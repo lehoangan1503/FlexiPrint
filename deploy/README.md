@@ -1,6 +1,7 @@
 # Deploy — VPS runbook
 
-VPS `139.180.132.159` (Ubuntu, 2 vCPU, 1.6 GB RAM + 8 GB swap). Domain `flexiprint.next.lc` → A record to the VPS.
+VPS `139.180.132.159` (Ubuntu, 2 vCPU, 1.6 GB RAM + 8 GB swap). A records to the VPS:
+`flexiprint.next.lc` (app) and `flexiprint-api.next.lc` (Supabase Studio + API).
 
 ```
 /opt/flexiprint/
@@ -19,8 +20,8 @@ tuned small, and the gateway listens on `127.0.0.1:8000` only.
 
 ```
 COMPOSE_FILE=docker-compose.yml:docker-compose.flexiprint.yml
-SUPABASE_PUBLIC_URL=https://flexiprint.next.lc
-API_EXTERNAL_URL=https://flexiprint.next.lc
+SUPABASE_PUBLIC_URL=https://flexiprint-api.next.lc
+API_EXTERNAL_URL=https://flexiprint-api.next.lc
 SITE_URL=https://flexiprint.next.lc
 PGRST_DB_SCHEMAS=public,graphql_public,flexiprint
 DISABLE_SIGNUP=true
@@ -34,8 +35,10 @@ for f in /opt/flexiprint/migrations/*.sql; do docker exec -i supabase-db psql -U
 docker compose restart rest     # PostgREST picks up the new schema
 ```
 
-Studio is not public: `ssh -L 8000:127.0.0.1:8000 root@139.180.132.159`, open http://localhost:8000
-(user `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD` from the Supabase `.env`).
+**Supabase admin (Studio)**: https://flexiprint-api.next.lc (like supa-api.top for the 3D tool) —
+nginx `deploy/nginx/flexiprint-supabase.conf` → Envoy, which asks for basic auth
+(`DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD` in the Supabase `.env`). The same domain also serves the
+APIs; the app itself reaches Supabase through its own domain (`/auth/v1`, `/rest/v1` in flexiprint.conf).
 
 ## 2. App + services
 
@@ -52,9 +55,11 @@ and R2 credentials. `NEXT_PUBLIC_*` are baked in at build time — rebuild after
 ```bash
 cp deploy/nginx/flexiprint-cache.conf /etc/nginx/conf.d/
 cp deploy/nginx/flexiprint.conf /etc/nginx/sites-available/flexiprint
+cp deploy/nginx/flexiprint-supabase.conf /etc/nginx/sites-available/flexiprint-supabase
 ln -sf /etc/nginx/sites-available/flexiprint /etc/nginx/sites-enabled/flexiprint
+ln -sf /etc/nginx/sites-available/flexiprint-supabase /etc/nginx/sites-enabled/flexiprint-supabase
 nginx -t && systemctl reload nginx
-certbot --nginx -d flexiprint.next.lc --redirect -m <email> --agree-tos -n
+certbot --nginx -d flexiprint.next.lc -d flexiprint-api.next.lc --redirect --agree-tos -n --register-unsafely-without-email
 ```
 
 `client_max_body_size 500m` everywhere; `/api/` streams request bodies (no buffering) with 600 s timeouts.

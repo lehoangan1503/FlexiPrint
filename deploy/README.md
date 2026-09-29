@@ -73,6 +73,11 @@ certbot --nginx -d flexiprint.next.lc -d flexiprint-api.next.lc --redirect --agr
 
 ## 5. Shopify (giftself-2.myshopify.com)
 
-Upload `customize-tool/shopify/sections/main-product.liquid`, `assets/ct-customizer.js`, `assets/ct-customizer.css`
-to the theme (never a full theme push), set the section's **Customize Tool URL** to `https://flexiprint.next.lc`,
-and give each product the metafield `customize_tool.product_id`.
+- App **FlexiPrint** (Dev Dashboard, same org as the store): client credentials in the app `.env`
+  (`SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`) → Admin API token, auto-refreshed. Scopes: themes, products,
+  files, read_orders. The metafield definition `customize_tool.product_id` (product, storefront read) exists.
+- Theme files can't be written through the Admin API without a Shopify exemption, so they go through
+  Shopify CLI with a staff login: `scripts/push-theme.sh` duplicates the live theme once into
+  **FlexiPrint preview** and pushes only `sections/flexiprint-product.liquid`, `assets/ct-customizer.{js,css}`
+  and `templates/product.flexiprint.json` (`--only` + `--nodelete`, never a full push).
+- A personalized product: template `product.flexiprint` + metafield `customize_tool.product_id` = FlexiPrint id.

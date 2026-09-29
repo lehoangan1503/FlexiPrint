@@ -76,8 +76,8 @@ certbot --nginx -d flexiprint.next.lc -d flexiprint-api.next.lc --redirect --agr
 - App **FlexiPrint** (Dev Dashboard, same org as the store): client credentials in the app `.env`
   (`SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`) → Admin API token, auto-refreshed. Scopes: themes, products,
   files, read_orders. The metafield definition `customize_tool.product_id` (product, storefront read) exists.
-- Theme files can't be written through the Admin API without a Shopify exemption, so they go through
-  Shopify CLI with a staff login: `scripts/push-theme.sh` duplicates the live theme once into
-  **FlexiPrint preview** and pushes only `sections/flexiprint-product.liquid`, `assets/ct-customizer.{js,css}`
-  and `templates/product.flexiprint.json` (`--only` + `--nodelete`, never a full push).
-- A personalized product: template `product.flexiprint` + metafield `customize_tool.product_id` = FlexiPrint id.
+- Theme **FlexiPrint** (live, #196148625691) = Shopify Horizon + the FlexiPrint section. Its default product
+  template uses the section, so a product only needs the metafield. Theme files can't be written through the
+  Admin API without a Shopify exemption; `scripts/push-theme.sh` updates them with Shopify CLI (staff login),
+  pushing only the FlexiPrint files.
+- A personalized product: metafield `customize_tool.product_id` = FlexiPrint id.

@@ -141,7 +141,7 @@
       </div>
     {%- endunless -%}
 
-    {%- form 'product', product, class: 'ct-form', 'data-ct-form': '', novalidate: 'novalidate' -%}
+    {%- form 'product', product, class: 'ct-form', data-ct-form: 'true', novalidate: 'novalidate' -%}
       <input type="hidden" name="id" value="{{ current_variant.id }}">
 
       {%- if is_custom -%}

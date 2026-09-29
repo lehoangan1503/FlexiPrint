@@ -42,7 +42,9 @@ UPDATE auth.users SET raw_app_meta_data = raw_app_meta_data || '{"role":"admin"}
 ## Local development
 
 ```bash
-cp .env.example .env.local   # fill Supabase + R2 keys
+# .env.local is never committed. Copy the real values from the VPS (same keys as production):
+#   ssh root@139.180.132.159 cat /opt/flexiprint/app/.env   → keep APP_URL=https://flexiprint.next.lc
+# Local dev then uses the PRODUCTION Supabase + R2 (same data as the live site).
 npm install
 npm run dev                  # Next + python services (services/*/run-local.sh)
 npm run build:ct-storefront  # rebuild the Shopify bundle after changing lib/ or storefront/

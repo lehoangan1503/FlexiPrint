@@ -4,7 +4,9 @@
  * long cache headers, and nginx caches them in front.
  *
  * Env: R2_ENDPOINT (https://<account>.r2.cloudflarestorage.com), R2_BUCKET,
- *      R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, APP_URL (public origin).
+ *      R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, APP_URL (public origin),
+ *      R2_KEY_PREFIX (optional, e.g. "flexiprint" — every object lives under it, so the
+ *      bucket can be shared with other projects; callers and public URLs never see it).
  */
 
 import {
@@ -35,14 +37,20 @@ function s3(): S3Client {
 
 const bucket = () => process.env.R2_BUCKET!;
 
+const PREFIX = (process.env.R2_KEY_PREFIX ?? "").replace(/^\/+|\/+$/g, "");
+/** Caller key → bucket key. */
+const full = (key: string) => (PREFIX ? `${PREFIX}/${key}` : key);
+/** Bucket key → caller key. */
+const bare = (key: string) => (PREFIX && key.startsWith(`${PREFIX}/`) ? key.slice(PREFIX.length + 1) : key);
+
 export async function r2Put(key: string, body: Buffer, mime: string): Promise<void> {
-  await s3().send(new PutObjectCommand({ Bucket: bucket(), Key: key, Body: body, ContentType: mime }));
+  await s3().send(new PutObjectCommand({ Bucket: bucket(), Key: full(key), Body: body, ContentType: mime }));
 }
 
 /** null when the object does not exist. */
 export async function r2Get(key: string): Promise<GetObjectCommandOutput | null> {
   try {
-    return await s3().send(new GetObjectCommand({ Bucket: bucket(), Key: key }));
+    return await s3().send(new GetObjectCommand({ Bucket: bucket(), Key: full(key) }));
   } catch (e) {
     const name = e instanceof Error ? e.name : "";
     if (name === "NoSuchKey" || name === "NotFound") return null;
@@ -55,7 +63,7 @@ export async function r2Remove(keys: string[]): Promise<void> {
   for (let i = 0; i < keys.length; i += 1000) {
     const batch = keys.slice(i, i + 1000);
     if (batch.length === 0) continue;
-    await s3().send(new DeleteObjectsCommand({ Bucket: bucket(), Delete: { Objects: batch.map((Key) => ({ Key })), Quiet: true } }));
+    await s3().send(new DeleteObjectsCommand({ Bucket: bucket(), Delete: { Objects: batch.map((k) => ({ Key: full(k) })), Quiet: true } }));
   }
 }
 
@@ -64,9 +72,9 @@ export async function r2ListOlderThan(prefix: string, cutoff: Date, limit: numbe
   const out: Array<{ key: string; at: number }> = [];
   let token: string | undefined;
   do {
-    const page = await s3().send(new ListObjectsV2Command({ Bucket: bucket(), Prefix: `${prefix}/`, ContinuationToken: token }));
+    const page = await s3().send(new ListObjectsV2Command({ Bucket: bucket(), Prefix: `${full(prefix)}/`, ContinuationToken: token }));
     for (const o of page.Contents ?? []) {
-      if (o.Key && o.LastModified && o.LastModified < cutoff) out.push({ key: o.Key, at: o.LastModified.getTime() });
+      if (o.Key && o.LastModified && o.LastModified < cutoff) out.push({ key: bare(o.Key), at: o.LastModified.getTime() });
     }
     token = page.IsTruncated ? page.NextContinuationToken : undefined;
   } while (token && out.length < limit * 4);

@@ -1,0 +1,12 @@
+{
+  "sections": {
+    "main": {
+      "type": "main-product",
+      "settings": {
+        "api_base": "",
+        "heading": "Personalized"
+      }
+    }
+  },
+  "order": ["main"]
+}

@@ -1,0 +1,51 @@
+# FlexiPrint production stack (Supabase runs separately: /opt/flexiprint/supabase, see deploy/README.md).
+#   docker compose up -d --build
+# Only the app is published, on 127.0.0.1:3000 behind host nginx (deploy/nginx/flexiprint.conf).
+name: flexiprint
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_DB_SCHEMA: ${NEXT_PUBLIC_DB_SCHEMA:-flexiprint}
+    image: flexiprint-app
+    env_file: .env
+    environment:
+      CT_PHOTO_STYLE_URL: http://photo-style:7002
+      CT_MATERIAL_URL: http://material-render:7003
+      CT_BG_REMOVER_URL: http://bg-remover:7001
+    # Server-side Supabase calls go to the public URL; resolve it to the host's nginx
+    # directly instead of hair-pinning through the public IP.
+    extra_hosts:
+      - "${APP_DOMAIN:-flexiprint.next.lc}:host-gateway"
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+    depends_on: [photo-style, material-render]
+
+  photo-style:
+    build: ./services/photo-style
+    restart: unless-stopped
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7002", "--workers", "1"]
+
+  material-render:
+    build: ./services/material-render
+    restart: unless-stopped
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7003", "--workers", "1"]
+
+  # BiRefNet cut-out (~1 GB model). The VPS leans on swap for it — slow but free;
+  # set FAL_KEY and stop this service to use fal.ai instead.
+  bg-remover:
+    build: ./services/bg-remover
+    restart: unless-stopped
+    environment:
+      BG_MODEL: birefnet-general
+      BG_CONCURRENCY: "1"
+      BG_MAX_SIDE: "1600"
+    deploy:
+      resources:
+        limits:
+          memory: 3g

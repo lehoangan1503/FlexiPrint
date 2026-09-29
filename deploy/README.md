@@ -1,0 +1,73 @@
+# Deploy — VPS runbook
+
+VPS `139.180.132.159` (Ubuntu, 2 vCPU, 1.6 GB RAM + 8 GB swap). Domain `flexiprint.next.lc` → A record to the VPS.
+
+```
+/opt/flexiprint/
+  supabase/     self-hosted Supabase (official docker/ + docker-compose.flexiprint.yml)
+  app/          this repo (git clone) + .env
+  migrations/   copies of supabase/migrations used to initialise the DB
+```
+
+## 1. Supabase (trimmed)
+
+Official `docker/` from github.com/supabase/supabase with `docker-compose.flexiprint.yml` on top:
+realtime, storage, imgproxy, edge functions and the pooler are disabled (files are on R2), Postgres is
+tuned small, and the gateway listens on `127.0.0.1:8000` only.
+
+`.env` changes from `.env.example` (after `sh utils/generate-keys.sh --update-env`):
+
+```
+COMPOSE_FILE=docker-compose.yml:docker-compose.flexiprint.yml
+SUPABASE_PUBLIC_URL=https://flexiprint.next.lc
+API_EXTERNAL_URL=https://flexiprint.next.lc
+SITE_URL=https://flexiprint.next.lc
+PGRST_DB_SCHEMAS=public,graphql_public,flexiprint
+DISABLE_SIGNUP=true
+ENABLE_EMAIL_AUTOCONFIRM=true
+API_GW_HTTP_PORT=127.0.0.1:8000
+```
+
+```bash
+cd /opt/flexiprint/supabase && docker compose up -d
+for f in /opt/flexiprint/migrations/*.sql; do docker exec -i supabase-db psql -U postgres -v ON_ERROR_STOP=1 < $f; done
+docker compose restart rest     # PostgREST picks up the new schema
+```
+
+Studio is not public: `ssh -L 8000:127.0.0.1:8000 root@139.180.132.159`, open http://localhost:8000
+(user `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD` from the Supabase `.env`).
+
+## 2. App + services
+
+```bash
+cd /opt/flexiprint/app && git pull
+docker compose up -d --build      # app on 127.0.0.1:3000, services on the internal network
+```
+
+`.env` = `.env.example` filled with the Supabase keys (`ANON_KEY`, `SERVICE_ROLE_KEY` from the Supabase `.env`)
+and R2 credentials. `NEXT_PUBLIC_*` are baked in at build time — rebuild after changing them.
+
+## 3. nginx + SSL
+
+```bash
+cp deploy/nginx/flexiprint-cache.conf /etc/nginx/conf.d/
+cp deploy/nginx/flexiprint.conf /etc/nginx/sites-available/flexiprint
+ln -sf /etc/nginx/sites-available/flexiprint /etc/nginx/sites-enabled/flexiprint
+nginx -t && systemctl reload nginx
+certbot --nginx -d flexiprint.next.lc --redirect -m <email> --agree-tos -n
+```
+
+`client_max_body_size 500m` everywhere; `/api/` streams request bodies (no buffering) with 600 s timeouts.
+
+## 4. Cron
+
+```
+23 * * * *  curl -fsS -X POST -H "Authorization: Bearer $CT_CRON_SECRET" https://flexiprint.next.lc/api/customize-tool/cron/cleanup
+0 3 * * *   docker exec supabase-db pg_dump -U postgres -n flexiprint -n auth -Fc postgres > /var/backups/flexiprint-$(date +\%F).dump
+```
+
+## 5. Shopify (giftself-2.myshopify.com)
+
+Upload `customize-tool/shopify/sections/main-product.liquid`, `assets/ct-customizer.js`, `assets/ct-customizer.css`
+to the theme (never a full theme push), set the section's **Customize Tool URL** to `https://flexiprint.next.lc`,
+and give each product the metafield `customize_tool.product_id`.

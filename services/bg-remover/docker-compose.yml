@@ -1,0 +1,14 @@
+services:
+  bg-remover:
+    build: .
+    ports:
+      - "7001:7001"
+    environment:
+      BG_MODEL: birefnet-general
+      BG_CONCURRENCY: "1"
+      # BG_TOKEN: change-me   # then set CT_BG_REMOVER_TOKEN in the Next app
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4g

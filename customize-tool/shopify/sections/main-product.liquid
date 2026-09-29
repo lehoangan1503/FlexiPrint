@@ -1,0 +1,218 @@
+{%- comment -%}
+  Customize Tool — product page section.
+
+  Renders every product (gallery, variants, add to cart). When the product has
+  the metafield  customize_tool.product_id  (Single line text, the id shown in
+  the tool's Publish dialog) it also loads the latest published template from
+  the tool and shows the personalization form:
+
+    - the left column starts with the product media (mockups) — or the live
+      design when the product has no media;
+    - as soon as the customer changes any option it swaps to the live custom
+      canvas ("View product photos" swaps back);
+    - customer photos open a dialog: upload → drag / zoom / rotate → Apply;
+    - Add to cart uploads a flattened preview and adds line-item properties
+      (visible choices + hidden _ct_preview, _ct_template, _ct_selection).
+
+  Assets: ct-customizer.js (built from customize-tool/storefront) + ct-customizer.css.
+  Every option (zones, groups, preset texts, photo styles, main versions) is
+  rendered from the template JSON, so anything created in the tool works here
+  with no theme edit: Publish, and it shows within ~30s. The tool's
+  "Xem trước" tab runs this same markup + script on the unsaved draft.
+{%- endcomment -%}
+
+{%- liquid
+  assign current_variant = product.selected_or_first_available_variant
+  assign featured = current_variant.featured_media | default: product.featured_media
+  assign ct_id = product.metafields.customize_tool.product_id.value | default: product.metafields.customize_tool.product_id | strip
+  assign api_base = section.settings.api_base | strip
+  assign last_char = api_base | slice: -1
+  if last_char == '/'
+    assign api_base = api_base | remove_last: '/'
+  endif
+  assign is_custom = false
+  if ct_id != blank and api_base != blank
+    assign is_custom = true
+  endif
+-%}
+
+{{ 'ct-customizer.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'ct-customizer.js' | asset_url }}" defer="defer"></script>
+
+<section
+  id="CtProduct-{{ section.id }}"
+  class="ct-product page-width"
+  data-ct-product
+  {% if is_custom %}
+    data-ct-template-url="{{ api_base }}/api/customize-tool/public/templates/{{ ct_id | url_encode }}"
+    data-ct-upload-url="{{ api_base }}/api/customize-tool/public/uploads/{{ ct_id | url_encode }}"
+    data-ct-photo-url="{{ api_base }}/api/customize-tool/public/photo/{{ ct_id | url_encode }}"
+  {% endif %}
+  data-ct-t-heading="{{ section.settings.heading | escape }}"
+  data-ct-t-upload="{{ section.settings.upload_label | escape }}"
+  data-ct-t-required="{{ section.settings.required_label | escape }}"
+  style="--ct-accent: {{ section.settings.accent }};"
+>
+  <div class="ct-product__media">
+    <div class="ct-gallery" data-ct-gallery>
+      <div class="ct-gallery__main" data-ct-gallery-main>
+        {%- for media in product.media -%}
+          <div class="ct-gallery__slide" data-media-id="{{ media.id }}" {% unless media.id == featured.id %}hidden{% endunless %}>
+            {%- case media.media_type -%}
+              {%- when 'image' -%}
+                {{
+                  media
+                  | image_url: width: 1600
+                  | image_tag:
+                    loading: 'eager',
+                    widths: '600, 900, 1200, 1600',
+                    sizes: '(min-width: 990px) 55vw, 100vw',
+                    alt: media.alt
+                }}
+              {%- when 'video' -%}
+                {{ media | video_tag: controls: true, image_size: '1200x' }}
+              {%- when 'external_video' -%}
+                {{ media | external_video_tag }}
+              {%- when 'model' -%}
+                {{ media | model_viewer_tag }}
+              {%- else -%}
+                {{ media | media_tag }}
+            {%- endcase -%}
+          </div>
+        {%- else -%}
+          <div class="ct-gallery__slide">{{ 'product-1' | placeholder_svg_tag: 'ct-placeholder' }}</div>
+        {%- endfor -%}
+      </div>
+      {%- if product.media.size > 1 -%}
+        <div class="ct-gallery__thumbs">
+          {%- for media in product.media -%}
+            <button type="button" class="ct-gallery__thumb{% if media.id == featured.id %} is-active{% endif %}" data-ct-thumb="{{ media.id }}" aria-label="{{ media.alt | default: product.title | escape }}">
+              {{ media.preview_image | image_url: width: 160 | image_tag: loading: 'lazy', alt: '' }}
+            </button>
+          {%- endfor -%}
+        </div>
+      {%- endif -%}
+    </div>
+
+    {%- if is_custom -%}
+      <div class="ct-stage" data-ct-stage hidden>
+        <canvas aria-label="{{ section.settings.preview_label | escape }}"></canvas>
+        <button type="button" class="ct-stage__toggle" data-ct-show-photos>{{ section.settings.photos_label }}</button>
+      </div>
+      <button type="button" class="ct-show-design" data-ct-show-design>{{ section.settings.design_label }}</button>
+    {%- endif -%}
+  </div>
+
+  <div class="ct-product__info">
+    {%- if section.settings.show_vendor -%}
+      <p class="ct-product__vendor">{{ product.vendor }}</p>
+    {%- endif -%}
+    <h1 class="ct-product__title">{{ product.title }}</h1>
+    <div class="ct-product__price">
+      <span data-ct-price>{{ current_variant.price | money }}</span>
+      <s class="ct-product__compare" data-ct-compare {% unless current_variant.compare_at_price > current_variant.price %}hidden{% endunless %}>
+        {%- if current_variant.compare_at_price > current_variant.price -%}{{ current_variant.compare_at_price | money }}{%- endif -%}
+      </s>
+    </div>
+
+    {%- unless product.has_only_default_variant -%}
+      {%- comment -%} Outside the form so the pickers are not posted to /cart/add. {%- endcomment -%}
+      <div class="ct-variants">
+        {%- for option in product.options_with_values -%}
+          {%- assign option_index = forloop.index0 -%}
+          <fieldset class="ct-variant">
+            <legend class="ct-field__label">{{ option.name }}</legend>
+            <div class="ct-pills">
+              {%- for value in option.values -%}
+                <label class="ct-pill">
+                  <input
+                    type="radio"
+                    name="ct-{{ section.id }}-option-{{ option_index }}"
+                    value="{{ value | escape }}"
+                    data-ct-option-index="{{ option_index }}"
+                    {% if option.selected_value == value %}checked{% endif %}
+                  >
+                  <span>{{ value }}</span>
+                </label>
+              {%- endfor -%}
+            </div>
+          </fieldset>
+        {%- endfor -%}
+      </div>
+    {%- endunless -%}
+
+    {%- form 'product', product, class: 'ct-form', 'data-ct-form': '', novalidate: 'novalidate' -%}
+      <input type="hidden" name="id" value="{{ current_variant.id }}">
+
+      {%- if is_custom -%}
+        <div class="ct-options" data-ct-options></div>
+      {%- endif -%}
+
+      <div class="ct-buy">
+        <label class="ct-qty">
+          <span class="visually-hidden">{{ 'products.product.quantity.label' | t | default: 'Quantity' }}</span>
+          <input type="number" name="quantity" value="1" min="1" inputmode="numeric">
+        </label>
+        <button
+          type="submit"
+          name="add"
+          class="ct-btn ct-btn--primary ct-add"
+          data-label-add="{{ section.settings.add_label | escape }}"
+          data-label-soldout="{{ section.settings.soldout_label | escape }}"
+          {% unless current_variant.available %}disabled{% endunless %}
+        >
+          <span data-ct-submit-label>
+            {%- if current_variant.available -%}{{ section.settings.add_label }}{%- else -%}{{ section.settings.soldout_label }}{%- endif -%}
+          </span>
+        </button>
+      </div>
+    {%- endform -%}
+
+    {%- if section.settings.show_description and product.description != blank -%}
+      <div class="ct-product__description rte">{{ product.description }}</div>
+    {%- endif -%}
+  </div>
+
+  <script type="application/json" data-ct-variants>
+    {
+      {%- for v in product.variants -%}
+        "{{ v.id }}": {
+          "price": {{ v.price | money | json }},
+          "compare": {% if v.compare_at_price > v.price %}{{ v.compare_at_price | money | json }}{% else %}null{% endif %},
+          "available": {{ v.available | json }},
+          "media": {% if v.featured_media %}"{{ v.featured_media.id }}"{% else %}null{% endif %}
+        }{% unless forloop.last %},{% endunless %}
+      {%- endfor -%}
+    }
+  </script>
+  <script type="application/json" data-ct-variant-options>
+    [{%- for v in product.variants -%}{"id": {{ v.id }}, "options": {{ v.options | json }}}{% unless forloop.last %},{% endunless %}{%- endfor -%}]
+  </script>
+</section>
+
+{% schema %}
+{
+  "name": "Product (Customize Tool)",
+  "tag": "section",
+  "class": "section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "api_base",
+      "label": "Customize Tool URL",
+      "info": "Origin of the Customize Tool app, e.g. https://tool.example.com (no trailing slash). Products need the metafield customize_tool.product_id."
+    },
+    { "type": "color", "id": "accent", "label": "Accent color", "default": "#e5793b" },
+    { "type": "text", "id": "heading", "label": "Personalization heading", "default": "Personalized" },
+    { "type": "text", "id": "upload_label", "label": "Upload button", "default": "Upload your photo" },
+    { "type": "text", "id": "required_label", "label": "Missing-field message", "default": "Please complete" },
+    { "type": "text", "id": "photos_label", "label": "Back-to-photos button", "default": "View product photos" },
+    { "type": "text", "id": "design_label", "label": "Back-to-design button", "default": "Preview my design" },
+    { "type": "text", "id": "preview_label", "label": "Preview canvas label", "default": "Live preview of your design" },
+    { "type": "text", "id": "add_label", "label": "Add to cart label", "default": "Add to cart" },
+    { "type": "text", "id": "soldout_label", "label": "Sold out label", "default": "Sold out" },
+    { "type": "checkbox", "id": "show_vendor", "label": "Show vendor", "default": false },
+    { "type": "checkbox", "id": "show_description", "label": "Show description", "default": true }
+  ]
+}
+{% endschema %}

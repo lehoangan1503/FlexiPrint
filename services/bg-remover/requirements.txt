@@ -1,0 +1,4 @@
+rembg[cpu]==2.0.85
+fastapi>=0.128,<0.129
+uvicorn[standard]>=0.40,<0.41
+python-multipart>=0.0.21,<0.0.22

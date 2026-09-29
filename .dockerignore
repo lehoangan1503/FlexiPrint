@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+.env
+.env*.local
+services
+deploy
+supabase
+**/__pycache__
+**/.venv

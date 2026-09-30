@@ -6,15 +6,12 @@
 import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
 import type {
-  CtAiProviderId,
   CtAiStyle,
   CtAiStyleRef,
   CtAsset,
   CtAssetMeta,
   CtAssetRole,
   CtCreateProductBody,
-  CtGenerateBody,
-  CtGenerateResponse,
   CtGeneration,
   CtProduct,
   CtProductBundle,
@@ -30,11 +27,10 @@ import type {
 } from "../types";
 import { normalizeProductConfig, normalizeRegion } from "../lib/design";
 import { ctServiceClient, type CtSession } from "./supabase";
-import { ctDownload, ctLibraryPath, ctPublicUploadPath, ctRemove, ctStoragePath, ctUpload } from "./storage";
+import { ctLibraryPath, ctPublicUploadPath, ctRemove, ctStoragePath, ctUpload } from "./storage";
 import { buildTemplate } from "../lib/template";
 import { readImageInfo } from "./image-size";
-import { getProvider, listProviders } from "./ai/providers";
-import { buildPrompt } from "./ai/prompts";
+import { listProviders } from "./ai/providers";
 import { PhotoConfigError, cachedAiResult, photoCapabilities, processPhoto, type PhotoResult } from "./ai/photo";
 import { sweepPhotoCache } from "./photo-cache";
 import { isAiStyleRef, isPhotoStyleRef } from "../lib/photo-styles";
@@ -625,103 +621,4 @@ export async function deleteAsset(s: CtSession, assetId: string): Promise<NextRe
 
 export function aiProviders(): NextResponse {
   return NextResponse.json({ providers: listProviders() });
-}
-
-const GEN_ROLES: CtAssetRole[] = ["main", "sub", "variant", "mockup"];
-
-export async function generate(s: CtSession, productId: string, body: CtGenerateBody): Promise<NextResponse> {
-  if (!(await ownedProduct(s, productId))) return jsonError("Không có quyền sửa sản phẩm này", 403);
-  if (!GEN_ROLES.includes(body.targetRole)) return jsonError("targetRole không hợp lệ", 400);
-  const prompt = (body.prompt ?? "").trim();
-  if (!prompt) return jsonError("Thiếu prompt", 400);
-
-  const providerId: CtAiProviderId = body.provider;
-  const provider = getProvider(providerId);
-  if (!provider) return jsonError("Provider không hợp lệ", 400);
-  if (!provider.configured()) return jsonError(`Chưa cấu hình API key cho ${provider.label}`, 400);
-  const model = provider.models().find((m) => m.id === body.model) ?? provider.models()[0];
-
-  const count = Math.min(4, Math.max(1, Math.round(body.params?.count ?? 1)));
-  const transparent = Boolean(body.params?.transparent) && model.supportsTransparent;
-  const aspectRatio = body.params?.aspectRatio ?? "1:1";
-
-  // A variant always uses its parent sub asset as the first reference.
-  let refIds = Array.from(new Set(body.referenceAssetIds ?? []));
-  let parentId: string | null = null;
-  if (body.targetRole === "variant") {
-    if (!body.parentAssetId) return jsonError("Variant cần chọn sub object gốc", 400);
-    parentId = body.parentAssetId;
-    refIds = [parentId, ...refIds.filter((id) => id !== parentId)];
-  }
-  refIds = refIds.slice(0, model.maxReferences);
-
-  const { data: refAssets } = refIds.length
-    ? await s.supabase.from(CT_TABLES.assets).select("*").in("id", refIds).returns<CtAsset[]>()
-    : { data: [] as CtAsset[] };
-  const refsOrdered = refIds
-    .map((id) => (refAssets ?? []).find((a) => a.id === id))
-    .filter((a): a is CtAsset => Boolean(a));
-
-  const { data: generation, error: genErr } = await s.supabase
-    .from(CT_TABLES.generations)
-    .insert({
-      user_id: s.user.id,
-      product_id: productId,
-      target_role: body.targetRole,
-      parent_asset_id: parentId,
-      provider: providerId,
-      model: model.id,
-      prompt,
-      reference_asset_ids: refsOrdered.map((a) => a.id),
-      params: { aspectRatio, count, transparent },
-      status: "pending",
-    })
-    .select("*")
-    .single<CtGeneration>();
-  if (genErr || !generation) return jsonError(genErr?.message ?? "Không tạo được generation", 500);
-
-  const finish = async (patch: Partial<CtGeneration>) => {
-    const { data } = await s.supabase
-      .from(CT_TABLES.generations)
-      .update({ ...patch, finished_at: new Date().toISOString() })
-      .eq("id", generation.id)
-      .select("*")
-      .single<CtGeneration>();
-    return data ?? generation;
-  };
-
-  try {
-    const references = await Promise.all(refsOrdered.map((a) => ctDownload(a.url)));
-    const images = await provider.generate({
-      model: model.id,
-      prompt: buildPrompt(body.targetRole, prompt, references.length, transparent),
-      references,
-      aspectRatio,
-      count,
-      transparent,
-    });
-
-    const baseName = prompt.slice(0, 40);
-    const assets: CtAsset[] = [];
-    for (const [i, img] of images.entries()) {
-      assets.push(
-        await insertAsset(s, {
-          productId,
-          role: body.targetRole,
-          parentId,
-          generationId: generation.id,
-          name: images.length > 1 ? `${baseName} #${i + 1}` : baseName,
-          data: img.data,
-          meta: {},
-        }),
-      );
-    }
-    const done = await finish({ status: "succeeded" });
-    const response: CtGenerateResponse = { generation: done, assets };
-    return NextResponse.json(response, { status: 201 });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "Tạo ảnh thất bại";
-    await finish({ status: "failed", error: message });
-    return jsonError(message, 502);
-  }
 }

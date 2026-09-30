@@ -186,9 +186,9 @@ export function PreviewPanel(props: PreviewPanelProps) {
             <span className="text-xs font-semibold">Tổ hợp đã lưu ({composites.length})</span>
             {props.onMockup ? (
               <>
-                <span className="text-[11px] text-muted-foreground">Chọn nhiều ảnh → Tạo mockup (nhiều sản phẩm trong 1 ảnh)</span>
+                <span className="text-[11px] text-muted-foreground">Chọn 1 tổ hợp → mở Studio: vật liệu AI + bối cảnh → lưu mockup</span>
                 <CtButton size="sm" variant="primary" className="ml-auto" disabled={picked.length === 0} onClick={() => props.onMockup?.(picked)}>
-                  <Sparkles className="h-3.5 w-3.5" /> Tạo mockup AI ({picked.length})
+                  <Sparkles className="h-3.5 w-3.5" /> Mockup AI trong Studio
                 </CtButton>
               </>
             ) : (

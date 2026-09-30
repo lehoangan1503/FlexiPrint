@@ -19,6 +19,7 @@ import { ChevronDown, ChevronRight, Crown, ExternalLink, ImagePlus, Library, Loa
 import type { CtAsset, CtClipartCategory } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { flattenCategories, libraryOrigins, renditionOf, setMembers } from "../../lib/library";
+import { openStudio } from "../../lib/studio-link";
 import { CHECKER_STYLE, CtButton, CtInput, CtSelect, CtTooltip, cx } from "../ui";
 
 export interface LibraryPanelProps {
@@ -66,6 +67,12 @@ export function LibraryPanel(props: LibraryPanelProps) {
   useEffect(() => {
     const t = setTimeout(load, 250);
     return () => clearTimeout(t);
+  }, [load]);
+
+  // Back from the studio tab: show what it just saved.
+  useEffect(() => {
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
   }, [load]);
 
   const options = useMemo(
@@ -123,10 +130,13 @@ export function LibraryPanel(props: LibraryPanelProps) {
               <Library className="h-3.5 w-3.5" /> Quản lý
             </Link>
           </CtTooltip>
-          <CtTooltip label="ComfyUI Studio — tạo clipart / bộ biến thể / vật liệu bằng AI">
-            <Link href="/studio" target="_blank" className="inline-flex h-8 items-center gap-1 rounded-md border px-2 text-xs hover:bg-accent">
-              <Sparkles className="h-3.5 w-3.5" /> Studio
-            </Link>
+          <CtTooltip label="Tạo clipart mới bằng AI trong Studio (vào đúng danh mục đang chọn)">
+            <CtButton
+              size="sm"
+              onClick={() => openStudio({ template: current?.usage === "main" ? "01-origin-set" : current ? "03-element-pack" : "01-origin-set", category: current?.id ?? null })}
+            >
+              <Sparkles className="h-3.5 w-3.5" /> Tạo AI
+            </CtButton>
           </CtTooltip>
         </div>
         {current && (current.spec || current.mode === "variant_set") && (
@@ -219,6 +229,14 @@ function OriginCard(props: {
             </CtTooltip>
           )}
         </div>
+      </div>
+      <div className="flex border-t text-[11px]">
+        <button className="flex flex-1 items-center justify-center gap-1 py-1 hover:bg-accent" onClick={() => openStudio({ template: "02-variant-set", clipart: origin.id })} title="Mở Studio: tạo thêm màu / style cho clipart này (giữ nguyên hình)">
+          <Sparkles className="h-3 w-3" /> Biến thể AI
+        </button>
+        <button className="flex flex-1 items-center justify-center gap-1 border-l py-1 hover:bg-accent" onClick={() => openStudio({ template: "04-clipart-material", clipart: origin.id })} title="Mở Studio: tạo bản vật liệu (acrylic, glitter…) cho clipart này">
+          <Sparkles className="h-3 w-3" /> Vật liệu AI
+        </button>
       </div>
       <div className="flex items-center border-t">
         <button className="flex flex-1 items-center gap-1 px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent" onClick={() => setOpen((v) => !v)}>

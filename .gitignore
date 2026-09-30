@@ -9,3 +9,4 @@ next-env.d.ts
 .DS_Store
 __pycache__/
 .venv/
+services/comfy/.comfy/

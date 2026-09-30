@@ -15,8 +15,6 @@ import type {
   CtCategoryBody,
   CtClipartCategory,
   CtClipartUsage,
-  CtGenerateBody,
-  CtGenerateResponse,
   CtMaterialConfig,
   CtPhotoCapabilities,
   CtPreset,
@@ -162,6 +160,4 @@ export const ctApi = {
   /** Sets the fp_studio cookie the studio's nginx gate checks. */
   studioSession: () => call<{ url: string }>("studio/session", { method: "POST" }),
 
-  generate: (productId: string, body: CtGenerateBody) =>
-    call<CtGenerateResponse>(`products/${productId}/generate`, json("POST", body)),
 };

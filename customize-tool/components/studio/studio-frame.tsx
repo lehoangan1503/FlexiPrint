@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, Library, Loader2 } from "lucide-react";
 import { ctApi } from "../../lib/api-client";
+import { studioFrameUrl } from "../../lib/studio-link";
 
 export function StudioFrame() {
   const [url, setUrl] = useState<string | null>(null);
@@ -20,7 +21,8 @@ export function StudioFrame() {
   useEffect(() => {
     ctApi
       .studioSession()
-      .then((r) => setUrl(r.url))
+      // ?template=…&clipart=… from the editor's "Tạo bằng AI" buttons → the studio opens that graph pre-filled.
+      .then((r) => setUrl(studioFrameUrl(r.url, new URLSearchParams(window.location.search))))
       .catch((e: Error) => setError(e.message));
   }, []);
 

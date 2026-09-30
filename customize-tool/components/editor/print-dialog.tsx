@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * "Vật liệu & file in": the physical product the design is printed on and
- * its production files.
+ * "File in": the physical product the design is printed on and its
+ * production files.
  *
  *   Vật liệu    acrylic / ceramic / metal / wood — outline, size, border,
  *               thickness. Only production facts: how a material LOOKS is
@@ -77,9 +77,9 @@ export function PrintDialog(props: PrintDialogProps) {
   };
 
   return (
-    <CtModal open={props.open} onOpenChange={props.onOpenChange} title="Vật liệu & file in">
+    <CtModal open={props.open} onOpenChange={props.onOpenChange} title="File in">
       <div className="space-y-4 text-sm">
-        <CtField label="Vật liệu phôi">
+        <CtField label="Loại phôi in">
           <div className="grid grid-cols-2 gap-1.5">
             {CT_MATERIALS.map((m) => (
               <button

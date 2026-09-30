@@ -39,7 +39,7 @@ def _data_uri(png: bytes) -> str:
 
 
 async def _cpa(path: str, body: dict) -> bytes:
-    base = os.environ.get("CPA_BASE_URL", "https://cpa.next.lc/v1").rstrip("/")
+    base = (os.environ.get("CPA_BASE_URL") or "https://cpa.next.lc/v1").rstrip("/")
     key = os.environ.get("CPA_API_KEY", "")
     if not key:
         raise ProviderError("CPA_API_KEY chưa cấu hình")

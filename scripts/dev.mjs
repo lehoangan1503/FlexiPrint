@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `npm run dev`: Next.js + the customize-tool Python services (services/*/run-local.sh).
+// `npm run dev`: Next.js + the customize-tool Python services + the ComfyUI studio (services/*/run-local.sh).
 // A service whose port is already listening is assumed running and skipped.
 // SKIP_SERVICES=1 npm run dev → Next only. Ctrl+C stops everything.
 import { spawn } from "node:child_process";
@@ -13,6 +13,8 @@ const SERVICES = [
   { name: "bg-remover", port: 7001, color: 35 },
   { name: "photo-style", port: 7002, color: 36 },
   { name: "material-render", port: 7003, color: 33 },
+  // ComfyUI studio (first run installs ComfyUI into services/comfy/.comfy — a few minutes).
+  { name: "comfy", port: 8188, color: 34 },
 ];
 
 const children = [];

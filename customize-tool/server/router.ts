@@ -11,7 +11,7 @@
  *   PUT    products/:id/design           CtSaveDesignBody
  *   POST   products/:id/publish          → snapshot into ct_templates (Shopify)
  *   POST   products/:id/assets           multipart: file, role, parent_id?, name?, meta?
- *   POST   products/:id/generate         CtGenerateBody
+ *   (AI generation runs in the ComfyUI studio — server/studio.ts, services/comfy)
  *   PATCH  assets/:id                    CtUpdateAssetBody
  *   DELETE assets/:id
  *   PUT    assets/:id/file              multipart: file  (replace image, keep id)
@@ -65,7 +65,6 @@ import type {
   CtAiStyleBody,
   CtCategoryBody,
   CtCreateProductBody,
-  CtGenerateBody,
   CtPresetBody,
   CtSaveDesignBody,
   CtUpdateAssetBody,
@@ -185,9 +184,6 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
         return body && UUID.test(body.asset_id ?? "") ? lib.linkProductMain(session, id, body.asset_id) : h.jsonError("Body không hợp lệ", 400);
       }
       if (assetId && UUID.test(assetId) && method === "DELETE") return lib.unlinkProductMain(session, id, assetId);
-    } else if (sub === "generate" && method === "POST") {
-      const body = await readJson<CtGenerateBody>(req);
-      return body ? h.generate(session, id, body) : h.jsonError("Body không hợp lệ", 400);
     }
   }
 

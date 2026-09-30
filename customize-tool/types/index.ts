@@ -692,22 +692,6 @@ export interface CtUpdateAssetBody {
   meta?: CtAssetMeta;
 }
 
-export interface CtGenerateBody {
-  targetRole: CtAssetRole;
-  /** Required for "variant" — the sub asset the versions belong to. */
-  parentAssetId: string | null;
-  provider: CtAiProviderId;
-  model: string;
-  prompt: string;
-  referenceAssetIds: string[];
-  params: CtGenerationParams;
-}
-
-export interface CtGenerateResponse {
-  generation: CtGeneration;
-  assets: CtAsset[];
-}
-
 export interface CtAiModelOption {
   id: string;
   label: string;

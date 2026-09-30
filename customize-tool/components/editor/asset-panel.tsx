@@ -31,7 +31,7 @@ export interface AssetPanelProps {
   canPlace: boolean;
   busy: string | null;
   onUpload: (role: CtAssetRole, files: File[], parentId: string | null) => void;
-  /** AI plugin — omitted when no provider is configured, which hides every AI button. */
+  /** Open the ComfyUI studio on the matching graph (lib/studio-link.ts). */
   onGenerate?: (role: CtAssetRole, parentId: string | null) => void;
   onDelete: (asset: CtAsset) => void;
   onSetMain: (asset: CtAsset) => void;
@@ -87,7 +87,7 @@ export function AssetPanel(props: AssetPanelProps) {
             ["main", `Main (${mains.length})`],
             ["sub", `Sub (${subs.length})`],
             // References only feed AI requests.
-            ...(props.onGenerate || refs.length > 0 ? [["reference", `Tham chiếu (${refs.length})`]] : []),
+            ...(refs.length > 0 ? [["reference", `Tham chiếu (${refs.length})`]] : []),
             ["library", "Thư viện"],
           ] as Array<[AssetTab, string]>
         ).map(([k, label]) => (
@@ -116,7 +116,7 @@ export function AssetPanel(props: AssetPanelProps) {
         <UploadButton label="Upload" multiple onFiles={(f) => props.onUpload(tab, f, null)} disabled={props.busy !== null} />
         {tab !== "reference" && props.onGenerate && (
           <CtButton size="sm" variant="primary" onClick={() => props.onGenerate?.(tab, null)} disabled={props.busy !== null}>
-            <Sparkles className="h-3.5 w-3.5" /> Tạo bằng AI
+            <Sparkles className="h-3.5 w-3.5" /> Tạo bằng AI (Studio)
           </CtButton>
         )}
         {props.busy && (
@@ -355,7 +355,7 @@ function SubGroup(props: AssetPanelProps & { sub: CtAsset; variants: CtAsset[] }
           </CtTooltip>
           {props.onGenerate && (
             <CtButton size="sm" onClick={() => props.onGenerate?.("variant", sub.id)} disabled={props.busy !== null}>
-              <Sparkles className="h-3.5 w-3.5" /> Version AI
+              <Sparkles className="h-3.5 w-3.5" /> Biến thể AI (Studio)
             </CtButton>
           )}
           <UploadButton label="Upload version" multiple onFiles={(f) => props.onUpload("variant", f, sub.id)} disabled={props.busy !== null} />

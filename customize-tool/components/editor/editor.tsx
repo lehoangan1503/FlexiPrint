@@ -23,7 +23,7 @@ import {
   Move,
   Pentagon,
   Redo2,
-  Layers,
+  Printer,
   Rocket,
   Save,
   Square,
@@ -47,12 +47,10 @@ import {
   selectedMainId,
 } from "../../lib/design";
 import { fitShapeToBounds, newId, shapeBounds, translateShape } from "../../lib/geometry";
-import { materialPreset } from "../../lib/materials";
 import { CtAutoWidthInput, CtButton, CtTooltip, CtTooltipProvider, cx } from "../ui";
 import { Stage, type EditTarget, type StageTool } from "./stage";
 import { Inspector } from "./inspector";
 import { AssetPanel } from "./asset-panel";
-import { GenerateDialog } from "./generate-dialog";
 import { CleanupDialog } from "./cleanup-dialog";
 import { PreviewPanel } from "./preview-panel";
 import { StorefrontPreview } from "./storefront-preview";
@@ -60,15 +58,11 @@ import { PublishDialog } from "./publish-dialog";
 import { layoutView, setOwnLayout, updateItem, updateRegion, useDesign } from "./use-design";
 import { PrintDialog } from "./print-dialog";
 import { PromoteDialog } from "./promote-dialog";
+import { openStudio } from "../../lib/studio-link";
 
 /** Thiết kế = edit · Xem trước = the real storefront page · Tổ hợp & Mockup = composites + AI mockups. */
 type View = "design" | "preview" | "mockup";
 
-interface GenState {
-  role: CtAssetRole;
-  parent: CtAsset | null;
-  refIds: string[];
-}
 
 /** Kinds drawn with a frame tool. A custom layer is added at once instead: its frame is the image itself. */
 type DrawKind = "text" | "photo";
@@ -131,21 +125,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [gen, setGen] = useState<GenState | null>(null);
   const [cleanup, setCleanup] = useState<CtAsset | null>(null);
   const [promote, setPromote] = useState<CtAsset | null>(null);
-  /**
-   * AI is a plugin: with no provider key configured the tool is upload-only
-   * and every AI affordance is hidden. Turning it on is just adding an env key.
-   */
-  const [aiEnabled, setAiEnabled] = useState(false);
-
-  useEffect(() => {
-    ctApi
-      .providers()
-      .then((list) => setAiEnabled(list.some((p) => p.configured)))
-      .catch(() => setAiEnabled(false));
-  }, []);
 
   // ---------------------------------------------------------------- load
   useEffect(() => {
@@ -456,14 +437,25 @@ export function CustomizeEditor({ productId }: { productId: string }) {
 
   const setMainConfig = (patch: Partial<CtMainOptionConfig>) => ed.commit((s) => ({ ...s, config: { ...s.config, main: { ...s.config.main, ...patch } } }));
 
-  const onGenerated = (created: CtAsset[]) => {
-    setAssets((a) => [...a, ...created]);
-    if (product && !product.main_asset_id) {
-      const m = created.find((c) => c.role === "main");
-      if (m) setProduct({ ...product, main_asset_id: m.id });
+  /**
+   * AI generation lives in the ComfyUI studio: open the matching graph in a new
+   * tab (clipart / artwork pre-selected); results land in the library, which the
+   * Thư viện tab reloads when this tab regains focus.
+   */
+  const generateInStudio = (role: CtAssetRole, parentId: string | null) => {
+    const parent = parentId ? assets.find((a) => a.id === parentId) : undefined;
+    if (role === "variant" && parent) {
+      if (parent.product_id !== null) {
+        flash("Đưa clipart này vào thư viện trước, rồi tạo biến thể trong Studio");
+        setPromote(parent);
+        return;
+      }
+      openStudio({ template: "02-variant-set", clipart: parent.id });
+      return;
     }
-    if (created[0]?.role === "mockup") setView("mockup");
+    openStudio({ template: role === "main" ? "01-origin-set" : "03-element-pack" });
   };
+
 
   /** A library clipart is never deleted from here: the product just stops using it. */
   const unlinkLibraryAsset = async (asset: CtAsset) => {
@@ -735,9 +727,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               {design.dirty ? "Lưu thiết kế" : "Đã lưu"}
             </CtButton>
           </CtTooltip>
-          <CtTooltip label="Vật liệu phôi (acrylic, sứ, nhôm, gỗ…), hiển thị bản vật liệu AI, xuất file in + đường cắt">
+          <CtTooltip label="Thông số phôi in (acrylic, sứ, nhôm, gỗ…) + xuất file in và đường cắt laser">
             <CtButton size="sm" variant="outline" onClick={() => setMaterialOpen(true)} disabled={!main}>
-              <Layers className="h-3.5 w-3.5" /> Vật liệu: {materialPreset(config.material.id).label.split(" (")[0]}
+              <Printer className="h-3.5 w-3.5" /> File in
             </CtButton>
           </CtTooltip>
           <CtTooltip label="Publish lên Shopify (main-product.liquid)">
@@ -757,9 +749,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             canPlace={selectedRegion?.kind === "image"}
             busy={busy}
             onUpload={(role, files, parentId) => void upload(role, files, parentId)}
-            onGenerate={
-              aiEnabled ? (role, parentId) => setGen({ role, parent: assets.find((a) => a.id === parentId) ?? null, refIds: [] }) : undefined
-            }
+            onGenerate={generateInStudio}
             onDelete={removeAsset}
             onSetMain={setMain}
             onPlace={place}
@@ -889,7 +879,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               selection={selection}
               onSelectionChange={setSelection}
               onSaveComposites={saveComposites}
-              onMockup={aiEnabled ? (ids) => setGen({ role: "mockup", parent: null, refIds: ids }) : undefined}
+              onMockup={(ids) => openStudio({ template: "05-artwork-mockup", artwork: ids[0] ?? null })}
               onDelete={removeAsset}
             />
           ) : (
@@ -949,18 +939,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         )}
       </div>
 
-      {gen && (
-        <GenerateDialog
-          open
-          onOpenChange={(o) => !o && setGen(null)}
-          productId={product.id}
-          role={gen.role}
-          parent={gen.parent}
-          assets={assets}
-          initialRefIds={gen.refIds}
-          onDone={onGenerated}
-        />
-      )}
       <PromoteDialog
         asset={promote}
         onClose={() => setPromote(null)}

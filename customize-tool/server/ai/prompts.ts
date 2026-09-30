@@ -74,6 +74,7 @@ export function buildPrompt(role: CtAssetRole, userPrompt: string, refCount: num
 
     case "reference":
     case "composite":
+    case "rendition":
       return userPrompt;
   }
 }

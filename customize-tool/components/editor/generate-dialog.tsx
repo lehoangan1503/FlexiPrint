@@ -17,6 +17,7 @@ const ROLE_TITLE: Record<CtAssetRole, string> = {
   sub: "Tạo sub object bằng AI",
   variant: "Tạo version cho sub object",
   mockup: "Tạo mockup chuyên nghiệp",
+  rendition: "",
   composite: "",
   reference: "",
 };
@@ -26,6 +27,7 @@ const PLACEHOLDER: Record<CtAssetRole, string> = {
   sub: "vd. Bánh bao kawaii thân tròn, glitter cầu vồng lấp lánh, không có mặt",
   variant: "vd. Đổi biểu cảm thành mắt nhắm cười híp, má hồng",
   mockup: "vd. Treo trên cây thông Noel, đèn bokeh vàng ấm, cận cảnh, nền tối sang trọng",
+  rendition: "",
   composite: "",
   reference: "",
 };

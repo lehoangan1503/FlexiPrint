@@ -30,7 +30,7 @@ import type {
 } from "../types";
 import { normalizeProductConfig, normalizeRegion } from "../lib/design";
 import { ctServiceClient, type CtSession } from "./supabase";
-import { ctDownload, ctPublicUploadPath, ctRemove, ctStoragePath, ctUpload } from "./storage";
+import { ctDownload, ctLibraryPath, ctPublicUploadPath, ctRemove, ctStoragePath, ctUpload } from "./storage";
 import { buildTemplate } from "../lib/template";
 import { readImageInfo } from "./image-size";
 import { getProvider, listProviders } from "./ai/providers";
@@ -38,11 +38,12 @@ import { buildPrompt } from "./ai/prompts";
 import { PhotoConfigError, cachedAiResult, photoCapabilities, processPhoto, type PhotoResult } from "./ai/photo";
 import { sweepPhotoCache } from "./photo-cache";
 import { isAiStyleRef, isPhotoStyleRef } from "../lib/photo-styles";
-import { loadAiStyle, originAllowed, publicAiStyles, takeAiQuota } from "./ai-styles";
+import { isAdmin, loadAiStyle, originAllowed, publicAiStyles, takeAiQuota } from "./ai-styles";
 import { falConfigured } from "./ai/fal-style";
 import { printPack, readPrintPackForm } from "./material";
+import { deleteClipart, loadProductAssets } from "./library";
 
-const ROLES: CtAssetRole[] = ["main", "sub", "variant", "composite", "mockup", "reference"];
+const ROLES: CtAssetRole[] = ["main", "sub", "variant", "rendition", "composite", "mockup", "reference"];
 
 export function jsonError(message: string, status: number): NextResponse {
   return NextResponse.json({ error: message }, { status });
@@ -86,8 +87,7 @@ export async function getBundle(s: CtSession, productId: string): Promise<NextRe
   const { data: product } = await s.supabase.from(CT_TABLES.products).select("*").eq("id", productId).maybeSingle<CtProduct>();
   if (!product) return jsonError("Không tìm thấy sản phẩm", 404);
 
-  const [assets, regions, generations] = await Promise.all([
-    s.supabase.from(CT_TABLES.assets).select("*").eq("product_id", productId).order("sort_order").order("created_at").returns<CtAsset[]>(),
+  const [regions, generations] = await Promise.all([
     s.supabase.from(CT_TABLES.regions).select("*").eq("product_id", productId).order("sort_order").returns<CtRegion[]>(),
     s.supabase
       .from(CT_TABLES.generations)
@@ -102,9 +102,12 @@ export async function getBundle(s: CtSession, productId: string): Promise<NextRe
     ? await s.supabase.from(CT_TABLES.items).select("*").in("region_id", regionIds).order("sort_order").returns<CtRegionItem[]>()
     : { data: [] as CtRegionItem[] };
 
+  // The product's own assets + the library cliparts its zones / main versions use.
+  const assets = await loadProductAssets(s.supabase, product, items.data ?? []);
+
   const bundle: CtProductBundle = {
     product,
-    assets: assets.data ?? [],
+    assets,
     regions: regions.data ?? [],
     items: items.data ?? [],
     generations: generations.data ?? [],
@@ -170,8 +173,7 @@ export async function publish(s: CtSession, productId: string, origin: string): 
   const product = await ownedProduct(s, productId);
   if (!product) return jsonError("Không có quyền publish sản phẩm này", 403);
 
-  const [assets, regions, last] = await Promise.all([
-    s.supabase.from(CT_TABLES.assets).select("*").eq("product_id", productId).returns<CtAsset[]>(),
+  const [regions, last] = await Promise.all([
     s.supabase.from(CT_TABLES.regions).select("*").eq("product_id", productId).returns<CtRegion[]>(),
     s.supabase
       .from(CT_TABLES.templates)
@@ -186,6 +188,7 @@ export async function publish(s: CtSession, productId: string, origin: string): 
   const items = regionIds.length
     ? await s.supabase.from(CT_TABLES.items).select("*").in("region_id", regionIds).returns<CtRegionItem[]>()
     : { data: [] as CtRegionItem[] };
+  const assets = await loadProductAssets(s.supabase, product, items.data ?? []);
 
   const version = (last.data?.version ?? 0) + 1;
   const publishedAt = new Date().toISOString();
@@ -199,7 +202,7 @@ export async function publish(s: CtSession, productId: string, origin: string): 
   try {
     template = buildTemplate({
       product,
-      assets: assets.data ?? [],
+      assets,
       regions: regions.data ?? [],
       items: items.data ?? [],
       version,
@@ -546,28 +549,21 @@ export async function uploadAsset(s: CtSession, productId: string, form: FormDat
 }
 
 export async function updateAsset(s: CtSession, assetId: string, body: CtUpdateAssetBody): Promise<NextResponse> {
+  const { data: cur } = await s.supabase.from(CT_TABLES.assets).select("*").eq("id", assetId).maybeSingle<CtAsset>();
+  // Library cliparts are shared: admins edit them too.
+  if (!cur || (cur.user_id !== s.user.id && !(cur.product_id === null && (await isAdmin(s))))) return jsonError("Không có quyền sửa asset này", 403);
   const patch: CtUpdateAssetBody = {};
   if (typeof body.name === "string") patch.name = body.name;
   if (typeof body.sort_order === "number") patch.sort_order = body.sort_order;
-  if (body.meta || body.parent_id !== undefined) {
-    const { data: cur } = await s.supabase.from(CT_TABLES.assets).select("*").eq("id", assetId).maybeSingle<CtAsset>();
-    if (!cur || cur.user_id !== s.user.id) return jsonError("Không có quyền sửa asset này", 403);
-    if (body.meta) patch.meta = { ...cur.meta, ...body.meta };
-    if (body.parent_id !== undefined && body.parent_id !== cur.parent_id) {
-      // Moving an option between groups: variants only, onto a sub of the same product.
-      if (cur.role !== "variant" || !body.parent_id) return jsonError("Chỉ version mới đổi được nhóm", 400);
-      const { data: parent } = await s.supabase.from(CT_TABLES.assets).select("id, role, product_id").eq("id", body.parent_id).maybeSingle<Pick<CtAsset, "id" | "role" | "product_id">>();
-      if (!parent || parent.role !== "sub" || parent.product_id !== cur.product_id) return jsonError("Nhóm đích không hợp lệ", 400);
-      patch.parent_id = body.parent_id;
-    }
+  if (body.meta) patch.meta = { ...cur.meta, ...body.meta };
+  if (body.parent_id !== undefined && body.parent_id !== cur.parent_id) {
+    // Moving an option between groups: variants only, onto a sub of the same product (or both in the library).
+    if (cur.role !== "variant" || !body.parent_id) return jsonError("Chỉ version mới đổi được nhóm", 400);
+    const { data: parent } = await s.supabase.from(CT_TABLES.assets).select("id, role, product_id").eq("id", body.parent_id).maybeSingle<Pick<CtAsset, "id" | "role" | "product_id">>();
+    if (!parent || parent.role !== "sub" || parent.product_id !== cur.product_id) return jsonError("Nhóm đích không hợp lệ", 400);
+    patch.parent_id = body.parent_id;
   }
-  const { data, error } = await s.supabase
-    .from(CT_TABLES.assets)
-    .update(patch)
-    .eq("id", assetId)
-    .eq("user_id", s.user.id)
-    .select("*")
-    .maybeSingle<CtAsset>();
+  const { data, error } = await s.supabase.from(CT_TABLES.assets).update(patch).eq("id", assetId).select("*").maybeSingle<CtAsset>();
   if (error) return jsonError(error.message, 500);
   if (!data) return jsonError("Không có quyền sửa asset này", 403);
   return NextResponse.json({ asset: data });
@@ -580,7 +576,7 @@ export async function updateAsset(s: CtSession, assetId: string, body: CtUpdateA
 export async function replaceAssetFile(s: CtSession, assetId: string, form: FormData): Promise<NextResponse> {
   const { data: asset } = await s.supabase.from(CT_TABLES.assets).select("*").eq("id", assetId).maybeSingle<CtAsset>();
   if (!asset) return jsonError("Không tìm thấy asset", 404);
-  if (asset.user_id !== s.user.id) return jsonError("Không có quyền sửa asset này", 403);
+  if (asset.user_id !== s.user.id && !(asset.product_id === null && (await isAdmin(s)))) return jsonError("Không có quyền sửa asset này", 403);
   const file = form.get("file");
   if (!(file instanceof Blob)) return jsonError("Thiếu file", 400);
   if (file.size > CT_CONFIG.maxUploadBytes) return jsonError("File quá lớn", 413);
@@ -588,7 +584,9 @@ export async function replaceAssetFile(s: CtSession, assetId: string, form: Form
   const info = readImageInfo(data);
   if (!info) return jsonError("File không phải ảnh PNG/JPEG/WebP hợp lệ", 400);
   try {
-    const path = ctStoragePath(s.user.id, asset.product_id, asset.role, info.mime);
+    const path = asset.product_id
+      ? ctStoragePath(s.user.id, asset.product_id, asset.role, info.mime)
+      : ctLibraryPath(s.user.id, asset.category_id, asset.role, info.mime);
     const url = await ctUpload(path, data, info.mime);
     const { data: updated, error } = await s.supabase
       .from(CT_TABLES.assets)
@@ -610,6 +608,8 @@ export async function replaceAssetFile(s: CtSession, assetId: string, form: Form
 export async function deleteAsset(s: CtSession, assetId: string): Promise<NextResponse> {
   const { data: asset } = await s.supabase.from(CT_TABLES.assets).select("*").eq("id", assetId).maybeSingle<CtAsset>();
   if (!asset) return jsonError("Không tìm thấy asset", 404);
+  // Library cliparts: refused while a product still uses them.
+  if (asset.product_id === null) return deleteClipart(s, assetId);
   if (asset.user_id !== s.user.id) return jsonError("Không có quyền xoá asset này", 403);
   // Variants cascade in the DB; collect their files first.
   const { data: children } = await s.supabase.from(CT_TABLES.assets).select("storage_path").eq("parent_id", assetId);

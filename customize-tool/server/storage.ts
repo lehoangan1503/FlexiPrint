@@ -13,6 +13,12 @@ export function ctStoragePath(userId: string, productId: string, role: string, m
   return `${userId}/${CT_CONFIG.storagePrefix}/${productId}/${role}/${crypto.randomUUID()}.${ext}`;
 }
 
+/** Library clipart: `<uid>/customize-tool/library/<category|none>/<role>/…` — no product in the key, it outlives any product. */
+export function ctLibraryPath(userId: string, categoryId: string | null, role: string, mime: string): string {
+  const ext = EXT[mime] ?? "png";
+  return `${userId}/${CT_CONFIG.storagePrefix}/library/${categoryId ?? "none"}/${role}/${crypto.randomUUID()}.${ext}`;
+}
+
 export async function ctUpload(path: string, body: Buffer, mime: string): Promise<string> {
   try {
     await r2Put(path, body, mime);

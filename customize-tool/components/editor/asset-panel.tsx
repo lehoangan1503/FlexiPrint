@@ -8,19 +8,22 @@
  *              an option the customer picks ("Choose Color").
  *   Sub        objects that go into image zones, each with its own versions.
  *   Tham chiếu style/subject references fed to AI requests.
+ *   Thư viện   the global clipart library (library-panel.tsx): place shared
+ *              cliparts into zones / add library mains as versions.
  *
  * Every asset can be uploaded or generated independently — one AI request
  * per main, per sub, per version — and cleaned up (background cut-out).
  */
 
 import { useRef, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, Crown, Eraser, ImagePlus, Loader2, MapPinned, Sparkles, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Crown, Eraser, ImagePlus, Library, Loader2, MapPinned, Sparkles, Trash2, Unlink } from "lucide-react";
 import type { CtAsset, CtAssetRole, CtMainLayout, CtMainOptionConfig, CtOptionDisplay } from "../../types";
 import { mainVersions, variantsOf } from "../../lib/design";
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtSelect, CtTooltip, cx } from "../ui";
 import { DISPLAY_OPTIONS } from "./inspector";
+import { LibraryBadge, LibraryPanel } from "./library-panel";
 
-export type AssetTab = "main" | "sub" | "reference";
+export type AssetTab = "main" | "sub" | "reference" | "library";
 
 export interface AssetPanelProps {
   assets: CtAsset[];
@@ -44,6 +47,11 @@ export interface AssetPanelProps {
   /** Main version currently on the canvas. */
   shownMainId: string | null;
   onSetSwatch: (asset: CtAsset, color: string) => void;
+  /** Library tab: element origin + its set → a new option group of the selected zone. */
+  onPlaceLibrary: (origin: CtAsset, family: CtAsset[]) => void;
+  onAddLibraryMain: (main: CtAsset) => void;
+  /** Move a product clipart into the global library. */
+  onPromote: (asset: CtAsset) => void;
 }
 
 export function AssetPanel(props: AssetPanelProps) {
@@ -70,7 +78,7 @@ export function AssetPanel(props: AssetPanelProps) {
         e.preventDefault();
         setDragOver(false);
         const files = Array.from(e.dataTransfer.files).filter((f) => /^image\/(png|jpeg|webp)$/.test(f.type));
-        if (files.length && props.busy === null) props.onUpload(tab, files, null);
+        if (files.length && props.busy === null && tab !== "library") props.onUpload(tab, files, null);
       }}
     >
       <div className="flex border-b">
@@ -80,6 +88,7 @@ export function AssetPanel(props: AssetPanelProps) {
             ["sub", `Sub (${subs.length})`],
             // References only feed AI requests.
             ...(props.onGenerate || refs.length > 0 ? [["reference", `Tham chiếu (${refs.length})`]] : []),
+            ["library", "Thư viện"],
           ] as Array<[AssetTab, string]>
         ).map(([k, label]) => (
           <button
@@ -92,6 +101,17 @@ export function AssetPanel(props: AssetPanelProps) {
         ))}
       </div>
 
+      {tab === "library" ? (
+        <div className="min-h-0 flex-1">
+          <LibraryPanel
+            canPlace={props.canPlace}
+            usedIds={new Set(assets.map((a) => a.id))}
+            onPlace={props.onPlaceLibrary}
+            onAddMain={props.onAddLibraryMain}
+          />
+        </div>
+      ) : (
+      <>
       <div className="flex gap-1.5 border-b p-2">
         <UploadButton label="Upload" multiple onFiles={(f) => props.onUpload(tab, f, null)} disabled={props.busy !== null} />
         {tab !== "reference" && props.onGenerate && (
@@ -203,6 +223,8 @@ export function AssetPanel(props: AssetPanelProps) {
             </div>
           ))}
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -251,8 +273,11 @@ function AssetCard({
   onCleanup,
   onRename,
   onPreview,
+  onPromote,
   highlighted,
 }: AssetPanelProps & { asset: CtAsset; children?: React.ReactNode; compact?: boolean; highlighted?: boolean }) {
+  const inLibrary = asset.product_id === null;
+  const promotable = !inLibrary && asset.parent_id === null && (asset.role === "main" || asset.role === "sub");
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(asset.name);
   return (
@@ -262,9 +287,10 @@ function AssetCard({
         <span className="absolute bottom-0.5 right-0.5 rounded bg-black/60 px-1 text-[10px] text-white">
           {asset.width}×{asset.height}
         </span>
-        {asset.generation_id && (
+        {(asset.generation_id || asset.source === "ai") && (
           <span className="absolute left-0.5 top-0.5 rounded bg-sky-600/90 px-1 text-[10px] text-white">AI</span>
         )}
+        {inLibrary && <LibraryBadge />}
       </button>
       <div className="mt-1 flex items-center gap-1">
         {editing ? (
@@ -291,9 +317,16 @@ function AssetCard({
             <Eraser className="h-3 w-3" />
           </button>
         </CtTooltip>
-        <CtTooltip label="Xoá">
+        {promotable && (
+          <CtTooltip label="Đưa vào thư viện — dùng lại cho sản phẩm khác">
+            <button className="rounded p-0.5 opacity-60 hover:bg-accent hover:opacity-100" onClick={() => onPromote(asset)}>
+              <Library className="h-3 w-3" />
+            </button>
+          </CtTooltip>
+        )}
+        <CtTooltip label={inLibrary ? "Gỡ khỏi sản phẩm (clipart vẫn trong thư viện)" : "Xoá"}>
           <button className="rounded p-0.5 text-destructive opacity-60 hover:bg-accent hover:opacity-100" onClick={() => onDelete(asset)}>
-            <Trash2 className="h-3 w-3" />
+            {inLibrary ? <Unlink className="h-3 w-3" /> : <Trash2 className="h-3 w-3" />}
           </button>
         </CtTooltip>
       </div>

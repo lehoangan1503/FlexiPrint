@@ -34,21 +34,43 @@
  *   POST   ai-styles                     CtAiStyleBody
  *   PATCH  ai-styles/:id                 CtAiStyleBody
  *   DELETE ai-styles/:id                 → 204
+ *
+ * Clipart library (global, migration 006; see server/library.ts):
+ *   GET    library/categories            → { categories, uncategorized, admin }
+ *   POST   library/categories            CtCategoryBody
+ *   PATCH  library/categories/:id        CtCategoryBody
+ *   DELETE library/categories/:id        409 while it holds cliparts / sub-categories
+ *   GET    library/cliparts?category=<id|none>&q=   → { cliparts } (origins + members + renditions)
+ *   POST   library/cliparts              multipart: file, category_id?, parent_id?, rendition=1?, name?, spec?, tags?, source?, meta?
+ *   PATCH  library/cliparts/:id          CtUpdateClipartBody
+ *   DELETE library/cliparts/:id          409 while a product uses it
+ *   GET    library/cliparts/:id/usage    → { usage: CtClipartUsage[] }
+ *   POST   assets/:id/promote            { category_id } — move a product clipart into the library
+ *   POST   products/:id/mains            { asset_id } — use a library main as a version
+ *   DELETE products/:id/mains/:assetId
+ *   GET    presets?kind=                 → { presets, admin }  (style_pack | material | scene)
+ *   POST   presets                       CtPresetBody
+ *   PATCH  presets/:id                   CtPresetBody
+ *   DELETE presets/:id
  */
 
 import type { NextRequest } from "next/server";
 import type { NextResponse } from "next/server";
 import type {
   CtAiStyleBody,
+  CtCategoryBody,
   CtCreateProductBody,
   CtGenerateBody,
+  CtPresetBody,
   CtSaveDesignBody,
   CtUpdateAssetBody,
+  CtUpdateClipartBody,
   CtUpdateProductBody,
 } from "../types";
-import { ctSession } from "./supabase";
+import { ctSession, type CtSession } from "./supabase";
 import * as h from "./handlers";
 import * as st from "./ai-styles";
+import * as lib from "./library";
 
 export interface CtRouteContext {
   params: Promise<{ path?: string[] }>;
@@ -102,7 +124,16 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
     if (id === "photo" && method === "GET") return h.photoCapabilitiesResponse();
     return h.jsonError("Not found", 404);
   }
+  if (head === "library") return dispatchLibrary(req, session, path);
   if (id && !UUID.test(id)) return h.jsonError("id không hợp lệ", 400);
+
+  if (head === "presets" && !sub) {
+    if (!id && method === "GET") return lib.listPresets(session, req.nextUrl.searchParams.get("kind"));
+    const body = method === "POST" || method === "PATCH" ? await readJson<CtPresetBody>(req) : null;
+    if (!id && method === "POST") return body ? lib.createPreset(session, body) : h.jsonError("Body không hợp lệ", 400);
+    if (id && method === "PATCH") return body ? lib.updatePreset(session, id, body) : h.jsonError("Body không hợp lệ", 400);
+    if (id && method === "DELETE") return lib.deletePreset(session, id);
+  }
 
   if (head === "ai-styles" && !sub) {
     if (!id && method === "GET") return st.listAiStyles(session);
@@ -137,6 +168,13 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
       return h.editorPhoto(session, id, await req.formData());
     } else if (sub === "print-pack" && method === "POST") {
       return h.editorPrintPack(session, id, await req.formData());
+    } else if (sub === "mains") {
+      const assetId = path[3];
+      if (!assetId && method === "POST") {
+        const body = await readJson<{ asset_id: string }>(req);
+        return body && UUID.test(body.asset_id ?? "") ? lib.linkProductMain(session, id, body.asset_id) : h.jsonError("Body không hợp lệ", 400);
+      }
+      if (assetId && UUID.test(assetId) && method === "DELETE") return lib.unlinkProductMain(session, id, assetId);
     } else if (sub === "generate" && method === "POST") {
       const body = await readJson<CtGenerateBody>(req);
       return body ? h.generate(session, id, body) : h.jsonError("Body không hợp lệ", 400);
@@ -150,10 +188,44 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
     }
     if (method === "DELETE") return h.deleteAsset(session, id);
   }
+  if (head === "assets" && id && sub === "promote" && method === "POST") {
+    const body = await readJson<{ category_id: string | null }>(req);
+    const cat = body?.category_id ?? null;
+    return cat === null || UUID.test(cat) ? lib.promoteAsset(session, id, cat) : h.jsonError("category_id không hợp lệ", 400);
+  }
   if (head === "assets" && id && sub === "file" && method === "PUT") {
     return h.replaceAssetFile(session, id, await req.formData());
   }
 
+  return h.jsonError("Not found", 404);
+}
+
+async function dispatchLibrary(req: NextRequest, session: CtSession, path: string[]): Promise<NextResponse> {
+  const [, resource, id, sub] = path;
+  const method = req.method;
+  if (id && !UUID.test(id)) return h.jsonError("id không hợp lệ", 400);
+  if (resource === "categories" && !sub) {
+    if (!id && method === "GET") return lib.listCategories(session);
+    const body = method === "POST" || method === "PATCH" ? await readJson<CtCategoryBody>(req) : null;
+    if (!id && method === "POST") return body ? lib.createCategory(session, body) : h.jsonError("Body không hợp lệ", 400);
+    if (id && method === "PATCH") return body ? lib.updateCategory(session, id, body) : h.jsonError("Body không hợp lệ", 400);
+    if (id && method === "DELETE") return lib.deleteCategory(session, id);
+  }
+  if (resource === "cliparts") {
+    if (!id && method === "GET") {
+      const params = req.nextUrl.searchParams;
+      const category = params.get("category");
+      if (category && category !== "none" && !UUID.test(category)) return h.jsonError("category không hợp lệ", 400);
+      return lib.listCliparts(session, category, params.get("q")?.trim() ?? "");
+    }
+    if (!id && method === "POST") return lib.uploadClipart(session, await req.formData());
+    if (id && sub === "usage" && method === "GET") return lib.getClipartUsage(session, id);
+    if (id && !sub && method === "PATCH") {
+      const body = await readJson<CtUpdateClipartBody>(req);
+      return body ? lib.updateClipart(session, id, body) : h.jsonError("Body không hợp lệ", 400);
+    }
+    if (id && !sub && method === "DELETE") return lib.deleteClipart(session, id);
+  }
   return h.jsonError("Not found", 404);
 }
 

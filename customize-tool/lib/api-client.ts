@@ -11,18 +11,37 @@ import type {
   CtAsset,
   CtAssetMeta,
   CtAssetRole,
+  CtAssetSource,
+  CtCategoryBody,
+  CtClipartCategory,
+  CtClipartUsage,
   CtGenerateBody,
   CtGenerateResponse,
   CtMaterialConfig,
   CtPhotoCapabilities,
+  CtPreset,
+  CtPresetBody,
+  CtPresetKind,
   CtProduct,
   CtProductBundle,
   CtProductListRow,
   CtPublishResponse,
   CtSaveDesignBody,
   CtUpdateAssetBody,
+  CtUpdateClipartBody,
   CtUpdateProductBody,
 } from "../types";
+
+export interface CtUploadClipartOpts {
+  categoryId: string | null;
+  parentId?: string | null;
+  rendition?: boolean;
+  name?: string;
+  spec?: string;
+  tags?: string[];
+  source?: CtAssetSource;
+  meta?: CtAssetMeta;
+}
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${CT_CONFIG.apiBase}/${path}`, init);
@@ -97,6 +116,48 @@ export const ctApi = {
     }
     return res.blob();
   },
+
+  // ------------------------------------------------------------ clipart library
+  listCategories: () => call<{ categories: CtClipartCategory[]; uncategorized: number; admin: boolean }>("library/categories"),
+  createCategory: (body: CtCategoryBody) => call<{ category: CtClipartCategory }>("library/categories", json("POST", body)).then((r) => r.category),
+  updateCategory: (id: string, body: CtCategoryBody) =>
+    call<{ category: CtClipartCategory }>(`library/categories/${id}`, json("PATCH", body)).then((r) => r.category),
+  deleteCategory: (id: string) => call<void>(`library/categories/${id}`, { method: "DELETE" }),
+  /** category: id, "none" (uncategorized) or null (all). */
+  listCliparts: (category: string | null, q = "") => {
+    const params = new URLSearchParams();
+    if (category) params.set("category", category);
+    if (q) params.set("q", q);
+    return call<{ cliparts: CtAsset[] }>(`library/cliparts?${params}`).then((r) => r.cliparts);
+  },
+  uploadClipart: (file: Blob, opts: CtUploadClipartOpts) => {
+    const form = new FormData();
+    form.append("file", file, file instanceof File ? file.name : "clipart.png");
+    if (opts.categoryId) form.append("category_id", opts.categoryId);
+    if (opts.parentId) form.append("parent_id", opts.parentId);
+    if (opts.rendition) form.append("rendition", "1");
+    if (opts.name) form.append("name", opts.name);
+    if (opts.spec) form.append("spec", opts.spec);
+    if (opts.tags) form.append("tags", JSON.stringify(opts.tags));
+    if (opts.source) form.append("source", opts.source);
+    if (opts.meta) form.append("meta", JSON.stringify(opts.meta));
+    return call<{ clipart: CtAsset }>("library/cliparts", { method: "POST", body: form }).then((r) => r.clipart);
+  },
+  updateClipart: (id: string, body: CtUpdateClipartBody) =>
+    call<{ clipart: CtAsset }>(`library/cliparts/${id}`, json("PATCH", body)).then((r) => r.clipart),
+  deleteClipart: (id: string) => call<void>(`library/cliparts/${id}`, { method: "DELETE" }),
+  clipartUsage: (id: string) => call<{ usage: CtClipartUsage[] }>(`library/cliparts/${id}/usage`).then((r) => r.usage),
+  /** Move a product clipart (with its versions) into the library. */
+  promoteAsset: (id: string, categoryId: string | null) =>
+    call<{ assets: CtAsset[] }>(`assets/${id}/promote`, json("POST", { category_id: categoryId })).then((r) => r.assets),
+  linkMain: (productId: string, assetId: string) =>
+    call<{ assets: CtAsset[]; main_asset_id: string }>(`products/${productId}/mains`, json("POST", { asset_id: assetId })),
+  unlinkMain: (productId: string, assetId: string) => call<void>(`products/${productId}/mains/${assetId}`, { method: "DELETE" }),
+
+  listPresets: (kind?: CtPresetKind) => call<{ presets: CtPreset[]; admin: boolean }>(`presets${kind ? `?kind=${kind}` : ""}`),
+  createPreset: (body: CtPresetBody) => call<{ preset: CtPreset }>("presets", json("POST", body)).then((r) => r.preset),
+  updatePreset: (id: string, body: CtPresetBody) => call<{ preset: CtPreset }>(`presets/${id}`, json("PATCH", body)).then((r) => r.preset),
+  deletePreset: (id: string) => call<void>(`presets/${id}`, { method: "DELETE" }),
 
   generate: (productId: string, body: CtGenerateBody) =>
     call<CtGenerateResponse>(`products/${productId}/generate`, json("POST", body)),

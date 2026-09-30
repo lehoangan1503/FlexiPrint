@@ -59,6 +59,7 @@ import { StorefrontPreview } from "./storefront-preview";
 import { PublishDialog } from "./publish-dialog";
 import { layoutView, setOwnLayout, updateItem, updateRegion, useDesign } from "./use-design";
 import { MaterialDialog } from "./material-dialog";
+import { PromoteDialog } from "./promote-dialog";
 
 /** Thiết kế = edit · Xem trước = the real storefront page · Tổ hợp & Mockup = composites + AI mockups. */
 type View = "design" | "preview" | "mockup";
@@ -134,6 +135,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [gen, setGen] = useState<GenState | null>(null);
   const [cleanup, setCleanup] = useState<CtAsset | null>(null);
+  const [promote, setPromote] = useState<CtAsset | null>(null);
   /**
    * AI is a plugin: with no provider key configured the tool is upload-only
    * and every AI affordance is hidden. Turning it on is just adding an env key.
@@ -398,7 +400,15 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     setBusy(`Đang upload ${files.length} ảnh…`);
     const created: CtAsset[] = [];
     try {
-      for (const f of files) created.push(await ctApi.uploadAsset(product.id, f, { role, parentId }));
+      // A version of a library clipart joins its set in the library (every product using it gets it).
+      const libParent = parentId ? assets.find((a) => a.id === parentId && a.product_id === null) : undefined;
+      for (const f of files) {
+        created.push(
+          libParent
+            ? await ctApi.uploadClipart(f, { categoryId: libParent.category_id, parentId: libParent.id })
+            : await ctApi.uploadAsset(product.id, f, { role, parentId }),
+        );
+      }
       if (role === "main" && !product.main_asset_id && created[0]) setProduct({ ...product, main_asset_id: created[0].id });
     } catch (e) {
       flash(e instanceof Error ? e.message : "Upload thất bại");
@@ -457,7 +467,33 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     if (created[0]?.role === "mockup") setView("mockup");
   };
 
+  /** A library clipart is never deleted from here: the product just stops using it. */
+  const unlinkLibraryAsset = async (asset: CtAsset) => {
+    if (!product) return;
+    const family = new Set(assets.filter((a) => a.id === asset.id || a.parent_id === asset.id).map((a) => a.id));
+    const usedIn = items.filter((i) => family.has(i.asset_id)).length;
+    const what = asset.role === "main" ? "version main" : `nhóm option (${usedIn} vùng)`;
+    if (!window.confirm(`Gỡ “${asset.name || asset.role}” khỏi sản phẩm này? Bỏ ${what}. Clipart vẫn còn trong thư viện.`)) return;
+    try {
+      if (asset.role === "main") {
+        await ctApi.unlinkMain(product.id, asset.id);
+        if (asset.id === product.main_asset_id) setProduct({ ...product, main_asset_id: null });
+      }
+      if (usedIn) design.commit((s) => ({ ...s, items: s.items.filter((i) => !family.has(i.asset_id)) }));
+      setAssets((a) => a.filter((x) => !family.has(x.id)));
+      if (usedIn) flash("Đã gỡ — nhớ Lưu thiết kế");
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Gỡ thất bại");
+    }
+  };
+
   const removeAsset = async (asset: CtAsset) => {
+    if (asset.product_id === null && asset.parent_id === null) return unlinkLibraryAsset(asset);
+    if (asset.product_id === null) {
+      // Other products may offer this colour: hide it here (Inspector → option), delete it on /library.
+      flash("Biến thể thuộc thư viện: ẩn option ở Inspector, hoặc xoá ở trang Thư viện");
+      return;
+    }
     const usedIn = items.filter((i) => i.asset_id === asset.id).length;
     const variants = assets.filter((a) => a.parent_id === asset.id).length;
     const warn = [
@@ -504,6 +540,40 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     design.commit((s) => ({ ...s, regions: fitLayerToFirstItem(s, r.id, sub), items: [...s.items, item] }));
     setActiveItemId(item.id);
     setSelection((sel) => ({ ...sel, [r.id]: { kind: "image", assetId: sub.id } }));
+  };
+
+  /** Library element: bring its set into the bundle, then place it like a product sub. */
+  const placeLibrary = (origin: CtAsset, family: CtAsset[]) => {
+    setAssets((list) => {
+      const have = new Set(list.map((a) => a.id));
+      return [...list, ...family.filter((a) => !have.has(a.id))];
+    });
+    place(origin);
+  };
+
+  const addLibraryMain = async (main: CtAsset) => {
+    if (!product) return;
+    if (assets.some((a) => a.id === main.id)) {
+      flash("Version này đã có trong sản phẩm");
+      return;
+    }
+    const current = assets.find((a) => a.id === product.main_asset_id);
+    if (current && regions.length > 0 && (current.width !== main.width || current.height !== main.height)) {
+      if (!window.confirm(`${main.width}×${main.height} khác main mặc định ${current.width}×${current.height} — sẽ bị kéo giãn cho khớp vùng. Vẫn thêm?`)) return;
+    }
+    try {
+      const res = await ctApi.linkMain(product.id, main.id);
+      setAssets((list) => {
+        const have = new Set(list.map((a) => a.id));
+        return [...list, ...res.assets.filter((a) => !have.has(a.id))];
+      });
+      if (!product.main_asset_id) setProduct({ ...product, main_asset_id: res.main_asset_id, thumbnail_url: main.url });
+      // More than one version: let the customer pick.
+      else if (!config.main.enabled) setMainConfig({ enabled: true });
+      flash("Đã thêm version main từ thư viện");
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Lỗi");
+    }
   };
 
   const previewAsset = (asset: CtAsset) => {
@@ -708,6 +778,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             }}
             shownMainId={shownMainId}
             onSetSwatch={setSwatch}
+            onPlaceLibrary={placeLibrary}
+            onAddLibraryMain={(m) => void addLibraryMain(m)}
+            onPromote={setPromote}
           />
         </aside>
 
@@ -897,6 +970,11 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           onDone={onGenerated}
         />
       )}
+      <PromoteDialog
+        asset={promote}
+        onClose={() => setPromote(null)}
+        onDone={(moved) => setAssets((list) => list.map((x) => moved.find((m) => m.id === x.id) ?? x))}
+      />
       <CleanupDialog
         asset={cleanup}
         onClose={() => setCleanup(null)}

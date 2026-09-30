@@ -14,6 +14,7 @@ import { CT_CONFIG } from "../config";
 import { ctSession } from "../server/supabase";
 import { CustomizeProductList } from "../components/product-list";
 import { CustomizeEditor } from "../components/editor/editor";
+import { LibraryManager } from "../components/library/library-manager";
 
 export async function CustomizeListPage() {
   const session = await ctSession();
@@ -40,4 +41,10 @@ export async function CustomizeEditorPage({ params }: { params: Promise<{ id: st
   if (!session) redirect(CT_CONFIG.loginPath);
   const { id } = await params;
   return <CustomizeEditor productId={id} />;
+}
+
+export async function CustomizeLibraryPage() {
+  const session = await ctSession();
+  if (!session) redirect(CT_CONFIG.loginPath);
+  return <LibraryManager />;
 }

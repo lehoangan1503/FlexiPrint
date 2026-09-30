@@ -48,7 +48,7 @@ function withDefaults(row: CtAiStyleRow): CtAiStyleRow {
 }
 
 /** Tool admin (user_profiles.role) or superadmin (app_metadata.role). */
-async function isAdmin(s: CtSession): Promise<boolean> {
+export async function isAdmin(s: CtSession): Promise<boolean> {
   if (s.user.app_metadata?.role === "admin") return true;
   const { data } = await s.supabase.from("user_profiles").select("role").eq("user_id", s.user.id).maybeSingle<{ role: string | null }>();
   return data?.role === "admin";

@@ -15,6 +15,12 @@
  *   composite   a flattened render of one combination, used as AI input for
  *               mockups.
  *   mockup      an AI-generated marketing image (often several products in one shot).
+ *   rendition   an AI material version of a clipart (acrylic, glitter…): same
+ *               silhouette and size, shown on the storefront instead of the flat art.
+ *
+ * Cliparts (main / sub / variant / rendition) live in the global LIBRARY when
+ * product_id is NULL (migration 006): grouped by ct_clipart_categories and
+ * reused by any product through region items and ct_product_mains.
  *
  * All geometry is in MAIN-ASSET PIXELS, so a design survives zooming/panning in
  * the editor and renders identically at any output scale.
@@ -22,7 +28,10 @@
 
 export type CtProductStatus = "draft" | "ready" | "archived";
 
-export type CtAssetRole = "main" | "sub" | "variant" | "composite" | "mockup" | "reference";
+export type CtAssetRole = "main" | "sub" | "variant" | "rendition" | "composite" | "mockup" | "reference";
+
+/** Where a clipart came from (licensing: stock art needs its license noted). */
+export type CtAssetSource = "upload" | "ai" | "stock";
 
 export type CtRegionKind = "image" | "text" | "photo";
 
@@ -255,7 +264,8 @@ export interface CtRegionConfig {
 export interface CtAsset {
   id: string;
   user_id: string;
-  product_id: string;
+  /** NULL = library clipart (shared by every product). */
+  product_id: string | null;
   role: CtAssetRole;
   parent_id: string | null;
   generation_id: string | null;
@@ -268,6 +278,13 @@ export interface CtAsset {
   meta: CtAssetMeta;
   sort_order: number;
   created_at: string;
+  /** Library category (migration 006); null for product-only assets. */
+  category_id: string | null;
+  /** The clipart's own description / prompt. */
+  spec: string;
+  tags: string[];
+  source: CtAssetSource;
+  license: string;
 }
 
 export interface CtAssetMeta {
@@ -278,6 +295,10 @@ export interface CtAssetMeta {
   /** Asset this one was derived from by an editor tool (e.g. background removal). */
   derivedFrom?: string;
   note?: string;
+  /** Renditions: the material preset it was rendered with. */
+  material?: string;
+  /** AI-made set members / renditions: silhouette match against the parent (1 = identical). */
+  iou?: number;
 }
 
 export interface CtRegion {
@@ -408,7 +429,8 @@ export interface CtProductListRow extends CtProduct {
 export interface CtGeneration {
   id: string;
   user_id: string;
-  product_id: string;
+  /** NULL for library generations (ComfyUI studio). */
+  product_id: string | null;
   target_role: CtAssetRole;
   parent_asset_id: string | null;
   provider: CtAiProviderId;
@@ -435,6 +457,123 @@ export interface CtProductBundle {
   regions: CtRegion[];
   items: CtRegionItem[];
   generations: CtGeneration[];
+}
+
+// ---------------------------------------------------------------------------
+// Clipart library (migration 006)
+// ---------------------------------------------------------------------------
+
+/** What the origins of a category are used as. */
+export type CtCategoryUsage = "main" | "element";
+
+/**
+ * How a category grows:
+ *   origin_set   independent originals of one kind (each car model, each hobby icon)
+ *   variant_set  one silhouette in many colours / styles (dumpling × 10 colours)
+ */
+export type CtCategoryMode = "origin_set" | "variant_set";
+
+export type CtCategoryAnchor = "center" | "bottom";
+
+export type CtCategoryBackground = "transparent" | "cutout" | "none";
+
+/** Generation / normalisation rules every clipart of a category follows (ComfyUI nodes enforce them). */
+export interface CtCategoryRules {
+  /** Output canvas, px — every clipart of the set shares it so they swap in place. */
+  canvas: { w: number; h: number };
+  /** Subject size as a fraction of the canvas' shorter side. */
+  fill: number;
+  anchor: CtCategoryAnchor;
+  background: CtCategoryBackground;
+  /** Set members keep the origin's exact alpha (same outline, same size). */
+  lockSilhouette: boolean;
+  /** Variant axes, e.g. ["color", "style"]. */
+  variantAxes: string[];
+  /** Default style pack (ct_presets kind style_pack). */
+  stylePackId: string | null;
+}
+
+export interface CtClipartCategory {
+  id: string;
+  user_id: string | null;
+  parent_id: string | null;
+  name: string;
+  usage: CtCategoryUsage;
+  mode: CtCategoryMode;
+  spec: string;
+  rules: CtCategoryRules;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  /** Origins in the category (list endpoint only). */
+  count?: number;
+  can_edit?: boolean;
+}
+
+export interface CtCategoryBody {
+  name: string;
+  parent_id: string | null;
+  usage: CtCategoryUsage;
+  mode: CtCategoryMode;
+  spec: string;
+  rules: CtCategoryRules;
+  sort_order?: number;
+}
+
+export interface CtUpdateClipartBody {
+  name?: string;
+  spec?: string;
+  tags?: string[];
+  category_id?: string | null;
+  sort_order?: number;
+  license?: string;
+  meta?: CtAssetMeta;
+}
+
+export type CtPresetKind = "style_pack" | "material" | "scene";
+
+export interface CtPresetParams {
+  /** Material: re-apply the source alpha so the rendition keeps the exact outline. */
+  lockSilhouette?: boolean;
+  /** Preferred model id for this preset. */
+  model?: string;
+}
+
+export interface CtPreset {
+  id: string;
+  user_id: string | null;
+  kind: CtPresetKind;
+  name: string;
+  prompt: string;
+  reference_asset_ids: string[];
+  params: CtPresetParams;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  can_edit?: boolean;
+}
+
+export interface CtPresetBody {
+  kind: CtPresetKind;
+  name: string;
+  prompt: string;
+  reference_asset_ids: string[];
+  params: CtPresetParams;
+  sort_order?: number;
+}
+
+/** GET library/cliparts */
+export interface CtLibraryQuery {
+  category?: string | null;
+  q?: string;
+  /** Only origins (parent_id NULL); their set members / renditions come along. */
+  withChildren?: boolean;
+}
+
+/** Where a library clipart is used — deleting it is refused while this is non-empty. */
+export interface CtClipartUsage {
+  productId: string;
+  productName: string;
 }
 
 // ---------------------------------------------------------------------------

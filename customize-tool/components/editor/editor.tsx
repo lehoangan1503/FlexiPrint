@@ -58,7 +58,7 @@ import { PreviewPanel } from "./preview-panel";
 import { StorefrontPreview } from "./storefront-preview";
 import { PublishDialog } from "./publish-dialog";
 import { layoutView, setOwnLayout, updateItem, updateRegion, useDesign } from "./use-design";
-import { MaterialDialog } from "./material-dialog";
+import { PrintDialog } from "./print-dialog";
 import { PromoteDialog } from "./promote-dialog";
 
 /** Thiết kế = edit · Xem trước = the real storefront page · Tổ hợp & Mockup = composites + AI mockups. */
@@ -126,8 +126,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [showOverlay, setShowOverlay] = useState(true);
-  /** Render the product material (acrylic, ceramic…) on the design canvas too. */
-  const [showMaterial, setShowMaterial] = useState(false);
   const [materialOpen, setMaterialOpen] = useState(false);
 
   const [busy, setBusy] = useState<string | null>(null);
@@ -737,7 +735,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               {design.dirty ? "Lưu thiết kế" : "Đã lưu"}
             </CtButton>
           </CtTooltip>
-          <CtTooltip label="Vật liệu render — acrylic, sứ, nhôm, gỗ… + ảnh nền + xuất file in">
+          <CtTooltip label="Vật liệu phôi (acrylic, sứ, nhôm, gỗ…), hiển thị bản vật liệu AI, xuất file in + đường cắt">
             <CtButton size="sm" variant="outline" onClick={() => setMaterialOpen(true)} disabled={!main}>
               <Layers className="h-3.5 w-3.5" /> Vật liệu: {materialPreset(config.material.id).label.split(" (")[0]}
             </CtButton>
@@ -835,12 +833,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                         Đang sửa vị trí riêng của version “{layoutMain.name || "main"}”
                       </span>
                     )}
-                    {config.material.id !== "none" && (
-                      <label className="flex cursor-pointer items-center gap-1 rounded border bg-background/80 px-1.5 py-0.5">
-                        <input type="checkbox" className="accent-sky-500" checked={showMaterial} onChange={(e) => setShowMaterial(e.target.checked)} />
-                        Xem vật liệu
-                      </label>
-                    )}
                     <span className="pointer-events-none">
                       Main: {main.width}×{main.height}px · {regions.length} vùng
                     </span>
@@ -852,7 +844,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     main={main}
                     assets={assets}
                     design={ed}
-                    material={showMaterial ? config.material : null}
                     selection={selection}
                     tool={tool}
                     onToolChange={setTool}
@@ -981,17 +972,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         onSaved={(a) => setAssets((list) => list.map((x) => (x.id === a.id ? a : x)))}
       />
       {main && (
-        <MaterialDialog
-          open={materialOpen}
-          onOpenChange={setMaterialOpen}
-          design={design}
-          product={product}
-          main={main}
-          assets={assets}
-          selection={selection}
-          busy={busy}
-          onUploadScene={(files) => upload("reference", files, null)}
-        />
+        <PrintDialog open={materialOpen} onOpenChange={setMaterialOpen} design={design} product={product} main={main} assets={assets} selection={selection} />
       )}
       <PublishDialog
         open={publishOpen}

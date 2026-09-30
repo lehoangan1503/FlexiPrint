@@ -2,8 +2,7 @@
  * Production files for material products (acrylic / ceramic / metal / wood):
  * the editor posts the full-resolution flat design, this forwards it to the
  * material-render microservice (services/material-render) together with the
- * product's material config and the preset knobs from lib/materials.ts — the
- * single catalog of materials — and streams back the zip
+ * product's material config (lib/materials.ts) and streams back the zip
  * (print.png, white.png, cut.svg, preview.png, meta.json).
  *
  * Env: CT_MATERIAL_URL (e.g. http://127.0.0.1:7003), CT_MATERIAL_TOKEN.
@@ -11,7 +10,7 @@
 
 import { NextResponse } from "next/server";
 import type { CtMaterialConfig } from "../types";
-import { materialPreset, normalizeMaterialConfig } from "../lib/materials";
+import { normalizeMaterialConfig } from "../lib/materials";
 
 const MAX_BYTES = 500 * 1024 * 1024;
 
@@ -47,25 +46,15 @@ export function readPrintPackForm(form: FormData): CtPrintPackRequest | string {
 export async function printPack(req: CtPrintPackRequest): Promise<NextResponse> {
   const base = process.env.CT_MATERIAL_URL;
   if (!base) return NextResponse.json({ error: "Chưa cấu hình CT_MATERIAL_URL (services/material-render)" }, { status: 501 });
-  const preset = materialPreset(req.material.id);
+  // The service's own defaults drive preview.png; the look of a material is AI-rendered now.
   const params = {
     material: req.material.id,
     shape: req.material.shape,
     widthMm: req.material.widthMm,
     borderMm: req.material.borderMm,
     thicknessMm: req.material.thicknessMm,
-    shadow: req.material.shadow,
-    gloss: req.material.gloss,
     dpi: req.dpi,
-    preset: {
-      face: preset.face,
-      faceOpacity: preset.faceOpacity,
-      edge: preset.edge,
-      bevel: preset.bevel,
-      pillow: preset.pillow,
-      finish: preset.finish,
-      printTint: preset.printTint,
-    },
+    preset: {},
   };
   const form = new FormData();
   form.append("file", req.design, "design.png");

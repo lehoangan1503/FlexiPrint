@@ -22,11 +22,10 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CtAsset, CtBounds, CtMaterialConfig, CtPoint, CtRegion, CtRegionItem, CtRegionKind, CtSelection, CtShape, CtTransform } from "../../types";
+import type { CtAsset, CtBounds, CtPoint, CtRegion, CtRegionItem, CtRegionKind, CtSelection, CtShape, CtTransform } from "../../types";
 import { clamp, fitShapeToBounds, itemPlacement, shapeBounds, shapeToSvgPath, SNAP_FRACTIONS, snapAxis, translateShape } from "../../lib/geometry";
-import { drawComposite, loadImage } from "../../lib/compositor";
-import { makeRegion, selectedMainId } from "../../lib/design";
-import { renderMaterial } from "../../lib/material-render";
+import { drawComposite } from "../../lib/compositor";
+import { makeRegion } from "../../lib/design";
 import { cx, CHECKER_STYLE } from "../ui";
 import type { DesignApi } from "./use-design";
 import { updateItem, updateRegion } from "./use-design";
@@ -75,8 +74,6 @@ export interface StageProps {
   showOverlay: boolean;
   /** Photo zones whose test photo is being processed: regionId -> spinner label. */
   photoBusy?: Record<string, string>;
-  /** Render the product material over the design (same size, no scene); null = flat. */
-  material?: CtMaterialConfig | null;
 }
 
 const MIN_ZOOM = 0.02;
@@ -86,7 +83,6 @@ export function Stage(props: StageProps) {
   const { main, assets, design, selection, tool, drawKind, editTarget, selectedRegionId, activeItemId } = props;
   const { regions, items } = design.state;
   const layouts = design.state.config.layouts;
-  const material = props.material ?? null;
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -199,14 +195,9 @@ export function Stage(props: StageProps) {
       off.height = Math.max(1, Math.round(main.height * renderScale));
       const ctx = off.getContext("2d");
       if (!ctx) return;
-      let shown: HTMLCanvasElement = off;
+      const shown: HTMLCanvasElement = off;
       try {
         await drawComposite(ctx, { main, assets, regions, items, selection, scale: renderScale, layouts });
-        if (material && material.id !== "none") {
-          const mainAsset = byId.get(selectedMainId(selection, assets, main.id)) ?? main;
-          const mainImage = material.shape === "main" ? await loadImage(mainAsset.url) : null;
-          shown = renderMaterial({ design: off, mainImage, material, mainWidthPx: main.width, scale: renderScale, pad: false }).canvas;
-        }
       } catch {
         return;
       }
@@ -218,7 +209,7 @@ export function Stage(props: StageProps) {
       vis.getContext("2d")?.drawImage(shown, 0, 0);
     });
     return () => cancelAnimationFrame(raf);
-  }, [main, assets, byId, regions, items, selection, renderScale, layouts, material]);
+  }, [main, assets, regions, items, selection, renderScale, layouts]);
 
   // ------------------------------------------------------------------ coords
   const toWorld = useCallback((clientX: number, clientY: number): CtPoint => {

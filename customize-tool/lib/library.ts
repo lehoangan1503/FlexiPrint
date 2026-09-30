@@ -75,6 +75,20 @@ export function renditionOf<A extends CtRenderAsset>(assets: A[], assetId: strin
   return list.sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
 }
 
+/**
+ * The storefront look (material display "rendition"): every clipart that has
+ * a rendition is drawn with the rendition's image, keeping the clipart's own
+ * id and size so zones, transforms and selections are untouched.
+ */
+export function withRenditions<A extends CtRenderAsset>(assets: A[]): A[] {
+  return assets
+    .filter((a) => a.role !== "rendition")
+    .map((a) => {
+      const r = renditionOf(assets, a.id);
+      return r ? { ...a, url: r.url } : a;
+    });
+}
+
 /** Categories as an indented, depth-first list (for selects and the tree). */
 export function flattenCategories(list: CtClipartCategory[]): Array<{ category: CtClipartCategory; depth: number }> {
   const byParent = new Map<string | null, CtClipartCategory[]>();

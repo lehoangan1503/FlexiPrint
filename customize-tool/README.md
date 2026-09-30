@@ -68,7 +68,7 @@ Tab dashboard: `src/app/dashboard/dashboard-client.tsx` → `view === "customize
    ```
    CT_PHOTO_STYLE_URL=http://127.0.0.1:7002 # microservice services/photo-style — style vẽ bằng OpenCV, không AI, ~1 giây
    CT_BG_REMOVER_URL=http://127.0.0.1:7001  # microservice tự host services/bg-remover (rembg + BiRefNet) — miễn phí, khuyên dùng
-   CT_MATERIAL_URL=http://127.0.0.1:7003    # services/material-render — file in + đường cắt laser (nút "Xuất file in" trong dialog Vật liệu)
+   CT_MATERIAL_URL=http://127.0.0.1:7003    # services/material-render — file in + đường cắt laser (nút "Xuất file in" trong dialog Vật liệu & file in)
    # CT_BG_REMOVER_TOKEN=...     # nếu service đặt BG_TOKEN
    # FAL_KEY=...                 # cùng BiRefNet nhưng host bởi fal.ai (trả tiền theo lượt)
    # CT_CUTOUT_MODEL=General Use (Heavy)
@@ -108,7 +108,17 @@ ct_products ─┬─ main_asset_id ──► ct_assets(main)
   - `main: { enabled, label, display }` — version main cho khách chọn
   - `layouts: { [mainAssetId]: { regions: { [regionId]: { shape?, hidden? } }, items: { [itemId]: transform } } }` —
     bố cục riêng của từng version main (`lib/layout.ts`)
-  - `material: { id, shape, widthMm, borderMm, thicknessMm, shadow, gloss, sceneAssetId, scene }` — vật liệu render (`lib/materials.ts`)
+  - `material: { id, shape, widthMm, borderMm, thicknessMm, display }` — phôi vật lý + storefront hiện art phẳng hay rendition AI (`lib/materials.ts`)
+- **Thư viện clipart** (migration 006, `server/library.ts`, trang `/library`, tab *Thư viện* trong editor):
+  - `ct_assets.product_id NULL` = clipart dùng chung.
+  - Danh mục `ct_clipart_categories`:
+    - `usage` main/element
+    - `mode` origin_set/variant_set
+    - `spec` + `rules`: canvas, fill, anchor, nền, `lockSilhouette`, trục biến thể, style pack
+  - `ct_product_mains`: main version lấy từ thư viện.
+  - `ct_presets`: style pack / vật liệu / scene.
+  - Role `rendition` = bản vật liệu AI.
+  - Clipart đang được sản phẩm dùng thì không xoá được.
 - `ct_templates` (002): snapshot bất biến theo version, ghi bởi **Publish**; storefront đọc bản mới nhất.
 - Xoá product thì cascade toàn bộ. File trên Storage được API xoá trước.
 - Lưu thiết kế đi qua RPC `ct_save_design`, 1 transaction.
@@ -159,28 +169,31 @@ Với polygon: double-click cạnh để thêm điểm, Alt+click đỉnh để 
 
 ## Vật liệu (acrylic, sứ, nhôm, gỗ)
 
-Nút **Vật liệu** trên header. Asset không cần có sẵn viền trắng / hiệu ứng: thiết kế phẳng (main + mọi layer)
-được render thành sản phẩm thật **sau** khi ghép, nên đổi xe / đổi chữ là viền đi theo.
+Vật liệu tách làm 2 phần:
 
-| Vật liệu | Viền plate mặc định | Ghi chú |
-|---|---|---|
-| Acrylic trắng | cắt theo hình + viền | kẹp xe, standee: viền trắng bao cả xe + chữ, cạnh dày 3mm, bóng đổ |
-| Acrylic trong | cắt theo hình + viền | viền plate trong suốt (thấy nền), cạnh ánh xanh |
-| Sứ bóng / Sứ mờ | theo phôi = main | main = phôi trắng (ornament tròn + dây), mọi layer in lên phôi và bị cắt theo phôi; men bóng |
-| Nhôm | theo phôi = main | ánh kim dạng dải |
-| Gỗ | cắt theo hình + viền | vân gỗ + mặt gỗ ngả màu |
+1. **Phôi vật lý**: dialog *Vật liệu & file in* (`print-dialog.tsx`, `config.material`) gồm loại phôi, viền cắt
+   (`contour` = theo hình + `borderMm`, `main` = phôi là main object), `widthMm`, `thicknessMm`. Phần này chỉ
+   dùng cho file in.
+2. **Bề ngoài vật liệu**: do AI vẽ, **không mô phỏng bằng canvas** nữa (đã bỏ `lib/material-render.ts`).
+   - Preset `material` trong `ct_presets` (acrylic trong/trắng, glitter, gỗ, nhôm, gốm) + node **FP Material**
+     trong Studio (ComfyUI) render từng clipart thành **rendition**.
+   - Rendition giữ đúng silhouette và kích thước: ép lại alpha gốc (khi bật `lockSilhouette`).
+   - `config.material.display = "rendition"`: template publish vẽ rendition thay cho clipart phẳng
+     (`lib/library.ts withRenditions`). Clipart chưa có rendition thì vẫn hiện bản phẳng.
+   - File in luôn dùng art phẳng.
 
-- **Cắt theo hình** (`contour`): alpha thiết kế → nở ra `borderMm` (distance transform) → lấp lỗ → closing để khe
-  giữa các chữ thành 1 đường cong mượt. Đây cũng là đường cắt laser.
-- **Theo phôi** (`main`): alpha của main version là plate.
-- `widthMm` = bề rộng thật của main (vd. 5.5 in = 139.7 mm) → đổi mm ra pixel; dialog cảnh báo nếu main < 200 dpi.
-- **Ảnh nền**: sản phẩm được đặt lên 1 ảnh (tab Tham chiếu) — vị trí / cỡ / xoay; storefront hiện đúng ảnh này.
-- Preview chạy trên trình duyệt (`lib/material-render.ts`, 30–100 ms) — editor (checkbox "Xem vật liệu" trên canvas,
-  tab Tổ hợp), storefront canvas và ảnh preview trong giỏ. Tổ hợp lưu (input AI mockup) vẫn là thiết kế phẳng.
-- **Xuất file in (.zip)**: tổ hợp đang chọn → `services/material-render` (`CT_MATERIAL_URL`) →
-  `print.png` (dpi thật) · `white.png` (lớp mực trắng cho acrylic) · `cut.svg` (mm) · `preview.png` ·
-  `meta.json` (kích thước, diện tích, chiều dài đường cắt, cảnh báo plate bị tách nhiều mảnh / ảnh bị phóng to).
-- Thêm vật liệu = thêm 1 entry trong `lib/materials.ts` (service nhận các núm render qua `preset`, không có danh mục riêng).
+**Xuất file in (.zip)**:
+- Đầu vào: tổ hợp đang chọn (art phẳng) → `services/material-render` (`CT_MATERIAL_URL`).
+- Kết quả gồm:
+  - `print.png` (dpi thật)
+  - `white.png` (lớp mực trắng cho acrylic)
+  - `cut.svg` (mm)
+  - `preview.png`
+  - `meta.json`
+
+Chi tiết đường cắt:
+- **contour**: alpha → nở `borderMm` → lấp lỗ → closing.
+- **main**: alpha của main version.
 
 ## Tách ra site riêng
 

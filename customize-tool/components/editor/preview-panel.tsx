@@ -22,8 +22,7 @@ import {
   selectedMainId,
 } from "../../lib/design";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
-import { renderProduct } from "../../lib/material-render";
-import { materialActive } from "../../lib/materials";
+import { withRenditions } from "../../lib/library";
 import { IDENTITY_TRANSFORM } from "../../lib/geometry";
 import { aiStyleRef, isAiStyleRef, needsServer, styleEngine, styleLabel } from "../../lib/photo-styles";
 import { processPhoto } from "../../lib/photo-process";
@@ -52,9 +51,11 @@ export interface PreviewPanelProps {
 
 export function PreviewPanel(props: PreviewPanelProps) {
   const { main, assets, items, selection, layouts, material } = props;
-  /** Show / download the finished product (material + scene) instead of the flat design. */
+  /** Show / download with the AI material renditions (what the storefront shows) instead of the flat art. */
   const [withMaterial, setWithMaterial] = useState(true);
-  const showMaterial = withMaterial && materialActive(material);
+  const hasRenditions = assets.some((a) => a.role === "rendition");
+  const showMaterial = withMaterial && hasRenditions && material.display === "rendition";
+  const shownAssets = useMemo(() => (showMaterial ? withRenditions(assets) : assets), [assets, showMaterial]);
   const regions = useMemo(() => props.regions.map(normalizeRegion).sort((a, b) => a.sort_order - b.sort_order), [props.regions]);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -67,10 +68,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
   useEffect(() => {
     let cancelled = false;
     const scale = Math.min(1, 1400 / Math.max(main.width, main.height));
-    (showMaterial
-      ? renderProduct({ main, assets, regions, items, selection, layouts, material, maxSide: 1400 })
-      : renderComposite({ main, assets, regions, items, selection, scale, layouts })
-    )
+    renderComposite({ main, assets: shownAssets, regions, items, selection, scale, layouts })
       .then((c) => {
         if (cancelled || !hostRef.current) return;
         c.className = "max-h-full max-w-full object-contain";
@@ -80,7 +78,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [main, assets, regions, items, selection, layouts, material, showMaterial]);
+  }, [main, shownAssets, regions, items, selection, layouts]);
 
   const render = async (sel: CtSelection) => {
     const canvas = await renderComposite({ main, assets, regions, items, selection: sel, scale: 1, layouts });
@@ -113,7 +111,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
 
   const download = async () => {
     const blob = showMaterial
-      ? await canvasToBlob(await renderProduct({ main, assets, regions, items, selection, layouts, material, maxSide: 2400 }), "image/png")
+      ? await canvasToBlob(await renderComposite({ main, assets: shownAssets, regions, items, selection, scale: 1, layouts }), "image/png")
       : await render(selection);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -383,10 +381,10 @@ export function PreviewPanel(props: PreviewPanelProps) {
           })}
         </div>
         <div className="space-y-2 border-t p-3">
-          {materialActive(material) && (
+          {hasRenditions && material.display === "rendition" && (
             <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
               <input type="checkbox" className="accent-sky-500" checked={withMaterial} onChange={(e) => setWithMaterial(e.target.checked)} />
-              Xem / tải kèm vật liệu + ảnh nền (tổ hợp lưu vẫn là thiết kế phẳng)
+              Xem / tải bằng bản vật liệu AI (tổ hợp lưu vẫn là art phẳng)
             </label>
           )}
           <div className="flex gap-1.5">

@@ -28,7 +28,6 @@ import { CT_MAIN_KEY } from "../types";
 import type { CtOptionDisplay, CtPhotoSelection, CtPhotoStyleRef, CtRegion, CtRenderAsset, CtSelection, CtTemplate, CtTransform } from "../types";
 import { ctGoogleFontsHref } from "../config";
 import { canvasToBlob, drawComposite, loadImage, renderComposite } from "../lib/compositor";
-import { renderProduct } from "../lib/material-render";
 import { isHidden, layoutFor } from "../lib/layout";
 import {
   defaultRegionSelection,
@@ -352,18 +351,9 @@ export class Customizer {
     return renderComposite({ main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, scale, layouts: this.tpl.config.layouts });
   }
 
-  /** The finished product as the customer sees it: design → material (acrylic, ceramic…) → scene photo. */
+  /** The product as the customer sees it (material renditions are already swapped in by the template), long side `maxSide`. */
   private product(selection: CtSelection, maxSide: number): Promise<HTMLCanvasElement> {
-    return renderProduct({
-      main: this.main,
-      assets: this.tpl.assets,
-      regions: this.regions,
-      items: this.tpl.items,
-      selection,
-      layouts: this.tpl.config.layouts,
-      material: this.tpl.config.material,
-      maxSide,
-    });
+    return this.compose(selection, Math.min(1, maxSide / Math.max(this.main.width, this.main.height)));
   }
 
   /** Zones the chosen main version uses (its layout may hide some — "1 person" hides photo 2 and 3). */

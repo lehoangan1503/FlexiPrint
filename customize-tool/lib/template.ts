@@ -10,6 +10,7 @@
 import type { CtAsset, CtProduct, CtProductConfig, CtPublicAiStyle, CtRegion, CtRegionItem, CtRenderAsset, CtTemplate } from "../types";
 import { mainVersions, normalizeProductConfig, normalizeRegion, variantsOf } from "./design";
 import { pruneLayout } from "./layout";
+import { withRenditions } from "./library";
 
 function renderAsset(a: CtAsset): CtRenderAsset {
   return {
@@ -37,8 +38,10 @@ export function buildTemplate(args: {
   /** Names of the AI styles the zones offer (the prompt never goes into the template). */
   aiStyles?: CtPublicAiStyle[];
 }): CtTemplate {
-  const { product, assets, version, publishedAt } = args;
+  const { product, version, publishedAt } = args;
   const config = normalizeProductConfig(product.config);
+  // "Rendition" display: the storefront draws the AI material versions; print files keep the flat art.
+  const assets = config.material.display === "rendition" ? withRenditions(args.assets) : args.assets.filter((a) => a.role !== "rendition");
   const main = assets.find((a) => a.id === product.main_asset_id && a.role === "main");
   if (!main) throw new Error("Chưa có main object — không publish được");
 
@@ -64,11 +67,6 @@ export function buildTemplate(args: {
     const l = config.layouts[m.id];
     if (l) layouts[m.id] = pruneLayout(l, regionIds, itemIds);
   }
-  // The scene photo the material renders onto ships like any other asset.
-  const scene = config.material.sceneAssetId ? byId.get(config.material.sceneAssetId) : undefined;
-  if (scene) used.set(scene.id, scene);
-  const material = { ...config.material, sceneAssetId: scene ? scene.id : null };
-
   return {
     schema: 1,
     productId: product.id,
@@ -78,7 +76,7 @@ export function buildTemplate(args: {
     mainAssetId: main.id,
     width: main.width,
     height: main.height,
-    config: { ...config, layouts, material },
+    config: { ...config, layouts },
     assets: Array.from(used.values()).map(renderAsset),
     regions,
     items,

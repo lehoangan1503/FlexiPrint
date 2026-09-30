@@ -351,7 +351,10 @@ export interface CtMainLayout {
 }
 
 /**
- * How the finished design is rendered as a physical product (lib/materials.ts):
+ * The physical product the design is printed on (lib/materials.ts) — drives
+ * the print files (services/material-render: print.png, white ink, cut.svg).
+ * The LOOK of a material is AI-rendered (ComfyUI studio → renditions), not
+ * simulated here.
  *   none            flat artwork, as designed
  *   acrylic_white   cut acrylic with a white backing (car visor clip, standee)
  *   acrylic_clear   clear acrylic — the scene shows through the plate border
@@ -370,15 +373,14 @@ export type CtMaterialId = "none" | "acrylic_white" | "acrylic_clear" | "ceramic
  */
 export type CtMaterialShape = "contour" | "main";
 
-/** Where the rendered product sits on the scene photo (fractions of the scene). */
-export interface CtScenePlacement {
-  /** Centre of the product. */
-  x: number;
-  y: number;
-  /** Product width as a fraction of the scene width. */
-  width: number;
-  rotation: number;
-}
+/**
+ * What the storefront shows:
+ *   flat       the cliparts as drawn
+ *   rendition  each clipart's AI material version (library "rendition", same
+ *              silhouette + size) where one exists — acrylic / glitter look.
+ * Print files always use the flat art.
+ */
+export type CtMaterialDisplay = "flat" | "rendition";
 
 export interface CtMaterialConfig {
   id: CtMaterialId;
@@ -387,15 +389,9 @@ export interface CtMaterialConfig {
   widthMm: number;
   /** contour: margin of plate around the design, mm. */
   borderMm: number;
-  /** Plate thickness shown as an edge, mm (acrylic 3 mm; 0 = none). */
+  /** Plate thickness, mm (acrylic 3 mm; 0 = none) — goes into the print meta. */
   thicknessMm: number;
-  /** Drop shadow strength 0..1. */
-  shadow: number;
-  /** Highlight / sheen strength 0..1. */
-  gloss: number;
-  /** Background photo (a "reference" asset) the product is placed on; null = transparent. */
-  sceneAssetId: string | null;
-  scene: CtScenePlacement;
+  display: CtMaterialDisplay;
 }
 
 export interface CtProductConfig {

@@ -1,0 +1,412 @@
+{
+ "last_node_id": 4,
+ "last_link_id": 7,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "MarkdownNote",
+   "pos": [
+    20,
+    20
+   ],
+   "size": [
+    420,
+    240
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {},
+   "widgets_values": [
+    "## Vật liệu cho 1 clipart (rendition)\nPreset vật liệu (acrylic, glitter, gỗ…) → AI render lại, **resize đúng W×H gốc + ép alpha gốc** (khoá silhouette).\n`edge_px` nở viền (viền acrylic trong). Lưu `rendition` → storefront hiện bản này khi sản phẩm bật *Hiển thị: bản vật liệu AI*; file in vẫn dùng bản phẳng."
+   ],
+   "color": "#432",
+   "bgcolor": "#653"
+  },
+  {
+   "id": 2,
+   "type": "FP_LoadClipart",
+   "pos": [
+    480,
+    40
+   ],
+   "size": [
+    340,
+    330
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clipart",
+     "type": "COMBO",
+     "link": null,
+     "widget": {
+      "name": "clipart"
+     }
+    }
+   ],
+   "outputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "links": [
+      1
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "mask",
+     "type": "MASK",
+     "links": [
+      2
+     ],
+     "slot_index": 1
+    },
+    {
+     "name": "clipart_id",
+     "type": "STRING",
+     "links": [
+      6
+     ],
+     "slot_index": 2
+    },
+    {
+     "name": "context",
+     "type": "FP_CONTEXT",
+     "links": [
+      3,
+      7
+     ],
+     "slot_index": 3
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "FP_LoadClipart"
+   },
+   "widgets_values": [
+    "",
+    false,
+    "refresh"
+   ]
+  },
+  {
+   "id": 3,
+   "type": "FP_Material",
+   "pos": [
+    860,
+    40
+   ],
+   "size": [
+    360,
+    420
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 1
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 2
+    },
+    {
+     "name": "context",
+     "type": "FP_CONTEXT",
+     "link": 3
+    },
+    {
+     "name": "material",
+     "type": "COMBO",
+     "link": null,
+     "widget": {
+      "name": "material"
+     }
+    },
+    {
+     "name": "lock",
+     "type": "COMBO",
+     "link": null,
+     "widget": {
+      "name": "lock"
+     }
+    },
+    {
+     "name": "edge_px",
+     "type": "INT",
+     "link": null,
+     "widget": {
+      "name": "edge_px"
+     }
+    },
+    {
+     "name": "extra",
+     "type": "STRING",
+     "link": null,
+     "widget": {
+      "name": "extra"
+     }
+    },
+    {
+     "name": "model",
+     "type": "COMBO",
+     "link": null,
+     "widget": {
+      "name": "model"
+     }
+    },
+    {
+     "name": "seed",
+     "type": "INT",
+     "link": null,
+     "widget": {
+      "name": "seed"
+     }
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "links": [
+      4
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "links": [
+      5
+     ],
+     "slot_index": 1
+    },
+    {
+     "name": "report",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 2
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "FP_Material"
+   },
+   "widgets_values": [
+    "",
+    false,
+    "refresh",
+    "theo preset",
+    0,
+    "",
+    "cpa:gpt-image-2",
+    0,
+    "fixed"
+   ]
+  },
+  {
+   "id": 4,
+   "type": "FP_SaveToLibrary",
+   "pos": [
+    1260,
+    40
+   ],
+   "size": [
+    340,
+    360
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 4
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 5
+    },
+    {
+     "name": "context",
+     "type": "FP_CONTEXT",
+     "link": 7
+    },
+    {
+     "name": "kind",
+     "type": "COMBO",
+     "link": null,
+     "widget": {
+      "name": "kind"
+     }
+    },
+    {
+     "name": "names",
+     "type": "STRING",
+     "link": null,
+     "widget": {
+      "name": "names"
+     }
+    },
+    {
+     "name": "parent_id",
+     "type": "STRING",
+     "link": 6,
+     "widget": {
+      "name": "parent_id"
+     }
+    },
+    {
+     "name": "tags",
+     "type": "STRING",
+     "link": null,
+     "widget": {
+      "name": "tags"
+     }
+    },
+    {
+     "name": "prompts",
+     "type": "STRING",
+     "link": null,
+     "widget": {
+      "name": "prompts"
+     }
+    }
+   ],
+   "outputs": [
+    {
+     "name": "clipart_ids",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "FP_SaveToLibrary"
+   },
+   "widgets_values": [
+    "rendition",
+    "",
+    "",
+    "",
+    ""
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   2,
+   0,
+   3,
+   0,
+   "IMAGE"
+  ],
+  [
+   2,
+   2,
+   1,
+   3,
+   1,
+   "MASK"
+  ],
+  [
+   3,
+   2,
+   3,
+   3,
+   2,
+   "FP_CONTEXT"
+  ],
+  [
+   4,
+   3,
+   0,
+   4,
+   0,
+   "IMAGE"
+  ],
+  [
+   5,
+   3,
+   1,
+   4,
+   1,
+   "MASK"
+  ],
+  [
+   6,
+   2,
+   2,
+   4,
+   5,
+   "STRING"
+  ],
+  [
+   7,
+   2,
+   3,
+   4,
+   2,
+   "FP_CONTEXT"
+  ]
+ ],
+ "groups": [
+  {
+   "title": "Clipart",
+   "bounding": [
+    460,
+    -10,
+    380,
+    400
+   ],
+   "color": "#335",
+   "font_size": 22,
+   "flags": {}
+  },
+  {
+   "title": "Vật liệu",
+   "bounding": [
+    840,
+    -10,
+    400,
+    490
+   ],
+   "color": "#353",
+   "font_size": 22,
+   "flags": {}
+  },
+  {
+   "title": "Lưu (rendition)",
+   "bounding": [
+    1240,
+    -10,
+    380,
+    430
+   ],
+   "color": "#533",
+   "font_size": 22,
+   "flags": {}
+  }
+ ],
+ "config": {},
+ "extra": {
+  "ds": {
+   "scale": 0.8,
+   "offset": [
+    40,
+    60
+   ]
+  }
+ },
+ "version": 0.4
+}

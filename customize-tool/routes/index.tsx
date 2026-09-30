@@ -15,6 +15,7 @@ import { ctSession } from "../server/supabase";
 import { CustomizeProductList } from "../components/product-list";
 import { CustomizeEditor } from "../components/editor/editor";
 import { LibraryManager } from "../components/library/library-manager";
+import { StudioFrame } from "../components/studio/studio-frame";
 
 export async function CustomizeListPage() {
   const session = await ctSession();
@@ -47,4 +48,10 @@ export async function CustomizeLibraryPage() {
   const session = await ctSession();
   if (!session) redirect(CT_CONFIG.loginPath);
   return <LibraryManager />;
+}
+
+export async function CustomizeStudioPage() {
+  const session = await ctSession();
+  if (!session) redirect(CT_CONFIG.loginPath);
+  return <StudioFrame />;
 }

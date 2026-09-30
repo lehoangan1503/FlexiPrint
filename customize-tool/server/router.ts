@@ -52,6 +52,11 @@
  *   POST   presets                       CtPresetBody
  *   PATCH  presets/:id                   CtPresetBody
  *   DELETE presets/:id
+ *
+ * ComfyUI studio (server/studio.ts):
+ *   POST   studio/session                sets the fp_studio cookie → { url }
+ *   GET    studio/auth                   nginx auth_request (cookie, no session) → 204 | 401
+ *   *      internal/*                    node pack API, Bearer CT_COMFY_TOKEN (docker network only)
  */
 
 import type { NextRequest } from "next/server";
@@ -71,6 +76,7 @@ import { ctSession, type CtSession } from "./supabase";
 import * as h from "./handlers";
 import * as st from "./ai-styles";
 import * as lib from "./library";
+import * as studio from "./studio";
 
 export interface CtRouteContext {
   params: Promise<{ path?: string[] }>;
@@ -113,6 +119,9 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
   const path = (await ctx.params).path ?? [];
   if (path[0] === "public") return dispatchPublic(req, path);
   if (path[0] === "cron" && path[1] === "cleanup" && req.method === "POST") return h.cronCleanup(req.headers.get("authorization"));
+  // ComfyUI studio: nginx auth_request (own cookie) and the node pack's internal API (bearer token).
+  if (path[0] === "studio" && path[1] === "auth" && req.method === "GET") return studio.studioAuth(req);
+  if (path[0] === "internal") return studio.dispatchInternal(req, path);
 
   const session = await ctSession();
   if (!session) return h.jsonError("Chưa đăng nhập", 401);
@@ -125,6 +134,7 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
     return h.jsonError("Not found", 404);
   }
   if (head === "library") return dispatchLibrary(req, session, path);
+  if (head === "studio" && id === "session" && method === "POST") return studio.studioSession(session);
   if (id && !UUID.test(id)) return h.jsonError("id không hợp lệ", 400);
 
   if (head === "presets" && !sub) {

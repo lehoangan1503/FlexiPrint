@@ -39,6 +39,9 @@ export type CtGenerationStatus = "pending" | "succeeded" | "failed";
 
 export type CtAiProviderId = "gemini" | "openai";
 
+/** Provider recorded on ct_generations rows: editor providers + the ComfyUI studio. */
+export type CtGenerationProvider = CtAiProviderId | "comfy";
+
 /**
  * How a group of options is shown to the customer:
  *   image     tiles with the option picture (dumpling colours, glasses)
@@ -429,7 +432,7 @@ export interface CtGeneration {
   product_id: string | null;
   target_role: CtAssetRole;
   parent_asset_id: string | null;
-  provider: CtAiProviderId;
+  provider: CtGenerationProvider;
   model: string;
   prompt: string;
   reference_asset_ids: string[];

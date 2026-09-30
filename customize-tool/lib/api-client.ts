@@ -159,6 +159,9 @@ export const ctApi = {
   updatePreset: (id: string, body: CtPresetBody) => call<{ preset: CtPreset }>(`presets/${id}`, json("PATCH", body)).then((r) => r.preset),
   deletePreset: (id: string) => call<void>(`presets/${id}`, { method: "DELETE" }),
 
+  /** Sets the fp_studio cookie the studio's nginx gate checks. */
+  studioSession: () => call<{ url: string }>("studio/session", { method: "POST" }),
+
   generate: (productId: string, body: CtGenerateBody) =>
     call<CtGenerateResponse>(`products/${productId}/generate`, json("POST", body)),
 };

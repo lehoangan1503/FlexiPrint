@@ -9,7 +9,8 @@
  *
  * Env:
  *   GEMINI_API_KEY, GEMINI_IMAGE_MODELS (optional, comma list overrides defaults)
- *   OPENAI_API_KEY, OPENAI_BASE_URL (optional), OPENAI_IMAGE_MODELS (optional)
+ *   OPENAI_API_KEY, OPENAI_BASE_URL (optional), OPENAI_IMAGE_MODELS (optional),
+ *   OPENAI_EDITS_JSON=1 (proxy wants JSON edits — cpa.next.lc)
  */
 
 import type { CtAiModelOption, CtAiProviderId, CtAiProviderInfo, CtAspectRatio } from "../../types";
@@ -165,6 +166,22 @@ const openai: ImageProvider = {
           quality: "high",
           background,
           output_format: "png",
+        }),
+      });
+    } else if (process.env.OPENAI_EDITS_JSON === "1") {
+      // OpenAI-compatible proxies (cpa.next.lc) take edits as JSON with data-URI images, not multipart.
+      res = await fetch(`${base}/images/edits`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({
+          model: req.model,
+          prompt: req.prompt,
+          n: req.count,
+          size,
+          quality: "high",
+          background,
+          output_format: "png",
+          images: req.references.map((r) => ({ image_url: `data:${r.mime};base64,${r.data.toString("base64")}` })),
         }),
       });
     } else {

@@ -193,19 +193,30 @@ app.registerExtension({
       type: "custom",
       render: renderSidebar,
     });
-    // The stock default graph needs local diffusion models this studio doesn't have:
-    // replace it with the FlexiPrint starter template (a saved / opened workflow is left alone).
+    // First visit: skip ComfyUI's stock onboarding (cloud / local-model templates this studio
+    // can't run) and open the FlexiPrint starter instead. Later visits keep the user's tabs.
     setTimeout(async () => {
-      const nodes = app.graph?._nodes ?? [];
-      const stock = nodes.some((n) => ["KSampler", "CheckpointLoaderSimple", "UNETLoader"].includes(n.type)) && !nodes.some((n) => String(n.type).startsWith("FP_"));
-      if (!stock) return;
+      const settings = app.extensionManager?.setting;
+      let first = false;
       try {
+        first = !localStorage.getItem("fp-starter-loaded");
+        localStorage.setItem("fp-starter-loaded", "1");
+      } catch {
+        // storage blocked: fall back to the graph check below
+      }
+      if (settings && !settings.get("Comfy.TutorialCompleted")) await settings.set("Comfy.TutorialCompleted", true).catch(() => {});
+      const nodes = app.graph?._nodes ?? [];
+      const hasFp = nodes.some((n) => String(n.type).startsWith("FP_"));
+      const stock = nodes.length === 0 || nodes.some((n) => ["KSampler", "CheckpointLoaderSimple", "UNETLoader"].includes(n.type));
+      if (hasFp || !(first || stock)) return;
+      try {
+        document.querySelectorAll('.p-dialog-close-button, [aria-label="Close"]').forEach((b) => b.closest(".p-dialog, [role=dialog]") && b.click());
         const wf = await (await api.fetchApi("/workflow_templates/flexiprint/01-origin-set.json")).json();
         await app.loadGraphData(wf);
       } catch (e) {
         console.warn("[flexiprint] starter template", e);
       }
-    }, 1200);
+    }, 1500);
     api.addEventListener("executed", ({ detail }) => {
       const text = detail?.output?.text?.join?.("\n");
       if (!text) return;

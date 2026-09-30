@@ -35,7 +35,7 @@ CATEGORY_NODE = "FlexiPrint"
 
 
 def _remote(kind: str) -> io.RemoteOptions:
-    return io.RemoteOptions(route=f"/flexi/options/{kind}", refresh_button=True, control_after_refresh="first")
+    return io.RemoteOptions(route=f"flexi/options/{kind}", refresh_button=True, control_after_refresh="first")
 
 
 def _model_input(default: str | None = None) -> io.Combo.Input:

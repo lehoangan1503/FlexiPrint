@@ -37,7 +37,7 @@ services:
     command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7003", "--workers", "1"]
 
   # ComfyUI studio (services/comfy/README.md): CPU only, models over HTTP. Host nginx serves it
-  # behind auth_request (deploy/nginx/flexiprint-studio.conf); the node pack calls the app's
+  # under /comfy/ behind auth_request (deploy/nginx/flexiprint-comfy.locations); the node pack calls the app's
   # internal API over this network.
   comfy:
     build: ./services/comfy

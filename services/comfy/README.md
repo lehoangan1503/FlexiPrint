@@ -37,18 +37,23 @@ To regenerate them, run `python tools/build_workflows.py` against a running Comf
 ## How it connects
 
 ```
-browser ─► https://<studio host>  nginx auth_request /api/customize-tool/studio/auth (cookie fp_studio)
-                                  └► comfy:8188 (docker network)
+browser ─► https://flexiprint.next.lc/studio   (app page: sets the fp_studio cookie, iframes /comfy/)
+        ─► https://flexiprint.next.lc/comfy/*  nginx auth_request → /api/customize-tool/studio/auth
+                                              └► 127.0.0.1:8188 (prefix stripped)
 comfy nodes ─► http://app:3000/api/customize-tool/internal/*   Bearer FP_COMFY_TOKEN (= CT_COMFY_TOKEN)
 ```
 
+- **Under a prefix:** ComfyUI runs fine below `/comfy/`. Its frontend derives the API base from the
+  page path, and the node pack's dropdown routes are relative (`flexi/options/…`). Only the favicons
+  use absolute paths, and those fall through to the app's 404.
+- **nginx:** `deploy/nginx/flexiprint-comfy.locations` is included in the 443 server;
+  `flexiprint-comfy-map.conf` goes in `conf.d`.
 - **App env:**
   - `CT_COMFY_TOKEN`
   - `CT_STUDIO_SECRET`
-  - `CT_STUDIO_URL`: where `/studio` points the iframe
-  - `CT_STUDIO_COOKIE_DOMAIN`: `.next.lc` when the studio is on a subdomain
+  - `CT_STUDIO_URL`: default `/comfy/`
   - `CT_STUDIO_USER_ID`: owner of studio-made cliparts; default is the first superadmin
-- **Comfy env:**
+- **Comfy env** (compose sets it):
   - `FP_API_URL`
   - `FP_COMFY_TOKEN`
   - `CPA_BASE_URL`

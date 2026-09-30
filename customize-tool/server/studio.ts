@@ -1,13 +1,14 @@
 /**
  * ComfyUI studio (services/comfy) ↔ FlexiPrint.
  *
- * 1. Gate. ComfyUI has no auth of its own. nginx puts it behind
+ * 1. Gate. ComfyUI has no auth of its own. nginx serves it under /comfy/
+ *    on the app's domain (deploy/nginx/flexiprint-comfy.locations) behind
  *    `auth_request` → GET studio/auth, which accepts the `fp_studio` cookie:
  *    HMAC(userId, expiry) with CT_STUDIO_SECRET, set by POST studio/session
  *    for a signed-in user (the /studio page calls it before loading the
- *    iframe). CT_STUDIO_COOKIE_DOMAIN (e.g. ".next.lc") lets the cookie reach
- *    a studio subdomain; unset = host-only (studio on another port of the
- *    same host — cookies ignore ports).
+ *    iframe). CT_STUDIO_URL (default "/comfy/") is what the iframe loads;
+ *    CT_STUDIO_COOKIE_DOMAIN only matters if the studio ever moves to a
+ *    subdomain.
  *
  * 2. Internal API for the FlexiPrint node pack, `Authorization: Bearer
  *    CT_COMFY_TOKEN`, over the docker network (never exposed by nginx):
@@ -72,12 +73,12 @@ function verifyToken(token: string, secret: string): string | null {
 /** POST studio/session — signed-in user → studio cookie + where the studio lives. */
 export function studioSession(s: CtSession): NextResponse {
   const secret = process.env.CT_STUDIO_SECRET;
-  const url = process.env.CT_STUDIO_URL;
-  if (!secret || !url) return jsonError("Studio chưa cấu hình (CT_STUDIO_SECRET, CT_STUDIO_URL)", 501);
+  const url = process.env.CT_STUDIO_URL || "/comfy/";
+  if (!secret) return jsonError("Studio chưa cấu hình (CT_STUDIO_SECRET)", 501);
   const res = NextResponse.json({ url });
   res.cookies.set(COOKIE, makeToken(s.user.id, secret), {
     httpOnly: true,
-    secure: url.startsWith("https://"),
+    secure: url.startsWith("https://") || (url.startsWith("/") && process.env.NODE_ENV === "production"),
     sameSite: "lax",
     path: "/",
     maxAge: TTL_S,

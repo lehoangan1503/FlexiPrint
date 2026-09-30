@@ -1,0 +1,44 @@
+# /etc/nginx/snippets/flexiprint-comfy.locations — included inside the
+# flexiprint.next.lc 443 server (sites-available/flexiprint):
+#     include /etc/nginx/snippets/flexiprint-comfy.locations;
+# plus deploy/nginx/flexiprint-comfy-map.conf in conf.d (websocket upgrade map).
+#
+# ComfyUI studio (services/comfy) under /comfy/ on the app's own domain — no
+# extra DNS / certificate. ComfyUI has no login: every request passes
+# auth_request, which accepts the fp_studio cookie the /studio page sets
+# (customize-tool/server/studio.ts). The ComfyUI frontend derives its API base
+# from the page path, and the FlexiPrint node pack uses relative routes, so it
+# works below a prefix.
+
+location = /_studio_auth {
+    internal;
+    proxy_pass http://flexiprint_app/api/customize-tool/studio/auth;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+}
+
+location = /comfy {
+    return 301 /comfy/;
+}
+
+location /comfy/ {
+    auth_request /_studio_auth;
+    error_page 401 = @studio_login;
+
+    proxy_pass http://127.0.0.1:8188/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $flexiprint_connection_upgrade;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    client_max_body_size 100m;
+
+    # Only the app itself may frame the studio.
+    add_header Content-Security-Policy "frame-ancestors 'self'" always;
+}
+
+# Not signed in to the studio: the app page sets the cookie, then frames /comfy/.
+location @studio_login {
+    return 302 /studio;
+}

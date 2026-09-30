@@ -64,6 +64,25 @@ certbot --nginx -d flexiprint.next.lc -d flexiprint-api.next.lc --redirect --agr
 
 `client_max_body_size 500m` everywhere; `/api/` streams request bodies (no buffering) with 600 s timeouts.
 
+**Studio (ComfyUI, `services/comfy`)** runs under `/comfy/` on the same domain, with no extra DNS or
+certificate:
+
+```bash
+cp deploy/nginx/flexiprint-comfy-map.conf /etc/nginx/conf.d/
+cp deploy/nginx/flexiprint-comfy.locations /etc/nginx/snippets/
+# in /etc/nginx/sites-available/flexiprint, inside the 443 server block, above `location / {`:
+#     include /etc/nginx/snippets/flexiprint-comfy.locations;
+nginx -t && systemctl reload nginx
+```
+
+- **App `.env`:**
+  - `CT_COMFY_TOKEN`, `CT_STUDIO_SECRET`: random, `openssl rand -hex 32`
+  - `CPA_API_KEY` (team image API) and `FAL_KEY`
+  - The editor's "Tạo bằng AI" can use the same API: `OPENAI_BASE_URL=https://cpa.next.lc/v1`,
+    `OPENAI_API_KEY=$CPA_API_KEY`, `OPENAI_EDITS_JSON=1`
+- **Memory:** ComfyUI needs about 450 MB idle (container limit 1.2 GB).
+- **Health check:** `docker stats --no-stream`.
+
 ## 4. Cron
 
 ```

@@ -1,0 +1,1769 @@
+{
+ "tldrawFileFormatVersion": 1,
+ "schema": {
+  "schemaVersion": 2,
+  "sequences": {
+   "com.tldraw.store": 5,
+   "com.tldraw.asset": 1,
+   "com.tldraw.camera": 1,
+   "com.tldraw.document": 2,
+   "com.tldraw.instance": 26,
+   "com.tldraw.instance_page_state": 5,
+   "com.tldraw.page": 1,
+   "com.tldraw.instance_presence": 6,
+   "com.tldraw.pointer": 1,
+   "com.tldraw.shape": 4,
+   "com.tldraw.user": 1,
+   "com.tldraw.asset.image": 6,
+   "com.tldraw.asset.video": 5,
+   "com.tldraw.asset.bookmark": 2,
+   "com.tldraw.shape.arrow": 8,
+   "com.tldraw.shape.bookmark": 2,
+   "com.tldraw.shape.draw": 5,
+   "com.tldraw.shape.embed": 4,
+   "com.tldraw.shape.frame": 1,
+   "com.tldraw.shape.geo": 11,
+   "com.tldraw.shape.group": 0,
+   "com.tldraw.shape.highlight": 4,
+   "com.tldraw.shape.image": 5,
+   "com.tldraw.shape.line": 5,
+   "com.tldraw.shape.note": 13,
+   "com.tldraw.shape.text": 4,
+   "com.tldraw.shape.video": 4,
+   "com.tldraw.binding.arrow": 1
+  }
+ },
+ "records": [
+  {
+   "id": "document:document",
+   "typeName": "document",
+   "gridSize": 10,
+   "name": "Chiều ngược — app giao việc cho @flexiprint",
+   "meta": {}
+  },
+  {
+   "id": "page:page",
+   "typeName": "page",
+   "name": "Chiều ngược — app giao việc cho @flexiprint",
+   "index": "a1",
+   "meta": {}
+  },
+  {
+   "id": "shape:title",
+   "typeName": "shape",
+   "type": "text",
+   "x": 0,
+   "y": -170,
+   "rotation": 0,
+   "index": "a2geM",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "color": "black",
+    "size": "xl",
+    "font": "sans",
+    "textAlign": "start",
+    "w": 1900,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "Chiều ngược — người dùng bấm trên app FlexiPrint, @flexiprint trên agent_ide làm, kết quả về lại app để duyệt"
+        }
+       ]
+      }
+     ]
+    },
+    "scale": 1,
+    "autoSize": false
+   }
+  },
+  {
+   "id": "shape:fa",
+   "typeName": "shape",
+   "type": "frame",
+   "x": 0,
+   "y": 0,
+   "rotation": 0,
+   "index": "a3M1b",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "w": 520,
+    "h": 940,
+    "name": "① Trình duyệt — app FlexiPrint",
+    "color": "black"
+   }
+  },
+  {
+   "id": "shape:fb",
+   "typeName": "shape",
+   "type": "frame",
+   "x": 680,
+   "y": 0,
+   "rotation": 0,
+   "index": "a4ngn",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "w": 560,
+    "h": 940,
+    "name": "② Server FlexiPrint (flexiprint.next.lc)",
+    "color": "black"
+   }
+  },
+  {
+   "id": "shape:fc",
+   "typeName": "shape",
+   "type": "frame",
+   "x": 1400,
+   "y": 0,
+   "rotation": 0,
+   "index": "a5CZj",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "w": 520,
+    "h": 940,
+    "name": "③ agent_ide — máy chung của công ty",
+    "color": "black"
+   }
+  },
+  {
+   "id": "shape:a1",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 40,
+   "y": 70,
+   "rotation": 0,
+   "index": "a6m1Q",
+   "parentId": "shape:fa",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 110,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "Dialog danh mục — chọn công tắc @flexiprint"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "bấm Tạo bằng AI · Cập nhật bằng AI · Kiểm tra prompt"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:a2",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 40,
+   "y": 260,
+   "rotation": 0,
+   "index": "a7zy9",
+   "parentId": "shape:fa",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "dashed",
+    "url": "",
+    "w": 440,
+    "h": 90,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "grey",
+    "fill": "none",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "agent_ide không trả lời → dùng Gemini Flash như cũ"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:a3",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 40,
+   "y": 590,
+   "rotation": 0,
+   "index": "a8yjz",
+   "parentId": "shape:fa",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 110,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "Panel duyệt"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "hiện tiến độ từng dòng → đề xuất dạng ô tick"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "(trước / sau từng lớp)"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:a4",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 40,
+   "y": 770,
+   "rotation": 0,
+   "index": "a9nh2",
+   "parentId": "shape:fa",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 110,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "Người dùng tick → \"Áp dụng & lưu\""
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "lưu bằng TÀI KHOẢN CỦA HỌ (quyền + lịch sử như thường)"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:b1",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 60,
+   "y": 70,
+   "rotation": 0,
+   "index": "aAgln",
+   "parentId": "shape:fb",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 110,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "POST ai/agent-tasks"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "ghi một dòng vào ct_agent_tasks (pending)"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "loại việc · danh mục · nhận xét · URL ảnh"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:b2",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 60,
+   "y": 260,
+   "rotation": 0,
+   "index": "aBgrU",
+   "parentId": "shape:fb",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 120,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "green",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "flexiprint-mcp   /api/customize-tool/mcp"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "khoá: Bearer CT_AGENT_TOKEN"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "đọc · prompt đã ghép · studio · task"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:b3",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 60,
+   "y": 430,
+   "rotation": 0,
+   "index": "aCDWb",
+   "parentId": "shape:fb",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 90,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "orange",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "ComfyUI studio + fal.ai — tạo ảnh thử"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:b4",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 60,
+   "y": 590,
+   "rotation": 0,
+   "index": "aDc6Q",
+   "parentId": "shape:fb",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 110,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "ct_agent_tasks (cùng dòng task)"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "progress từng dòng → result → done"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "(hoặc failed / cancelled)"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:b5",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 60,
+   "y": 770,
+   "rotation": 0,
+   "index": "aEjkv",
+   "parentId": "shape:fb",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 110,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "violet",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "DB danh mục + lịch sử"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "(ct_clipart_categories · ct_category_history)"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:c1",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 40,
+   "y": 70,
+   "rotation": 0,
+   "index": "aFlRj",
+   "parentId": "shape:fc",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 110,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "Kernel API   POST /kernel/v1/turns"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "khoá: token svc_… của project flexiprint"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "(một phiên riêng cho mỗi danh mục)"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:c2",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 40,
+   "y": 260,
+   "rotation": 0,
+   "index": "aGHlA",
+   "parentId": "shape:fc",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 440,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "green",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "@flexiprint — Claude Code (gói thuê bao)"
+        }
+       ]
+      },
+      {
+       "type": "paragraph"
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "skill flexiprint-task:"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "get_task → đọc danh mục, lịch sử, xem ảnh"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "→ assemble_prompts (prompt y như model ảnh nhận)"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "→ tạo ảnh thử nếu cần → tự kiểm"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "→ submit_result (hoặc fail_task)"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:n1",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 480,
+   "y": 125,
+   "rotation": 0,
+   "index": "aHJBr",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": 260,
+     "y": 0
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "① tạo task"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "(thay vì gọi Flash)"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:n1-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n1",
+   "toId": "shape:a1",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 1,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:n1-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n1",
+   "toId": "shape:b1",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 0,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:n2",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 1180,
+   "y": 125,
+   "rotation": 0,
+   "index": "aINzT",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": 260,
+     "y": 0
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "② gửi lượt"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "\"[FlexiPrint task id]\""
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:n2-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n2",
+   "toId": "shape:b1",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 1,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:n2-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n2",
+   "toId": "shape:c1",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 0,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:n3",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 1660,
+   "y": 180,
+   "rotation": 0,
+   "index": "aJ0zH",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": 0,
+     "y": 80
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "③ chạy lượt cho @flexiprint"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:n3-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n3",
+   "toId": "shape:c1",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 0.5,
+     "y": 1
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:n3-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n3",
+   "toId": "shape:c2",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 0.5,
+     "y": 0
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:n4",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 1440,
+   "y": 320,
+   "rotation": 0,
+   "index": "aK3XQ",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "green",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": -260,
+     "y": 0
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "④ đọc task + toàn hệ thống"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:n4-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n4",
+   "toId": "shape:c2",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 0,
+     "y": 0.13636363636363635
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:n4-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n4",
+   "toId": "shape:b2",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 1,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:n4b",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 960,
+   "y": 380,
+   "rotation": 0,
+   "index": "aLYkI",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "orange",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": 0,
+     "y": 50
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "run_studio"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:n4b-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n4b",
+   "toId": "shape:b2",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 0.5,
+     "y": 1
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:n4b-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n4b",
+   "toId": "shape:b3",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 0.5,
+     "y": 0
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:n5",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 1440,
+   "y": 645,
+   "rotation": 0,
+   "index": "aMc0I",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": -260,
+     "y": 0
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "⑤ report_progress"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "submit_result"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:n5-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n5",
+   "toId": "shape:c2",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 0,
+     "y": 0.875
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:n5-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n5",
+   "toId": "shape:b4",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 1,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:n6",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 740,
+   "y": 645,
+   "rotation": 0,
+   "index": "aNrL6",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": -260,
+     "y": 0
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "⑥ app hỏi mỗi 2,5 giây"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "→ tiến độ, rồi kết quả"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:n6-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n6",
+   "toId": "shape:b4",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 0,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:n6-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n6",
+   "toId": "shape:a3",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 1,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:n6b",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 260,
+   "y": 700,
+   "rotation": 0,
+   "index": "aOV5n",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": 0,
+     "y": 70
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "duyệt"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:n6b-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n6b",
+   "toId": "shape:a3",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 0.5,
+     "y": 1
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:n6b-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n6b",
+   "toId": "shape:a4",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 0.5,
+     "y": 0
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:n7",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 480,
+   "y": 825,
+   "rotation": 0,
+   "index": "aPzbF",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": 260,
+     "y": 0
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "⑦ lưu"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:n7-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n7",
+   "toId": "shape:a4",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 1,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:n7-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:n7",
+   "toId": "shape:b5",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 0,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:nf",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 260,
+   "y": 180,
+   "rotation": 0,
+   "index": "aQiCM",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "grey",
+    "fill": "none",
+    "dash": "dashed",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": 0,
+     "y": 80
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "agent offline"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:nf-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:nf",
+   "toId": "shape:a1",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 0.5,
+     "y": 1
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:nf-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:nf",
+   "toId": "shape:a2",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 0.5,
+     "y": 0
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:steps",
+   "typeName": "shape",
+   "type": "text",
+   "x": 0,
+   "y": 990,
+   "rotation": 0,
+   "index": "aRnQI",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "color": "black",
+    "size": "m",
+    "font": "sans",
+    "textAlign": "start",
+    "w": 1920,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "① Người dùng mở danh mục, chọn @flexiprint, bấm nút → app ghi task vào ct_agent_tasks."
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "② Server FlexiPrint gửi lượt sang agent_ide bằng token svc_… (chỉ báo \"có task id X\")."
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "③ agent_ide chạy Claude Code trong project flexiprint — danh mục nào cũng giữ một phiên riêng, nên agent nhớ lần trước đã thử gì."
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "④ Agent gọi ngược FlexiPrint qua MCP bằng CT_AGENT_TOKEN: đọc task, danh mục, lịch sử, xem ảnh, xem prompt đã ghép, tạo ảnh thử."
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "⑤ Agent báo tiến độ và nộp kết quả vào chính dòng task (agent_ide không có webhook — submit_result là \"cuộc gọi báo lại\")."
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "⑥ App hỏi trạng thái task, hiện tiến độ rồi đề xuất dạng ô tick. Lượt kết thúc mà không nộp / treo quá 3 giờ → báo lỗi."
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "⑦ Người dùng tick và áp dụng → app lưu bằng tài khoản của họ. Trong việc đến từ app, agent KHÔNG tự lưu."
+        }
+       ]
+      }
+     ]
+    },
+    "scale": 1,
+    "autoSize": false
+   }
+  }
+ ]
+}

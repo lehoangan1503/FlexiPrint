@@ -38,13 +38,13 @@
    "id": "document:document",
    "typeName": "document",
    "gridSize": 10,
-   "name": "FlexiPrint MCP 2 chiều",
+   "name": "Chiều xuôi — nhờ @flexiprint trên agent_ide",
    "meta": {}
   },
   {
    "id": "page:page",
    "typeName": "page",
-   "name": "Kiến trúc",
+   "name": "Chiều xuôi — nhờ @flexiprint trên agent_ide",
    "index": "a1",
    "meta": {}
   },
@@ -53,9 +53,9 @@
    "typeName": "shape",
    "type": "text",
    "x": 0,
-   "y": -190,
+   "y": -170,
    "rotation": 0,
-   "index": "a27Yj",
+   "index": "a29Yr",
    "parentId": "page:page",
    "isLocked": false,
    "opacity": 1,
@@ -74,7 +74,7 @@
        "content": [
         {
          "type": "text",
-         "text": "FlexiPrint MCP — đồng bộ 2 chiều giữa app trên trình duyệt và agent cục bộ"
+         "text": "Chiều xuôi — người trong công ty nhờ thẳng @flexiprint trên agent_ide, agent làm việc trên FlexiPrint qua MCP"
         }
        ]
       }
@@ -85,21 +85,21 @@
    }
   },
   {
-   "id": "shape:fa",
+   "id": "shape:fc",
    "typeName": "shape",
    "type": "frame",
    "x": 0,
    "y": 0,
    "rotation": 0,
-   "index": "a3PjI",
+   "index": "a3I0A",
    "parentId": "page:page",
    "isLocked": false,
    "opacity": 1,
    "meta": {},
    "props": {
-    "w": 540,
-    "h": 920,
-    "name": "① Trình duyệt — app FlexiPrint",
+    "w": 520,
+    "h": 940,
+    "name": "① agent_ide — máy chung của công ty",
     "color": "black"
    }
   },
@@ -107,49 +107,49 @@
    "id": "shape:fb",
    "typeName": "shape",
    "type": "frame",
-   "x": 760,
+   "x": 680,
    "y": 0,
    "rotation": 0,
-   "index": "a4P3M",
+   "index": "a45Tb",
    "parentId": "page:page",
    "isLocked": false,
    "opacity": 1,
    "meta": {},
    "props": {
-    "w": 580,
-    "h": 920,
-    "name": "② Server FlexiPrint (Next + Supabase)",
+    "w": 560,
+    "h": 940,
+    "name": "② Server FlexiPrint (flexiprint.next.lc)",
     "color": "black"
    }
   },
   {
-   "id": "shape:fc",
+   "id": "shape:fa",
    "typeName": "shape",
    "type": "frame",
-   "x": 1560,
+   "x": 1400,
    "y": 0,
    "rotation": 0,
-   "index": "a57Xb",
+   "index": "a5Bbn",
    "parentId": "page:page",
    "isLocked": false,
    "opacity": 1,
    "meta": {},
    "props": {
-    "w": 540,
-    "h": 920,
-    "name": "③ agent_ide — một máy chung của công ty",
+    "w": 520,
+    "h": 940,
+    "name": "③ Trình duyệt — app FlexiPrint",
     "color": "black"
    }
   },
   {
-   "id": "shape:a1",
+   "id": "shape:p1",
    "typeName": "shape",
    "type": "geo",
    "x": 40,
-   "y": 60,
+   "y": 70,
    "rotation": 0,
-   "index": "a6ASE",
-   "parentId": "shape:fa",
+   "index": "a60lQ",
+   "parentId": "shape:fc",
    "isLocked": false,
    "opacity": 1,
    "meta": {},
@@ -157,356 +157,8 @@
     "geo": "rectangle",
     "dash": "solid",
     "url": "",
-    "w": 460,
-    "h": 130,
-    "growY": 0,
-    "scale": 1,
-    "labelColor": "black",
-    "color": "blue",
-    "fill": "semi",
-    "size": "s",
-    "font": "sans",
-    "align": "middle",
-    "verticalAlign": "middle",
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "Dialog danh mục"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "Tạo bằng AI · Cập nhật bằng AI · Kiểm tra prompt"
-        }
-       ]
-      }
-     ]
-    }
-   }
-  },
-  {
-   "id": "shape:a2",
-   "typeName": "shape",
-   "type": "geo",
-   "x": 40,
-   "y": 250,
-   "rotation": 0,
-   "index": "a7N5Q",
-   "parentId": "shape:fa",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "geo": "rectangle",
-    "dash": "solid",
-    "url": "",
-    "w": 460,
-    "h": 100,
-    "growY": 0,
-    "scale": 1,
-    "labelColor": "black",
-    "color": "blue",
-    "fill": "none",
-    "size": "s",
-    "font": "sans",
-    "align": "middle",
-    "verticalAlign": "middle",
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "Công tắc:  Flash  |  @flexiprint"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "(chấm xanh = agent_ide trả lời /ping)"
-        }
-       ]
-      }
-     ]
-    }
-   }
-  },
-  {
-   "id": "shape:a3",
-   "typeName": "shape",
-   "type": "geo",
-   "x": 40,
-   "y": 420,
-   "rotation": 0,
-   "index": "a86NU",
-   "parentId": "shape:fa",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "geo": "rectangle",
-    "dash": "solid",
-    "url": "",
-    "w": 460,
-    "h": 130,
-    "growY": 0,
-    "scale": 1,
-    "labelColor": "black",
-    "color": "blue",
-    "fill": "semi",
-    "size": "s",
-    "font": "sans",
-    "align": "middle",
-    "verticalAlign": "middle",
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "Panel duyệt"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "xem trước / sau → tick → Áp dụng & lưu"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "(người dùng luôn duyệt ở đây)"
-        }
-       ]
-      }
-     ]
-    }
-   }
-  },
-  {
-   "id": "shape:a4",
-   "typeName": "shape",
-   "type": "geo",
-   "x": 40,
-   "y": 640,
-   "rotation": 0,
-   "index": "a9oFQ",
-   "parentId": "shape:fa",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "geo": "rectangle",
-    "dash": "solid",
-    "url": "",
-    "w": 460,
-    "h": 120,
-    "growY": 0,
-    "scale": 1,
-    "labelColor": "black",
-    "color": "green",
-    "fill": "semi",
-    "size": "s",
-    "font": "sans",
-    "align": "middle",
-    "verticalAlign": "middle",
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "Màn hình danh mục / thư viện"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "tự cập nhật khi agent sửa (realtime)"
-        }
-       ]
-      }
-     ]
-    }
-   }
-  },
-  {
-   "id": "shape:b1",
-   "typeName": "shape",
-   "type": "geo",
-   "x": 60,
-   "y": 60,
-   "rotation": 0,
-   "index": "aAMj6",
-   "parentId": "shape:fb",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "geo": "rectangle",
-    "dash": "solid",
-    "url": "",
-    "w": 460,
-    "h": 130,
-    "growY": 0,
-    "scale": 1,
-    "labelColor": "black",
-    "color": "blue",
-    "fill": "semi",
-    "size": "s",
-    "font": "sans",
-    "align": "middle",
-    "verticalAlign": "middle",
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "ct_agent_tasks (migration 011)"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "pending → running → done / failed / cancelled"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "input · progress · result · session theo danh mục"
-        }
-       ]
-      }
-     ]
-    }
-   }
-  },
-  {
-   "id": "shape:b2",
-   "typeName": "shape",
-   "type": "geo",
-   "x": 60,
-   "y": 250,
-   "rotation": 0,
-   "index": "aBHGX",
-   "parentId": "shape:fb",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "geo": "rectangle",
-    "dash": "solid",
-    "url": "",
-    "w": 460,
-    "h": 150,
-    "growY": 0,
-    "scale": 1,
-    "labelColor": "black",
-    "color": "green",
-    "fill": "semi",
-    "size": "s",
-    "font": "sans",
-    "align": "middle",
-    "verticalAlign": "middle",
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "MCP /mcp — flexiprint-mcp"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "đọc · ghi · chạy AI · kiểm tra prompt"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "+ tài liệu hệ thống (rules từng lớp)"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "token riêng mỗi người, có scope"
-        }
-       ]
-      }
-     ]
-    }
-   }
-  },
-  {
-   "id": "shape:b3",
-   "typeName": "shape",
-   "type": "geo",
-   "x": 60,
-   "y": 460,
-   "rotation": 0,
-   "index": "aCRJb",
-   "parentId": "shape:fb",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "geo": "rectangle",
-    "dash": "solid",
-    "url": "",
-    "w": 460,
-    "h": 130,
+    "w": 440,
+    "h": 110,
     "growY": 0,
     "scale": 1,
     "labelColor": "black",
@@ -524,7 +176,7 @@
        "content": [
         {
          "type": "text",
-         "text": "DB + lịch sử = nguồn sự thật chung"
+         "text": "Người trong công ty chat:"
         }
        ]
       },
@@ -533,16 +185,7 @@
        "content": [
         {
          "type": "text",
-         "text": "ghi nguồn: browser / agent:<tên>"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "chống ghi đè bằng updated_at"
+         "text": "\"@flexiprint lỗ treo Chibi Car bị lệch, sửa giúp\""
         }
        ]
       }
@@ -551,108 +194,13 @@
    }
   },
   {
-   "id": "shape:b4",
-   "typeName": "shape",
-   "type": "geo",
-   "x": 60,
-   "y": 650,
-   "rotation": 0,
-   "index": "aDA8b",
-   "parentId": "shape:fb",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "geo": "rectangle",
-    "dash": "solid",
-    "url": "",
-    "w": 460,
-    "h": 90,
-    "growY": 0,
-    "scale": 1,
-    "labelColor": "black",
-    "color": "orange",
-    "fill": "semi",
-    "size": "s",
-    "font": "sans",
-    "align": "middle",
-    "verticalAlign": "middle",
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "ComfyUI studio + fal"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "(tạo ảnh: gốc · đa sắc · vật liệu · mockup)"
-        }
-       ]
-      }
-     ]
-    }
-   }
-  },
-  {
-   "id": "shape:b5",
-   "typeName": "shape",
-   "type": "geo",
-   "x": 60,
-   "y": 790,
-   "rotation": 0,
-   "index": "aEU4e",
-   "parentId": "shape:fb",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "geo": "rectangle",
-    "dash": "dashed",
-    "url": "",
-    "w": 460,
-    "h": 90,
-    "growY": 0,
-    "scale": 1,
-    "labelColor": "black",
-    "color": "grey",
-    "fill": "none",
-    "size": "s",
-    "font": "sans",
-    "align": "middle",
-    "verticalAlign": "middle",
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "Gemini Flash — chỉ còn là dự phòng"
-        }
-       ]
-      }
-     ]
-    }
-   }
-  },
-  {
-   "id": "shape:c1",
+   "id": "shape:ag",
    "typeName": "shape",
    "type": "geo",
    "x": 40,
-   "y": 60,
+   "y": 260,
    "rotation": 0,
-   "index": "aFqIb",
+   "index": "a7q3A",
    "parentId": "shape:fc",
    "isLocked": false,
    "opacity": 1,
@@ -661,121 +209,8 @@
     "geo": "rectangle",
     "dash": "solid",
     "url": "",
-    "w": 460,
-    "h": 130,
-    "growY": 0,
-    "scale": 1,
-    "labelColor": "black",
-    "color": "blue",
-    "fill": "semi",
-    "size": "s",
-    "font": "sans",
-    "align": "middle",
-    "verticalAlign": "middle",
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "Kernel API  /kernel/v1/turns · /jobs/:id"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "token svc_… của project flexiprint"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "(admin agent_ide cấp)"
-        }
-       ]
-      }
-     ]
-    }
-   }
-  },
-  {
-   "id": "shape:c2",
-   "typeName": "shape",
-   "type": "geo",
-   "x": 40,
-   "y": 250,
-   "rotation": 0,
-   "index": "aGy1b",
-   "parentId": "shape:fc",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "geo": "rectangle",
-    "dash": "dashed",
-    "url": "",
-    "w": 460,
-    "h": 100,
-    "growY": 0,
-    "scale": 1,
-    "labelColor": "black",
-    "color": "green",
-    "fill": "none",
-    "size": "s",
-    "font": "sans",
-    "align": "middle",
-    "verticalAlign": "middle",
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "Người trong công ty chat trên agent_ide"
-        }
-       ]
-      },
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "“@flexiprint …” (nhờ trực tiếp)"
-        }
-       ]
-      }
-     ]
-    }
-   }
-  },
-  {
-   "id": "shape:c3",
-   "typeName": "shape",
-   "type": "geo",
-   "x": 40,
-   "y": 440,
-   "rotation": 0,
-   "index": "aHLKU",
-   "parentId": "shape:fc",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "geo": "rectangle",
-    "dash": "solid",
-    "url": "",
-    "w": 460,
-    "h": 190,
+    "w": 440,
+    "h": 620,
     "growY": 0,
     "scale": 1,
     "labelColor": "black",
@@ -798,11 +233,14 @@
        ]
       },
       {
+       "type": "paragraph"
+      },
+      {
        "type": "paragraph",
        "content": [
         {
          "type": "text",
-         "text": "docs/agent.md + skills flexiprint-task / -category"
+         "text": "skill flexiprint-category:"
         }
        ]
       },
@@ -811,7 +249,7 @@
        "content": [
         {
          "type": "text",
-         "text": "capability MCP flexiprint (Bearer CT_AGENT_TOKEN)"
+         "text": "đọc → giải thích vì sao ảnh ra như vậy"
         }
        ]
       },
@@ -820,7 +258,34 @@
        "content": [
         {
          "type": "text",
-         "text": "không bash · task từ app: chỉ đề xuất"
+         "text": "→ viết bản trước / sau, ghép thử bằng assemble_prompts"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "→ tạo ảnh thử nếu cần"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "→ HỎI người nhờ đồng ý"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "→ lưu, báo lại mã lịch sử"
         }
        ]
       }
@@ -829,294 +294,32 @@
    }
   },
   {
-   "id": "shape:arrow1",
+   "id": "shape:m1",
    "typeName": "shape",
-   "type": "arrow",
-   "x": 270,
-   "y": 125,
+   "type": "geo",
+   "x": 60,
+   "y": 260,
    "rotation": 0,
-   "index": "aIhVQ",
-   "parentId": "page:page",
+   "index": "a8tqI",
+   "parentId": "shape:fb",
    "isLocked": false,
    "opacity": 1,
    "meta": {},
    "props": {
-    "kind": "arc",
-    "labelColor": "black",
-    "color": "blue",
-    "fill": "none",
+    "geo": "rectangle",
     "dash": "solid",
-    "size": "s",
-    "arrowheadStart": "none",
-    "arrowheadEnd": "arrow",
-    "font": "sans",
-    "start": {
-     "x": 0,
-     "y": 0
-    },
-    "end": {
-     "x": 780,
-     "y": 0
-    },
-    "bend": 0,
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "① tạo task (thay vì gọi Flash)"
-        }
-       ]
-      }
-     ]
-    },
-    "labelPosition": 0.5,
+    "url": "",
+    "w": 440,
+    "h": 110,
+    "growY": 0,
     "scale": 1,
-    "elbowMidPoint": 0.5
-   }
-  },
-  {
-   "id": "binding:arrow1-start",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow1",
-   "toId": "shape:a1",
-   "meta": {},
-   "props": {
-    "terminal": "start",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "binding:arrow1-end",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow1",
-   "toId": "shape:b1",
-   "meta": {},
-   "props": {
-    "terminal": "end",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "shape:arrow2",
-   "typeName": "shape",
-   "type": "arrow",
-   "x": 1050,
-   "y": 125,
-   "rotation": 0,
-   "index": "aJvvj",
-   "parentId": "page:page",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "kind": "arc",
-    "labelColor": "black",
-    "color": "blue",
-    "fill": "none",
-    "dash": "solid",
-    "size": "s",
-    "arrowheadStart": "none",
-    "arrowheadEnd": "arrow",
-    "font": "sans",
-    "start": {
-     "x": 0,
-     "y": 0
-    },
-    "end": {
-     "x": 780,
-     "y": 0
-    },
-    "bend": 40,
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "② gửi lượt (svc token)"
-        }
-       ]
-      }
-     ]
-    },
-    "labelPosition": 0.5,
-    "scale": 1,
-    "elbowMidPoint": 0.5
-   }
-  },
-  {
-   "id": "binding:arrow2-start",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow2",
-   "toId": "shape:b1",
-   "meta": {},
-   "props": {
-    "terminal": "start",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "binding:arrow2-end",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow2",
-   "toId": "shape:c1",
-   "meta": {},
-   "props": {
-    "terminal": "end",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "shape:arrow3",
-   "typeName": "shape",
-   "type": "arrow",
-   "x": 1830,
-   "y": 125,
-   "rotation": 0,
-   "index": "aKyiz",
-   "parentId": "page:page",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "kind": "arc",
-    "labelColor": "black",
-    "color": "blue",
-    "fill": "none",
-    "dash": "solid",
-    "size": "s",
-    "arrowheadStart": "none",
-    "arrowheadEnd": "arrow",
-    "font": "sans",
-    "start": {
-     "x": 0,
-     "y": 0
-    },
-    "end": {
-     "x": 0,
-     "y": 410
-    },
-    "bend": 0,
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "③ chạy lượt cho @flexiprint"
-        }
-       ]
-      }
-     ]
-    },
-    "labelPosition": 0.5,
-    "scale": 1,
-    "elbowMidPoint": 0.5
-   }
-  },
-  {
-   "id": "binding:arrow3-start",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow3",
-   "toId": "shape:c1",
-   "meta": {},
-   "props": {
-    "terminal": "start",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "binding:arrow3-end",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow3",
-   "toId": "shape:c3",
-   "meta": {},
-   "props": {
-    "terminal": "end",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "shape:arrow4",
-   "typeName": "shape",
-   "type": "arrow",
-   "x": 1830,
-   "y": 300,
-   "rotation": 0,
-   "index": "aLBjM",
-   "parentId": "page:page",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "kind": "arc",
     "labelColor": "black",
     "color": "green",
-    "fill": "none",
-    "dash": "dashed",
+    "fill": "semi",
     "size": "s",
-    "arrowheadStart": "none",
-    "arrowheadEnd": "arrow",
     "font": "sans",
-    "start": {
-     "x": 0,
-     "y": 0
-    },
-    "end": {
-     "x": 0,
-     "y": 235
-    },
-    "bend": 0,
+    "align": "middle",
+    "verticalAlign": "middle",
     "richText": {
      "type": "doc",
      "content": [
@@ -1125,61 +328,318 @@
        "content": [
         {
          "type": "text",
-         "text": "chiều xuôi"
+         "text": "flexiprint-mcp — tool ĐỌC"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "list_categories · get_category · get_history"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "list_cliparts · view_image · assemble_prompts"
         }
        ]
       }
      ]
-    },
-    "labelPosition": 0.5,
+    }
+   }
+  },
+  {
+   "id": "shape:m2",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 60,
+   "y": 430,
+   "rotation": 0,
+   "index": "a9PKj",
+   "parentId": "shape:fb",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 90,
+    "growY": 0,
     "scale": 1,
-    "elbowMidPoint": 0.5
+    "labelColor": "black",
+    "color": "orange",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "ComfyUI studio + fal.ai"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "run_studio / get_run (ảnh lưu vào thư viện)"
+        }
+       ]
+      }
+     ]
+    }
    }
   },
   {
-   "id": "binding:arrow4-start",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow4",
-   "toId": "shape:c2",
+   "id": "shape:m3",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 60,
+   "y": 590,
+   "rotation": 0,
+   "index": "aATDU",
+   "parentId": "shape:fb",
+   "isLocked": false,
+   "opacity": 1,
    "meta": {},
    "props": {
-    "terminal": "start",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 130,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "green",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "flexiprint-mcp — tool LƯU"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "save_category · save_preset · restore_category"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "chốt: không ghi đè khi vừa có người sửa · không lưu khi"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "danh mục đang có task từ app · preset dùng chung phải xác nhận"
+        }
+       ]
+      }
+     ]
+    }
    }
   },
   {
-   "id": "binding:arrow4-end",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow4",
-   "toId": "shape:c3",
+   "id": "shape:m4",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 60,
+   "y": 790,
+   "rotation": 0,
+   "index": "aB6Fr",
+   "parentId": "shape:fb",
+   "isLocked": false,
+   "opacity": 1,
    "meta": {},
    "props": {
-    "terminal": "end",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 110,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "violet",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "DB + lịch sử"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "mỗi lần lưu: bản trước · bản sau · ai nhờ · vì sao"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "model \"agent:flexiprint\" — không xoá gì"
+        }
+       ]
+      }
+     ]
+    }
    }
   },
   {
-   "id": "shape:arrow5",
+   "id": "shape:w1",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 40,
+   "y": 430,
+   "rotation": 0,
+   "index": "aCZfb",
+   "parentId": "shape:fa",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 90,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "Thư viện: thấy ảnh thử agent vừa tạo"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:w2",
+   "typeName": "shape",
+   "type": "geo",
+   "x": 40,
+   "y": 790,
+   "rotation": 0,
+   "index": "aDZKQ",
+   "parentId": "shape:fa",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "geo": "rectangle",
+    "dash": "solid",
+    "url": "",
+    "w": 440,
+    "h": 110,
+    "growY": 0,
+    "scale": 1,
+    "labelColor": "black",
+    "color": "blue",
+    "fill": "semi",
+    "size": "s",
+    "font": "sans",
+    "align": "middle",
+    "verticalAlign": "middle",
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "Mở danh mục: thấy bản mới"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "Tab Lịch sử: dòng \"@flexiprint: … (theo yêu cầu của …)\""
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shape:x0",
    "typeName": "shape",
    "type": "arrow",
-   "x": 1830,
-   "y": 535,
+   "x": 260,
+   "y": 180,
    "rotation": 0,
-   "index": "aMWBE",
+   "index": "aEviz",
    "parentId": "page:page",
    "isLocked": false,
    "opacity": 1,
@@ -1187,7 +647,7 @@
    "props": {
     "kind": "arc",
     "labelColor": "black",
-    "color": "green",
+    "color": "violet",
     "fill": "none",
     "dash": "solid",
     "size": "s",
@@ -1199,8 +659,8 @@
      "y": 0
     },
     "end": {
-     "x": -780,
-     "y": -210
+     "x": 0,
+     "y": 80
     },
     "bend": 0,
     "richText": {
@@ -1211,7 +671,7 @@
        "content": [
         {
          "type": "text",
-         "text": "④ get_task, xem hệ thống, tạo ảnh thử, review"
+         "text": "nhờ việc"
         }
        ]
       }
@@ -1223,49 +683,49 @@
    }
   },
   {
-   "id": "binding:arrow5-start",
+   "id": "binding:x0-start",
    "typeName": "binding",
    "type": "arrow",
-   "fromId": "shape:arrow5",
-   "toId": "shape:c3",
+   "fromId": "shape:x0",
+   "toId": "shape:p1",
    "meta": {},
    "props": {
     "terminal": "start",
     "normalizedAnchor": {
      "x": 0.5,
-     "y": 0.5
+     "y": 1
     },
     "isExact": false,
-    "isPrecise": false,
+    "isPrecise": true,
     "snap": "none"
    }
   },
   {
-   "id": "binding:arrow5-end",
+   "id": "binding:x0-end",
    "typeName": "binding",
    "type": "arrow",
-   "fromId": "shape:arrow5",
-   "toId": "shape:b2",
+   "fromId": "shape:x0",
+   "toId": "shape:ag",
    "meta": {},
    "props": {
     "terminal": "end",
     "normalizedAnchor": {
      "x": 0.5,
-     "y": 0.5
+     "y": 0
     },
     "isExact": false,
-    "isPrecise": false,
+    "isPrecise": true,
     "snap": "none"
    }
   },
   {
-   "id": "shape:arrow6",
+   "id": "shape:x1",
    "typeName": "shape",
    "type": "arrow",
-   "x": 1050,
-   "y": 325,
+   "x": 480,
+   "y": 315,
    "rotation": 0,
-   "index": "aN1pX",
+   "index": "aF2eU",
    "parentId": "page:page",
    "isLocked": false,
    "opacity": 1,
@@ -1285,8 +745,8 @@
      "y": 0
     },
     "end": {
-     "x": 0,
-     "y": 370
+     "x": 260,
+     "y": 0
     },
     "bend": 0,
     "richText": {
@@ -1297,7 +757,7 @@
        "content": [
         {
          "type": "text",
-         "text": "chạy thử ảnh"
+         "text": "① đọc toàn hệ thống"
         }
        ]
       }
@@ -1309,49 +769,230 @@
    }
   },
   {
-   "id": "binding:arrow6-start",
+   "id": "binding:x1-start",
    "typeName": "binding",
    "type": "arrow",
-   "fromId": "shape:arrow6",
-   "toId": "shape:b2",
+   "fromId": "shape:x1",
+   "toId": "shape:ag",
    "meta": {},
    "props": {
     "terminal": "start",
     "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
+     "x": 1,
+     "y": 0.08870967741935484
     },
     "isExact": false,
-    "isPrecise": false,
+    "isPrecise": true,
     "snap": "none"
    }
   },
   {
-   "id": "binding:arrow6-end",
+   "id": "binding:x1-end",
    "typeName": "binding",
    "type": "arrow",
-   "fromId": "shape:arrow6",
-   "toId": "shape:b4",
+   "fromId": "shape:x1",
+   "toId": "shape:m1",
    "meta": {},
    "props": {
     "terminal": "end",
     "normalizedAnchor": {
-     "x": 0.5,
+     "x": 0,
      "y": 0.5
     },
     "isExact": false,
-    "isPrecise": false,
+    "isPrecise": true,
     "snap": "none"
    }
   },
   {
-   "id": "shape:arrow7",
+   "id": "shape:x2",
    "typeName": "shape",
    "type": "arrow",
-   "x": 1050,
-   "y": 325,
+   "x": 480,
+   "y": 475,
    "rotation": 0,
-   "index": "aOLKQ",
+   "index": "aG96j",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "orange",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": 260,
+     "y": 0
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "② tạo ảnh thử"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:x2-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:x2",
+   "toId": "shape:ag",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 1,
+     "y": 0.3467741935483871
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:x2-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:x2",
+   "toId": "shape:m2",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 0,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:x3",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 480,
+   "y": 655,
+   "rotation": 0,
+   "index": "aHTpU",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "green",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": 260,
+     "y": 0
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "④ lưu (sau khi"
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "người nhờ đồng ý)"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:x3-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:x3",
+   "toId": "shape:ag",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 1,
+     "y": 0.6370967741935484
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:x3-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:x3",
+   "toId": "shape:m3",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 0,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:x3b",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 960,
+   "y": 720,
+   "rotation": 0,
+   "index": "aI5G2",
    "parentId": "page:page",
    "isLocked": false,
    "opacity": 1,
@@ -1372,7 +1013,7 @@
     },
     "end": {
      "x": 0,
-     "y": 200
+     "y": 70
     },
     "bend": 0,
     "richText": {
@@ -1383,7 +1024,7 @@
        "content": [
         {
          "type": "text",
-         "text": "đọc · lưu có lịch sử (khi được nhờ trực tiếp)"
+         "text": "ghi + lịch sử"
         }
        ]
       }
@@ -1395,49 +1036,135 @@
    }
   },
   {
-   "id": "binding:arrow7-start",
+   "id": "binding:x3b-start",
    "typeName": "binding",
    "type": "arrow",
-   "fromId": "shape:arrow7",
-   "toId": "shape:b2",
+   "fromId": "shape:x3b",
+   "toId": "shape:m3",
    "meta": {},
    "props": {
     "terminal": "start",
     "normalizedAnchor": {
      "x": 0.5,
-     "y": 0.5
+     "y": 1
     },
     "isExact": false,
-    "isPrecise": false,
+    "isPrecise": true,
     "snap": "none"
    }
   },
   {
-   "id": "binding:arrow7-end",
+   "id": "binding:x3b-end",
    "typeName": "binding",
    "type": "arrow",
-   "fromId": "shape:arrow7",
-   "toId": "shape:b3",
+   "fromId": "shape:x3b",
+   "toId": "shape:m4",
    "meta": {},
    "props": {
     "terminal": "end",
     "normalizedAnchor": {
      "x": 0.5,
-     "y": 0.5
+     "y": 0
     },
     "isExact": false,
-    "isPrecise": false,
+    "isPrecise": true,
     "snap": "none"
    }
   },
   {
-   "id": "shape:arrow8",
+   "id": "shape:x4",
    "typeName": "shape",
    "type": "arrow",
-   "x": 1830,
-   "y": 535,
+   "x": 1180,
+   "y": 475,
    "rotation": 0,
-   "index": "aPpUq",
+   "index": "aJyiz",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "orange",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": 260,
+     "y": 0
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "ảnh vào thư viện"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:x4-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:x4",
+   "toId": "shape:m2",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 1,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:x4-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:x4",
+   "toId": "shape:w1",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 0,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:x5",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 1180,
+   "y": 845,
+   "rotation": 0,
+   "index": "aKMMv",
    "parentId": "page:page",
    "isLocked": false,
    "opacity": 1,
@@ -1457,8 +1184,94 @@
      "y": 0
     },
     "end": {
-     "x": -780,
-     "y": -410
+     "x": 260,
+     "y": 0
+    },
+    "bend": 0,
+    "richText": {
+     "type": "doc",
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "⑤ app thấy ngay"
+        }
+       ]
+      }
+     ]
+    },
+    "labelPosition": 0.5,
+    "scale": 1,
+    "elbowMidPoint": 0.5
+   }
+  },
+  {
+   "id": "binding:x5-start",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:x5",
+   "toId": "shape:m4",
+   "meta": {},
+   "props": {
+    "terminal": "start",
+    "normalizedAnchor": {
+     "x": 1,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "binding:x5-end",
+   "typeName": "binding",
+   "type": "arrow",
+   "fromId": "shape:x5",
+   "toId": "shape:w2",
+   "meta": {},
+   "props": {
+    "terminal": "end",
+    "normalizedAnchor": {
+     "x": 0,
+     "y": 0.5
+    },
+    "isExact": false,
+    "isPrecise": true,
+    "snap": "none"
+   }
+  },
+  {
+   "id": "shape:xq",
+   "typeName": "shape",
+   "type": "arrow",
+   "x": 444.8,
+   "y": 297.2,
+   "rotation": 0,
+   "index": "aLONr",
+   "parentId": "page:page",
+   "isLocked": false,
+   "opacity": 1,
+   "meta": {},
+   "props": {
+    "kind": "arc",
+    "labelColor": "black",
+    "color": "violet",
+    "fill": "none",
+    "dash": "solid",
+    "size": "s",
+    "arrowheadStart": "none",
+    "arrowheadEnd": "arrow",
+    "font": "sans",
+    "start": {
+     "x": 0,
+     "y": 0
+    },
+    "end": {
+     "x": 0,
+     "y": -117.19999999999999
     },
     "bend": -60,
     "richText": {
@@ -1469,93 +1282,16 @@
        "content": [
         {
          "type": "text",
-         "text": "⑤ submit_result + report_progress (qua MCP)"
+         "text": "③ cho xem trước / sau,"
         }
        ]
-      }
-     ]
-    },
-    "labelPosition": 0.5,
-    "scale": 1,
-    "elbowMidPoint": 0.5
-   }
-  },
-  {
-   "id": "binding:arrow8-start",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow8",
-   "toId": "shape:c3",
-   "meta": {},
-   "props": {
-    "terminal": "start",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "binding:arrow8-end",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow8",
-   "toId": "shape:b1",
-   "meta": {},
-   "props": {
-    "terminal": "end",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "shape:arrow9",
-   "typeName": "shape",
-   "type": "arrow",
-   "x": 1050,
-   "y": 125,
-   "rotation": 0,
-   "index": "aQ3aM",
-   "parentId": "page:page",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "kind": "arc",
-    "labelColor": "black",
-    "color": "blue",
-    "fill": "none",
-    "dash": "solid",
-    "size": "s",
-    "arrowheadStart": "none",
-    "arrowheadEnd": "arrow",
-    "font": "sans",
-    "start": {
-     "x": 0,
-     "y": 0
-    },
-    "end": {
-     "x": -780,
-     "y": 360
-    },
-    "bend": 0,
-    "richText": {
-     "type": "doc",
-     "content": [
+      },
       {
        "type": "paragraph",
        "content": [
         {
          "type": "text",
-         "text": "⑥ kết quả + tiến độ realtime"
+         "text": "hỏi đồng ý"
         }
        ]
       }
@@ -1567,307 +1303,49 @@
    }
   },
   {
-   "id": "binding:arrow9-start",
+   "id": "binding:xq-start",
    "typeName": "binding",
    "type": "arrow",
-   "fromId": "shape:arrow9",
-   "toId": "shape:b1",
+   "fromId": "shape:xq",
+   "toId": "shape:ag",
    "meta": {},
    "props": {
     "terminal": "start",
     "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
+     "x": 0.92,
+     "y": 0.06
     },
     "isExact": false,
-    "isPrecise": false,
+    "isPrecise": true,
     "snap": "none"
    }
   },
   {
-   "id": "binding:arrow9-end",
+   "id": "binding:xq-end",
    "typeName": "binding",
    "type": "arrow",
-   "fromId": "shape:arrow9",
-   "toId": "shape:a3",
+   "fromId": "shape:xq",
+   "toId": "shape:p1",
    "meta": {},
    "props": {
     "terminal": "end",
     "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
+     "x": 0.92,
+     "y": 1
     },
     "isExact": false,
-    "isPrecise": false,
+    "isPrecise": true,
     "snap": "none"
    }
   },
   {
-   "id": "shape:arrow10",
-   "typeName": "shape",
-   "type": "arrow",
-   "x": 270,
-   "y": 485,
-   "rotation": 0,
-   "index": "aRHDb",
-   "parentId": "page:page",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "kind": "arc",
-    "labelColor": "black",
-    "color": "blue",
-    "fill": "none",
-    "dash": "solid",
-    "size": "s",
-    "arrowheadStart": "none",
-    "arrowheadEnd": "arrow",
-    "font": "sans",
-    "start": {
-     "x": 0,
-     "y": 0
-    },
-    "end": {
-     "x": 780,
-     "y": 40
-    },
-    "bend": 0,
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "⑦ Áp dụng & lưu"
-        }
-       ]
-      }
-     ]
-    },
-    "labelPosition": 0.5,
-    "scale": 1,
-    "elbowMidPoint": 0.5
-   }
-  },
-  {
-   "id": "binding:arrow10-start",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow10",
-   "toId": "shape:a3",
-   "meta": {},
-   "props": {
-    "terminal": "start",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "binding:arrow10-end",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow10",
-   "toId": "shape:b3",
-   "meta": {},
-   "props": {
-    "terminal": "end",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "shape:arrow11",
-   "typeName": "shape",
-   "type": "arrow",
-   "x": 1050,
-   "y": 525,
-   "rotation": 0,
-   "index": "aSddf",
-   "parentId": "page:page",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "kind": "arc",
-    "labelColor": "black",
-    "color": "green",
-    "fill": "none",
-    "dash": "solid",
-    "size": "s",
-    "arrowheadStart": "none",
-    "arrowheadEnd": "arrow",
-    "font": "sans",
-    "start": {
-     "x": 0,
-     "y": 0
-    },
-    "end": {
-     "x": -780,
-     "y": 175
-    },
-    "bend": 0,
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "realtime"
-        }
-       ]
-      }
-     ]
-    },
-    "labelPosition": 0.5,
-    "scale": 1,
-    "elbowMidPoint": 0.5
-   }
-  },
-  {
-   "id": "binding:arrow11-start",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow11",
-   "toId": "shape:b3",
-   "meta": {},
-   "props": {
-    "terminal": "start",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "binding:arrow11-end",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow11",
-   "toId": "shape:a4",
-   "meta": {},
-   "props": {
-    "terminal": "end",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "shape:arrow12",
-   "typeName": "shape",
-   "type": "arrow",
-   "x": 270,
-   "y": 125,
-   "rotation": 0,
-   "index": "aTThf",
-   "parentId": "page:page",
-   "isLocked": false,
-   "opacity": 1,
-   "meta": {},
-   "props": {
-    "kind": "arc",
-    "labelColor": "black",
-    "color": "grey",
-    "fill": "none",
-    "dash": "dashed",
-    "size": "s",
-    "arrowheadStart": "none",
-    "arrowheadEnd": "arrow",
-    "font": "sans",
-    "start": {
-     "x": 0,
-     "y": 0
-    },
-    "end": {
-     "x": 780,
-     "y": 710
-    },
-    "bend": 40,
-    "richText": {
-     "type": "doc",
-     "content": [
-      {
-       "type": "paragraph",
-       "content": [
-        {
-         "type": "text",
-         "text": "agent offline → dự phòng"
-        }
-       ]
-      }
-     ]
-    },
-    "labelPosition": 0.5,
-    "scale": 1,
-    "elbowMidPoint": 0.5
-   }
-  },
-  {
-   "id": "binding:arrow12-start",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow12",
-   "toId": "shape:a1",
-   "meta": {},
-   "props": {
-    "terminal": "start",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "binding:arrow12-end",
-   "typeName": "binding",
-   "type": "arrow",
-   "fromId": "shape:arrow12",
-   "toId": "shape:b5",
-   "meta": {},
-   "props": {
-    "terminal": "end",
-    "normalizedAnchor": {
-     "x": 0.5,
-     "y": 0.5
-    },
-    "isExact": false,
-    "isPrecise": false,
-    "snap": "none"
-   }
-  },
-  {
-   "id": "shape:legend",
+   "id": "shape:steps",
    "typeName": "shape",
    "type": "text",
    "x": 0,
-   "y": 960,
+   "y": 990,
    "rotation": 0,
-   "index": "aUUqT",
+   "index": "aMZBz",
    "parentId": "page:page",
    "isLocked": false,
    "opacity": 1,
@@ -1877,7 +1355,7 @@
     "size": "m",
     "font": "sans",
     "textAlign": "start",
-    "w": 2100,
+    "w": 1920,
     "richText": {
      "type": "doc",
      "content": [
@@ -1886,7 +1364,7 @@
        "content": [
         {
          "type": "text",
-         "text": "Xanh dương = chiều ngược: trình duyệt giao việc cho @flexiprint trên agent_ide (①→⑦)"
+         "text": "Người trong công ty chat \"@flexiprint …\" trên agent_ide."
         }
        ]
       },
@@ -1895,7 +1373,7 @@
        "content": [
         {
          "type": "text",
-         "text": "Xanh lá = chiều xuôi: agent điều khiển toàn hệ thống qua MCP (đọc, ghi, chạy AI, kiểm tra)"
+         "text": "① Agent đọc qua MCP (CT_AGENT_TOKEN): danh mục, lịch sử, cây clipart, xem ảnh, xem prompt đã ghép."
         }
        ]
       },
@@ -1904,7 +1382,43 @@
        "content": [
         {
          "type": "text",
-         "text": "Xám nét đứt = dự phòng khi không có agent online"
+         "text": "② Khi cần, agent tạo ảnh thử bằng studio — ảnh lưu vào thư viện như ảnh tạo từ app."
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "③ Agent viết bản trước / sau, cho người nhờ xem và hỏi đồng ý."
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "④ Đồng ý → save_category / save_preset. Bị từ chối nếu có người vừa sửa (agent đọc lại rồi làm lại), nếu danh mục đang có task từ app, hoặc preset dùng chung chưa xác nhận."
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "⑤ Mỗi lần lưu có một dòng lịch sử; app thấy bản mới ngay; restore_category đưa về bất kỳ bản cũ nào."
+        }
+       ]
+      },
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "Lưu ý: danh tính người nhờ do agent tự ghi (chưa xác thực) — mọi người chat được với @flexiprint đều nhờ nó lưu được."
         }
        ]
       }

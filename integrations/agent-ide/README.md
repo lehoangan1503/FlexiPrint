@@ -50,7 +50,7 @@ sequenceDiagram
     U->>F: ⑦ tick & "Áp dụng & lưu" (lưu bằng tài khoản người dùng, có lịch sử)
 ```
 
-Bản vẽ tldraw: `docs/architecture/flexiprint-mcp-2-chieu.tldr`.
+Bản vẽ tldraw: `docs/architecture/flexiprint-chieu-nguoc.tldr` (app → agent → app) và `docs/architecture/flexiprint-chieu-xuoi.tldr` (nhờ thẳng @flexiprint).
 
 ---
 

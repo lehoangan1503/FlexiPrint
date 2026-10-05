@@ -10,3 +10,6 @@ next-env.d.ts
 __pycache__/
 .venv/
 services/comfy/.comfy/
+
+# agent_ide hand-off secrets (deploy key…) — sent privately, never committed
+integrations/agent-ide/secrets/

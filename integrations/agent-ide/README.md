@@ -87,7 +87,7 @@ Khi agent_ide không trả lời, app vẫn dùng Flash như cũ.
 | `CT_AGENT_TOKEN` (`fpa_…`) | An (đã tạo) | `.env` server FlexiPrint **và** header của capability `flexiprint` trên agent_ide (mục 5.4) | Chìa để **agent vào FlexiPrint** (MCP). An gửi **riêng**, không nằm trong repo |
 | `svc_…` (`AGENT_IDE_TOKEN`) | Admin agent_ide (mục 5.5) | `.env` server FlexiPrint | Chìa để **FlexiPrint gửi việc cho @flexiprint**; chỉ trong thư mục project này, có trần lượt/ngày, thu hồi được |
 | `AGENT_IDE_URL` | Admin agent_ide | `.env` server FlexiPrint | Địa chỉ public của agent_ide (Cloudflare Tunnel), không có `/` cuối |
-| Deploy key GitHub | Agent trên agent_ide sinh (mục 5.1), An gắn vào repo | Khoá riêng nằm trên máy agent_ide; khoá công khai trên GitHub | Kéo code FlexiPrint về (chỉ đọc), không hết hạn tới khi gỡ |
+| Deploy key GitHub (`flexiprint_deploy`) | An (đã tạo + gắn lên GitHub) | Khoá riêng: gửi riêng → `~/.ssh/` máy agent_ide; khoá công khai trên GitHub | Kéo code FlexiPrint về (chỉ đọc, một repo), không hết hạn tới khi gỡ |
 
 Đã có sẵn bên FlexiPrint, không cần làm gì: `SUPABASE_SERVICE_ROLE_KEY`, `CT_COMFY_TOKEN`.
 
@@ -100,15 +100,23 @@ Project của agent = `REPO/integrations/agent-ide/flexiprint` — chính thư m
 có ngay bản khai và skill mới.
 
 ### 5.1 Khoá đọc repo (deploy key, không hết hạn)
-```bash
-ssh-keygen -t ed25519 -N "" -C "agent_ide flexiprint (read-only)" -f ~/.ssh/flexiprint_deploy
-cat ~/.ssh/flexiprint_deploy.pub
-```
-**[CẦN NGƯỜI]** Gửi dòng `.pub` cho An. An vào GitHub → repo FlexiPrint → Settings → Deploy keys → *Add deploy key*
-→ dán, **không** tick "Allow write access". (Khoá riêng không bao giờ rời máy agent_ide. Deploy key không hết hạn;
-gỡ khỏi GitHub là thu hồi.)
+An đã tạo sẵn khoá và gắn lên GitHub (chỉ đọc, chỉ repo FlexiPrint, không hết hạn — gỡ trên GitHub là thu hồi).
+An gửi riêng thư mục `secrets/` gồm `flexiprint_deploy` (khoá riêng) và `.env.agent-ide.local` (token MCP).
+Không cần gửi gì lại cho An.
 
-Thêm vào `~/.ssh/config`:
+Đặt khoá vào máy agent_ide:
+- **Linux / macOS**
+  ```bash
+  mkdir -p ~/.ssh && cp flexiprint_deploy ~/.ssh/flexiprint_deploy && chmod 600 ~/.ssh/flexiprint_deploy
+  ```
+- **Windows (PowerShell)**
+  ```powershell
+  New-Item -ItemType Directory -Force $HOME\.ssh | Out-Null
+  Copy-Item flexiprint_deploy $HOME\.ssh\flexiprint_deploy
+  icacls $HOME\.ssh\flexiprint_deploy /inheritance:r /grant:r "$($env:USERNAME):R"
+  ```
+
+Thêm vào `~/.ssh/config` (Windows: `%USERPROFILE%\.ssh\config`):
 ```
 Host github-flexiprint
   HostName github.com
@@ -116,6 +124,7 @@ Host github-flexiprint
   IdentityFile ~/.ssh/flexiprint_deploy
   IdentitiesOnly yes
 ```
+Kiểm: `ssh -T github-flexiprint` → "Hi lehoangan1503/FlexiPrint! You've successfully authenticated…".
 
 ### 5.2 Lấy code + tự cập nhật
 ```bash
@@ -176,9 +185,10 @@ UI Cài đặt → Dịch vụ → thêm; hoặc API admin
 ## 6. Việc bên FlexiPrint (An)
 
 1. Chạy trên Supabase: `supabase/migrations/011_agent_tasks.sql`, `012_agent_writes.sql`.
-2. `.env` server FlexiPrint: `CT_AGENT_TOKEN=fpa_…` (đã có trong `integrations/agent-ide/.env.agent-ide.local`),
+2. `.env` server FlexiPrint: `CT_AGENT_TOKEN=fpa_…` (đã có trong `integrations/agent-ide/secrets/.env.agent-ide.local`),
    `AGENT_IDE_URL=…`, `AGENT_IDE_TOKEN=svc_…` (từ mục 5.5). Deploy.
-3. Gắn deploy key (mục 5.1).
+3. Gắn khoá công khai `secrets/flexiprint_deploy.pub` lên GitHub (Settings → Deploy keys, không cho ghi), rồi gửi
+   riêng thư mục `secrets/` cho admin agent_ide.
 
 ---
 
@@ -210,7 +220,7 @@ Resources: `flexiprint://guide/overview` (đọc đầu tiên), `…/task-result
 |---|---|
 | Chặn agent vào FlexiPrint | An đổi `CT_AGENT_TOKEN` trong `.env` FlexiPrint, deploy → gửi token mới cho agent_ide |
 | Chặn FlexiPrint gửi việc | Admin agent_ide: Dịch vụ → xoay token / tắt dịch vụ `flexiprint` |
-| Chặn kéo code | An gỡ deploy key trên GitHub |
+| Chặn kéo code | An gỡ deploy key "agent_ide flexiprint" trên GitHub (Settings → Deploy keys) |
 
 ## 9. Sự cố thường gặp
 

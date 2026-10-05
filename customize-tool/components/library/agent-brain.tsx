@@ -1,84 +1,40 @@
 "use client";
 
 /**
- * "Bộ não AI" of the category dialog: the built-in LLM (Gemini Flash) or the editor's own agent — @flexiprint on
- * agent_ide, which sees the whole system through flexiprint-mcp (server/agent/tasks.ts, server/mcp). With the
- * agent, the dialog sends a task and waits for it; the result comes back in the built-in LLM's shape, so the
- * rest of the dialog (tick, apply) does not change.
+ * The category dialog's AI is the editor's own agent — @flexiprint on agent_ide, which sees the whole system
+ * through flexiprint-mcp (server/agent/tasks.ts, server/mcp). The dialog sends a task and waits for it; the
+ * result comes back in the built-in LLM's shape, so the rest of the dialog (tick, apply) does not change.
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, Sparkles, Square } from "lucide-react";
+import { Bot, Loader2, Square } from "lucide-react";
 import type { CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { cx } from "../ui";
 
-export type CtAiBrain = "builtin" | "agent";
-
-const BRAIN_KEY = "ct-ai-brain";
-
-function readBrain(): CtAiBrain {
-  try {
-    return localStorage.getItem(BRAIN_KEY) === "agent" ? "agent" : "builtin";
-  } catch {
-    return "builtin";
-  }
-}
-
-/** The chosen brain (remembered per browser) and whether the agent can be used at all. */
-export function useAiBrain() {
+/** Whether @flexiprint is set up and answering. null while loading. */
+export function useAgentStatus() {
   const [status, setStatus] = useState<CtAgentStatus | null>(null);
-  const [brain, setBrainState] = useState<CtAiBrain>("builtin");
   useEffect(() => {
     let live = true;
     ctApi
       .agentStatus()
-      .then((s) => {
-        if (!live) return;
-        setStatus(s);
-        if (s.configured) setBrainState(readBrain());
-      })
-      .catch(() => undefined);
+      .then((s) => live && setStatus(s))
+      .catch((e: Error) => live && setStatus({ configured: false, online: false, name: "", error: e.message }));
     return () => {
       live = false;
     };
   }, []);
-  const setBrain = (b: CtAiBrain) => {
-    setBrainState(b);
-    try {
-      localStorage.setItem(BRAIN_KEY, b);
-    } catch {
-      // The choice just isn't remembered.
-    }
-  };
-  return { status, brain: status?.configured ? brain : ("builtin" as const), setBrain };
+  return status;
 }
 
-/** Flash | Agent switch — hidden while no agent is configured. */
-export function BrainToggle(props: { status: CtAgentStatus | null; brain: CtAiBrain; onBrain: (b: CtAiBrain) => void; disabled?: boolean }) {
-  if (!props.status?.configured) return null;
-  const item = (b: CtAiBrain, label: React.ReactNode, title: string) => (
-    <button
-      type="button"
-      disabled={props.disabled}
-      title={title}
-      onClick={() => props.onBrain(b)}
-      className={cx("inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px]", props.brain === b ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground")}
-    >
-      {label}
-    </button>
-  );
+/** "@flexiprint ●" — who the dialog sends the work to, and whether it is online. */
+export function AgentBadge({ status }: { status: CtAgentStatus | null }) {
+  const title = !status ? "Đang kiểm tra agent…" : !status.configured ? "Chưa cấu hình agent @flexiprint" : status.online ? "Agent trên agent_ide: xem toàn hệ thống, có thể tạo ảnh thử rồi mới đề xuất" : `Agent chưa trả lời: ${status.error || "offline"}`;
   return (
-    <span className="inline-flex items-center gap-0.5 rounded-md border bg-muted/50 p-0.5">
-      {item("builtin", <><Sparkles className="h-3 w-3" /> Flash</>, "AI có sẵn (Gemini Flash) — nhanh")}
-      {item(
-        "agent",
-        <>
-          <Bot className="h-3 w-3" /> @{props.status.name || "flexiprint"}
-          <span className={cx("h-1.5 w-1.5 rounded-full", props.status.online ? "bg-emerald-500" : "bg-rose-500")} />
-        </>,
-        props.status.online ? "Agent của bạn trên agent_ide: xem toàn hệ thống, có thể tạo ảnh thử rồi mới đề xuất — chậm hơn" : `Agent chưa trả lời: ${props.status.error || "offline"}`,
-      )}
+    <span title={title} className="inline-flex items-center gap-1 rounded-md border bg-muted/50 px-2 py-0.5 text-[11px]">
+      <Bot className="h-3 w-3" /> @{status?.name || "flexiprint"}
+      <span className={cx("h-1.5 w-1.5 rounded-full", !status ? "bg-muted-foreground" : status.configured && status.online ? "bg-emerald-500" : "bg-rose-500")} />
     </span>
   );
 }

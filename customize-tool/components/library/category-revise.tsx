@@ -4,22 +4,22 @@
  * "Cập nhật bằng AI" of a category, and its history (migration 010).
  *
  * The editor says what they dislike — about the numbered result images (opened from the AI dialog's "Chưa hài
- * lòng kết quả") and / or new reference photos. The AI (server/ai/prompt-writer.ts suggestCategoryRevision) reads
- * the category's current prompts, the library and the images, finds which layer causes the problem — spec,
- * style pack, material, chi tiết thành phẩm — and proposes changes to that layer only: switch to another
- * library preset, edit the prompt, or add one. Each change is shown before / after and applied only if ticked.
+ * lòng kết quả") and / or new reference photos — or nothing, to have the prompts checked as they are. One button
+ * sends it all to @flexiprint (agent-brain.tsx), which reads the category's current prompts, the library and the
+ * images, reviews the assembled prompt, finds which layer causes the problem — spec, style pack, material, chi
+ * tiết thành phẩm — and proposes changes to that layer only: switch to another library preset, edit the prompt,
+ * or add one. Each change is shown before / after and applied only if ticked.
  */
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, History, Loader2, RefreshCw, ShieldCheck, Sparkles, X } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, History, Loader2, RefreshCw, ShieldCheck, Sparkles, X } from "lucide-react";
 import type { CtAsset, CtCategoryHistoryEntry, CtCategoryRevision, CtCategorySnapshot, CtMaterialSpec, CtPreset, CtPromptReview, CtRevisePreset, CtReviseRefRole } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { isMaterialClipart, isMulticolorClipart } from "../../lib/library";
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtTextarea, cx } from "../ui";
-import { numberedImage } from "../studio/refine-shared";
 import { SentenceDiff } from "../studio/sentence-diff";
 import { RefNoteBox, type RefImage } from "./ref-note-box";
-import { AgentProgress, BrainToggle, useAgentTask, useAiBrain } from "./agent-brain";
+import { AgentBadge, AgentProgress, useAgentStatus, useAgentTask } from "./agent-brain";
 
 /** What the editor ticked in a revision. */
 export interface CtReviseChoice {
@@ -60,13 +60,13 @@ export function CategoryRevisePanel(props: {
   const [note, setNote] = useState("");
   const [refs, setRefs] = useState<RefImage[]>([]);
   const [off, setOff] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState<"analyse" | "review" | "apply" | null>(null);
+  const [busy, setBusy] = useState<"analyse" | "apply" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<CtCategoryRevision | null>(null);
   const [refUrls, setRefUrls] = useState<string[]>([]);
   const [choice, setChoice] = useState<CtReviseChoice | null>(null);
   const shown = props.review.filter((a) => !off.has(a.id));
-  const { status, brain, setBrain } = useAiBrain();
+  const status = useAgentStatus();
   const agent = useAgentTask();
 
   const analyse = async () => {
@@ -78,13 +78,8 @@ export function CategoryRevisePanel(props: {
       refs.forEach((r) => URL.revokeObjectURL(r.preview));
       setRefs([]);
       setRefUrls(urls);
-      if (brain === "agent") {
-        const images = shown.map((a) => ({ url: a.url, label: reviewLabel(a, props.materials) }));
-        show(await agent.run<CtCategoryRevision>("revise", { category: props.category, note, images, refUrls: urls }));
-        return;
-      }
-      const images = await Promise.all(shown.map(async (a, i) => ({ image: await numberedImage(a.url, i + 1), label: reviewLabel(a, props.materials), url: a.url })));
-      show(await ctApi.suggestCategoryRevision({ category: props.category, note, images, refUrls: urls }));
+      const images = shown.map((a) => ({ url: a.url, label: reviewLabel(a, props.materials) }));
+      show(await agent.run<CtCategoryRevision>("revise", { category: props.category, note, images, refUrls: urls }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lỗi");
     } finally {
@@ -101,19 +96,6 @@ export function CategoryRevisePanel(props: {
       details: p.details !== null,
       dropRefs: (p.review?.dropProductRefs.length ?? 0) > 0,
     });
-  };
-
-  /** The category's prompts as they are now, read together — no feedback needed. */
-  const check = async () => {
-    setBusy("review");
-    setError(null);
-    try {
-      show(brain === "agent" ? await agent.run<CtCategoryRevision>("revise", { category: props.category, note: "", images: [], refUrls: [] }) : await ctApi.reviewCategory(props.category));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Lỗi");
-    } finally {
-      setBusy(null);
-    }
   };
 
   const apply = async () => {
@@ -141,10 +123,10 @@ export function CategoryRevisePanel(props: {
         <Sparkles className="h-3.5 w-3.5" />
         <span className="text-sm font-medium">Cập nhật bằng AI</span>
         <span className="text-[11px] text-muted-foreground">
-          AI xem prompt hiện tại, ảnh tham khảo{props.review.length ? ", ảnh kết quả" : ""} và mô tả của bạn → tìm sai ở lớp nào (spec chung, style pack, vật liệu, chi tiết thành phẩm) và chỉ sửa lớp đó.
+          @flexiprint kiểm tra prompt hiện tại, ảnh tham khảo{props.review.length ? ", ảnh kết quả" : ""} và mô tả của bạn (để trống = chỉ kiểm tra prompt) → tìm sai ở lớp nào (spec chung, style pack, vật liệu, chi tiết thành phẩm) và chỉ sửa lớp đó.
         </span>
         <span className="ml-auto shrink-0">
-          <BrainToggle status={status} brain={brain} onBrain={setBrain} disabled={busy !== null} />
+          <AgentBadge status={status} />
         </span>
         <button className="rounded p-1 text-muted-foreground hover:bg-accent" onClick={props.onClose} aria-label="Đóng">
           <X className="h-3.5 w-3.5" />
@@ -264,13 +246,9 @@ export function CategoryRevisePanel(props: {
         <span className="text-[11px] text-muted-foreground">
           {plan ? `${changes} thay đổi được chọn. Áp dụng = lưu danh mục ngay (có lịch sử); style pack / vật liệu sửa chung sẽ đổi cả các danh mục đang dùng.` : "Chưa lưu gì cho tới khi bấm Áp dụng."}
         </span>
-        <CtButton size="sm" className="ml-auto shrink-0" onClick={() => void check()} disabled={busy !== null} title="Đọc toàn bộ prompt như model ảnh nhận (spec + style + vật liệu + chi tiết + ảnh thành phẩm) → tìm chỗ mâu thuẫn và đề xuất sửa">
-          {busy === "review" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-          {busy === "review" ? "Đang kiểm tra…" : "Kiểm tra prompt"}
-        </CtButton>
-        <CtButton size="sm" className="shrink-0" onClick={() => void analyse()} disabled={busy !== null || (!note.trim() && !shown.length && !refs.length && !refUrls.length)}>
-          {busy === "analyse" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : plan ? <RefreshCw className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
-          {busy === "analyse" ? "Đang phân tích…" : plan ? "Phân tích lại" : "Phân tích"}
+        <CtButton size="sm" className="ml-auto shrink-0" onClick={() => void analyse()} disabled={busy !== null || !status?.configured} title="Gửi prompt hiện tại + mô tả + ảnh cho @flexiprint: kiểm tra toàn bộ prompt như model ảnh nhận, tìm chỗ sai / mâu thuẫn và đề xuất sửa">
+          {busy === "analyse" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : plan ? <RefreshCw className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+          {busy === "analyse" ? "Đang gửi @flexiprint…" : plan ? "Gửi lại @flexiprint" : "Gửi @flexiprint review"}
         </CtButton>
         {plan && (
           <CtButton size="sm" variant="primary" className="shrink-0" onClick={() => void apply()} disabled={busy !== null || changes === 0}>

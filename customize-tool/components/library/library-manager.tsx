@@ -44,7 +44,7 @@ import { ClipartBadges } from "../editor/library-panel";
 import { PacksTab } from "./packs-tab";
 import { RefNoteBox, refImage, type RefImage } from "./ref-note-box";
 import { CategoryHistory, CategoryRevisePanel, type CtReviseChoice } from "./category-revise";
-import { AgentProgress, BrainToggle, useAgentTask, useAiBrain } from "./agent-brain";
+import { AgentBadge, AgentProgress, useAgentStatus, useAgentTask } from "./agent-brain";
 
 export { refImage };
 
@@ -185,6 +185,22 @@ function ClipartsTab() {
     anchor.current = a.id;
   };
   const allPicked = shownOrder.length > 0 && shownOrder.every((a) => picked.has(a.id));
+  /** Quick picks for clearing out a category: every vật liệu version, or every đa sắc. A second press unticks them. */
+  const pickGroups = [
+    { key: "material", label: "vật liệu", list: shownOrder.filter((a) => isMaterialClipart(a) && !isMulticolorClipart(a)) },
+    { key: "multicolor", label: "đa sắc", list: shownOrder.filter(isMulticolorClipart) },
+  ];
+  const togglePickGroup = (list: CtAsset[]) => {
+    const on = !list.every((a) => picked.has(a.id));
+    setPicked((cur) => {
+      const next = new Set(cur);
+      for (const a of list) {
+        if (on) next.add(a.id);
+        else next.delete(a.id);
+      }
+      return next;
+    });
+  };
 
   /**
    * Delete pictures. A gốc takes its whole set with it, so a picked member of a picked gốc is not deleted twice.
@@ -338,6 +354,11 @@ function ClipartsTab() {
           <div className="space-y-3">
             <div className="sticky top-0 z-10 -mx-1 flex items-center gap-2 rounded-md border bg-background/95 px-2 py-1.5 text-xs backdrop-blur">
               <CtCheckbox checked={allPicked} onChange={(on) => setPicked(on ? new Set(shownOrder.map((a) => a.id)) : new Set())} label="Chọn tất cả" />
+              {pickGroups.map((g) =>
+                g.list.length > 0 ? (
+                  <CtCheckbox key={g.key} checked={g.list.every((a) => picked.has(a.id))} onChange={() => togglePickGroup(g.list)} label={`Tất cả ${g.label} (${g.list.length})`} />
+                ) : null,
+              )}
               <span className="text-muted-foreground">
                 {picked.size ? `Đã chọn ${picked.size}/${shownOrder.length} ảnh` : "Tick ô ở góc ảnh để chọn — giữ Shift để chọn cả dải"}
               </span>
@@ -1299,31 +1320,25 @@ function CategoryDetails(props: {
 }
 
 /**
- * Category dialog "Tạo bằng AI": reference images + a note → name, spec, style pack, materials, details — the
- * library's own presets when they fit (server/ai/prompt-writer.ts).
+ * Category dialog "Tạo bằng AI": reference images + a note → @flexiprint → name, spec, style pack, materials,
+ * details — the library's own presets when they fit.
  */
 function PromptAssistant(props: { body: CtCategoryBody; onResult: (s: CtPromptSuggestion, refs: Array<Blob | string>) => Promise<void>; onClose: () => void }) {
   const [refs, setRefs] = useState<RefImage[]>([]);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { status, brain, setBrain } = useAiBrain();
+  const status = useAgentStatus();
   const agent = useAgentTask();
 
   const run = async () => {
     setBusy(true);
     setError(null);
     try {
-      if (brain === "agent") {
-        const refUrls = await Promise.all(refs.map((r) => ctApi.uploadPresetRef(r.blob)));
-        const category = { id: null, name: props.body.name, spec: props.body.spec, rules: props.body.rules };
-        const s = await agent.run<CtPromptSuggestion>("create", { category, note, images: [], refUrls });
-        await props.onResult(s, refUrls);
-        props.onClose();
-        return;
-      }
-      const s = await ctApi.suggestCategoryPrompts({ name: props.body.name, spec: props.body.spec, note, images: refs.map((r) => r.blob) });
-      await props.onResult(s, refs.map((r) => r.blob));
+      const refUrls = await Promise.all(refs.map((r) => ctApi.uploadPresetRef(r.blob)));
+      const category = { id: null, name: props.body.name, spec: props.body.spec, rules: props.body.rules };
+      const s = await agent.run<CtPromptSuggestion>("create", { category, note, images: [], refUrls });
+      await props.onResult(s, refUrls);
       props.onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lỗi");
@@ -1347,7 +1362,7 @@ function PromptAssistant(props: { body: CtCategoryBody; onResult: (s: CtPromptSu
           <span className="font-medium">Tạo bằng AI</span>
           <span className="text-[11px] text-muted-foreground">Dùng Tên và Spec đang có (nếu có) — trống thì AI tự đặt.</span>
           <span className="ml-auto shrink-0">
-            <BrainToggle status={status} brain={brain} onBrain={setBrain} disabled={busy} />
+            <AgentBadge status={status} />
           </span>
           <button className="rounded p-1 text-muted-foreground hover:bg-accent" onClick={props.onClose} aria-label="Đóng">
             <X className="h-3.5 w-3.5" />
@@ -1360,8 +1375,8 @@ function PromptAssistant(props: { body: CtCategoryBody; onResult: (s: CtPromptSu
         <span className="text-[11px] text-muted-foreground">
           Điền tất cả các tab (chưa lưu danh mục). Style pack / vật liệu có sẵn trong thư viện mà phù hợp thì được chọn lại; chỉ cái chưa có mới được tạo.
         </span>
-        <CtButton size="sm" variant="primary" className="ml-auto shrink-0" onClick={() => void run()} disabled={busy}>
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {busy ? "Đang phân tích & tra thư viện…" : "Tạo"}
+        <CtButton size="sm" variant="primary" className="ml-auto shrink-0" onClick={() => void run()} disabled={busy || !status?.configured}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {busy ? "Đang gửi @flexiprint…" : "Tạo"}
         </CtButton>
       </div>
     </div>

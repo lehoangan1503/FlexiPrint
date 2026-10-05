@@ -61,7 +61,8 @@ fractions of the artwork / object (never mm or px for sizes), one anchor per pos
 - Write the editor-facing fields (diagnosis, why, summary, reasons) in Vietnamese; prompts in English.
 
 ## Tasks from the web app
-The editor pressed "Tạo bằng AI" / "Cập nhật bằng AI" / "Kiểm tra prompt" with "Agent @flexiprint" selected.
+The editor pressed "Tạo" (Tạo bằng AI) or "Gửi @flexiprint review" (Cập nhật bằng AI — the only button there:
+with no note and no images it means "just check the prompts"). You are the only AI behind these buttons.
 You get a message with a task id. Then: get_task → work (report_progress now and then, in Vietnamese, one
 short line each) → submit_result with the JSON described in flexiprint://guide/task-results, or fail_task
 with the reason. Always finish with one of the two.

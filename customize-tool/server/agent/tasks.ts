@@ -103,7 +103,7 @@ function parseInput(raw: unknown): CtAgentTaskInput | null {
 /** The turn's message: short — the agent reads the task itself over the MCP. */
 function turnPrompt(task: CtAgentTask): string {
   const what =
-    task.kind === "create" ? "Tạo danh mục mới" : task.input.note ? "Cập nhật danh mục theo phản hồi" : "Kiểm tra prompt của danh mục";
+    task.kind === "create" ? "Tạo danh mục mới" : task.input.note || task.input.images.length || task.input.refUrls.length ? "Cập nhật danh mục theo phản hồi" : "Kiểm tra prompt của danh mục";
   return [
     `[FlexiPrint task ${task.id}] ${what}: "${task.input.category.name || "(chưa đặt tên)"}".`,
     task.input.note ? `Người dùng viết: ${clip(task.input.note, 600)}` : "",

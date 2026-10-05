@@ -59,6 +59,20 @@ async def _cpa(path: str, body: dict) -> bytes:
 
 
 async def _fal(model: str, body: dict) -> bytes:
+    # A connection that fails to open (TLS reset, DNS hiccup) never reached fal — nothing billed: try again a few
+    # times instead of failing the whole run (a material run of 4 cliparts makes dozens of calls).
+    for attempt in range(4):
+        try:
+            return await _fal_once(model, body)
+        except aiohttp.ClientConnectorError as e:
+            if attempt == 3:
+                raise ProviderError(f"fal không kết nối được: {e}") from e
+            print(f"[FP] fal kết nối lỗi, thử lại ({attempt + 1}/3): {e}")
+            await asyncio.sleep(2 * (attempt + 1))
+    raise ProviderError("fal không kết nối được")
+
+
+async def _fal_once(model: str, body: dict) -> bytes:
     key = os.environ.get("FAL_KEY", "")
     if not key:
         raise ProviderError("FAL_KEY chưa cấu hình")

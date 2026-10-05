@@ -304,13 +304,18 @@ def lock_art(matte: np.ndarray, art: np.ndarray, surface: np.ndarray | None = No
 
 def merge_version(base: np.ndarray, version: np.ndarray, art_alpha: np.ndarray) -> np.ndarray:
     """Only what the added detail changed comes from `version`: differences off the plate, joined to the top
-    edge (a cord leaves the picture there) or big enough to be a thing of their own. Two passes of a clear plate
-    differ a little all along its rim — that stays the base's."""
+    edge (a cord leaves the picture there) or big enough to be a thing of their own — and, from there, on into
+    the clear plate close by (a cord threaded through the hole lies over the tab in front and shows through it
+    behind). Two passes of a clear plate differ a little all along its rim — away from the detail that stays the
+    base's. The printed artwork is never taken."""
     a = on(base, (128, 128, 128)).astype(np.int16)
     b = on(version, (128, 128, 128)).astype(np.int16)
-    diff = np.abs(a - b).max(axis=2) > 30
-    H, W = diff.shape
-    diff &= (base[..., 3] < 60) & (art_alpha < 128)
+    delta = np.abs(a - b).max(axis=2)
+    H, W = delta.shape
+    plate = (base[..., 3] >= 60) & (art_alpha < 128)
+    # On the plate a stronger change is needed: the rim of two clear passes differs a little everywhere.
+    on_plate = _small((delta > 45) & plate)
+    diff = (delta > 30) & (base[..., 3] < 60) & (art_alpha < 128)
     joined = _small(np.asarray(Image.fromarray((diff * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(7))) > 0)
     top = np.zeros((H, W), bool)
     top[:8] = True
@@ -331,6 +336,12 @@ def merge_version(base: np.ndarray, version: np.ndarray, art_alpha: np.ndarray) 
                 blobs |= one
             cur &= ~one
         lab |= blobs
+    if lab.any() and on_plate.any():
+        # The detail continues over the plate only near where it already is (≈6% of the width).
+        r = max(1, round(lab.shape[1] * 0.06))
+        near = np.asarray(Image.fromarray((lab * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(2 * r + 1))) > 0
+        lab = _grow(lab | (on_plate & near), lab)
+        diff |= (delta > 45) & plate
     keep = _big(lab, W, H) & diff
     m = Image.fromarray((keep * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.GaussianBlur(1.2))
     mk = np.asarray(m, dtype=np.float32)[..., None] / 255

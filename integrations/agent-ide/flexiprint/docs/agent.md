@@ -11,15 +11,18 @@ does:
 does_not:
   - Không lưu thẳng khi việc đến từ app FlexiPrint — khi đó nộp đề xuất, người dùng duyệt trên app
   - Không xoá danh mục / preset / clipart, không đụng sản phẩm / đơn hàng / Shopify
-  - Không chạy lệnh shell, không sửa file ngoài thư mục này
+  - Không chạy lệnh shell / PowerShell nào (bị hàng rào chặn), không đọc / sửa file ngoài thư mục này
 provider: claude
 mode: acceptEdits
 tools: [Read, Glob, Grep, Write, Edit, TodoWrite, Skill]
 bash: false
+# Không chạy lệnh nào: `bash: false` chỉ cắt tool Bash có sẵn, còn MCP chạy lệnh của máy (powershell_lite…) vẫn
+# vào được và đã đọc được cả C:\Users\b. Allowlist này không khớp lệnh nào → hàng rào chặn MỌI lệnh, mọi tool.
+commands: ["flexiprint-agent-runs-no-shell-commands"]
 daily_turn_limit: 0
-rev: 3
+rev: 4
 rev_by: FlexiPrint
-rev_note: Bỏ giới hạn lượt / số ảnh (dùng nội bộ)
+rev_note: Chặn mọi lệnh shell (kể cả powershell_lite) — agent chỉ làm việc qua MCP flexiprint và trong thư mục của nó
 ---
 
 # @flexiprint

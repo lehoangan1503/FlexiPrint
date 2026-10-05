@@ -427,7 +427,7 @@ const studioTools: CtMcpTool[] = [
 async function finishTaskRun(ctx: CtMcpContext, runId: string, st: CtStudioRunStatus): Promise<void> {
   const db = ctx.service;
   if (!db) return;
-  const { data: tasks } = await db.from(CT_TABLES.agentTasks).select("*").contains("runs", [{ run_id: runId }]).limit(1).returns<CtAgentTask[]>();
+  const { data: tasks } = await db.from(CT_TABLES.agentTasks).select("*").filter("runs", "cs", JSON.stringify([{ run_id: runId }])).limit(1).returns<CtAgentTask[]>();
   const task = tasks?.[0];
   const run = task?.runs.find((r) => r.run_id === runId);
   if (!task || !run || run.finished_at) return;

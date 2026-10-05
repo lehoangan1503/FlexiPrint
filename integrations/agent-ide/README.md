@@ -63,11 +63,11 @@ Bản vẽ tldraw: `docs/architecture/flexiprint-mcp-2-chieu.tldr`.
    "có task id X". Mỗi danh mục dùng lại **một phiên** của agent → agent nhớ những gì đã thử ở danh mục đó.
 3. **③** agent_ide chạy một lượt Claude Code trong project `flexiprint` (skill `flexiprint-task`).
 4. **④** Agent gọi ngược FlexiPrint qua MCP bằng `CT_AGENT_TOKEN`: đọc task, danh mục, lịch sử, xem ảnh, xem prompt
-   đã ghép đúng như model ảnh nhận, có thể tạo 1–3 ảnh thử.
+   đã ghép đúng như model ảnh nhận, tạo ảnh thử khi cần.
 5. **⑤** Agent báo tiến độ (`report_progress`) và nộp kết quả (`submit_result`) hoặc bỏ (`fail_task`). agent_ide
    không có webhook báo xong — `submit_result` chính là "cuộc gọi báo lại".
 6. **⑥** App hỏi trạng thái task, hiện tiến độ từng dòng, rồi hiện **đề xuất** dạng ô tick (như Flash vẫn làm).
-   Nếu lượt của agent kết thúc mà không nộp, hoặc quá 30 phút → task báo lỗi.
+   Nếu lượt của agent kết thúc mà không nộp (hoặc treo quá 3 giờ) → task báo lỗi.
 7. **⑦** Người dùng tick và áp dụng → app lưu bằng **tài khoản của chính người dùng**. Agent không tự lưu trong việc
    đến từ app.
 
@@ -85,7 +85,7 @@ Khi agent_ide không trả lời, app vẫn dùng Flash như cũ.
 | Tên | Ai tạo | Để ở đâu | Dùng để |
 |---|---|---|---|
 | `CT_AGENT_TOKEN` (`fpa_…`) | An (đã tạo) | `.env` server FlexiPrint **và** header của capability `flexiprint` trên agent_ide (mục 5.4) | Chìa để **agent vào FlexiPrint** (MCP). An gửi **riêng**, không nằm trong repo |
-| `svc_…` (`AGENT_IDE_TOKEN`) | Admin agent_ide (mục 5.5) | `.env` server FlexiPrint | Chìa để **FlexiPrint gửi việc cho @flexiprint**; chỉ trong thư mục project này, có trần lượt/ngày, thu hồi được |
+| `svc_…` (`AGENT_IDE_TOKEN`) | Admin agent_ide (mục 5.5) | `.env` server FlexiPrint | Chìa để **FlexiPrint gửi việc cho @flexiprint**; chỉ trong thư mục project này, không giới hạn lượt, thu hồi được |
 | `AGENT_IDE_URL` | Admin agent_ide | `.env` server FlexiPrint | Địa chỉ public của agent_ide (Cloudflare Tunnel), không có `/` cuối |
 | Deploy key GitHub (`flexiprint_deploy`) | An (đã tạo + gắn lên GitHub) | Khoá riêng: gửi riêng → `~/.ssh/` máy agent_ide; khoá công khai trên GitHub | Kéo code FlexiPrint về (chỉ đọc, một repo), không hết hạn tới khi gỡ |
 
@@ -144,7 +144,7 @@ Thư mục `REPO/integrations/agent-ide/flexiprint` đã có sẵn `docs/agent.m
 cần **mở thư mục đó như một project** (UI: Mở project; API admin: `POST /api/projects/open {"cwd": "<đường dẫn tuyệt đối>"}`).
 **Không** bấm "Thăng agent" (nó báo đã có bản khai). Kiểm: danh sách agent có **@flexiprint**.
 
-Bản khai: Claude, `acceptEdits`, không bash, chỉ trong thư mục này, 200 lượt/ngày (sửa trong `docs/agent.md` qua
+Bản khai: Claude, `acceptEdits`, không bash, chỉ trong thư mục này, không giới hạn lượt (sửa trong `docs/agent.md` qua
 repo FlexiPrint nếu cần).
 
 ### 5.4 Gắn MCP flexiprint (capability)
@@ -171,7 +171,7 @@ UI Cài đặt → project flexiprint → capability `flexiprint` = bật; hoặ
 
 ### 5.5 Token dịch vụ cho FlexiPrint
 UI Cài đặt → Dịch vụ → thêm; hoặc API admin
-`POST /api/services {"name": "flexiprint", "folder": "<thư mục project>", "dailyTurnLimit": 200}` → lấy `token`
+`POST /api/services {"name": "flexiprint", "folder": "<thư mục project>", "dailyTurnLimit": 0}` → lấy `token`
 (`svc_…`). **[CẦN NGƯỜI]** Gửi **riêng** cho An: token `svc_…` + địa chỉ public agent_ide.
 
 ### 5.6 Kiểm tra

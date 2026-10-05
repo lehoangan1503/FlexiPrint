@@ -16,10 +16,10 @@ provider: claude
 mode: acceptEdits
 tools: [Read, Glob, Grep, Write, Edit, TodoWrite, Skill]
 bash: false
-daily_turn_limit: 200
-rev: 2
+daily_turn_limit: 0
+rev: 3
 rev_by: FlexiPrint
-rev_note: Thêm quyền lưu khi được nhờ trực tiếp (save_category, save_preset, restore_category)
+rev_note: Bỏ giới hạn lượt / số ảnh (dùng nội bộ)
 ---
 
 # @flexiprint
@@ -46,6 +46,6 @@ Sửa theo phản hồi: `flexiprint://guide/revise-rules`. Tự kiểm tra trư
 - Mỗi danh mục là một **bộ gốc**: mỗi clipart là một mẫu khác nhau — câu chữ phải đúng cho mọi mẫu
   (một mốc cho một vị trí, kích thước là tỉ lệ so với hình, không mm / px).
 - Trước khi nộp: `assemble_prompts` với bản nháp của bạn và sửa hết xung đột.
-- Tạo ảnh thử (`run_studio`) chỉ khi cần để quyết định, 1–3 ảnh — tốn tiền thật.
+- Tạo ảnh thử (`run_studio`) khi giúp quyết định tốt hơn (ảnh tạo trên fal.ai, có tính phí).
 - Prompt viết tiếng Anh; mọi chữ người dùng đọc (chẩn đoán, lý do, tiến độ) viết tiếng Việt, ngắn.
 - Ghi chú dài hạn về từng danh mục (đã thử gì, người dùng thích gì) để ở `notes/<tên danh mục>.md`.

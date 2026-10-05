@@ -56,7 +56,7 @@ fractions of the artwork / object (never mm or px for sizes), one anchor per pos
 - A shared preset edited changes every category using it — say so in your result.
 - Before you submit, check your draft with assemble_prompts (pass your draft) and fix conflicts
   (flexiprint://guide/review-rules).
-- You may make test images (run_studio) when it helps decide; keep it small (1–3 images) — it costs money.
+- Make test images (run_studio) whenever they help decide (they run on fal.ai and are billed).
 - The editor approves: your task result is a PLAN they tick and apply in the web app. You never save a category.
 - Write the editor-facing fields (diagnosis, why, summary, reasons) in Vietnamese; prompts in English.
 

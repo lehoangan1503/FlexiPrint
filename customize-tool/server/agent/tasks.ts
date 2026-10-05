@@ -26,8 +26,8 @@ import type { CtSession } from "../supabase";
 import { clip, jsonError, record, str } from "../ai/llm";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** A task the agent has not answered in this long is given up. */
-const TASK_TIMEOUT_MS = 30 * 60 * 1000;
+/** Only a hung task is given up: agent_ide itself stops a turn after 2 h. */
+const TASK_TIMEOUT_MS = 3 * 60 * 60 * 1000;
 
 interface KernelConfig {
   url: string;
@@ -185,7 +185,7 @@ export async function getAgentTask(s: CtSession, id: string): Promise<NextRespon
   // Still open: did the agent's turn end without an answer?
   let fail = "";
   const cfg = kernelConfig();
-  if (Date.now() - Date.parse(task.created_at) > TASK_TIMEOUT_MS) fail = "Agent không trả lời sau 30 phút";
+  if (Date.now() - Date.parse(task.created_at) > TASK_TIMEOUT_MS) fail = "Agent không trả lời sau 3 giờ";
   else if (cfg && task.agent_job_id) {
     try {
       const job = await kernel<KernelJob>(cfg, `/jobs/${encodeURIComponent(task.agent_job_id)}`, { timeoutMs: 5_000 });

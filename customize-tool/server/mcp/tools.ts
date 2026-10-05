@@ -321,7 +321,7 @@ const studioTools: CtMcpTool[] = [
   {
     name: "run_studio",
     description: [
-      "Make images with the studio (ComfyUI; costs money — test with 1–3 images). Returns run_id; poll get_run. Results are saved into the library like the web app's.",
+      "Make images with the studio (ComfyUI, models on fal.ai — billed). Returns run_id; poll get_run. Results are saved into the library like the web app's.",
       "Recipes and their params:",
       '- origin: new origins of a category. {category_id, style_pack_id: null (category default), material_id: null | "none" | id, material_extra: "", material_ids?: [ids → also make those material versions], note: "", subjects: [{name, text}], model: "", chain_reference: true, cutout: "category", rules: {}, tags: []}',
       '- refine: edit origins. {targets: [{clipart_id, name, edit?, spec?}], instruction, keep, refs: [], model: "", cutout: "category"}',

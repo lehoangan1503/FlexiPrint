@@ -32,7 +32,7 @@ Người dùng đang chờ trên trình duyệt. Họ thấy từng dòng `repor
 - `assemble_prompts` với bản nháp (spec / style_prompt / details / materials) → đọc như model ảnh đọc.
   Không còn: hai mốc cho một vị trí, kích thước không đo được, câu "NOT in this picture" xoá mất chi tiết bắt buộc,
   thứ nằm sai lớp, ảnh thành phẩm mâu thuẫn.
-- Khi thật cần (ví dụ không chắc vị trí lỗ treo): `run_studio` 1–3 ảnh, `get_run` đến khi xong, `view_image`.
+- Khi ảnh thử giúp quyết định (ví dụ không chắc vị trí lỗ treo): `run_studio`, `get_run` đến khi xong, `view_image`.
 
 ## 5. Nộp
 - `submit_result(task_id, result)` đúng định dạng — chẩn đoán / lý do bằng tiếng Việt, ngắn, nói rõ ảnh số mấy.

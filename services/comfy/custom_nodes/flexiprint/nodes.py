@@ -737,6 +737,12 @@ class FPMaterial(io.ComfyNode):
                 FpContext.Input("context", optional=True),
                 io.String.Input("names", default="", optional=True, tooltip="Tên từng ảnh (JSON list / mỗi dòng 1 tên) — mỗi phiên bản thêm “ · <tên bản>”"),
                 io.String.Input("parent_ids", default="", optional=True, tooltip="Id clipart của từng ảnh (JSON list) — nhân theo số phiên bản, nối vào FP Save to Library"),
+                io.String.Input(
+                    "draft",
+                    default="",
+                    optional=True,
+                    tooltip="Chạy thử prompt chưa lưu (JSON {material_prompt?, details?, product_refs?}) — thay prompt preset / chi tiết / ảnh thành phẩm của danh mục; ảnh lưu tên “· thử”",
+                ),
                 io.Combo.Input(
                     "canvas",
                     options=["nới rộng (vật liệu quanh hình)", "giữ khung ảnh"],
@@ -778,6 +784,7 @@ class FPMaterial(io.ComfyNode):
         context=None,
         names: str = "",
         parent_ids: str = "",
+        draft: str = "",
         canvas: str = "nới rộng (vật liệu quanh hình)",
     ) -> io.NodeOutput:
         preset = await _preset("material", fpc.option_id(material))
@@ -789,10 +796,15 @@ class FPMaterial(io.ComfyNode):
         # only so saved workflows still load.)
         if params.get("art") not in ("print", "surface"):
             preset = {**preset, "params": {**params, "art": "print"}}
-        return await cls._v2(images, preset, extra, model, masks, context, names, parent_ids, keep_frame=canvas == "giữ khung ảnh")
+        over = json.loads(draft) if draft.strip() else {}
+        if not isinstance(over, dict):
+            raise ValueError("draft: cần JSON object")
+        return await cls._v2(images, preset, extra, model, masks, context, names, parent_ids, keep_frame=canvas == "giữ khung ảnh", draft=over)
 
     @classmethod
-    async def _v2(cls, images, preset: dict, extra: str, model: str, masks, context, names: str, parent_ids: str, keep_frame: bool) -> io.NodeOutput:
+    async def _v2(
+        cls, images, preset: dict, extra: str, model: str, masks, context, names: str, parent_ids: str, keep_frame: bool, draft: dict | None = None
+    ) -> io.NodeOutput:
         """Presets with `params.art` (material.py): base version + one per "version" detail, on a padded canvas.
 
         The material (preset) is reusable: only its look. The product's details (hole, cord, clip…) and the photos
@@ -801,6 +813,10 @@ class FPMaterial(io.ComfyNode):
         params = preset.get("params") or {}
         srcs = imaging.tensors_to_rgba(images, masks)
         cat_rules = ((context or {}).get("category") or {}).get("rules") or {}
+        # A draft (prompts proposed, not saved) replaces what it carries.
+        draft = draft or {}
+        if "details" in draft or "product_refs" in draft:
+            cat_rules = {**cat_rules, **({"details": draft["details"]} if "details" in draft else {}), **({"productRefs": draft["product_refs"]} if "product_refs" in draft else {})}
         specs = fpmat.parse_specs(cat_rules.get("details"))
         use = fpmat.nano_model(str(params.get("model") or model))
         refs: list[bytes] = []
@@ -811,7 +827,7 @@ class FPMaterial(io.ComfyNode):
                 refs.append(_ref_png(await fp_api.download(str(url))))
             except Exception as e:  # a missing reference photo must not block the material
                 print(f"[FP Material] ảnh mẫu lỗi {url}: {e}")
-        material_text = preset["prompt"].strip()
+        material_text = (draft.get("material_prompt") or preset["prompt"]).strip()
         if context and context.get("style"):
             material_text += f"\nThe artwork is drawn in this style (keep it): {context['style']['prompt']}"
         used: set[str] = set()
@@ -851,9 +867,13 @@ class FPMaterial(io.ComfyNode):
                     meta["pad"] = {"x": round(p / w, 5), "y": round(p / h, 5)}
                 if label:
                     meta["materialVersion"] = label
+                if draft:
+                    meta["draft"] = True
                 outs.append(rgba)
                 metas.append(meta)
                 out_names.append(f"{base_name} · {label}" if label else base_name)
+                if draft:
+                    out_names[-1] += " · thử"
                 out_parents.append(parent)
             lines.append(f"#{i + 1}: " + "; ".join(report))
         report = f"{preset['name']} [{', '.join(sorted(used))}]\n" + "\n".join(lines)

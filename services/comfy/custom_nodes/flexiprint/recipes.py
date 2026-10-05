@@ -513,6 +513,7 @@ def _material(p: dict) -> ApiPrompt:
     edge = _int(p.get("edge_px"), 0, 60, 0)
     extra = _text(p.get("extra"))
     model = _model(p.get("model"))
+    draft = _draft(p.get("draft"))
     for t in targets[:40]:
         if not isinstance(t, dict):
             continue
@@ -531,10 +532,26 @@ def _material(p: dict) -> ApiPrompt:
                 "context": _out(load, 3),
                 "names": _name(t.get("name"), "vật liệu"),
                 "parent_ids": _out(load, 2),
+                **({"draft": draft} if draft else {}),
             },
         )
         _save_renditions(g, mat, _out(load, 3), material)
     return g.nodes
+
+
+def _draft(v: object) -> str:
+    """A test of prompts not saved yet (the agent's proposal): {material_prompt?, details?, product_refs?} → JSON for
+    FP Material, which uses them instead of the preset's prompt / the category's details / product photos."""
+    if not isinstance(v, dict):
+        return ""
+    out: dict = {}
+    if isinstance(v.get("material_prompt"), str) and v["material_prompt"].strip():
+        out["material_prompt"] = v["material_prompt"].strip()[:4000]
+    if isinstance(v.get("details"), list):
+        out["details"] = [d for d in v["details"] if isinstance(d, dict)][:20]
+    if isinstance(v.get("product_refs"), list):
+        out["product_refs"] = [u for u in v["product_refs"] if isinstance(u, str)][:6]
+    return json.dumps(out, ensure_ascii=False) if out else ""
 
 
 def _mockup(p: dict) -> ApiPrompt:

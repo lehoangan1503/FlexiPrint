@@ -10,7 +10,7 @@
 
 import { CT_TABLES } from "../../config";
 import { normalizeCategoryRules } from "../../lib/library";
-import type { CtAgentTask, CtAgentTaskProgress, CtAsset, CtCategoryRevision, CtCategoryHistoryEntry, CtCategorySnapshot, CtClipartCategory, CtMaterialSpec, CtStudioRunBody } from "../../types";
+import type { CtAgentTask, CtAgentTaskProgress, CtAgentTaskRun, CtAsset, CtCategoryRevision, CtCategoryHistoryEntry, CtCategorySnapshot, CtClipartCategory, CtMaterialSpec, CtStudioRunBody, CtStudioRunStatus } from "../../types";
 import { normalizeMaterialSpecs } from "../../lib/materials";
 import { isOwnUploadUrl } from "../library";
 import * as studio from "../studio";
@@ -310,6 +310,35 @@ async function bodyOf(res: Response): Promise<unknown> {
   return out;
 }
 
+/** How long one wait_run call holds before answering "still running" (nginx cuts /api/ at 600 s). */
+const WAIT_MS = 170_000;
+const POLL_MS = 5_000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function runStatus(db: LibraryDb, runId: string): Promise<CtStudioRunStatus> {
+  return (await bodyOf(await studio.studioRunStatus(db, runId))) as CtStudioRunStatus;
+}
+
+/** What a run makes, in the editor's words. */
+function runLabel(recipe: string, params: Record<string, unknown>): string {
+  const names = (list: unknown, key = "name") => (Array.isArray(list) ? list.map(record).map((x) => str(x[key])).filter(Boolean) : []);
+  const what = { origin: "clipart gốc", refine: "sửa clipart", variant: "đa sắc", material: "vật liệu" }[recipe] ?? recipe;
+  const list = recipe === "origin" ? names(params.subjects) : recipe === "variant" ? names(params.variants) : names(params.targets);
+  return clip(`${what}${params.draft ? " (prompt nháp)" : ""}${list.length ? `: ${list.join(", ")}` : ""}`, 200);
+}
+
+/** A material run's draft: prompts proposed but not saved, checked here before ComfyUI sees them. */
+function materialDraft(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const d = record(raw);
+  const out: Record<string, unknown> = {};
+  if (str(d.material_prompt)) out.material_prompt = clip(str(d.material_prompt), 4000);
+  if (Array.isArray(d.details)) out.details = normalizeMaterialSpecs(d.details);
+  if (Array.isArray(d.product_refs)) out.product_refs = d.product_refs.map(str).filter(isOwnUploadUrl).slice(0, 6);
+  return Object.keys(out).length ? out : null;
+}
+
 const studioTools: CtMcpTool[] = [
   {
     name: "list_models",
@@ -321,33 +350,114 @@ const studioTools: CtMcpTool[] = [
   {
     name: "run_studio",
     description: [
-      "Make images with the studio (ComfyUI, models on fal.ai — billed). Returns run_id; poll get_run. Results are saved into the library like the web app's.",
+      "Make images with the studio (ComfyUI, models on fal.ai — billed; a material run takes ~5 min). Returns run_id, then call wait_run (it waits for you). Results are saved into the library like the web app's.",
+      "Working on a web-app task: pass task_id — the editor sees the run live, and submit_result is refused until every run of the task has finished.",
       "Recipes and their params:",
       '- origin: new origins of a category. {category_id, style_pack_id: null (category default), material_id: null | "none" | id, material_extra: "", material_ids?: [ids → also make those material versions], note: "", subjects: [{name, text}], model: "", chain_reference: true, cutout: "category", rules: {}, tags: []}',
       '- refine: edit origins. {targets: [{clipart_id, name, edit?, spec?}], instruction, keep, refs: [], model: "", cutout: "category"}',
       '- variant: đa sắc of an origin. {clipart_id, variants: [{name, text: "#hex" or a change, mode?: "recolor" | "ai"}], method: "auto", lock_silhouette: true, model: ""}',
-      '- material: material versions. {material_id, targets: [{clipart_id, name}], lock: "preset", edge_px: 0, extra: "", model: ""}',
+      '- material: material versions. {material_id, targets: [{clipart_id, name}], lock: "preset", edge_px: 0, extra: "", model: "", draft?: {material_prompt?, details?: [{text, mode, label}], product_refs?: [urls]}}',
+      "  draft = test YOUR PROPOSED prompts without saving: they replace the material preset's prompt / the category's details / product photos for this run only; the images are saved named \"… · thử\". Use it to check a details or material change before you submit it.",
     ].join("\n"),
     inputSchema: {
       type: "object",
-      properties: { recipe: { type: "string", description: "origin | refine | variant | material" }, params: { type: "object", description: "The recipe's params (see description)." } },
+      properties: {
+        recipe: { type: "string", description: "origin | refine | variant | material" },
+        params: { type: "object", description: "The recipe's params (see description)." },
+        task_id: { type: "string", description: "The web-app task this run is for (shown to the editor; must finish before submit_result)." },
+      },
       required: ["recipe", "params"],
     },
     callers: AGENT,
-    run: async (_ctx, args) => {
+    run: async (ctx, args) => {
       const recipe = str(args.recipe);
       if (!["origin", "refine", "variant", "material"].includes(recipe)) throw new Error("recipe: origin | refine | variant | material");
-      return json(await bodyOf(await studio.studioRun({ recipe, params: record(args.params) } as unknown as CtStudioRunBody)));
+      const params = { ...record(args.params) };
+      delete params.draft;
+      const draft = recipe === "material" ? materialDraft(record(args.params).draft) : null;
+      if (draft) params.draft = draft;
+      const owner = str(args.task_id) ? await loadTask(ctx, args.task_id) : null;
+      if (owner) openTask(owner.task);
+      const out = record(await bodyOf(await studio.studioRun({ recipe, params } as unknown as CtStudioRunBody)));
+      const runId = str(out.run_id);
+      if (owner && runId) {
+        const { db, task } = owner;
+        const label = runLabel(recipe, params);
+        const run: CtAgentTaskRun = { run_id: runId, recipe, label, status: "queued", started_at: new Date().toISOString(), finished_at: null, asset_ids: [], error: "" };
+        await patchTask(db, task.id, {
+          status: "running",
+          runs: [...(task.runs ?? []), run],
+          progress: [...(task.progress ?? []), { at: run.started_at, text: `Đang tạo ảnh — ${label}` }].slice(-50),
+        });
+      }
+      return json({ ...out, next: "Call wait_run with this run_id — it waits until the images are done." });
     },
   },
   {
     name: "get_run",
-    description: "A studio run's state (queued / running / done / error) and the cliparts it saved so far (view them with view_image).",
+    description: "A studio run's state right now (queued / running / done / error) and the cliparts it saved so far. To wait for it, use wait_run instead.",
     inputSchema: { type: "object", properties: { run_id: { type: "string", description: "From run_studio." } }, required: ["run_id"] },
     callers: AGENT,
-    run: async (ctx, args) => json(await bodyOf(await studio.studioRunStatus(ctx.db, str(args.run_id)))),
+    run: async (ctx, args) => json(await runStatus(ctx.db, str(args.run_id))),
+  },
+  {
+    name: "wait_run",
+    description:
+      "Wait for a studio run to finish (the server waits, up to ~3 min per call) → its images (look at them with view_image) or its error. \"still running\" → call wait_run again. Never submit a task's result while one of its runs is unfinished.",
+    inputSchema: { type: "object", properties: { run_id: { type: "string", description: "From run_studio." } }, required: ["run_id"] },
+    callers: AGENT,
+    run: async (ctx, args) => {
+      const runId = str(args.run_id);
+      const deadline = Date.now() + WAIT_MS;
+      let st = await runStatus(ctx.db, runId);
+      while ((st.status === "queued" || st.status === "running") && Date.now() + POLL_MS < deadline) {
+        await sleep(POLL_MS);
+        st = await runStatus(ctx.db, runId);
+      }
+      const finished = st.status === "done" || st.status === "error";
+      if (finished) await finishTaskRun(ctx, runId, st);
+      const assets = st.assets.map((a) => ({ id: a.id, name: a.name, url: a.url, ...(Object.keys(a.meta ?? {}).length ? { meta: a.meta } : {}) }));
+      if (!finished) return json({ status: st.status, position: st.position, node: st.node, assets, message: "Still running — call wait_run again." });
+      return json({ status: st.status, error: st.error, assets, next: st.status === "done" ? "Look at the images with view_image before you decide." : "The run failed — fix and run again, or explain it in your result." });
+    },
   },
 ];
+
+/** A finished run on the task that started it: recorded, and its images shown to the editor. */
+async function finishTaskRun(ctx: CtMcpContext, runId: string, st: CtStudioRunStatus): Promise<void> {
+  const db = ctx.service;
+  if (!db) return;
+  const { data: tasks } = await db.from(CT_TABLES.agentTasks).select("*").contains("runs", [{ run_id: runId }]).limit(1).returns<CtAgentTask[]>();
+  const task = tasks?.[0];
+  const run = task?.runs.find((r) => r.run_id === runId);
+  if (!task || !run || run.finished_at) return;
+  const done: CtAgentTaskRun = { ...run, status: st.status, finished_at: new Date().toISOString(), asset_ids: st.assets.map((a) => a.id), error: st.error ?? "" };
+  const line: CtAgentTaskProgress =
+    st.status === "done"
+      ? { at: done.finished_at ?? "", text: `Ảnh đã xong — ${run.label}`, images: st.assets.map((a) => a.url).slice(0, 12) }
+      : { at: done.finished_at ?? "", text: `Tạo ảnh lỗi — ${run.label}: ${clip(st.error ?? "", 200)}` };
+  const patch: Partial<CtAgentTask> = { runs: task.runs.map((r) => (r.run_id === runId ? done : r)) };
+  // A closed task keeps its record, but its progress is not touched any more.
+  if (task.status === "pending" || task.status === "running") patch.progress = [...(task.progress ?? []), line].slice(-50);
+  await patchTask(db, task.id, patch);
+}
+
+/** The task's runs still queued / running, after asking ComfyUI about each. */
+async function unfinishedRuns(ctx: CtMcpContext, task: CtAgentTask): Promise<CtAgentTaskRun[]> {
+  const open: CtAgentTaskRun[] = [];
+  for (const r of (task.runs ?? []).filter((x) => !x.finished_at)) {
+    let st: CtStudioRunStatus;
+    try {
+      st = await runStatus(ctx.db, r.run_id);
+    } catch {
+      // ComfyUI can't be asked: don't lock the task forever on it.
+      continue;
+    }
+    if (st.status === "done" || st.status === "error") await finishTaskRun(ctx, r.run_id, st);
+    else open.push(r);
+  }
+  return open;
+}
 
 // ---------------------------------------------------------------------------
 // Tasks from the web app (migration 011)
@@ -464,6 +574,13 @@ const taskTools: CtMcpTool[] = [
     run: async (ctx, args) => {
       const { db, task } = await loadTask(ctx, args.task_id);
       openTask(task);
+      // Only the final answer: every test image of the task must be done (and looked at) first.
+      const open = await unfinishedRuns(ctx, task);
+      if (open.length) {
+        throw new Error(
+          `Not submitted — ${open.length} studio run(s) of this task still running: ${open.map((r) => `${r.run_id} (${r.label})`).join("; ")}. Call wait_run for each, look at the images, then submit_result.`,
+        );
+      }
       const raw = record(typeof args.result === "string" ? JSON.parse(args.result) : args.result);
       const snapshot: CtCategorySnapshot = { name: task.input.category.name, spec: task.input.category.spec, rules: normalizeCategoryRules(task.input.category.rules) };
       let result: CtAgentTask["result"];

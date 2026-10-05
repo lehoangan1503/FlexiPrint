@@ -17,5 +17,5 @@ description: Khi người trong công ty nhờ @flexiprint trực tiếp — xem
   4. Bị từ chối vì "saved at …": `get_category` lại, làm lại thay đổi trên bản mới nhất.
   5. Lưu xong: báo lại đã đổi gì và mã lịch sử (`historyId`); muốn lùi thì `restore_category` với dòng lịch sử cũ.
 - Đang có task từ app trên danh mục đó thì không lưu được — chờ người dùng duyệt task.
-- Tạo ảnh: `run_studio` (origin / refine / variant / material).
+- Tạo ảnh: `run_studio` (origin / refine / variant / material), rồi `wait_run` (server chờ hộ, "still running" thì gọi lại) và `view_image`. Thử prompt chưa lưu: recipe `material` với `params.draft`.
 - Trả lời tiếng Việt, ngắn; trích đúng câu prompt khi nói về nó.

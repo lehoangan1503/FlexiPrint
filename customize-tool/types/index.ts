@@ -1529,6 +1529,21 @@ export type CtAgentTaskStatus = "pending" | "running" | "done" | "failed" | "can
 export interface CtAgentTaskProgress {
   at: string;
   text: string;
+  /** Images to show with the line (a studio run's results). */
+  images?: string[];
+}
+
+/** A studio run the agent started for a task (migration 013). */
+export interface CtAgentTaskRun {
+  run_id: string;
+  recipe: string;
+  /** What it makes, for the editor ("vật liệu: police car"). */
+  label: string;
+  status: CtStudioRunState;
+  started_at: string;
+  finished_at: string | null;
+  asset_ids: string[];
+  error: string;
 }
 
 /** What the dialog hands over — the same things it sends the built-in LLM, as urls. */
@@ -1550,6 +1565,7 @@ export interface CtAgentTask {
   status: CtAgentTaskStatus;
   input: CtAgentTaskInput;
   progress: CtAgentTaskProgress[];
+  runs: CtAgentTaskRun[];
   result: CtPromptSuggestion | CtCategoryRevision | null;
   error: string;
   agent_job_id: string;

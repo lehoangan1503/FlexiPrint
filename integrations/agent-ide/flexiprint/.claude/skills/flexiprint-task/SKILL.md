@@ -32,10 +32,20 @@ Người dùng đang chờ trên trình duyệt. Họ thấy từng dòng `repor
 - `assemble_prompts` với bản nháp (spec / style_prompt / details / materials) → đọc như model ảnh đọc.
   Không còn: hai mốc cho một vị trí, kích thước không đo được, câu "NOT in this picture" xoá mất chi tiết bắt buộc,
   thứ nằm sai lớp, ảnh thành phẩm mâu thuẫn.
-- Khi ảnh thử giúp quyết định (ví dụ không chắc vị trí lỗ treo): `run_studio`, `get_run` đến khi xong, `view_image`.
+- Khi ảnh thử giúp quyết định (ví dụ không chắc vị trí lỗ treo, dây có xỏ qua lỗ chưa):
+  1. `run_studio(recipe, params, task_id)` — **luôn truyền `task_id`**: người dùng thấy ảnh đang tạo và ảnh ra ngay
+     trên dialog. Sửa prompt vật liệu / chi tiết / ảnh thành phẩm thì chạy recipe `material` với
+     `params.draft = {material_prompt?, details?, product_refs?}` = **đúng bản bạn định nộp** (không lưu gì, ảnh tên
+     "… · thử"). Thử 1 ảnh trước, đạt rồi mới thử thêm.
+  2. `wait_run(run_id)` — server chờ hộ (≈3 phút mỗi lần gọi). Trả "still running" → gọi `wait_run` lại. Một ảnh
+     vật liệu mất khoảng 5 phút. **Không** dùng `get_run` để chờ.
+  3. `view_image` ảnh ra. Chưa đạt → sửa bản nháp, chạy lại. Đạt → nộp.
 
 ## 5. Nộp
-- `submit_result(task_id, result)` đúng định dạng — chẩn đoán / lý do bằng tiếng Việt, ngắn, nói rõ ảnh số mấy.
+- Chỉ nộp khi **mọi việc đã xong hẳn**: mọi lượt tạo ảnh đã `wait_run` xong và đã xem. Kết quả là câu trả lời
+  cuối cùng, không phải báo cáo giữa chừng ("đang chờ ảnh…" thì không được nộp). Còn lượt chạy dở → server từ chối.
+- `submit_result(task_id, result)` đúng định dạng — chẩn đoán / lý do bằng tiếng Việt, ngắn, nói rõ ảnh số mấy,
+  và ảnh thử (tên "… · thử") cho thấy gì.
 - Lỗi định dạng → đọc thông báo, sửa, nộp lại.
 - Không làm được (thiếu thông tin, studio lỗi…) → `fail_task(task_id, lý do tiếng Việt)`.
 - Ghi vài dòng vào `notes/<tên danh mục>.md`: đã đổi gì, vì sao, còn nghi ngờ gì.

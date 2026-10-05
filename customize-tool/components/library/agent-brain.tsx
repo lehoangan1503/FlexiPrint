@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bot, Loader2, Square } from "lucide-react";
 import type { CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress } from "../../types";
 import { ctApi } from "../../lib/api-client";
-import { cx } from "../ui";
+import { CHECKER_STYLE, cx } from "../ui";
 
 /** Whether @flexiprint is set up and answering. null while loading. */
 export function useAgentStatus() {
@@ -68,6 +68,7 @@ export function useAgentTask() {
 /** What the agent says it is doing, live. */
 export function AgentProgress({ task, onCancel }: { task: CtAgentTask; onCancel: () => void }) {
   const lines: CtAgentTaskProgress[] = task.progress ?? [];
+  const runningRuns = (task.runs ?? []).filter((r) => !r.finished_at).length;
   return (
     <div className="space-y-1 rounded-md border border-violet-500/30 bg-violet-500/5 p-2 text-[11px]">
       <div className="flex items-center gap-1.5 font-medium">
@@ -80,11 +81,22 @@ export function AgentProgress({ task, onCancel }: { task: CtAgentTask; onCancel:
         <p className="text-muted-foreground">Agent đang đọc task và hệ thống…</p>
       ) : (
         lines.slice(-6).map((l, i) => (
-          <p key={`${l.at}-${i}`} className={i === Math.min(lines.length, 6) - 1 ? "" : "text-muted-foreground"}>
-            • {l.text}
-          </p>
+          <div key={`${l.at}-${i}`} className={i === Math.min(lines.length, 6) - 1 ? "" : "text-muted-foreground"}>
+            <p>• {l.text}</p>
+            {l.images && l.images.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1 pl-3">
+                {l.images.map((u) => (
+                  <a key={u} href={u} target="_blank" rel="noreferrer" className="block h-16 w-16 overflow-hidden rounded border" style={CHECKER_STYLE}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={u} alt="" className="h-full w-full object-contain" />
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
         ))
       )}
+      {runningRuns > 0 && <p className="text-muted-foreground">Đang chờ {runningRuns} lượt tạo ảnh — agent chỉ nộp kết quả khi ảnh xong.</p>}
     </div>
   );
 }

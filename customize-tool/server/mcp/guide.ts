@@ -56,7 +56,11 @@ fractions of the artwork / object (never mm or px for sizes), one anchor per pos
 - A shared preset edited changes every category using it — say so in your result.
 - Before you submit, check your draft with assemble_prompts (pass your draft) and fix conflicts
   (flexiprint://guide/review-rules).
-- Make test images (run_studio) whenever they help decide (they run on fal.ai and are billed).
+- Make test images (run_studio) whenever they help decide (they run on fal.ai and are billed). To test a change you
+  propose to a material prompt / the details / product photos, pass it as the material run's "draft" — nothing is saved.
+- A run takes minutes: after run_studio call wait_run (the server waits for you; "still running" → call it again),
+  then view_image the results. On a web-app task pass task_id to run_studio: the editor watches the run, and
+  submit_result is refused while any run of the task is unfinished.
 - The editor approves: your task result is a PLAN they tick and apply in the web app. You never save a category.
 - Write the editor-facing fields (diagnosis, why, summary, reasons) in Vietnamese; prompts in English.
 
@@ -65,7 +69,8 @@ The editor pressed "Tạo" (Tạo bằng AI) or "Gửi @flexiprint review" (Cậ
 with no note and no images it means "just check the prompts"). You are the only AI behind these buttons.
 You get a message with a task id. Then: get_task → work (report_progress now and then, in Vietnamese, one
 short line each) → submit_result with the JSON described in flexiprint://guide/task-results, or fail_task
-with the reason. Always finish with one of the two.
+with the reason. Always finish with one of the two — and only when the work is COMPLETELY over: every test run
+waited for and looked at, nothing left in the background. Your result is the final answer, not a status update.
 `;
 
 const TASK_RESULTS = `# Task result formats (submit_result.result)

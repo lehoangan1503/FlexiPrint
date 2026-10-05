@@ -209,7 +209,7 @@ UI Cài đặt → Dịch vụ → thêm; hoặc API admin
 |---|---|
 | Thư viện | `list_categories`, `get_category`, `list_cliparts`, `get_history`, `view_image`, `list_style_packs`, `list_materials`, `list_product_details` |
 | Prompt | `assemble_prompts` (prompt y như model ảnh nhận, kể cả bản nháp), `review_category` |
-| Studio | `list_models`, `run_studio` (origin / refine / variant / material — **tốn tiền**), `get_run` |
+| Studio | `list_models`, `run_studio` (origin / refine / variant / material — **tốn tiền**; `task_id` gắn vào task, `draft` chạy thử prompt chưa lưu), `wait_run` (server chờ hộ tới khi xong), `get_run` |
 | Task từ app | `get_task`, `report_progress`, `submit_result`, `fail_task` |
 | Lưu (khi được nhờ trực tiếp) | `save_category`, `save_preset`, `restore_category` |
 

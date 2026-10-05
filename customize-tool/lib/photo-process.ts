@@ -3,7 +3,10 @@
  * "try a photo" box and the storefront photo dialog, so both show the same
  * result:
  *
- *   1. shrink to PROCESS_MAX_PX (phone photos are 12 MP; models want ~1K)
+ *   1. shrink to PROCESS_MAX_PX (phone photos are 12 MP; models want ~1K) —
+ *      Face styles keep the photo as uploaded (up to FACE_PROCESS_MAX_PX, the
+ *      storefront's own upload size): the face is a small part of it, and the
+ *      cut comes back at the photo's resolution to stay sharp in its frame
  *   2. server (only when needed): AI restyle and/or subject cut-out
  *   3. key out a flat white backdrop if the server says one is left
  *   4. cut-out → fade the subject out where the photo frame crops it, so it
@@ -15,9 +18,13 @@
 import type { CtPhotoStyleRef } from "../types";
 import { canvasToBlob } from "./compositor";
 import { removeBackgroundFrom, trimTransparent } from "./image-tools";
-import { needsServer, styleEngine } from "./photo-styles";
+import { needsServer, styleEngine, styleFamily, styleFilter, type CtPhotoFilter } from "./photo-styles";
+
+const isFaceStyle = (style: CtPhotoStyleRef) => styleFamily(style) === "face";
 
 const PROCESS_MAX_PX = 1600;
+/** Face styles: the whole upload (storefront PHOTO_MAX_PX) — the face is cut at full resolution, never scaled down. */
+const FACE_PROCESS_MAX_PX = 3000;
 
 export interface PhotoProcessRequest {
   source: Blob;
@@ -91,12 +98,61 @@ async function serverStep(req: PhotoProcessRequest, input: Blob): Promise<HTMLCa
 }
 
 export async function processPhoto(req: PhotoProcessRequest): Promise<Blob> {
-  const input = await shrinkImage(req.source, PROCESS_MAX_PX);
+  const input = await shrinkImage(req.source, isFaceStyle(req.style) ? FACE_PROCESS_MAX_PX : PROCESS_MAX_PX);
   let canvas = needsServer(req.style, req.cutout) ? await serverStep(req, input) : toCanvas(await blobToImage(input));
-  if (req.cutout && req.fadeCrop) canvas = fadeCroppedEdges(canvas);
+  // Face styles end at the jaw on purpose (services/face-detect): no fade into a body that isn't there.
+  if (req.cutout && req.fadeCrop && !isFaceStyle(req.style)) canvas = fadeCroppedEdges(canvas);
   if (req.cutout) canvas = trimTransparent(canvas, 2);
   if (styleEngine(req.style) === "local") canvas = pixelArt(canvas, { cells: 170, colors: 64 });
+  const filter = styleFilter(req.style);
+  if (filter) canvas = colorFilter(canvas, filter);
   return hasAlpha(canvas) ? canvasToBlob(canvas, "image/png") : canvasToBlob(canvas, "image/jpeg", 0.92);
+}
+
+// ---------------------------------------------------------------------------
+// Colour filters (Face styles)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-pixel, alpha kept. Done by hand rather than with ctx.filter, which
+ * Safari's canvas ignores.
+ */
+export function colorFilter(src: HTMLCanvasElement, filter: CtPhotoFilter): HTMLCanvasElement {
+  const ctx = src.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return src;
+  const img = ctx.getImageData(0, 0, src.width, src.height);
+  const d = img.data;
+  const clamp = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i];
+    const g = d[i + 1];
+    const b = d[i + 2];
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    if (filter === "bw") {
+      // A touch of contrast so it reads as a print, not a washed-out grey.
+      const v = clamp((y - 128) * 1.1 + 128);
+      d[i] = v;
+      d[i + 1] = v;
+      d[i + 2] = v;
+    } else if (filter === "sepia") {
+      d[i] = clamp(0.393 * r + 0.769 * g + 0.189 * b);
+      d[i + 1] = clamp(0.349 * r + 0.686 * g + 0.168 * b);
+      d[i + 2] = clamp(0.272 * r + 0.534 * g + 0.131 * b);
+    } else if (filter === "warm") {
+      // Golden-hour: lift reds, a little green, pull blue down.
+      d[i] = clamp(r * 1.08 + 12);
+      d[i + 1] = clamp(g * 1.02 + 4);
+      d[i + 2] = clamp(b * 0.86);
+    } else {
+      // Vivid: +35% saturation around the luma, +8% contrast.
+      const sat = (c: number) => clamp(((y + (c - y) * 1.35) - 128) * 1.08 + 128);
+      d[i] = sat(r);
+      d[i + 1] = sat(g);
+      d[i + 2] = sat(b);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return src;
 }
 
 // ---------------------------------------------------------------------------

@@ -17,6 +17,9 @@ services:
       CT_PHOTO_STYLE_URL: http://photo-style:7002
       CT_MATERIAL_URL: http://material-render:7003
       CT_BG_REMOVER_URL: http://bg-remover:7001
+      CT_FACE_DETECT_URL: http://face-detect:7004
+      # ComfyUI studio for the editor's AI dialog (server/studio.ts, recipes).
+      CT_COMFY_URL: http://comfy:8188
     # Server-side Supabase calls go to the public URL; resolve it to the host's nginx
     # directly instead of hair-pinning through the public IP.
     extra_hosts:
@@ -24,12 +27,17 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     restart: unless-stopped
-    depends_on: [photo-style, material-render]
+    depends_on: [photo-style, material-render, face-detect]
 
   photo-style:
     build: ./services/photo-style
     restart: unless-stopped
     command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7002", "--workers", "1"]
+
+  face-detect:
+    build: ./services/face-detect
+    restart: unless-stopped
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7004", "--workers", "2"]
 
   material-render:
     build: ./services/material-render

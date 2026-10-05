@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { ChevronDown, User, Check, Loader2, LogOut, Pencil, ShieldCheck } from "lucide-react";
 import { logout } from "@/app/login/actions";
 import type { UserProfile } from "@/types/auth";
+import { ctAlert } from "../../customize-tool/components/dialogs";
 
 interface UserDropdownProps {
   profile: UserProfile;
@@ -55,7 +56,7 @@ export function UserDropdown({ profile: initialProfile, isSuperAdmin = false }: 
       setEditing(false);
       setTimeout(() => setSaved(false), 2000);
     } catch {
-      alert("Không thể lưu biệt danh");
+      void ctAlert({ title: "Không thể lưu biệt danh", tone: "danger" });
     } finally {
       setSaving(false);
     }

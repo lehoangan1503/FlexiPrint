@@ -12,8 +12,8 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import type { CtMainLayout, CtProductConfig, CtRegion, CtRegionItem } from "../../types";
-import { applyLayout, emptyLayout, pruneLayout } from "../../lib/layout";
+import type { CtProductConfig, CtRegion, CtRegionItem } from "../../types";
+import { versionLayers } from "../../lib/layout";
 
 export interface DesignState {
   regions: CtRegion[];
@@ -33,7 +33,8 @@ export interface DesignApi {
   checkpoint: () => void;
   undo: () => void;
   redo: () => void;
-  reset: (s: DesignState) => void;
+  /** Load a state (clears history); `dirty` when it already differs from what is saved. */
+  reset: (s: DesignState, dirty?: boolean) => void;
   markSaved: () => void;
 }
 
@@ -101,14 +102,14 @@ export function useDesign(initial: DesignState): DesignApi {
     setDirty(true);
   }, []);
 
-  const reset = useCallback((s: DesignState) => {
+  const reset = useCallback((s: DesignState, dirty = false) => {
     past.current = [];
     future.current = [];
     gestureStart.current = null;
     syncCounts();
     stateRef.current = s;
     setState(s);
-    setDirty(false);
+    setDirty(dirty);
   }, []);
 
   const markSaved = useCallback(() => setDirty(false), []);
@@ -137,60 +138,47 @@ export function updateItem(s: DesignState, id: string, fn: (i: CtRegionItem) => 
 }
 
 // ---------------------------------------------------------------------------
-// Per-main-version layouts
+// Layers per main version
 // ---------------------------------------------------------------------------
 
 /**
- * A DesignApi that edits the layout of main version `mainId` (config.layouts).
- * The stage and inspector keep working on plain regions / items: they see the
- * version's overrides applied, and a geometry change they make (zone shape,
- * object transform) is written back as an override of that version instead
- * of into the base layout. Everything else — names, config, new or deleted
- * zones, restacking — goes to the shared design as usual.
- *
- * Returns `api` untouched when the version has no own layout.
+ * A DesignApi that sees and edits only the layers of main version `mainId`
+ * (CtRegionConfig.mainId; lib/layout.ts). The stage and inspector keep working
+ * on plain regions / items: a zone they add belongs to this version, one they
+ * delete or restack touches only this version's set. Every version's stack is
+ * numbered from 0 on its own.
  */
 const viewCache = new WeakMap<DesignState, Map<string, DesignState>>();
 
-export function layoutView(api: DesignApi, mainId: string | null): DesignApi {
-  if (!mainId || !api.state.config.layouts[mainId]) return api;
+export function versionView(api: DesignApi, mainId: string | null): DesignApi {
+  if (!mainId) return api;
   const view = (s: DesignState): DesignState => {
-    const l = s.config.layouts[mainId];
-    if (!l) return s;
     // Same state + version → same object, so memo / effect deps downstream stay stable.
     let byMain = viewCache.get(s);
     if (!byMain) viewCache.set(s, (byMain = new Map()));
     const hit = byMain.get(mainId);
     if (hit) return hit;
-    const made = { ...s, ...applyLayout(s.regions, s.items, l) };
+    const own = versionLayers(s.regions, s.items, mainId);
+    const regions = [...own.regions].sort((a, b) => a.sort_order - b.sort_order).map((r, k) => (r.sort_order === k ? r : { ...r, sort_order: k }));
+    const made = { ...s, regions, items: own.items };
     byMain.set(mainId, made);
     return made;
   };
   const write = (s: DesignState, seen: DesignState, next: DesignState): DesignState => {
     if (next === seen) return s;
-    // The mapper may have edited the config itself (e.g. hide a zone): start from that.
-    const config = next.config;
-    const cur = config.layouts[mainId];
-    if (!cur) return next;
-    const layout: CtMainLayout = { regions: { ...cur.regions }, items: { ...cur.items } };
-    const baseRegions = new Map(s.regions.map((r) => [r.id, r]));
-    const seenRegions = new Map(seen.regions.map((r) => [r.id, r]));
-    const regions = next.regions.map((r) => {
-      const base = baseRegions.get(r.id);
-      if (!base) return r; // new zone: its shape is the base shape
-      if (r.shape !== seenRegions.get(r.id)?.shape) layout.regions[r.id] = { ...layout.regions[r.id], shape: r.shape };
-      return r.shape === base.shape ? r : { ...r, shape: base.shape };
-    });
-    const baseItems = new Map(s.items.map((i) => [i.id, i]));
-    const seenItems = new Map(seen.items.map((i) => [i.id, i]));
-    const items = next.items.map((i) => {
-      const base = baseItems.get(i.id);
-      if (!base) return i;
-      if (i.transform !== seenItems.get(i.id)?.transform) layout.items[i.id] = i.transform;
-      return i.transform === base.transform ? i : { ...i, transform: base.transform };
-    });
-    const pruned = pruneLayout(layout, new Set(regions.map((r) => r.id)), new Set(items.map((i) => i.id)));
-    return { regions, items, config: { ...config, layouts: { ...config.layouts, [mainId]: pruned } } };
+    const seenIds = new Set(seen.regions.map((r) => r.id));
+    const others = s.regions.filter((r) => !seenIds.has(r.id));
+    const otherIds = new Set(others.map((r) => r.id));
+    // Untouched layers keep their stored object; new ones join this version.
+    const stored = new Map(s.regions.map((r) => [r.id, r]));
+    const seenById = new Map(seen.regions.map((r) => [r.id, r]));
+    const mine = [...next.regions]
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((r) => (seenById.get(r.id) === r ? (stored.get(r.id) ?? r) : r.config?.mainId === mainId ? r : { ...r, config: { ...r.config, mainId } }));
+    // Stored bottom-first: the save RPC rewrites sort_order from array position.
+    const regions = [...others, ...mine].map((r, k) => (r.sort_order === k ? r : { ...r, sort_order: k }));
+    const items = [...s.items.filter((i) => otherIds.has(i.region_id)), ...next.items];
+    return { regions, items, config: next.config };
   };
   const through = (fn: (s: DesignState) => DesignState) => (s: DesignState) => {
     const seen = view(s);
@@ -202,23 +190,4 @@ export function layoutView(api: DesignApi, mainId: string | null): DesignApi {
     commit: (fn) => api.commit(through(fn)),
     live: (fn) => api.live(through(fn)),
   };
-}
-
-/** Toggle a zone's visibility in one main version's layout. */
-export function setZoneHidden(s: DesignState, mainId: string, regionId: string, hidden: boolean): DesignState {
-  const cur = s.config.layouts[mainId];
-  if (!cur) return s;
-  const entry = { ...cur.regions[regionId] };
-  if (hidden) entry.hidden = true;
-  else delete entry.hidden;
-  const regions = { ...cur.regions, [regionId]: entry };
-  return { ...s, config: { ...s.config, layouts: { ...s.config.layouts, [mainId]: { ...cur, regions } } } };
-}
-
-/** Give a main version its own layout (starting as a copy of the base), or drop it. */
-export function setOwnLayout(s: DesignState, mainId: string, on: boolean): DesignState {
-  const layouts = { ...s.config.layouts };
-  if (on) layouts[mainId] = layouts[mainId] ?? emptyLayout();
-  else delete layouts[mainId];
-  return { ...s, config: { ...s.config, layouts } };
 }

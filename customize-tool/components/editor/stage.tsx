@@ -11,6 +11,9 @@
  *   O  ellipse zone          drag to draw
  *   P  polygon pen           click points; click the first point, double-click
  *                            or Enter to close; Esc cancels
+ *   The version's own picture is a frame too (CtMainLayout.frame): click it to
+ *   select it, drag to move, handles resize it (corners keep the aspect, Shift =
+ *   free). The artboard behind — the default main's size — never changes.
  *   Object mode (toolbar or double-click a region) edits the selected object
  *   INSIDE its zone: drag = move, corner = scale, top knob = rotate.
  *   Moving / resizing snaps edges + centre to the main's edges, quarters and
@@ -22,13 +25,19 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CtAsset, CtBounds, CtPoint, CtRegion, CtRegionItem, CtRegionKind, CtSelection, CtShape, CtTransform } from "../../types";
-import { clamp, fitShapeToBounds, itemPlacement, shapeBounds, shapeToSvgPath, SNAP_FRACTIONS, snapAxis, translateShape } from "../../lib/geometry";
+import type { CtAsset, CtBounds, CtMainFrame, CtProductScene, CtPhotoFrame, CtPoint, CtRegion, CtRegionItem, CtRegionKind, CtSelection, CtShape, CtTransform } from "../../types";
+import { clamp, fitShapeToBounds, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, SNAP_FRACTIONS, snapAxis, translateShape } from "../../lib/geometry";
 import { drawComposite } from "../../lib/compositor";
-import { makeRegion } from "../../lib/design";
+import { hasTestPhoto, makeRegion } from "../../lib/design";
 import { cx, CHECKER_STYLE } from "../ui";
 import type { DesignApi } from "./use-design";
+import { useImageSize } from "./use-image-size";
+import { CLIPART_DRAG, type CtClipartDrag } from "./library-panel";
 import { updateItem, updateRegion } from "./use-design";
+import { mainFrameFor } from "../../lib/layout";
+
+const isTyping = (t: EventTarget | null) =>
+  t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
 
 export type StageTool = "select" | "hand" | "rect" | "ellipse" | "polygon";
 export type EditTarget = "region" | "object";
@@ -46,6 +55,8 @@ const SNAP_PX = 6;
 
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 const HANDLES: Handle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+/** ms after a click selects another zone during which dragging doesn't move it. */
+const SELECT_HOLD_MS = 500;
 
 type Gesture =
   | { kind: "pan"; startX: number; startY: number; panX: number; panY: number }
@@ -55,7 +66,15 @@ type Gesture =
   | { kind: "vertex"; id: string; index: number; shape: CtShape }
   | { kind: "move-item"; id: string; start: CtPoint; t: CtTransform; bounds: CtBounds; geom: ItemGeom | null }
   | { kind: "scale-item"; id: string; center: CtPoint; startDist: number; t: CtTransform }
-  | { kind: "rotate-item"; id: string; center: CtPoint; startAngle: number; t: CtTransform };
+  | { kind: "rotate-item"; id: string; center: CtPoint; startAngle: number; t: CtTransform }
+  // A photo zone's child frame (CtPhotoFrame): id = the region.
+  | { kind: "move-frame"; id: string; start: CtPoint; f: CtPhotoFrame; bounds: CtBounds }
+  | { kind: "scale-frame"; id: string; center: CtPoint; startDist: number; f: CtPhotoFrame }
+  | { kind: "stretch-frame"; id: string; axis: "x" | "y"; center: CtPoint; f: CtPhotoFrame; bounds: CtBounds }
+  | { kind: "rotate-frame"; id: string; center: CtPoint; startAngle: number; f: CtPhotoFrame }
+  // The shown version's picture frame (CtMainLayout.frame).
+  | { kind: "move-main"; start: CtPoint; f: CtMainFrame }
+  | { kind: "resize-main"; handle: Handle; f: CtMainFrame };
 
 export interface StageProps {
   productId: string;
@@ -74,6 +93,14 @@ export interface StageProps {
   showOverlay: boolean;
   /** Photo zones whose test photo is being processed: regionId -> spinner label. */
   photoBusy?: Record<string, string>;
+  /** A library clipart dropped on the canvas, at main-asset pixel coordinates. */
+  onDropClipart?: (drag: CtClipartDrag, at: CtPoint) => void;
+  /** Background photo drawn behind the design (Thiết kế → Nền). */
+  scene?: CtProductScene;
+  /** The version shown, whose picture frame can be selected / moved / resized. */
+  versionId: string;
+  mainSelected: boolean;
+  onSelectMain: (on: boolean) => void;
 }
 
 const MIN_ZOOM = 0.02;
@@ -91,17 +118,29 @@ export function Stage(props: StageProps) {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [draft, setDraft] = useState<CtPoint[]>([]);
+  /** Points stepped back with Ctrl+Z while drawing, newest last; a new click clears them. */
+  const draftRedo = useRef<CtPoint[]>([]);
   const [hover, setHover] = useState<CtPoint | null>(null);
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const [guides, setGuides] = useState<Guides>(NO_GUIDES);
+  const [dropping, setDropping] = useState(false);
   const gestureRef = useRef<Gesture | null>(null);
   gestureRef.current = gesture;
+  // A click that SELECTS another zone doesn't move it: drags are held for SELECT_HOLD_MS after it.
+  // (Zone ↔ its child frame is not held: inside a photo zone every click toggles between them.)
+  const moveHeldUntil = useRef(0);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
   const panRef = useRef(pan);
   panRef.current = pan;
 
   const byId = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
+  const mainFrame = mainFrameFor(layouts, props.versionId, main.width, main.height);
+  const setMainFrame = (f: CtMainFrame) =>
+    design.live((s) => {
+      const cur = s.config.layouts[props.versionId] ?? { regions: {}, items: {} };
+      return { ...s, config: { ...s.config, layouts: { ...s.config.layouts, [props.versionId]: { ...cur, frame: f } } } };
+    });
 
   // ------------------------------------------------------------------ view
   const fit = useCallback(() => {
@@ -158,8 +197,6 @@ export function Stage(props: StageProps) {
 
   // Space = temporary hand tool.
   useEffect(() => {
-    const isTyping = (t: EventTarget | null) =>
-      t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
     const down = (e: KeyboardEvent) => {
       if (e.code === "Space" && !isTyping(e.target)) {
         e.preventDefault();
@@ -179,12 +216,14 @@ export function Stage(props: StageProps) {
 
   // ------------------------------------------------------------------ render
   const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
-  // Quantised so zooming does not re-render the composite on every wheel tick.
+  // Quantised so zooming does not re-render the composite on every wheel tick. Zoomed past 100 % it renders above
+  // the main's own size (capped at ~4K px), so a customer photo — far sharper than the main's pixels — stays sharp.
   const renderScale = useMemo(() => {
-    const want = clamp(zoom * dpr, 0.05, 1);
-    const steps = [0.125, 0.25, 0.5, 0.75, 1];
-    return steps.find((s) => s >= want) ?? 1;
-  }, [zoom, dpr]);
+    const max = Math.max(1, Math.min(4, 4096 / Math.max(main.width, main.height)));
+    const want = clamp(zoom * dpr, 0.05, max);
+    const steps = [0.125, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4].filter((s) => s <= max);
+    return steps.find((s) => s >= want) ?? steps[steps.length - 1];
+  }, [zoom, dpr, main.width, main.height]);
 
   const renderToken = useRef(0);
   useEffect(() => {
@@ -220,6 +259,12 @@ export function Stage(props: StageProps) {
   }, []);
 
   const px = 1 / zoom; // one screen pixel in world units
+  const sceneRect = useMemo(() => {
+    const sc = props.scene;
+    if (!sc?.url || !sc.box.w) return null;
+    const k = main.width / sc.box.w;
+    return { x: -sc.box.x * k, y: -sc.box.y * k, w: sc.width * k, h: sc.height * k };
+  }, [props.scene, main.width]);
 
   // ------------------------------------------------------------------ item geometry
   /** Asset currently rendered for an item (the selected variant if it belongs to it). */
@@ -243,6 +288,25 @@ export function Stage(props: StageProps) {
     if (!a) return null;
     return itemPlacement(shapeBounds(activeRegion.shape), a.width, a.height, activeItem.transform);
   }, [activeItem, activeRegion, shownAssetFor]);
+
+  /** Object mode on a photo zone edits its child frame — where the customer's photo goes inside the zone. */
+  // An auto frame is worked out for the test photo shown in the zone (its size), like the compositor does.
+  const activeSel = activeRegion ? selection[activeRegion.id] : undefined;
+  const testPhotoSize = useImageSize(activeSel?.kind === "photo" ? activeSel.url : null);
+  const photoFrame = useMemo(
+    () =>
+      activeRegion?.kind === "photo" && activeRegion.config.photo && activeRegion.config.photo.frame?.enabled !== false && hasTestPhoto(activeSel)
+        ? resolvePhotoFrame(activeRegion.config.photo, activeRegion.shape, testPhotoSize)
+        : null,
+    [activeRegion, activeSel, testPhotoSize],
+  );
+  const frameGeom = useMemo(
+    () => (activeRegion && photoFrame ? photoFrameBox(shapeBounds(activeRegion.shape), photoFrame) : null),
+    [activeRegion, photoFrame],
+  );
+  /** A frame moved by hand stays where it was put: auto off. */
+  const setFrame = (id: string, f: CtPhotoFrame) =>
+    design.live((s) => updateRegion(s, id, (r) => ({ ...r, config: { ...r.config, photo: { ...r.config.photo, frame: { ...f, auto: false } } } })));
 
   // ------------------------------------------------------------------ pointer
   const effectiveTool: StageTool = spaceHeld ? "hand" : tool;
@@ -280,6 +344,7 @@ export function Stage(props: StageProps) {
         props.onToolChange("select");
       }
       setDraft((d) => (d.length ? [] : d));
+      draftRedo.current = [];
     },
     [design, drawKind, props, regions.length],
   );
@@ -305,10 +370,15 @@ export function Stage(props: StageProps) {
         }
       }
       setDraft((d) => [...d, w]);
+      draftRedo.current = [];
       return;
     }
-    // select tool on empty canvas → deselect
+    // select tool: on the version's picture → select its frame (and drag it); empty artboard → deselect
     props.onSelectRegion(null);
+    if (insideFrame(w, mainFrame)) {
+      props.onSelectMain(true);
+      setGesture({ kind: "move-main", start: w, f: mainFrame });
+    } else props.onSelectMain(false);
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -316,6 +386,12 @@ export function Stage(props: StageProps) {
     if (effectiveTool === "polygon") setHover(w);
     const g = gestureRef.current;
     if (!g) return;
+    if ((g.kind === "move-region" || g.kind === "move-frame") && performance.now() < moveHeldUntil.current) {
+      // Held: the drag starts from wherever the pointer is when the hold ends — no jump.
+      gestureRef.current = { ...g, start: w };
+      setGesture(gestureRef.current);
+      return;
+    }
     switch (g.kind) {
       case "pan":
         setPan({ x: g.panX + e.clientX - g.startX, y: g.panY + e.clientY - g.startY });
@@ -371,6 +447,39 @@ export function Stage(props: StageProps) {
         design.live((s) => updateRegion(s, g.id, (r) => ({ ...r, shape: fitShapeToBounds(g.shape, next) })));
         break;
       }
+      case "move-main": {
+        let dx = w.x - g.start.x;
+        let dy = w.y - g.start.y;
+        if (e.shiftKey) {
+          if (Math.abs(dx) > Math.abs(dy)) dy = 0;
+          else dx = 0;
+        }
+        const snap = g.f.rotation ? { dx: 0, dy: 0 } : snapBox({ x: g.f.x + dx, y: g.f.y + dy, w: g.f.w, h: g.f.h }, e.altKey, false, false);
+        setMainFrame({ ...g.f, x: g.f.x + dx + snap.dx, y: g.f.y + dy + snap.dy });
+        break;
+      }
+      case "resize-main": {
+        const b = g.f;
+        let x0 = b.x;
+        let y0 = b.y;
+        let x1 = b.x + b.w;
+        let y1 = b.y + b.h;
+        const ex = g.handle.includes("w") || g.handle.includes("e") ? snapLine(w.x, "x", e.altKey) : null;
+        const sx = ex?.line ?? w.x;
+        setGuides({ x: ex ? [ex.line] : [], y: [] });
+        if (g.handle.includes("w")) x0 = Math.min(sx, x1 - 4);
+        if (g.handle.includes("e")) x1 = Math.max(sx, x0 + 4);
+        if (g.handle.includes("n")) y0 = Math.min(w.y, y1 - 4);
+        if (g.handle.includes("s")) y1 = Math.max(w.y, y0 + 4);
+        // A picture keeps its aspect on a corner (Shift = free).
+        if (g.handle.length === 2 && !e.shiftKey && b.w > 0 && b.h > 0) {
+          const nh = (x1 - x0) * (b.h / b.w);
+          if (g.handle.includes("n")) y0 = y1 - nh;
+          else y1 = y0 + nh;
+        }
+        setMainFrame({ ...b, x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+        break;
+      }
       case "vertex": {
         if (g.shape.type !== "polygon") break;
         const points = g.shape.points.map((p, i) => (i === g.index ? w : p));
@@ -411,6 +520,34 @@ export function Stage(props: StageProps) {
         design.live((s) => updateItem(s, g.id, (it) => ({ ...it, transform: { ...g.t, rotation } })));
         break;
       }
+      case "move-frame": {
+        const dx = (w.x - g.start.x) / Math.max(1, g.bounds.w);
+        const dy = (w.y - g.start.y) / Math.max(1, g.bounds.h);
+        setFrame(g.id, { ...g.f, offsetX: g.f.offsetX + dx, offsetY: g.f.offsetY + dy });
+        break;
+      }
+      case "scale-frame": {
+        const k = Math.hypot(w.x - g.center.x, w.y - g.center.y) / Math.max(1, g.startDist);
+        setFrame(g.id, { ...g.f, scaleX: clamp(g.f.scaleX * k, 0.02, 20), scaleY: clamp(g.f.scaleY * k, 0.02, 20) });
+        break;
+      }
+      case "stretch-frame": {
+        // Distance from the centre along the frame's own (rotated) axis = half the new size.
+        const t = (g.f.rotation * Math.PI) / 180;
+        const vx = w.x - g.center.x;
+        const vy = w.y - g.center.y;
+        const along = g.axis === "x" ? vx * Math.cos(t) + vy * Math.sin(t) : -vx * Math.sin(t) + vy * Math.cos(t);
+        const size = (2 * Math.abs(along)) / Math.max(1, g.axis === "x" ? g.bounds.w : g.bounds.h);
+        setFrame(g.id, g.axis === "x" ? { ...g.f, scaleX: clamp(size, 0.02, 20) } : { ...g.f, scaleY: clamp(size, 0.02, 20) });
+        break;
+      }
+      case "rotate-frame": {
+        const a = (Math.atan2(w.y - g.center.y, w.x - g.center.x) * 180) / Math.PI;
+        let rotation = g.f.rotation + a - g.startAngle;
+        if (e.shiftKey) rotation = Math.round(rotation / 15) * 15;
+        setFrame(g.id, { ...g.f, rotation: Math.round(rotation * 10) / 10 });
+        break;
+      }
     }
   };
 
@@ -443,7 +580,10 @@ export function Stage(props: StageProps) {
   // time, and with an effect that re-runs each render (closePolygon depends on
   // `props`) that was an infinite render loop.
   useEffect(() => {
-    if (tool !== "polygon") setDraft((d) => (d.length ? [] : d));
+    if (tool !== "polygon") {
+      setDraft((d) => (d.length ? [] : d));
+      draftRedo.current = [];
+    }
   }, [tool]);
 
   // Keyboard for the polygon pen. Reads the latest draft/closer through refs
@@ -452,23 +592,58 @@ export function Stage(props: StageProps) {
   draftRef.current = draft;
   const closePolygonRef = useRef(closePolygon);
   closePolygonRef.current = closePolygon;
+  // Ctrl/Cmd+Z steps back one point, Ctrl/Cmd+Shift+Z (or Ctrl+Y) puts it back.
+  // Bound in the capture phase so it runs before the editor's design undo, and
+  // only swallows the key while there is a point to step through — otherwise
+  // the shortcut falls through to the design history.
   useEffect(() => {
     if (tool !== "polygon") return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Enter") closePolygonRef.current(draftRef.current);
-      if (e.key === "Escape") setDraft((d) => (d.length ? [] : d));
-      if (e.key === "Backspace") setDraft((d) => (d.length ? d.slice(0, -1) : d));
+    const undoPoint = () => {
+      const d = draftRef.current;
+      if (!d.length) return false;
+      draftRedo.current = [...draftRedo.current, d[d.length - 1]];
+      setDraft(d.slice(0, -1));
+      return true;
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const redoPoint = () => {
+      const r = draftRedo.current;
+      if (!r.length) return false;
+      draftRedo.current = r.slice(0, -1);
+      setDraft([...draftRef.current, r[r.length - 1]]);
+      return true;
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e.target)) return;
+      const k = e.key.toLowerCase();
+      if (e.metaKey || e.ctrlKey) {
+        const handled = k === "z" ? (e.shiftKey ? redoPoint() : undoPoint()) : k === "y" ? redoPoint() : false;
+        if (handled) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+        return;
+      }
+      if (e.key === "Enter") closePolygonRef.current(draftRef.current);
+      if (e.key === "Escape") {
+        setDraft((d) => (d.length ? [] : d));
+        draftRedo.current = [];
+      }
+      if (e.key === "Backspace") undoPoint();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [tool]);
 
   // ------------------------------------------------------------------ region handlers
   const onRegionPointerDown = (e: React.PointerEvent, region: CtRegion) => {
     if (effectiveTool !== "select") return;
     e.stopPropagation();
+    props.onSelectMain(false);
     viewportRef.current?.setPointerCapture(e.pointerId);
+    if (region.id !== selectedRegionId) moveHeldUntil.current = performance.now() + SELECT_HOLD_MS;
     props.onSelectRegion(region.id);
+    // A photo zone's body (outside its child frame, which has its own handler) is the zone itself.
+    if (region.kind === "photo" && editTarget === "object") props.onEditTargetChange("region");
     if (editTarget === "object" && region.id === selectedRegionId && itemGeom && activeItem) {
       setGesture({
         kind: "move-item",
@@ -506,7 +681,7 @@ export function Stage(props: StageProps) {
         return;
       }
     }
-    if (region.kind === "image") props.onEditTargetChange(editTarget === "object" ? "region" : "object");
+    if (region.kind === "image" || region.kind === "photo") props.onEditTargetChange(editTarget === "object" ? "region" : "object");
   };
 
   const onHandleDown = (e: React.PointerEvent, region: CtRegion, handle: Handle) => {
@@ -548,6 +723,29 @@ export function Stage(props: StageProps) {
     }
   };
 
+  const onFrameBodyDown = (e: React.PointerEvent) => {
+    if (effectiveTool !== "select" || !activeRegion || !photoFrame) return;
+    e.stopPropagation();
+    viewportRef.current?.setPointerCapture(e.pointerId);
+    // Clicking the child frame selects it (its own row in Layers; Delete removes the frame, not the zone).
+    props.onEditTargetChange("object");
+    setGesture({ kind: "move-frame", id: activeRegion.id, start: toWorld(e.clientX, e.clientY), f: photoFrame, bounds: shapeBounds(activeRegion.shape) });
+  };
+
+  const onFrameHandleDown = (e: React.PointerEvent, mode: "scale" | "rotate" | "x" | "y") => {
+    e.stopPropagation();
+    if (!frameGeom || !photoFrame || !activeRegion) return;
+    viewportRef.current?.setPointerCapture(e.pointerId);
+    props.onEditTargetChange("object");
+    const w = toWorld(e.clientX, e.clientY);
+    const center = { x: frameGeom.cx, y: frameGeom.cy };
+    const id = activeRegion.id;
+    if (mode === "scale") setGesture({ kind: "scale-frame", id, center, startDist: Math.hypot(w.x - center.x, w.y - center.y), f: photoFrame });
+    else if (mode === "rotate")
+      setGesture({ kind: "rotate-frame", id, center, startAngle: (Math.atan2(w.y - center.y, w.x - center.x) * 180) / Math.PI, f: photoFrame });
+    else setGesture({ kind: "stretch-frame", id, axis: mode, center, f: photoFrame, bounds: shapeBounds(activeRegion.shape) });
+  };
+
   // ------------------------------------------------------------------ draw
   const kindColor: Record<CtRegionKind, string> = { image: "#0ea5e9", text: "#f59e0b", photo: "#a855f7" };
   const cursor =
@@ -586,15 +784,45 @@ export function Stage(props: StageProps) {
       onPointerUp={onPointerUp}
       onPointerLeave={() => setHover(null)}
       onDoubleClick={() => tool === "polygon" && closePolygon(draft)}
+      onDragOver={(e) => {
+        if (!props.onDropClipart || !e.dataTransfer.types.includes(CLIPART_DRAG)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        setDropping(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+      }}
+      onDrop={(e) => {
+        setDropping(false);
+        const raw = e.dataTransfer.getData(CLIPART_DRAG);
+        if (!raw || !props.onDropClipart) return;
+        e.preventDefault();
+        props.onDropClipart(JSON.parse(raw) as CtClipartDrag, toWorld(e.clientX, e.clientY));
+      }}
     >
+      {dropping && <div className="pointer-events-none absolute inset-2 z-20 rounded-lg border-2 border-dashed border-sky-500 bg-sky-500/5" />}
+      {sceneRect && props.scene?.url && (
+        // The background in main px: the design box of the scene maps onto (0, 0, main.width, main.height).
+        <img
+          src={props.scene.url}
+          alt=""
+          draggable={false}
+          className="pointer-events-none absolute left-0 top-0 max-w-none origin-top-left select-none"
+          style={{
+            width: sceneRect.w,
+            height: sceneRect.h,
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom}) translate(${sceneRect.x}px, ${sceneRect.y}px)`,
+          }}
+        />
+      )}
       <div
-        className="absolute left-0 top-0 origin-top-left shadow-2xl"
+        className={cx("absolute left-0 top-0 origin-top-left", !sceneRect && "shadow-2xl")}
         style={{
           width: main.width,
           height: main.height,
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-          ...CHECKER_STYLE,
-          backgroundSize: `${16 * px}px ${16 * px}px`,
+          ...(sceneRect ? { outline: `${px}px dashed rgba(125,125,125,0.6)` } : { ...CHECKER_STYLE, backgroundSize: `${16 * px}px ${16 * px}px` }),
         }}
       >
         <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
@@ -624,6 +852,80 @@ export function Stage(props: StageProps) {
                 />
               );
             })}
+
+          {/* A photo zone's child frame: always there while the zone is selected, dragged on its own; the zone clips it. */}
+          {props.showOverlay && effectiveTool === "select" && frameGeom && (
+            <g transform={`rotate(${frameGeom.rotation} ${frameGeom.cx} ${frameGeom.cy})`}>
+              <rect
+                x={frameGeom.cx - frameGeom.w / 2}
+                y={frameGeom.cy - frameGeom.h / 2}
+                width={frameGeom.w}
+                height={frameGeom.h}
+                fill="transparent"
+                stroke="#a855f7"
+                strokeWidth={editTarget === "object" ? 2.5 : 1.5}
+                vectorEffect="non-scaling-stroke"
+                style={{ pointerEvents: "all", cursor: "move" }}
+                onPointerDown={onFrameBodyDown}
+              />
+            </g>
+          )}
+
+          {props.showOverlay && effectiveTool === "select" && frameGeom && selected && (
+            // The child frame covers the zone: its outline (a wide invisible stroke) still drags the zone itself.
+            <path
+              d={shapeToSvgPath(selected.shape)}
+              fill="none"
+              stroke="transparent"
+              strokeWidth={14 * px}
+              style={{ pointerEvents: "stroke", cursor: "move" }}
+              onPointerDown={(e) => {
+                if (effectiveTool !== "select") return;
+                e.stopPropagation();
+                viewportRef.current?.setPointerCapture(e.pointerId);
+                // The zone itself is selected again (not its child frame).
+                props.onEditTargetChange("region");
+                setGesture({ kind: "move-region", id: selected.id, start: toWorld(e.clientX, e.clientY), shape: selected.shape });
+              }}
+            />
+          )}
+
+          {props.mainSelected && !selected && effectiveTool === "select" && (
+            <g transform={mainFrame.rotation ? `rotate(${mainFrame.rotation} ${mainFrame.x + mainFrame.w / 2} ${mainFrame.y + mainFrame.h / 2})` : undefined}>
+              <rect
+                x={mainFrame.x}
+                y={mainFrame.y}
+                width={mainFrame.w}
+                height={mainFrame.h}
+                fill="none"
+                stroke="#10b981"
+                strokeWidth={1.5}
+                vectorEffect="non-scaling-stroke"
+              />
+              {HANDLES.map((h) => {
+                const p = handlePos(mainFrame, h);
+                return (
+                  <rect
+                    key={h}
+                    x={p.x - hs / 2}
+                    y={p.y - hs / 2}
+                    width={hs}
+                    height={hs}
+                    fill="#fff"
+                    stroke="#10b981"
+                    strokeWidth={1.5}
+                    vectorEffect="non-scaling-stroke"
+                    style={{ pointerEvents: "all", cursor: HANDLE_CURSOR[h] }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      viewportRef.current?.setPointerCapture(e.pointerId);
+                      setGesture({ kind: "resize-main", handle: h, f: mainFrame });
+                    }}
+                  />
+                );
+              })}
+            </g>
+          )}
 
           {props.showOverlay && selected && selBounds && effectiveTool === "select" && editTarget === "region" && (
             <g>
@@ -671,6 +973,88 @@ export function Stage(props: StageProps) {
                     onPointerDown={(e) => onVertexDown(e, selected, i)}
                   />
                 ))}
+            </g>
+          )}
+
+          {props.showOverlay && effectiveTool === "select" && frameGeom && (
+            <g transform={`rotate(${frameGeom.rotation} ${frameGeom.cx} ${frameGeom.cy})`}>
+              {frameGeom.margin > 0 && (
+                // The photo's own box inside the frame's margin.
+                <rect
+                  x={frameGeom.cx - frameGeom.w / 2 + frameGeom.margin}
+                  y={frameGeom.cy - frameGeom.h / 2 + frameGeom.margin}
+                  width={Math.max(0, frameGeom.w - 2 * frameGeom.margin)}
+                  height={Math.max(0, frameGeom.h - 2 * frameGeom.margin)}
+                  fill="none"
+                  stroke="#a855f7"
+                  strokeOpacity={0.45}
+                  strokeDasharray="3 3"
+                  strokeWidth={1}
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+              )}
+              <line
+                x1={frameGeom.cx}
+                y1={frameGeom.cy - frameGeom.h / 2}
+                x2={frameGeom.cx}
+                y2={frameGeom.cy - frameGeom.h / 2 - 28 * px}
+                stroke="#a855f7"
+                strokeWidth={1.5}
+                vectorEffect="non-scaling-stroke"
+              />
+              <circle
+                cx={frameGeom.cx}
+                cy={frameGeom.cy - frameGeom.h / 2 - 28 * px}
+                r={6 * px}
+                fill="#fff"
+                stroke="#a855f7"
+                strokeWidth={1.5}
+                vectorEffect="non-scaling-stroke"
+                style={{ pointerEvents: "all", cursor: "grab" }}
+                onPointerDown={(e) => onFrameHandleDown(e, "rotate")}
+              />
+              {[
+                [-1, -1],
+                [1, -1],
+                [1, 1],
+                [-1, 1],
+              ].map(([sx, sy]) => (
+                <rect
+                  key={`c${sx}${sy}`}
+                  x={frameGeom.cx + (sx * frameGeom.w) / 2 - hs / 2}
+                  y={frameGeom.cy + (sy * frameGeom.h) / 2 - hs / 2}
+                  width={hs}
+                  height={hs}
+                  fill="#fff"
+                  stroke="#a855f7"
+                  strokeWidth={1.5}
+                  vectorEffect="non-scaling-stroke"
+                  style={{ pointerEvents: "all", cursor: "nwse-resize" }}
+                  onPointerDown={(e) => onFrameHandleDown(e, "scale")}
+                />
+              ))}
+              {(
+                [
+                  [-1, 0, "x"],
+                  [1, 0, "x"],
+                  [0, -1, "y"],
+                  [0, 1, "y"],
+                ] as const
+              ).map(([sx, sy, axis]) => (
+                <circle
+                  key={`s${sx}${sy}`}
+                  cx={frameGeom.cx + (sx * frameGeom.w) / 2}
+                  cy={frameGeom.cy + (sy * frameGeom.h) / 2}
+                  r={hs / 2}
+                  fill="#a855f7"
+                  stroke="#fff"
+                  strokeWidth={1.5}
+                  vectorEffect="non-scaling-stroke"
+                  style={{ pointerEvents: "all", cursor: axis === "x" ? "ew-resize" : "ns-resize" }}
+                  onPointerDown={(e) => onFrameHandleDown(e, axis)}
+                />
+              ))}
             </g>
           )}
 
@@ -814,13 +1198,24 @@ export function Stage(props: StageProps) {
 
       {tool === "polygon" && (
         <div className="pointer-events-none absolute left-3 top-3 rounded bg-black/70 px-2 py-1 text-xs text-white">
-          Click để thêm điểm · click điểm đầu / double-click / Enter để đóng · Backspace xoá điểm · Esc huỷ
+          Click để thêm điểm · click điểm đầu / double-click / Enter để đóng · Backspace / Ctrl+Z lùi điểm · Ctrl+Shift+Z tiến lại · Esc huỷ
         </div>
       )}
-      {editTarget === "object" && (
-        <div className={cx("pointer-events-none absolute left-3 rounded bg-rose-600/90 px-2 py-1 text-xs text-white", tool === "polygon" ? "top-10" : "top-3")}>
-          Chế độ Object: kéo để di chuyển · góc để scale · núm trên để xoay (Shift = 15°)
+      {props.mainSelected && !selected && effectiveTool === "select" && !frameGeom && (
+        <div className={cx("pointer-events-none absolute left-3 rounded bg-emerald-600/90 px-2 py-1 text-xs text-white", tool === "polygon" ? "top-10" : "top-3")}>
+          Khung main (xanh): kéo = di chuyển · góc = resize giữ tỉ lệ (Shift = tự do) · cạnh = kéo dãn · thông số ở cột phải
         </div>
+      )}
+      {frameGeom && effectiveTool === "select" ? (
+        <div className={cx("pointer-events-none absolute left-3 rounded bg-purple-600/90 px-2 py-1 text-xs text-white", tool === "polygon" ? "top-10" : "top-3")}>
+          Khung ảnh (tím): kéo trong khung = di chuyển ảnh · góc = scale · chấm cạnh = kéo dãn · núm trên = xoay (Shift = 15°) · kéo viền vùng = di chuyển vùng
+        </div>
+      ) : (
+        editTarget === "object" && (
+          <div className={cx("pointer-events-none absolute left-3 rounded bg-rose-600/90 px-2 py-1 text-xs text-white", tool === "polygon" ? "top-10" : "top-3")}>
+            Chế độ Object: kéo để di chuyển · góc để scale · núm trên để xoay (Shift = 15°)
+          </div>
+        )
       )}
     </div>
   );
@@ -841,6 +1236,18 @@ function handlePos(b: CtBounds, h: Handle): CtPoint {
   const x = h.includes("w") ? b.x : h.includes("e") ? b.x + b.w : b.x + b.w / 2;
   const y = h.includes("n") ? b.y : h.includes("s") ? b.y + b.h : b.y + b.h / 2;
   return { x, y };
+}
+
+/** Is `p` inside frame `f` (its rotation undone)? */
+function insideFrame(p: CtPoint, f: CtMainFrame): boolean {
+  const cx = f.x + f.w / 2;
+  const cy = f.y + f.h / 2;
+  const t = (-f.rotation * Math.PI) / 180;
+  const dx = p.x - cx;
+  const dy = p.y - cy;
+  const x = dx * Math.cos(t) - dy * Math.sin(t);
+  const y = dx * Math.sin(t) + dy * Math.cos(t);
+  return Math.abs(x) <= f.w / 2 && Math.abs(y) <= f.h / 2;
 }
 
 function distToSegment(p: CtPoint, a: CtPoint, b: CtPoint): number {

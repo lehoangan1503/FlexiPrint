@@ -3,7 +3,7 @@
 //   Simple mode (setting "FlexiPrint.SimpleUI", on by default): ComfyUI's own
 //   sidebar tabs, onboarding, template gallery, minimap and non-FlexiPrint
 //   nodes are hidden — editors only see the FlexiPrint workspace.
-//   Sidebar "FlexiPrint"   1. Bắt đầu: the 5 FlexiPrint graphs
+//   Sidebar "FlexiPrint"   1. Bắt đầu: the 4 standard FlexiPrint graphs
 //                          2. Thêm node: every FP node, one click
 //                          3. Thư viện: categories → cliparts; click = FP Load Clipart
 //   Bottom panel "Ngữ cảnh"  what the selected FP node sent to the model last run.
@@ -11,6 +11,7 @@
 //   Deep links             /comfy/?fp_template=02-variant-set&fp_clipart=<id>
 //                          (&fp_artwork=<id>, &fp_category=<id>) — the editor's
 //                          "Tạo bằng AI" buttons open the right graph pre-filled.
+//                          ?fp_draft=<id>: the AI dialog's graph (routes.py /flexi/draft).
 //
 // Data comes from the node pack's own routes (/flexi/*, routes.py) — same origin,
 // no token in the browser.
@@ -22,18 +23,20 @@ const INFO = new Map(); // node id → last text
 const APP_URL_SETTING = "FlexiPrint.AppUrl";
 const SIMPLE_SETTING = "FlexiPrint.SimpleUI";
 
+// The four standard jobs (= the app's AI dialog recipes, recipes.py). Main or element is the
+// category's usage, so one "clipart gốc" graph covers both (03-element-pack stays as an example).
 const TEMPLATES = [
-  ["01-origin-set", "Bộ clipart gốc", "Nhiều clipart gốc cùng loại (mẫu xe, kiểu xửng…)"],
-  ["02-variant-set", "Bộ biến thể", "1 clipart → nhiều màu / style, giữ nguyên hình"],
-  ["03-element-pack", "Bộ element", "Hobby, nón, kính… đồng bộ 1 style"],
-  ["04-clipart-material", "Vật liệu cho clipart", "Acrylic / glitter / gỗ… → bản vật liệu"],
-  ["05-artwork-mockup", "Artwork → mockup", "Tổ hợp đã ghép → vật liệu → ảnh quảng cáo"],
+  ["01-origin-set", "Clipart gốc", "Main hoặc Element theo danh mục: mỗi dòng 1 clipart gốc, cùng style + rule"],
+  ["02-variant-set", "Biến thể", "1 clipart → nhiều màu / style, giữ nguyên hình (đổi màu không cần AI)"],
+  ["04-clipart-material", "Vật liệu", "Acrylic / glitter / gỗ… → bản vật liệu cho clipart"],
+  ["05-artwork-mockup", "Mockup", "Tổ hợp đã ghép → vật liệu → ảnh quảng cáo"],
 ];
 
 const NODES = [
   ["FP_StylePack", "Style Pack", "Ngữ cảnh"],
   ["FP_Category", "Danh mục", "Ngữ cảnh"],
   ["FP_ContextNote", "Ghi chú ngữ cảnh", "Ngữ cảnh"],
+  ["FP_Rules", "Ghi đè rule (canvas, fill, neo)", "Ngữ cảnh"],
   ["FP_OriginGenerate", "Tạo clipart gốc", "Tạo"],
   ["FP_VariantSet", "Tạo bộ biến thể", "Tạo"],
   ["FP_Material", "Vật liệu AI", "Tạo"],
@@ -124,9 +127,40 @@ async function loadTemplate(name) {
   await app.loadGraphData(wf);
 }
 
-/** Deep link from the FlexiPrint editor: template + pre-selected clipart / artwork / category. */
+// Remote dropdowns a recipe graph fills with a bare uuid → their option route.
+const REMOTE_WIDGETS = {
+  FP_LoadClipart: ["clipart", "cliparts"],
+  FP_LoadArtwork: ["artwork", "artworks"],
+  FP_Category: ["category", "categories"],
+  FP_StylePack: ["style_pack", "style_pack"],
+  FP_Material: ["material", "material"],
+  FP_MockupScene: ["scene", "scene"],
+};
+
+/** "Mở nâng cao trong Studio" from the app's AI dialog: the exact graph the dialog would run. */
+async function openDraft(id) {
+  const prompt = await getJson(`/flexi/draft/${encodeURIComponent(id)}`);
+  await app.loadApiJson(prompt, "FlexiPrint AI");
+  await new Promise((r) => setTimeout(r, 1200));
+  for (const n of app.graph._nodes) {
+    const spec = REMOTE_WIDGETS[n.type];
+    const w = spec && n.widgets?.find((x) => x.name === spec[0]);
+    const m = w && /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.exec(String(w.value));
+    if (m) await selectOption(n, spec[0], spec[1], m[0]);
+  }
+  app.graph.arrange?.();
+  app.graph.setDirtyCanvas(true, true);
+}
+
+/** Deep link from the FlexiPrint editor: template + pre-selected clipart / artwork / category, or a dialog draft. */
 async function openFromUrl() {
   const q = new URLSearchParams(location.search);
+  const draft = q.get("fp_draft");
+  if (draft) {
+    await openDraft(draft);
+    history.replaceState(null, "", location.pathname);
+    return true;
+  }
   const template = q.get("fp_template");
   if (!template) return false;
   await loadTemplate(template);

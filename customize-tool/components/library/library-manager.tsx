@@ -3,53 +3,59 @@
 /**
  * /library — manage the global clipart library (migration 006):
  *
- *   Clipart  category tree (usage, mode, shared spec + generation rules) and
- *            the cliparts in it: origins with their set members / renditions.
- *   Preset   reusable prompts: style packs, materials, scenes — what the
- *            ComfyUI studio nodes (services/comfy) offer in their dropdowns.
+ *   Clipart  categories (mode, shared spec, style pack, materials) and the
+ *            cliparts in it — every picture is a clipart: a gốc, its đa sắc
+ *            (other colours / styles, of the gốc or of a vật liệu version) and
+ *            its vật liệu versions. Each one has "Sửa nhanh"; fixing the gốc
+ *            makes every other picture of the set again from the new gốc, with
+ *            the category's settings (quick-fix-dialog.tsx).
+ *   Preset   reusable prompts: style packs and materials — written by hand or
+ *            by AI from a description + reference images.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, FolderPlus, ImagePlus, Loader2, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderPlus, History, ImagePlus, Loader2, Lock, Pencil, Plus, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import type {
   CtAsset,
-  CtCategoryAnchor,
-  CtCategoryBackground,
   CtCategoryBody,
-  CtCategoryMode,
-  CtCategoryUsage,
+  CtCategoryRevision,
+  CtRevisePreset,
   CtClipartCategory,
+  CtCategoryRules,
   CtClipartUsage,
+  CtMaterialArt,
+  CtMaterialSpec,
   CtPreset,
   CtPresetBody,
+  CtPresetHistoryEntry,
   CtPresetKind,
+  CtPresetParams,
+  CtPromptSuggestion,
 } from "../../types";
 import { ctApi } from "../../lib/api-client";
-import { defaultCategoryRules, flattenCategories, libraryOrigins, renditionOf, setMembers } from "../../lib/library";
-import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtModal, CtNumber, CtSelect, CtTextarea, CtTooltipProvider, cx } from "../ui";
+import { normalizeMaterialSpecs } from "../../lib/materials";
+import { clipartFamily, defaultCategoryRules, flattenCategories, isMaterialClipart, isMulticolorClipart, libraryOrigins } from "../../lib/library";
+import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtModal, CtNumber, CtSelect, CtTextarea, CtTooltip, CtTooltipProvider, cx } from "../ui";
+import { ctConfirm } from "../dialogs";
+import { CtAiDialog, type CtAiTarget } from "../studio/ai-dialog";
+import { QuickFixDialog, quickFixKey, type CtQuickFixTarget } from "../studio/quick-fix-dialog";
+import { ClipartBadges } from "../editor/library-panel";
+import { PacksTab } from "./packs-tab";
+import { RefNoteBox, refImage, type RefImage } from "./ref-note-box";
+import { CategoryHistory, CategoryRevisePanel, type CtReviseChoice } from "./category-revise";
+import { AgentProgress, BrainToggle, useAgentTask, useAiBrain } from "./agent-brain";
 
-type Tab = "cliparts" | "presets";
+export { refImage };
+
+type Tab = "cliparts" | "presets" | "packs";
 const NONE = "none";
 
-const USAGE_OPTIONS: Array<{ value: CtCategoryUsage; label: string }> = [
-  { value: "element", label: "Element — đặt vào vùng (bánh bao, nón, hobby…)" },
-  { value: "main", label: "Main object — phôi chính (xửng, xe, ornament…)" },
-];
-const MODE_OPTIONS: Array<{ value: CtCategoryMode; label: string }> = [
-  { value: "origin_set", label: "Bộ gốc — nhiều clipart gốc cùng loại, khác hình" },
-  { value: "variant_set", label: "Bộ biến thể — 1 hình, nhiều màu / style" },
-];
-const ANCHOR_OPTIONS: Array<{ value: CtCategoryAnchor; label: string }> = [
-  { value: "center", label: "Giữa" },
-  { value: "bottom", label: "Đáy (đứng trên mặt)" },
-];
-const BACKGROUND_OPTIONS: Array<{ value: CtCategoryBackground; label: string }> = [
-  { value: "cutout", label: "Tách nền (BiRefNet)" },
-  { value: "transparent", label: "Model trả nền trong suốt" },
-  { value: "none", label: "Giữ nền" },
-];
 const KIND_LABEL: Record<CtPresetKind, string> = { style_pack: "Style pack", material: "Vật liệu", scene: "Scene mockup" };
+/** What the Preset tab lists (scenes are picked in the editor's mockup tab). */
+const LIBRARY_KINDS: CtPresetKind[] = ["style_pack", "material"];
+/** What a category is — a fixed picture (public/ct-guide), not library data, so it survives a wipe. */
+const CATEGORY_PICTURE = { src: "/ct-guide/kind-origin-set.png", caption: "vd. Chibi Car — mỗi clipart gốc là 1 mẫu xe khác nhau, cùng kiểu vẽ, cùng góc nhìn. Đa sắc và vật liệu làm từ từng clipart gốc." };
 
 export function LibraryManager() {
   const [tab, setTab] = useState<Tab>("cliparts");
@@ -65,7 +71,8 @@ export function LibraryManager() {
             {(
               [
                 ["cliparts", "Clipart"],
-                ["presets", "Preset (style / vật liệu / scene)"],
+                ["presets", "Preset (style / vật liệu)"],
+                ["packs", "Bộ tổ hợp"],
               ] as Array<[Tab, string]>
             ).map(([k, label]) => (
               <button key={k} onClick={() => setTab(k)} className={cx("rounded px-3 py-1 text-xs font-medium", tab === k ? "bg-foreground text-background" : "hover:bg-accent")}>
@@ -73,11 +80,8 @@ export function LibraryManager() {
               </button>
             ))}
           </div>
-          <Link href="/studio" className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent">
-            <Sparkles className="h-3.5 w-3.5" /> Mở Studio (ComfyUI)
-          </Link>
         </header>
-        {tab === "cliparts" ? <ClipartsTab /> : <PresetsTab />}
+        {tab === "cliparts" ? <ClipartsTab /> : tab === "presets" ? <PresetsTab /> : <PacksTab />}
       </div>
     </CtTooltipProvider>
   );
@@ -91,6 +95,7 @@ function ClipartsTab() {
   const [categories, setCategories] = useState<CtClipartCategory[]>([]);
   const [uncategorized, setUncategorized] = useState(0);
   const [stylePacks, setStylePacks] = useState<CtPreset[]>([]);
+  const [materials, setMaterials] = useState<CtPreset[]>([]);
   const [selected, setSelected] = useState<string>(NONE);
   const [cliparts, setCliparts] = useState<CtAsset[]>([]);
   const [loading, setLoading] = useState(false);
@@ -98,6 +103,9 @@ function ClipartsTab() {
   const [editCategory, setEditCategory] = useState<CtClipartCategory | "new" | null>(null);
   const [editClipart, setEditClipart] = useState<CtAsset | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [ai, setAi] = useState<CtAiTarget | null>(null);
+  const [quickFix, setQuickFix] = useState<CtQuickFixTarget | null>(null);
+  const [clipartsVersion, setClipartsVersion] = useState(0);
 
   const loadCategories = useCallback(() => {
     ctApi
@@ -110,13 +118,20 @@ function ClipartsTab() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
+  const loadStylePacks = useCallback(() => {
+    ctApi
+      .listPresets()
+      .then((r) => {
+        setStylePacks(r.presets.filter((p) => p.kind === "style_pack"));
+        setMaterials(r.presets.filter((p) => p.kind === "material"));
+      })
+      .catch(() => setStylePacks([]));
+  }, []);
+
   useEffect(() => {
     loadCategories();
-    ctApi
-      .listPresets("style_pack")
-      .then((r) => setStylePacks(r.presets))
-      .catch(() => setStylePacks([]));
-  }, [loadCategories]);
+    loadStylePacks();
+  }, [loadCategories, loadStylePacks]);
 
   useEffect(() => {
     setLoading(true);
@@ -125,10 +140,114 @@ function ClipartsTab() {
       .then(setCliparts)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [selected]);
+  }, [selected, clipartsVersion]);
 
   const current = categories.find((c) => c.id === selected) ?? null;
   const origins = libraryOrigins(cliparts);
+  /** Every picture in the order it is shown (gốc, its vật liệu, its đa sắc) — the range of a shift-click. */
+  const shownOrder = useMemo(
+    () =>
+      libraryOrigins(cliparts).flatMap((o) => {
+        const fam = clipartFamily(cliparts, o);
+        return [o, ...fam.filter((a) => isMaterialClipart(a) && !isMulticolorClipart(a)), ...fam.filter(isMulticolorClipart)];
+      }),
+    [cliparts],
+  );
+
+  // Multi-select: click the box, shift-click (box or picture) for a range, or "Chọn tất cả".
+  // Kept per category: another category starts with nothing picked.
+  const [pickState, setPickState] = useState<{ category: string; ids: Set<string> }>({ category: selected, ids: new Set() });
+  const picked = useMemo(() => (pickState.category === selected ? pickState.ids : new Set<string>()), [pickState, selected]);
+  const setPicked = (next: Set<string> | ((cur: Set<string>) => Set<string>)) =>
+    setPickState((st) => {
+      const cur = st.category === selected ? st.ids : new Set<string>();
+      return { category: selected, ids: typeof next === "function" ? next(cur) : next };
+    });
+  const anchor = useRef<string | null>(null);
+  const togglePick = (a: CtAsset, shift: boolean) => {
+    // Read now: the updater runs later, after the anchor moved to this picture.
+    const last = anchor.current;
+    setPicked((cur) => {
+      const next = new Set(cur);
+      const from = last ? shownOrder.findIndex((x) => x.id === last) : -1;
+      const to = shownOrder.findIndex((x) => x.id === a.id);
+      if (shift && from >= 0 && to >= 0) {
+        // The range takes the anchor's state (picked → pick all of it).
+        const on = cur.has(last ?? "");
+        for (const x of shownOrder.slice(Math.min(from, to), Math.max(from, to) + 1)) {
+          if (on) next.add(x.id);
+          else next.delete(x.id);
+        }
+      } else if (next.has(a.id)) next.delete(a.id);
+      else next.add(a.id);
+      return next;
+    });
+    anchor.current = a.id;
+  };
+  const allPicked = shownOrder.length > 0 && shownOrder.every((a) => picked.has(a.id));
+
+  /**
+   * Delete pictures. A gốc takes its whole set with it, so a picked member of a picked gốc is not deleted twice.
+   * Pictures used in products are listed first; confirming removes them from those products too.
+   */
+  const removeCliparts = async (list: CtAsset[]) => {
+    const ids = new Set(list.map((a) => a.id));
+    const byId = new Map(cliparts.map((a) => [a.id, a]));
+    const covered = (a: CtAsset): boolean => {
+      for (let p = a.parent_id; p; p = byId.get(p)?.parent_id ?? null) if (ids.has(p)) return true;
+      return false;
+    };
+    const targets = list.filter((a) => !covered(a));
+    if (!targets.length) return;
+    setBusy("Đang kiểm tra sản phẩm đang dùng…");
+    let usage: Array<{ asset: CtAsset; products: string[] }>;
+    try {
+      usage = await Promise.all(targets.map(async (a) => ({ asset: a, products: (await ctApi.clipartUsage(a.id).catch(() => [])).map((u) => u.productName) })));
+    } finally {
+      setBusy(null);
+    }
+    const used = usage.filter((u) => u.products.length);
+    const sets = targets.filter((a) => a.parent_id === null).length;
+    const what =
+      targets.length === 1
+        ? `“${targets[0].name}”${targets[0].parent_id === null ? " và toàn bộ đa sắc / vật liệu của nó" : ""}`
+        : `${targets.length} ảnh${sets ? ` (${sets} clipart gốc — kèm toàn bộ đa sắc / vật liệu của chúng)` : ""}`;
+    const ok = await ctConfirm(
+      used.length
+        ? {
+            title: "Có ảnh đang được dùng trong sản phẩm",
+            message: `${used.map((u) => `• ${u.asset.name}: ${u.products.join(", ")}`).join("\n")}\n\nXoá ${what} sẽ gỡ luôn các ảnh này khỏi những sản phẩm trên (layer, version, option). Sản phẩm đã publish cần publish lại.`,
+            tone: "danger",
+            confirmLabel: "Xoá & gỡ khỏi sản phẩm",
+          }
+        : { title: `Xoá ${what} khỏi thư viện?`, tone: "danger", confirmLabel: "Xoá" },
+    );
+    if (!ok) return;
+    const done: string[] = [];
+    const failed: string[] = [];
+    for (const [i, u] of usage.entries()) {
+      setBusy(`Đang xoá ${i + 1}/${usage.length}…`);
+      try {
+        await ctApi.deleteClipart(u.asset.id, u.products.length > 0);
+        done.push(u.asset.id);
+      } catch (e) {
+        failed.push(`${u.asset.name}: ${e instanceof Error ? e.message : "lỗi"}`);
+      }
+    }
+    setBusy(null);
+    const gone = new Set(done);
+    setCliparts((cur) => {
+      const map = new Map(cur.map((a) => [a.id, a]));
+      const dead = (a: CtAsset): boolean => {
+        for (let x: CtAsset | undefined = a; x; x = x.parent_id ? map.get(x.parent_id) : undefined) if (gone.has(x.id)) return true;
+        return false;
+      };
+      return cur.filter((a) => !dead(a));
+    });
+    setPicked((cur) => new Set([...cur].filter((id) => !gone.has(id) && cliparts.some((a) => a.id === id))));
+    if (failed.length) setError(`Không xoá được: ${failed.join("; ")}`);
+    loadCategories();
+  };
 
   const upload = async (files: File[], parentId: string | null) => {
     setBusy(`Đang upload ${files.length} ảnh…`);
@@ -161,9 +280,6 @@ function ClipartsTab() {
               onClick={() => setSelected(c.id)}
             >
               <span className="flex-1 truncate">{c.name}</span>
-              <span className={cx("rounded px-1 text-[10px]", c.usage === "main" ? "bg-amber-500/15 text-amber-600" : "bg-sky-500/15 text-sky-600")}>
-                {c.usage === "main" ? "main" : "element"}
-              </span>
               <span className="w-6 text-right text-[11px] text-muted-foreground">{c.count ?? 0}</span>
               {c.can_edit && (
                 <button
@@ -194,14 +310,19 @@ function ClipartsTab() {
             <h2 className="text-base font-semibold">{current ? current.name : "Chưa phân loại"}</h2>
             {current && (
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {current.usage === "main" ? "Main object" : "Element"} · {current.mode === "variant_set" ? "bộ biến thể" : "bộ gốc"} · canvas {current.rules.canvas.w}×
-                {current.rules.canvas.h} · fill {Math.round(current.rules.fill * 100)}% · {current.rules.lockSilhouette ? "khoá silhouette" : "không khoá silhouette"}
-                {current.rules.variantAxes.length > 0 && ` · trục: ${current.rules.variantAxes.join(", ")}`}
+                canvas {current.rules.canvas.w}×
+                {current.rules.canvas.h} · {stylePacks.find((p) => p.id === current.rules.stylePackId)?.name ?? "chưa có style pack"} · vật liệu: clipart phẳng
+                {current.rules.materialIds.map((id) => ` + ${materials.find((m) => m.id === id)?.name ?? "?"}`).join("")}
               </p>
             )}
-            {current?.spec && <p className="mt-1 max-w-3xl whitespace-pre-line text-xs">{current.spec}</p>}
+            {current && <CategoryInfo category={current} stylePacks={stylePacks} materials={materials} onEdit={current.can_edit ? () => setEditCategory(current) : undefined} />}
           </div>
-          <UploadButton label="Upload clipart gốc" onFiles={(f) => void upload(f, null)} disabled={busy !== null} />
+          <div className="flex shrink-0 gap-2">
+            <CtButton size="sm" variant="primary" onClick={() => setAi({ recipe: "origin", categoryId: current?.id ?? null })}>
+              <Sparkles className="h-3.5 w-3.5" /> Tạo bằng AI
+            </CtButton>
+            <UploadButton label="Upload clipart gốc" onFiles={(f) => void upload(f, null)} disabled={busy !== null} />
+          </div>
         </div>
         {busy && (
           <p className="mb-2 flex items-center gap-1 text-xs text-muted-foreground">
@@ -212,36 +333,37 @@ function ClipartsTab() {
         {loading ? (
           <Loader2 className="h-5 w-5 animate-spin" />
         ) : origins.length === 0 ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">Danh mục trống. Upload clipart, hoặc tạo trong Studio (ComfyUI) rồi lưu vào danh mục này.</p>
+          <p className="py-10 text-center text-sm text-muted-foreground">Danh mục trống. Bấm “Tạo bằng AI” hoặc upload clipart gốc.</p>
         ) : (
           <div className="space-y-3">
-            {origins.map((o) => {
-              const members = setMembers(cliparts, o.id);
-              const rendition = renditionOf(cliparts, o.id);
-              return (
-                <div key={o.id} className="flex gap-3 rounded-lg border p-2">
-                  <Thumb asset={o} big onClick={() => setEditClipart(o)} />
-                  {rendition && <Thumb asset={rendition} big label="vật liệu" onClick={() => setEditClipart(rendition)} />}
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-medium">{o.name || "(không tên)"}</span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {o.width}×{o.height} · {o.source}
-                      </span>
-                      <span className="ml-auto" />
-                      <UploadButton label="+ biến thể" small onFiles={(f) => void upload(f, o.id)} disabled={busy !== null} />
-                    </div>
-                    {o.spec && <p className="line-clamp-2 text-[11px] text-muted-foreground">{o.spec}</p>}
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {members.map((m) => (
-                        <Thumb key={m.id} asset={m} onClick={() => setEditClipart(m)} />
-                      ))}
-                      {members.length === 0 && <span className="text-[11px] text-muted-foreground">Chưa có biến thể.</span>}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            <div className="sticky top-0 z-10 -mx-1 flex items-center gap-2 rounded-md border bg-background/95 px-2 py-1.5 text-xs backdrop-blur">
+              <CtCheckbox checked={allPicked} onChange={(on) => setPicked(on ? new Set(shownOrder.map((a) => a.id)) : new Set())} label="Chọn tất cả" />
+              <span className="text-muted-foreground">
+                {picked.size ? `Đã chọn ${picked.size}/${shownOrder.length} ảnh` : "Tick ô ở góc ảnh để chọn — giữ Shift để chọn cả dải"}
+              </span>
+              {picked.size > 0 && (
+                <span className="ml-auto flex gap-1.5">
+                  <CtButton size="sm" variant="ghost" onClick={() => setPicked(new Set())}>
+                    Bỏ chọn
+                  </CtButton>
+                  <CtButton size="sm" className="text-destructive" onClick={() => void removeCliparts(shownOrder.filter((a) => picked.has(a.id)))} disabled={busy !== null}>
+                    <Trash2 className="h-3.5 w-3.5" /> Xoá {picked.size} ảnh
+                  </CtButton>
+                </span>
+              )}
+            </div>
+            {origins.map((o) => (
+              <SetCard
+                key={o.id}
+                origin={o}
+                family={clipartFamily(cliparts, o)}
+                materials={materials}
+                onOpen={setEditClipart}
+                onQuickFix={(a) => setQuickFix({ assets: [a], origin: o })}
+                picked={picked}
+                onPick={togglePick}
+              />
+            ))}
           </div>
         )}
       </main>
@@ -251,6 +373,8 @@ function ClipartsTab() {
           category={editCategory === "new" ? null : editCategory}
           categories={categories}
           stylePacks={stylePacks}
+          materials={materials}
+          onPresetsChanged={loadStylePacks}
           onClose={() => setEditCategory(null)}
           onSaved={(c) => {
             loadCategories();
@@ -262,6 +386,17 @@ function ClipartsTab() {
           }}
         />
       )}
+      <CtAiDialog
+        target={ai}
+        onClose={() => setAi(null)}
+        onSaved={() => {
+          setClipartsVersion((v) => v + 1);
+          loadCategories();
+          loadStylePacks();
+        }}
+        onReplaced={() => setClipartsVersion((v) => v + 1)}
+      />
+      <QuickFixDialog key={quickFixKey(quickFix)} target={quickFix} onClose={() => setQuickFix(null)} onDone={() => setClipartsVersion((v) => v + 1)} />
       {editClipart && (
         <ClipartDialog
           asset={editClipart}
@@ -281,18 +416,216 @@ function ClipartsTab() {
   );
 }
 
-function Thumb({ asset, big, label, onClick }: { asset: CtAsset; big?: boolean; label?: string; onClick: () => void }) {
+type InfoTab = "spec" | "style" | "materials" | "details";
+
+/** What a category's cliparts are made from, read-only: shared spec, style pack, materials, product details. */
+function CategoryInfo(props: { category: CtClipartCategory; stylePacks: CtPreset[]; materials: CtPreset[]; onEdit?: () => void }) {
+  const { category, stylePacks, materials } = props;
+  const [tab, setTab] = useState<InfoTab>("spec");
+  const { rules } = category;
+  const pack = stylePacks.find((p) => p.id === rules.stylePackId) ?? null;
+  const used = rules.materialIds.map((id) => ({ id, preset: materials.find((m) => m.id === id) ?? null }));
+  const tabs: Array<[InfoTab, string, number | null]> = [
+    ["spec", "Spec chung", null],
+    ["style", "Style pack", null],
+    ["materials", "Vật liệu", used.length + 1],
+    ["details", "Chi tiết thành phẩm", rules.details.length],
+  ];
   return (
-    <button
-      className={cx("relative shrink-0 overflow-hidden rounded border hover:ring-2 hover:ring-sky-500", big ? "h-28 w-28" : "h-16 w-16")}
-      style={CHECKER_STYLE}
-      onClick={onClick}
-      title={asset.name}
-    >
-      <img src={asset.url} alt={asset.name} className="h-full w-full object-contain" loading="lazy" />
-      {label && <span className="absolute bottom-0.5 left-0.5 rounded bg-violet-600/90 px-1 text-[10px] text-white">{label}</span>}
-      {asset.source === "ai" && <span className="absolute left-0.5 top-0.5 rounded bg-sky-600/90 px-1 text-[10px] text-white">AI</span>}
-    </button>
+    <div className="mt-3 max-w-3xl">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex rounded-lg border bg-muted/40 p-0.5">
+          {tabs.map(([k, label, count]) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className={cx(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                tab === k ? "bg-foreground text-background shadow-sm" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+            >
+              {label}
+              {count !== null && (
+                <span className={cx("rounded-full px-1.5 text-[10px] leading-4", tab === k ? "bg-background/20" : "bg-muted text-muted-foreground")}>{count}</span>
+              )}
+            </button>
+          ))}
+        </div>
+        {props.onEdit && (
+          <CtButton size="sm" onClick={props.onEdit}>
+            <Pencil className="h-3.5 w-3.5" /> Chỉnh sửa
+          </CtButton>
+        )}
+      </div>
+      <div className="space-y-2 pt-2 text-xs">
+        {tab === "spec" && (
+          <>
+            {category.spec ? <p className="whitespace-pre-line">{category.spec}</p> : <p className="text-muted-foreground">Chưa có spec chung.</p>}
+            <InfoRefs label="Ảnh mẫu kiểu vẽ" urls={rules.refs} />
+          </>
+        )}
+        {tab === "style" &&
+          (pack ? (
+            <>
+              <p className="font-medium">{pack.name}</p>
+              <p className="whitespace-pre-line">{pack.prompt}</p>
+              <InfoRefs label="Ảnh mẫu" urls={pack.params.refs ?? []} />
+            </>
+          ) : (
+            <p className="text-muted-foreground">Chưa có style pack.</p>
+          ))}
+        {tab === "materials" && (
+          <>
+            <div className="rounded-md border px-2 py-1.5">
+              <p className="font-medium">Clipart phẳng</p>
+              <p className="text-muted-foreground">Luôn có — file gửi xưởng, không có chi tiết thành phẩm.</p>
+            </div>
+            {used.map(({ id, preset }) => (
+              <div key={id} className="space-y-1 rounded-md border px-2 py-1.5">
+                <p className="font-medium">{preset?.name ?? "Vật liệu đã bị xoá"}</p>
+                {preset && <p className="whitespace-pre-line">{preset.prompt}</p>}
+                {preset && <InfoRefs label="Ảnh mẫu" urls={preset.params.refs ?? []} />}
+              </div>
+            ))}
+          </>
+        )}
+        {tab === "details" && (
+          <>
+            {rules.details.length === 0 ? (
+              <p className="text-muted-foreground">Chưa có chi tiết thành phẩm.</p>
+            ) : (
+              <SpecSummary specs={rules.details} disabled onRemove={() => undefined} />
+            )}
+            {rules.details.length > 0 && used.length === 0 && (
+              <p className="text-amber-600">Danh mục chưa gắn vật liệu nào — chi tiết chỉ được vẽ trên các bản vật liệu.</p>
+            )}
+            {rules.detailsNote && <p className="whitespace-pre-line text-muted-foreground">{rules.detailsNote}</p>}
+            <InfoRefs label="Ảnh thành phẩm" urls={rules.productRefs} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InfoRefs({ label, urls }: { label: string; urls: string[] }) {
+  if (!urls.length) return null;
+  return (
+    <div>
+      <p className="mb-1 text-[11px] text-muted-foreground">{label}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {urls.map((u) => (
+          <a key={u} href={u} target="_blank" rel="noreferrer" className="block h-16 w-16 overflow-hidden rounded border">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={u} alt="" className="h-full w-full object-cover" />
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One set of the category: its gốc, then its vật liệu versions and its đa sắc (of the gốc or of a vật liệu
+ * version — those carry both badges). Every picture has its own "Sửa nhanh"; a click opens its details.
+ */
+interface TileActions {
+  onOpen: (a: CtAsset) => void;
+  onQuickFix: (a: CtAsset) => void;
+  picked: Set<string>;
+  /** shift = extend the range from the last picked one. */
+  onPick: (a: CtAsset, shift: boolean) => void;
+}
+
+function SetCard(props: TileActions & { origin: CtAsset; family: CtAsset[]; materials: CtPreset[] }) {
+  const { origin, family } = props;
+  const material = family.filter((a) => isMaterialClipart(a) && !isMulticolorClipart(a));
+  const multicolor = family.filter(isMulticolorClipart);
+  const materialName = (a: CtAsset) => props.materials.find((m) => m.id === a.meta.material)?.name ?? null;
+  return (
+    <div className="rounded-lg border p-2">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="truncate text-sm font-medium">{origin.name || "(không tên)"}</span>
+        <span className="text-[11px] text-muted-foreground">
+          {origin.width}×{origin.height} · {origin.source} · {material.length} vật liệu · {multicolor.length} đa sắc
+        </span>
+      </div>
+      {origin.spec && <p className="mb-2 line-clamp-2 text-[11px] text-muted-foreground">{origin.spec}</p>}
+      <div className="flex flex-wrap items-start gap-3">
+        <Tile asset={origin} big caption="Gốc" {...props} />
+        {material.length > 0 && <TileGroup label="Vật liệu" list={material} sub={materialName} {...props} />}
+        {multicolor.length > 0 && <TileGroup label="Đa sắc" list={multicolor} sub={(a) => (isMaterialClipart(a) ? materialName(a) : null)} {...props} />}
+        {material.length + multicolor.length === 0 && (
+          <span className="self-center text-[11px] text-muted-foreground">Chưa có đa sắc / vật liệu — tạo ở “Tạo bằng AI” (bước 2, 3).</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TileGroup(props: TileActions & { label: string; list: CtAsset[]; sub: (a: CtAsset) => string | null }) {
+  return (
+    <div className="space-y-1 border-l pl-3">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {props.label} ({props.list.length})
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {props.list.map((a) => (
+          <Tile key={a.id} {...props} asset={a} caption={props.sub(a) ?? a.name} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Tile(props: TileActions & { asset: CtAsset; big?: boolean; caption: string }) {
+  const { asset, big, caption } = props;
+  const on = props.picked.has(asset.id);
+  const selecting = props.picked.size > 0;
+  return (
+    <div className={cx("group shrink-0 space-y-1", big ? "w-28" : "w-24")}>
+      <div className="relative">
+        <button
+          className={cx("relative block aspect-square w-full overflow-hidden rounded border hover:ring-2 hover:ring-sky-500", on && "ring-2 ring-sky-500")}
+          style={CHECKER_STYLE}
+          onClick={(e) => (e.shiftKey || selecting ? props.onPick(asset, e.shiftKey) : props.onOpen(asset))}
+          title={selecting ? "Chọn / bỏ chọn (Shift: cả dải)" : `${asset.name} — chi tiết (Shift+click: chọn)`}
+        >
+          <img src={asset.url} alt={asset.name} className={cx("h-full w-full object-contain", selecting && !on && "opacity-60")} loading="lazy" />
+          {asset.source === "ai" && <span className="absolute left-0.5 top-0.5 rounded bg-sky-600/90 px-1 text-[10px] text-white">AI</span>}
+          <ClipartBadges asset={asset} origin className="absolute inset-x-0.5 bottom-0.5" />
+        </button>
+        <button
+          className={cx(
+            "absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded border transition-opacity",
+            on ? "border-sky-500 bg-sky-500 text-white" : "border-white/80 bg-black/40",
+            !on && !selecting && "opacity-0 group-hover:opacity-100",
+          )}
+          onClick={(e) => props.onPick(asset, e.shiftKey)}
+          aria-label={on ? "Bỏ chọn" : "Chọn"}
+        >
+          {on && <Check className="h-3 w-3" />}
+        </button>
+      </div>
+      <div className="truncate text-[10px] text-muted-foreground" title={caption}>
+        {caption}
+      </div>
+      <div className="flex">
+        <CtTooltip
+          label={
+            asset.parent_id === null
+              ? "Sửa ảnh gốc — xong thì mọi đa sắc và vật liệu của bộ tự tạo lại từ gốc mới, theo setting của danh mục"
+              : "Sửa riêng ảnh này (đổi màu miễn phí, hoặc AI) — ảnh làm từ nó (vật liệu / đa sắc của nó) tạo lại theo"
+          }
+        >
+          <span className="flex min-w-0 flex-1">
+            <CtButton size="sm" className="h-6 flex-1 px-1 text-[11px]" onClick={() => props.onQuickFix(asset)}>
+              <Wand2 className="h-3 w-3" /> Sửa nhanh
+            </CtButton>
+          </span>
+        </CtTooltip>
+      </div>
+    </div>
   );
 }
 
@@ -319,45 +652,240 @@ function UploadButton({ label, onFiles, disabled, small }: { label: string; onFi
   );
 }
 
-function CategoryDialog(props: {
+type CategoryTab = "info" | "spec" | "style" | "materials" | "details";
+
+/** The dialog's tabs — independent, open in any order. */
+const CATEGORY_TABS: Array<{ id: CategoryTab; label: string }> = [
+  { id: "info", label: "Thông tin chung" },
+  { id: "spec", label: "Spec chung" },
+  { id: "style", label: "Style pack" },
+  { id: "materials", label: "Vật liệu" },
+  { id: "details", label: "Chi tiết thành phẩm" },
+];
+
+const SPEC_DO = ["Hình dạng, tỉ lệ giữa các đối tượng (vd. mũ cao ~1/3 thân xe)", "Vị trí, góc nhìn chung của cả bộ", "Quy tắc chung: vùng để trống cho khách custom, thứ không được có", "Viết tiếng Anh"];
+const SPEC_DONT = ["Cách vẽ, nét, đổ bóng (thuộc style pack)", "Vật liệu: acrylic, gỗ, glitter… (thuộc bước Vật liệu)", "Lỗ, dây, móc… (thuộc Chi tiết thành phẩm)", "Màu / chi tiết riêng của từng hình"];
+
+/**
+ * Why materials and product details are separate steps, and when they are used — shown on both steps:
+ * they cost an AI call per image, so they only run once an origin is approved, never with every origin try.
+ */
+function ProductStepNote({ step }: { step: "materials" | "details" }) {
+  return (
+    <div className="space-y-1.5 rounded-lg border border-violet-500/30 bg-violet-500/5 p-3 text-xs leading-relaxed">
+      <p className="font-medium">Vật liệu + Chi tiết thành phẩm = 1 ảnh sản phẩm hoàn chỉnh</p>
+      <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
+        <li>
+          <b className="text-foreground">Vật liệu</b> quyết định chất liệu và chất lượng bề mặt của ảnh: acrylic trong, gỗ, glitter…
+        </li>
+        <li>
+          <b className="text-foreground">Chi tiết thành phẩm</b> quyết định các chi tiết thêm của sản phẩm thật: lỗ treo, dây, móc… và <b className="text-foreground">số ảnh</b> được
+          tạo — mỗi chi tiết “tạo thêm phiên bản” là 1 ảnh nữa (vd. bản không dây + bản có dây = 2 ảnh).
+        </li>
+        <li>
+          <b className="text-foreground">Chỉ dùng sau khi clipart gốc đã xong</b> (spec chung + style pack): clipart gốc thường phải tạo / sửa nhiều lượt — lượt nào cũng làm vật liệu và
+          thành phẩm thì rất tốn tiền. Duyệt clipart gốc trước, rồi mới tạo ở bước “Vật liệu & thành phẩm” của Tạo bằng AI.
+        </li>
+        <li>
+          <b className="text-foreground">Tách riêng để tái sử dụng:</b> 1 vật liệu (vd. Acrylic trong) dùng chung cho nhiều danh mục; chi tiết thành phẩm thuộc riêng danh mục này
+          {step === "details" ? " — chép được sang danh mục khác bằng “Lấy từ danh mục khác”." : "."}
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Create / edit a category: independent tabs (a check turns green once the tab is complete; all green → it can be
+ * saved), and "Tạo bằng AI" on top that fills every tab at once — reusing the library's style packs, materials
+ * and details when they fit. Also used by the AI dialog (components/studio/ai-dialog.tsx).
+ */
+export function CategoryDialog(props: {
   category: CtClipartCategory | null;
-  categories: CtClipartCategory[];
+  /** Kept for the callers; categories are independent (no parent any more). */
+  categories?: CtClipartCategory[];
   stylePacks: CtPreset[];
+  /** Material presets the category can add renditions with. */
+  materials?: CtPreset[];
   onClose: () => void;
   onSaved: (c: CtClipartCategory) => void;
   onDeleted: () => void;
+  /** A style pack was created / edited / deleted from inside the dialog — the parent reloads its list. */
+  onPresetsChanged?: () => void;
+  /**
+   * Results the editor is not happy with (AI dialog "Chưa hài lòng kết quả"): the dialog opens on "Cập nhật bằng AI"
+   * with them numbered.
+   */
+  review?: CtAsset[];
 }) {
-  const c = props.category;
+  const [c, setC] = useState(props.category);
   const [body, setBody] = useState<CtCategoryBody>(() => ({
     name: c?.name ?? "",
-    parent_id: c?.parent_id ?? null,
+    parent_id: null,
+    // Kept in the DB for older code paths; every clipart is just a clipart now, each gốc its own set.
     usage: c?.usage ?? "element",
     mode: c?.mode ?? "origin_set",
     spec: c?.spec ?? "",
     rules: c?.rules ?? defaultCategoryRules(),
   }));
-  const [axes, setAxes] = useState((c?.rules.variantAxes ?? []).join(", "));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const set = (patch: Partial<CtCategoryBody>) => setBody((b) => ({ ...b, ...patch }));
   const setRules = (patch: Partial<CtCategoryBody["rules"]>) => setBody((b) => ({ ...b, rules: { ...b.rules, ...patch } }));
 
-  const parents = useMemo(
-    () => [
-      { value: NONE, label: "(gốc)" },
-      ...flattenCategories(props.categories)
-        .filter(({ category: x }) => x.id !== c?.id)
-        .map(({ category: x, depth }) => ({ value: x.id, label: `${"— ".repeat(depth)}${x.name}` })),
-    ],
-    [props.categories, c],
-  );
+  // Style packs / materials created / edited here (null = deleted), on top of the props until the parent reloads.
+  const [presetEdits, setPresetEdits] = useState<Record<string, CtPreset | null>>({});
+  const presets = useMemo(() => {
+    const byId = new Map([...props.stylePacks, ...(props.materials ?? [])].map((p) => [p.id, p]));
+    for (const [id, p] of Object.entries(presetEdits)) {
+      if (p) byId.set(id, p);
+      else byId.delete(id);
+    }
+    return Array.from(byId.values());
+  }, [props.stylePacks, props.materials, presetEdits]);
+  const packs = presets.filter((p) => p.kind === "style_pack");
+  const mats = presets.filter((p) => p.kind === "material");
+  const pack = packs.find((p) => p.id === body.rules.stylePackId) ?? null;
+  const chosen = body.rules.materialIds.map((id) => mats.find((m) => m.id === id)).filter((m): m is CtPreset => Boolean(m));
+  const addable = mats.filter((m) => !body.rules.materialIds.includes(m.id));
+  const [editPreset, setEditPreset] = useState<{ kind: "style_pack" | "material"; preset: CtPreset | null } | null>(null);
+  const [assistant, setAssistant] = useState(Boolean(props.category && props.review?.length));
+  const [historyOpen, setHistoryOpen] = useState(false);
+  /** What the last "Tạo bằng AI" / "Cập nhật bằng AI" reused / created / changed. */
+  const [aiReport, setAiReport] = useState<string | null>(null);
 
+  const addMaterial = (id: string) => setBody((b) => ({ ...b, rules: { ...b.rules, materialIds: b.rules.materialIds.includes(id) ? b.rules.materialIds : [...b.rules.materialIds, id] } }));
+  const dropMaterial = (id: string) => setBody((b) => ({ ...b, rules: { ...b.rules, materialIds: b.rules.materialIds.filter((x) => x !== id) } }));
+
+  /** A preset saved here becomes the style pack / joins the materials; a deleted one leaves them. */
+  const presetChanged = (kind: "style_pack" | "material", id: string, saved: CtPreset | null) => {
+    setPresetEdits((m) => ({ ...m, [id]: saved }));
+    if (kind === "style_pack") {
+      if (saved) setRules({ stylePackId: saved.id });
+      else if (body.rules.stylePackId === id) setRules({ stylePackId: null });
+    } else if (saved) addMaterial(saved.id);
+    else dropMaterial(id);
+    props.onPresetsChanged?.();
+  };
+
+  /**
+   * AI suggestion: name (when empty), spec and the product's details go into the form; a style pack / material the
+   * library already has is picked, a new one is saved at once and picked. The reference photos are kept by what
+   * they show: the artwork ("design" — sent with the flat drawing) or the finished product ("product" — sent
+   * with the material step only).
+   */
+  const applySuggestion = async (s: CtPromptSuggestion, refBlobs: Array<Blob | string>) => {
+    // The agent's task already uploaded the photos (urls); the built-in LLM's did not.
+    const uploaded = await Promise.all(refBlobs.map((b) => (typeof b === "string" ? b : ctApi.uploadPresetRef(b))));
+    const refs = uploaded.filter((_, i) => s.refRoles[i] !== "product");
+    const productRefs = uploaded.filter((_, i) => s.refRoles[i] === "product");
+    setBody((b) => ({
+      ...b,
+      name: b.name.trim() ? b.name : s.name,
+      spec: s.spec,
+      rules: {
+        ...b.rules,
+        refs: [...b.rules.refs, ...refs].slice(0, 6),
+        productRefs: [...b.rules.productRefs, ...productRefs].slice(0, MAX_PRESET_REFS),
+        details: s.details.length ? s.details : b.rules.details,
+      },
+    }));
+    if (s.style.reuseId) setRules({ stylePackId: s.style.reuseId });
+    else {
+      const style = await ctApi.createPreset({ kind: "style_pack", name: s.style.name, prompt: s.style.prompt, reference_asset_ids: [], params: refs.length ? { refs } : {} });
+      presetChanged("style_pack", style.id, style);
+    }
+    for (const m of s.materials) {
+      if (m.reuseId) addMaterial(m.reuseId);
+      else {
+        const mat = await ctApi.createPreset({ kind: "material", name: m.name, prompt: m.prompt, reference_asset_ids: [], params: MATERIAL_PARAMS });
+        presetChanged("material", mat.id, mat);
+      }
+    }
+    setAiReport(s.summary);
+  };
+
+  /**
+   * "Cập nhật bằng AI" applied: the ticked changes go into the category — library presets switched to, prompts
+   * edited (the shared preset, or a copy for this category), new ones created — then it is saved at once, linked
+   * to the revision in the history. The dialog stays open.
+   */
+  const applyRevision = async (plan: CtCategoryRevision, choice: CtReviseChoice, refUrls: string[]) => {
+    if (!c) return;
+    const rules = { ...body.rules, materialIds: [...body.rules.materialIds] };
+    const lines: string[] = [];
+    const remember = (p: CtPreset) => setPresetEdits((m) => ({ ...m, [p.id]: p }));
+    /** The preset after an "edit" / "new": the shared one updated, or a copy for this category. */
+    const written = async (item: CtRevisePreset, kind: "style_pack" | "material", shared: boolean): Promise<CtPreset> => {
+      const cur = presets.find((p) => p.id === item.currentId) ?? null;
+      if (item.action === "edit" && cur && shared) {
+        const saved = await ctApi.updatePreset(cur.id, { kind, name: cur.name, prompt: item.prompt, reference_asset_ids: cur.reference_asset_ids, params: cur.params });
+        remember(saved);
+        return saved;
+      }
+      const name = item.action === "edit" && cur ? `${cur.name} · ${body.name}`.slice(0, 80) : item.name;
+      const params = cur?.params ?? (kind === "material" ? MATERIAL_PARAMS : {});
+      const made = await ctApi.createPreset({ kind, name, prompt: item.prompt, reference_asset_ids: cur?.reference_asset_ids ?? [], params });
+      remember(made);
+      return made;
+    };
+    if (choice.style.apply && plan.style.action !== "keep") {
+      if (plan.style.action === "switch" && plan.style.targetId) rules.stylePackId = plan.style.targetId;
+      else rules.stylePackId = (await written(plan.style, "style_pack", choice.style.shared)).id;
+      lines.push(`Style pack: ${plan.style.action === "switch" ? `đổi sang “${plan.style.name}”` : plan.style.action === "new" ? `tạo mới “${plan.style.name}”` : choice.style.shared ? "sửa prompt (bản chung)" : "sửa prompt (bản riêng)"}`);
+    }
+    for (const [i, m] of plan.materials.entries()) {
+      if (!choice.materials[i]?.apply || m.action === "keep") continue;
+      const at = m.currentId ? rules.materialIds.indexOf(m.currentId) : -1;
+      if (m.action === "remove") rules.materialIds = rules.materialIds.filter((id) => id !== m.currentId);
+      else {
+        const id = m.action === "switch" && m.targetId ? m.targetId : (await written(m, "material", choice.materials[i].shared)).id;
+        if (at >= 0) rules.materialIds[at] = id;
+        else if (!rules.materialIds.includes(id)) rules.materialIds.push(id);
+      }
+      lines.push(`Vật liệu “${m.name}”: ${m.action === "remove" ? "bỏ" : m.action === "switch" ? (m.currentId ? "đổi sang bản có sẵn" : "thêm (có sẵn)") : m.action === "new" ? "tạo mới" : "sửa prompt"}`);
+    }
+    rules.materialIds = [...new Set(rules.materialIds)];
+    if (choice.details && plan.details) {
+      rules.details = plan.details.list;
+      lines.push(`Chi tiết thành phẩm: ${plan.details.list.length} chi tiết`);
+    }
+    const design = refUrls.filter((_, i) => plan.refRoles[i] === "design");
+    const product = refUrls.filter((_, i) => plan.refRoles[i] === "product");
+    rules.refs = [...new Set([...rules.refs, ...design])].slice(-6);
+    rules.productRefs = [...new Set([...rules.productRefs, ...product])].slice(-MAX_PRESET_REFS);
+    const dropped = choice.dropRefs ? (plan.review?.dropProductRefs ?? []) : [];
+    if (dropped.length) {
+      rules.productRefs = rules.productRefs.filter((u) => !dropped.includes(u));
+      lines.push(`Bỏ ${dropped.length} ảnh thành phẩm mâu thuẫn`);
+    }
+    if (design.length + product.length) lines.push(`Lưu ${design.length + product.length} ảnh tham khảo mới`);
+    const next: CtCategoryBody = { ...body, spec: choice.spec ?? body.spec, rules };
+    if (choice.spec !== null) lines.unshift("Spec chung: cập nhật");
+    const saved = await ctApi.updateCategory(c.id, { ...next, parent_id: null, revision_id: plan.historyId });
+    setBody({ ...next, spec: saved.spec, rules: saved.rules });
+    setC(saved);
+    props.onSaved(saved);
+    props.onPresetsChanged?.();
+    setAiReport(["Đã áp dụng & lưu danh mục:", ...lines].join("\n"));
+  };
+
+  /** What a tab still needs (null = complete). Vật liệu / chi tiết are optional. */
+  const tabMissing: Record<CategoryTab, string | null> = {
+    info: !body.name.trim() ? "Nhập tên danh mục" : null,
+    spec: !body.spec.trim() ? "Viết spec chung (hoặc bấm Tạo bằng AI)" : null,
+    style: !pack ? "Chọn style pack (hoặc bấm + để tạo)" : null,
+    materials: null,
+    details: null,
+  };
+  const missing = CATEGORY_TABS.map((x) => tabMissing[x.id]).find((m) => m !== null) ?? null;
+  const [tab, setTab] = useState<CategoryTab>("info");
   const save = async () => {
+    if (missing) return setError(missing);
     setBusy(true);
     setError(null);
-    const payload: CtCategoryBody = { ...body, rules: { ...body.rules, variantAxes: axes.split(",").map((a) => a.trim()).filter(Boolean) } };
     try {
-      const saved = c ? await ctApi.updateCategory(c.id, payload) : await ctApi.createCategory(payload);
+      const saved = c ? await ctApi.updateCategory(c.id, { ...body, parent_id: null }) : await ctApi.createCategory({ ...body, parent_id: null });
       props.onSaved(saved);
       props.onClose();
     } catch (e) {
@@ -368,7 +896,7 @@ function CategoryDialog(props: {
   };
 
   const remove = async () => {
-    if (!c || !window.confirm(`Xoá danh mục “${c.name}”?`)) return;
+    if (!c || !(await ctConfirm({ title: `Xoá danh mục “${c.name}”?`, tone: "danger", confirmLabel: "Xoá" }))) return;
     try {
       await ctApi.deleteCategory(c.id);
       props.onDeleted();
@@ -378,83 +906,470 @@ function CategoryDialog(props: {
     }
   };
 
+  const picture = CATEGORY_PICTURE;
+  const extraVersions = body.rules.details.filter((d) => d.mode === "version");
   return (
-    <CtModal open onOpenChange={(o) => !o && props.onClose()} title={c ? `Danh mục: ${c.name}` : "Danh mục mới"} wide>
-      <div className="grid grid-cols-2 gap-4 text-sm">
-        <div className="space-y-3">
-          <CtField label="Tên">
-            <CtInput value={body.name} onChange={(e) => set({ name: e.target.value })} placeholder="vd. Dumpling glitter" />
-          </CtField>
-          <CtField label="Danh mục cha">
-            <CtSelect<string> value={body.parent_id ?? NONE} onChange={(v) => set({ parent_id: v === NONE ? null : v })} options={parents} />
-          </CtField>
-          <CtField label="Dùng làm" hint="Main = phôi (mỗi clipart gốc là 1 version main). Element = đặt vào vùng custom.">
-            <CtSelect<CtCategoryUsage> value={body.usage} onChange={(usage) => set({ usage })} options={USAGE_OPTIONS} />
-          </CtField>
-          <CtField label="Kiểu bộ" hint="Bộ gốc: mỗi clipart là 1 hình riêng cùng chủng loại (6 mẫu xe). Bộ biến thể: 1 clipart gốc + nhiều màu/style giữ nguyên hình.">
-            <CtSelect<CtCategoryMode> value={body.mode} onChange={(mode) => set({ mode })} options={MODE_OPTIONS} />
-          </CtField>
-          <CtField label="Spec chung (prompt cho cả danh mục)" hint="Được ghép vào prompt của mọi clipart tạo trong danh mục này (Studio).">
-            <CtTextarea rows={6} value={body.spec} onChange={(e) => set({ spec: e.target.value })} placeholder="vd. A round steamed bun (baozi) with pleated top, soft squishy body, kawaii face area left blank…" />
-          </CtField>
-        </div>
-        <div className="space-y-3">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Rule tạo clipart</p>
-          <div className="grid grid-cols-3 gap-2">
-            <CtField label="Canvas W">
-              <CtNumber value={body.rules.canvas.w} min={64} max={4096} onChange={(w) => setRules({ canvas: { ...body.rules.canvas, w } })} />
-            </CtField>
-            <CtField label="Canvas H">
-              <CtNumber value={body.rules.canvas.h} min={64} max={4096} onChange={(h) => setRules({ canvas: { ...body.rules.canvas, h } })} />
-            </CtField>
-            <CtField label="Fill (0.1–1)">
-              <CtNumber value={body.rules.fill} step={0.05} min={0.1} max={1} onChange={(fill) => setRules({ fill })} />
-            </CtField>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <CtField label="Neo">
-              <CtSelect<CtCategoryAnchor> value={body.rules.anchor} onChange={(anchor) => setRules({ anchor })} options={ANCHOR_OPTIONS} />
-            </CtField>
-            <CtField label="Nền">
-              <CtSelect<CtCategoryBackground> value={body.rules.background} onChange={(background) => setRules({ background })} options={BACKGROUND_OPTIONS} />
-            </CtField>
-          </div>
-          <CtCheckbox
-            checked={body.rules.lockSilhouette}
-            onChange={(lockSilhouette) => setRules({ lockSilhouette })}
-            label="Khoá silhouette cho biến thể / vật liệu"
-            hint="Biến thể và bản vật liệu AI được ép lại đúng alpha của clipart gốc — cùng đường viền, cùng kích thước, thay nhau được trong 1 vùng."
+    <CtModal open onOpenChange={(o) => !o && props.onClose()} title={c ? `Cập nhật danh mục: ${c.name}` : "Danh mục mới"} wide>
+      <div className="mb-3 space-y-2">
+        {assistant && c ? (
+          <CategoryRevisePanel
+            category={{ id: c.id, name: body.name, spec: body.spec, rules: body.rules }}
+            review={props.review ?? []}
+            materials={mats}
+            onApply={applyRevision}
+            onClose={() => setAssistant(false)}
           />
-          <CtField label="Trục biến thể" hint="Cách nhau bằng dấu phẩy, vd. color, style">
-            <CtInput value={axes} onChange={(e) => setAxes(e.target.value)} />
-          </CtField>
-          <CtField label="Style pack mặc định">
-            <CtSelect<string>
-              value={body.rules.stylePackId ?? NONE}
-              onChange={(v) => setRules({ stylePackId: v === NONE ? null : v })}
-              options={[{ value: NONE, label: "(không)" }, ...props.stylePacks.map((p) => ({ value: p.id, label: p.name }))]}
-            />
-          </CtField>
-        </div>
+        ) : assistant ? (
+          <PromptAssistant body={body} onResult={applySuggestion} onClose={() => setAssistant(false)} />
+        ) : (
+          <div className="flex items-center gap-3 rounded-lg border border-sky-500/30 bg-sky-500/5 p-2.5">
+            <CtButton variant="primary" onClick={() => setAssistant(true)}>
+              <Sparkles className="h-3.5 w-3.5" /> {c ? "Cập nhật bằng AI" : "Tạo bằng AI"}
+            </CtButton>
+            <span className="flex-1 text-[11px] leading-snug text-muted-foreground">
+              {c
+                ? "Mô tả chỗ chưa ưng (+ ảnh tham khảo) → AI xem prompt hiện tại, tìm sai ở spec chung, style pack, vật liệu hay chi tiết thành phẩm và chỉ sửa chỗ đó — đổi sang bản có sẵn trong thư viện nếu phù hợp hơn."
+                : "Thả ảnh tham khảo / ghi vài dòng → AI đặt tên, viết spec chung, rồi tra thư viện: style pack, vật liệu, chi tiết thành phẩm nào đã có và phù hợp thì dùng lại, chỉ tạo mới khi không có."}
+            </span>
+            {c && (
+              <CtButton size="sm" onClick={() => setHistoryOpen((v) => !v)}>
+                <History className="h-3.5 w-3.5" /> Lịch sử
+              </CtButton>
+            )}
+          </div>
+        )}
+        {historyOpen && c && <CategoryHistory key={c.updated_at ?? c.id} categoryId={c.id} onClose={() => setHistoryOpen(false)} />}
+        {aiReport && (
+          <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2.5 text-[11px] leading-snug">
+            <CircleCheck className="mt-px h-3.5 w-3.5 shrink-0 text-emerald-500" />
+            <div className="flex-1 space-y-0.5">
+              {aiReport.split("\n").map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+            <button className="rounded p-0.5 text-muted-foreground hover:bg-accent" onClick={() => setAiReport(null)} aria-label="Đóng">
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
       </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-1.5 text-xs">
+        {CATEGORY_TABS.map((x) => {
+          const done = tabMissing[x.id] === null;
+          return (
+            <CtTooltip key={x.id} label={tabMissing[x.id] ?? "Đã xong"}>
+              <button
+                onClick={() => setTab(x.id)}
+                className={cx(
+                  "flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-medium transition-colors",
+                  x.id === tab ? "border-foreground bg-foreground text-background" : "hover:bg-accent",
+                )}
+              >
+                <span className={cx("flex h-4 w-4 items-center justify-center rounded-full", done ? "bg-emerald-500 text-white" : "bg-muted-foreground/30 text-background")}>
+                  <Check className="h-2.5 w-2.5" />
+                </span>
+                {x.label}
+              </button>
+            </CtTooltip>
+          );
+        })}
+      </div>
+
+      <div className="min-h-[340px] text-sm">
+        {tab === "info" && (
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-3">
+              <CtField label="Tên">
+                <CtInput value={body.name} onChange={(e) => set({ name: e.target.value })} placeholder="vd. Chibi Car" autoFocus />
+              </CtField>
+              <div className="grid grid-cols-2 gap-2">
+                <CtField label="Canvas W" hint="Kích thước ảnh kết quả (px).">
+                  <CtNumber value={body.rules.canvas.w} min={64} max={4096} onChange={(w) => setRules({ canvas: { ...body.rules.canvas, w } })} />
+                </CtField>
+                <CtField label="Canvas H">
+                  <CtNumber value={body.rules.canvas.h} min={64} max={4096} onChange={(h) => setRules({ canvas: { ...body.rules.canvas, h } })} />
+                </CtField>
+              </div>
+            </div>
+            <figure className="space-y-1">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={picture.src} alt="" className="w-full rounded-md border bg-white" />
+              <figcaption className="text-[11px] leading-snug text-muted-foreground">{picture.caption}</figcaption>
+            </figure>
+          </div>
+        )}
+
+        {tab === "spec" && (
+          <div className="space-y-3">
+            <div className="grid gap-4 md:grid-cols-[1fr_280px]">
+              <CtField label="Spec chung (prompt cho cả danh mục)">
+                <CtTextarea
+                  rows={12}
+                  value={body.spec}
+                  onChange={(e) => set({ spec: e.target.value })}
+                  placeholder="vd. A chibi toy car, super-deformed: oversized rounded body, big wheels, short hood, seen from the front-left 3/4 angle. A round helmet sits on the top right of the roof; the helmet's face area is left completely blank (no eyes, no mouth). No driver, no license plate."
+                />
+              </CtField>
+              <div className="space-y-3 text-xs">
+                <div className="space-y-1.5">
+                  <p className="font-medium">Nên viết</p>
+                  {SPEC_DO.map((x) => (
+                    <p key={x} className="flex gap-1.5 leading-snug">
+                      <CircleCheck className="mt-px h-3.5 w-3.5 shrink-0 text-emerald-500" /> {x}
+                    </p>
+                  ))}
+                </div>
+                <div className="space-y-1.5">
+                  <p className="font-medium">Không nên viết</p>
+                  {SPEC_DONT.map((x) => (
+                    <p key={x} className="flex gap-1.5 leading-snug text-muted-foreground">
+                      <CircleMinus className="mt-px h-3.5 w-3.5 shrink-0 text-rose-500" /> {x}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <SavedRefs
+              label="Ảnh mẫu của bộ — gửi kèm model vẽ clipart gốc"
+              hint="Model vẽ nhìn thấy các ảnh này mỗi lần vẽ clipart gốc (học góc nhìn, tỉ lệ, bố cục, nét — không chép nội dung), nên ít phải đoán và cả bộ đồng đều hơn. Nên là 2–4 clipart đã ưng của chính bộ này. Tối đa 6, model nhận 4 (ưu tiên ảnh của bộ trước ảnh của style pack)."
+              urls={body.rules.refs}
+              pending={0}
+              disabled={false}
+              onRemove={(u) => setRules({ refs: body.rules.refs.filter((x) => x !== u) })}
+              onAdd={async (files) => {
+                const urls = await Promise.all(files.map(async (f) => ctApi.uploadPresetRef(await refImage(f))));
+                setBody((b) => ({ ...b, rules: { ...b.rules, refs: [...b.rules.refs, ...urls].slice(-6) } }));
+              }}
+              onError={setError}
+            />
+          </div>
+        )}
+
+        {tab === "style" && (
+          <div className="max-w-2xl space-y-3">
+            <CtField label="Style pack (bắt buộc)" hint="Cách vẽ chung: nét, đổ bóng, màu, độ bóng. Ghép TRƯỚC spec chung trong prompt. 1 style pack dùng được cho nhiều danh mục.">
+              <SelectWithEdit<string>
+                value={body.rules.stylePackId ?? NONE}
+                onChange={(v) => setRules({ stylePackId: v === NONE ? null : v })}
+                options={[{ value: NONE, label: packs.length ? "— Chọn style pack —" : "— Chưa có, bấm + để tạo —" }, ...packs.map((p) => ({ value: p.id, label: p.name }))]}
+                onNew={() => setEditPreset({ kind: "style_pack", preset: null })}
+                onEdit={pack ? () => setEditPreset({ kind: "style_pack", preset: pack }) : undefined}
+                newLabel="Style pack mới"
+              />
+            </CtField>
+            {pack && <p className="whitespace-pre-line rounded-md border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">{pack.prompt}</p>}
+            {pack && (
+              <SavedRefs
+                label="Ảnh mẫu của style pack — gửi kèm model vẽ"
+                hint={(pack.params.refs ?? []).length ? "Dùng chung cho mọi danh mục chọn pack này; sửa ở nút bút chì. Model vẽ nhận ảnh mẫu của bộ trước, còn chỗ mới tới các ảnh này." : "Pack chưa có ảnh mẫu — thêm ở nút bút chì để model vẽ thấy đúng nét."}
+                urls={pack.params.refs ?? []}
+                pending={0}
+                disabled
+                always
+                onRemove={() => undefined}
+              />
+            )}
+            <p className="text-[11px] text-muted-foreground">Clipart gốc = spec chung + style pack. Đây là tất cả những gì bước “Clipart gốc” dùng.</p>
+          </div>
+        )}
+
+        {tab === "materials" && (
+          <div className="grid gap-4 md:grid-cols-[1fr_360px]">
+            <CtField label="Vật liệu của danh mục (tuỳ chọn)">
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="inline-flex items-center gap-1 rounded-full border bg-muted px-2 py-0.5 text-xs">
+                    <Lock className="h-3 w-3 text-muted-foreground" /> Clipart phẳng
+                  </span>
+                  {chosen.map((m) => (
+                    <span key={m.id} className="inline-flex items-center gap-0.5 rounded-full border border-violet-500/40 bg-violet-500/10 py-0.5 pl-2 pr-0.5 text-xs text-violet-700 dark:text-violet-300">
+                      <button className="hover:underline" onClick={() => setEditPreset({ kind: "material", preset: m })} title="Xem / sửa">
+                        {m.name}
+                      </button>
+                      <button className="rounded-full p-0.5 hover:bg-violet-500/20" onClick={() => dropMaterial(m.id)} aria-label={`Bỏ ${m.name}`}>
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <SelectWithEdit<string>
+                  value=""
+                  onChange={(v) => v && addMaterial(v)}
+                  options={[{ value: "", label: addable.length ? "+ Thêm vật liệu…" : mats.length ? "Đã chọn hết vật liệu" : "Chưa có vật liệu, bấm + để tạo" }, ...addable.map((p) => ({ value: p.id, label: p.name }))]}
+                  onNew={() => setEditPreset({ kind: "material", preset: null })}
+                  newLabel="Vật liệu mới"
+                />
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  Clipart phẳng luôn có (file gửi xưởng). Mỗi vật liệu chọn ở đây là 1 lựa chọn ở bước “Vật liệu & thành phẩm”
+                  {chosen.length ? ` — mỗi clipart gốc × ${chosen.length} vật liệu × ${1 + extraVersions.length} ảnh (theo chi tiết thành phẩm).` : "."}
+                </p>
+                {chosen.map((m) => (
+                  <div key={m.id} className="space-y-1 rounded-md border bg-muted/30 p-2">
+                    <p className="line-clamp-3 text-[11px] leading-snug text-muted-foreground">
+                      <b className="text-foreground">{m.name}:</b> {m.prompt}
+                    </p>
+                    {(m.params.refs ?? []).length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {(m.params.refs ?? []).map((u) => (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img key={u} src={u} alt="" className="h-10 w-10 rounded border object-cover" />
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-amber-600">Chưa có ảnh mẫu vật liệu — model chỉ đọc chữ, dễ ra lệch (đục, viền dày…). Thêm ảnh ở tên vật liệu.</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CtField>
+            <ProductStepNote step="materials" />
+          </div>
+        )}
+
+        {tab === "details" && (
+          <div className="space-y-3">
+            <ProductStepNote step="details" />
+            <CategoryDetails categoryId={c?.id ?? null} name={body.name} spec={body.spec} rules={body.rules} hasMaterial={chosen.length > 0} onChange={setRules} onError={setError} />
+          </div>
+        )}
+      </div>
+
       {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
-      <div className="mt-4 flex gap-2">
+      <div className="mt-3 flex items-center gap-2 border-t pt-3">
         {c?.can_edit && (
           <CtButton variant="ghost" className="text-destructive" onClick={() => void remove()}>
             <Trash2 className="h-3.5 w-3.5" /> Xoá
           </CtButton>
         )}
-        <span className="flex-1" />
+        <span className="flex-1 text-center text-[11px] text-muted-foreground">{missing}</span>
         <CtButton onClick={props.onClose}>Huỷ</CtButton>
-        <CtButton variant="primary" onClick={() => void save()} disabled={busy || !body.name.trim()}>
-          {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Lưu
-        </CtButton>
+        <CtTooltip label={missing ?? (c ? "Lưu thay đổi" : "Tạo danh mục")}>
+          <span>
+            <CtButton variant="primary" onClick={() => void save()} disabled={busy || missing !== null}>
+              {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} {c ? "Lưu" : "Tạo mới"}
+            </CtButton>
+          </span>
+        </CtTooltip>
       </div>
+      {editPreset && (
+        <PresetDialog
+          preset={editPreset.preset}
+          kind={editPreset.kind}
+          onClose={() => setEditPreset(null)}
+          onSaved={(saved) => {
+            const id = saved?.id ?? editPreset.preset?.id ?? null;
+            if (id) presetChanged(editPreset.kind, id, saved);
+          }}
+        />
+      )}
     </CtModal>
   );
 }
 
-function ClipartDialog(props: {
+/**
+ * Chi tiết thành phẩm of a category (CtCategoryRules.details): what its finished product has besides the material —
+ * a hole, a spring and a cord, a visor clip… Read by the AI from a description + photos of the product, or copied
+ * from another category (a copy: editing it here never changes the other one; photos are copied as links).
+ * Never on the flat clipart: only the material versions get them.
+ */
+function CategoryDetails(props: {
+  categoryId: string | null;
+  name: string;
+  spec: string;
+  rules: CtCategoryRules;
+  hasMaterial: boolean;
+  onChange: (patch: Partial<CtCategoryRules>) => void;
+  onError: (msg: string | null) => void;
+}) {
+  const { details, productRefs, detailsNote } = props.rules;
+  const [refs, setRefs] = useState<RefImage[]>([]);
+  const [writing, setWriting] = useState(false);
+  /** "Lấy từ danh mục khác": the other categories with details (loaded when opened). */
+  const [others, setOthers] = useState<CtClipartCategory[] | null>(null);
+  const [sourceId, setSourceId] = useState("");
+  const source = others?.find((x) => x.id === sourceId) ?? null;
+  const has = (t: string) => details.some((d) => d.text.trim() === t.trim());
+
+  const analyse = async () => {
+    setWriting(true);
+    props.onError(null);
+    try {
+      const uploaded = await Promise.all(refs.map((r) => ctApi.uploadPresetRef(r.blob)));
+      refs.forEach((r) => URL.revokeObjectURL(r.preview));
+      setRefs([]);
+      const urls = [...productRefs, ...uploaded].slice(0, MAX_PRESET_REFS);
+      const s = await ctApi.suggestDetails({ name: props.name, spec: props.spec, note: detailsNote, refUrls: urls });
+      props.onChange({ productRefs: urls, details: s.details });
+    } catch (e) {
+      props.onError(e instanceof Error ? e.message : "Lỗi");
+    } finally {
+      setWriting(false);
+    }
+  };
+
+  const openPicker = () => {
+    ctApi
+      .listCategories()
+      .then((r) => setOthers(r.categories.filter((x) => x.id !== props.categoryId && x.rules.details.length > 0)))
+      .catch((e: Error) => props.onError(e.message));
+  };
+
+  const copy = (list: CtMaterialSpec[]) => props.onChange({ details: normalizeMaterialSpecs([...details, ...list.filter((d) => !has(d.text))]) });
+
+  return (
+    <div className="space-y-2 text-sm">
+      <p className="text-[11px] text-muted-foreground">
+        Lỗ, lò xo, dây, móc kẹp… của sản phẩm danh mục này ({details.length} chi tiết). Không vẽ vào clipart phẳng (file gửi xưởng) — chỉ có trên bản vật liệu
+        {props.hasMaterial ? "." : " — danh mục chưa chọn vật liệu nào (tab Vật liệu), nên chi tiết chưa được dùng."}
+      </p>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <RefNoteBox
+            refs={refs}
+            onRefs={setRefs}
+            note={detailsNote}
+            onNote={(v) => props.onChange({ detailsNote: v })}
+            onError={(m) => props.onError(m)}
+            placeholder="Mô tả thành phẩm + thả ảnh sản phẩm thật, vd. ornament có lỗ đục, lò xo xỏ dây vàng; có bản có dây và bản không dây. Muốn chỉ chỗ: vẽ chấm / khoanh lên ảnh rồi ghi “chấm đỏ = lỗ”."
+            saved={productRefs}
+            onRemoveSaved={(u) => props.onChange({ productRefs: productRefs.filter((x) => x !== u) })}
+            max={MAX_PRESET_REFS}
+          />
+          <CtButton className="w-full justify-center" onClick={() => void analyse()} disabled={writing || (!detailsNote.trim() && refs.length + productRefs.length === 0)}>
+            {writing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {details.length ? "Phân tích lại chi tiết" : "Phân tích chi tiết bằng AI"}
+          </CtButton>
+          <p className="text-[11px] text-muted-foreground">Ảnh thành phẩm chỉ gửi kèm bước vật liệu (không gửi khi vẽ clipart phẳng).</p>
+        </div>
+        <div className="space-y-2">
+          {details.length ? (
+            <SpecSummary specs={details} disabled={false} onRemove={(i) => props.onChange({ details: details.filter((_, k) => k !== i) })} />
+          ) : (
+            <p className="rounded-md border border-dashed px-3 py-2 text-center text-[11px] text-muted-foreground">Chưa có — bản vật liệu chỉ có vật liệu.</p>
+          )}
+          {others === null ? (
+            <CtButton size="sm" variant="ghost" onClick={openPicker}>
+              <Plus className="h-3.5 w-3.5" /> Lấy từ danh mục khác
+            </CtButton>
+          ) : (
+            <div className="space-y-1.5 rounded-md border p-2">
+              <CtSelect<string>
+                value={sourceId}
+                onChange={setSourceId}
+                options={[
+                  { value: "", label: others.length ? "— Chọn danh mục để chép chi tiết —" : "Chưa danh mục nào có chi tiết" },
+                  ...others.map((x) => ({ value: x.id, label: `${x.name} (${x.rules.details.length})` })),
+                ]}
+              />
+              {source && (
+                <>
+                  {source.rules.details.map((d, i) => (
+                    <div key={i} className="flex items-start gap-2 text-[11px]">
+                      <span className="flex-1">
+                        <b>{d.mode === "version" ? `Bản thêm “${d.label}”: ` : "Luôn có: "}</b>
+                        {d.text}
+                      </span>
+                      <CtButton size="sm" variant="ghost" disabled={has(d.text)} onClick={() => copy([d])}>
+                        {has(d.text) ? "Đã có" : "Chép"}
+                      </CtButton>
+                    </div>
+                  ))}
+                  <div className="flex gap-1.5">
+                    <CtButton size="sm" onClick={() => copy(source.rules.details)}>
+                      Chép tất cả
+                    </CtButton>
+                    {source.rules.productRefs.length > 0 && (
+                      <CtButton
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => props.onChange({ productRefs: [...new Set([...productRefs, ...source.rules.productRefs])].slice(0, MAX_PRESET_REFS) })}
+                      >
+                        + Chép {source.rules.productRefs.length} ảnh thành phẩm
+                      </CtButton>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Category dialog "Tạo bằng AI": reference images + a note → name, spec, style pack, materials, details — the
+ * library's own presets when they fit (server/ai/prompt-writer.ts).
+ */
+function PromptAssistant(props: { body: CtCategoryBody; onResult: (s: CtPromptSuggestion, refs: Array<Blob | string>) => Promise<void>; onClose: () => void }) {
+  const [refs, setRefs] = useState<RefImage[]>([]);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { status, brain, setBrain } = useAiBrain();
+  const agent = useAgentTask();
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (brain === "agent") {
+        const refUrls = await Promise.all(refs.map((r) => ctApi.uploadPresetRef(r.blob)));
+        const category = { id: null, name: props.body.name, spec: props.body.spec, rules: props.body.rules };
+        const s = await agent.run<CtPromptSuggestion>("create", { category, note, images: [], refUrls });
+        await props.onResult(s, refUrls);
+        props.onClose();
+        return;
+      }
+      const s = await ctApi.suggestCategoryPrompts({ name: props.body.name, spec: props.body.spec, note, images: refs.map((r) => r.blob) });
+      await props.onResult(s, refs.map((r) => r.blob));
+      props.onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Lỗi");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <RefNoteBox
+        refs={refs}
+        onRefs={setRefs}
+        note={note}
+        onNote={setNote}
+        onError={setError}
+        placeholder="Mô tả (tiếng Việt được), vd. xe chibi, mũ bảo hiểm góc trên bên phải, mặt trên mũ để trống cho khách gắn ảnh; vẽ kiểu sticker bóng, viền trắng; làm thêm bản acrylic trong."
+      >
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-3.5 w-3.5" />
+          <span className="font-medium">Tạo bằng AI</span>
+          <span className="text-[11px] text-muted-foreground">Dùng Tên và Spec đang có (nếu có) — trống thì AI tự đặt.</span>
+          <span className="ml-auto shrink-0">
+            <BrainToggle status={status} brain={brain} onBrain={setBrain} disabled={busy} />
+          </span>
+          <button className="rounded p-1 text-muted-foreground hover:bg-accent" onClick={props.onClose} aria-label="Đóng">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </RefNoteBox>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      {agent.task && <AgentProgress task={agent.task} onCancel={agent.cancel} />}
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] text-muted-foreground">
+          Điền tất cả các tab (chưa lưu danh mục). Style pack / vật liệu có sẵn trong thư viện mà phù hợp thì được chọn lại; chỉ cái chưa có mới được tạo.
+        </span>
+        <CtButton size="sm" variant="primary" className="ml-auto shrink-0" onClick={() => void run()} disabled={busy}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {busy ? "Đang phân tích & tra thư viện…" : "Tạo"}
+        </CtButton>
+      </div>
+    </div>
+  );
+}
+
+/** A library clipart's details (name, spec, tags, category, usage, delete) — also opened from the editor's library panel. */
+export function ClipartDialog(props: {
   asset: CtAsset;
   categories: CtClipartCategory[];
   onClose: () => void;
@@ -471,7 +1386,6 @@ function ClipartDialog(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isOrigin = a.parent_id === null;
-  const usageKind: CtCategoryUsage = a.role === "main" ? "main" : "element";
 
   useEffect(() => {
     ctApi
@@ -501,10 +1415,23 @@ function ClipartDialog(props: {
   };
 
   const remove = async () => {
-    if (!window.confirm(isOrigin ? `Xoá “${a.name}” và toàn bộ biến thể của nó khỏi thư viện?` : `Xoá “${a.name}” khỏi thư viện?`)) return;
+    // Still loading → ask the server (a used clipart answers with its products).
+    const used = usage ?? (await ctApi.clipartUsage(a.id).catch(() => []));
+    const what = isOrigin ? `“${a.name}” và toàn bộ đa sắc / vật liệu của nó` : `“${a.name}”`;
+    const ok = await ctConfirm(
+      used.length
+        ? {
+            title: "Clipart đang được dùng trong sản phẩm",
+            message: `${what} đang được dùng trong ${used.length} sản phẩm: ${used.map((u) => u.productName).join(", ")}.\n\nXoá sẽ gỡ luôn clipart này khỏi các sản phẩm đó (layer, version, option). Sản phẩm đã publish cần publish lại.\n\nChắc chắn muốn xoá?`,
+            tone: "danger",
+            confirmLabel: "Xoá & gỡ khỏi sản phẩm",
+          }
+        : { title: `Xoá ${what} khỏi thư viện?`, tone: "danger", confirmLabel: "Xoá" },
+    );
+    if (!ok) return;
     setBusy(true);
     try {
-      await ctApi.deleteClipart(a.id);
+      await ctApi.deleteClipart(a.id, used.length > 0);
       props.onDeleted(a.id);
       props.onClose();
     } catch (e) {
@@ -515,14 +1442,14 @@ function ClipartDialog(props: {
   };
 
   return (
-    <CtModal open onOpenChange={(o) => !o && props.onClose()} title={isOrigin ? "Clipart gốc" : a.role === "rendition" ? "Bản vật liệu" : "Biến thể"} wide>
+    <CtModal open onOpenChange={(o) => !o && props.onClose()} title={isOrigin ? "Clipart gốc" : isMulticolorClipart(a) ? (isMaterialClipart(a) ? "Đa sắc · vật liệu" : "Đa sắc") : "Vật liệu"} wide>
       <div className="grid grid-cols-[320px_1fr] gap-4 text-sm">
         <div className="aspect-square overflow-hidden rounded-lg border" style={CHECKER_STYLE}>
           <img src={a.url} alt={a.name} className="h-full w-full object-contain" />
         </div>
         <div className="space-y-3">
           <p className="text-[11px] text-muted-foreground">
-            {a.role} · {a.width}×{a.height} · nguồn {a.source}
+            {a.width}×{a.height} · nguồn {a.source}
             {typeof a.meta.iou === "number" && ` · khớp silhouette ${(a.meta.iou * 100).toFixed(1)}%`}
             {a.meta.material && ` · vật liệu ${a.meta.material}`}
           </p>
@@ -541,15 +1468,13 @@ function ClipartDialog(props: {
             </CtField>
           </div>
           {isOrigin && (
-            <CtField label="Danh mục" hint="Biến thể và bản vật liệu đi theo clipart gốc.">
+            <CtField label="Danh mục" hint="Đa sắc và vật liệu đi theo clipart gốc.">
               <CtSelect<string>
                 value={category}
                 onChange={setCategory}
                 options={[
                   { value: NONE, label: "Chưa phân loại" },
-                  ...flattenCategories(props.categories)
-                    .filter(({ category: c }) => c.usage === usageKind)
-                    .map(({ category: c, depth }) => ({ value: c.id, label: `${"— ".repeat(depth)}${c.name}` })),
+                  ...flattenCategories(props.categories).map(({ category: c, depth }) => ({ value: c.id, label: `${"— ".repeat(depth)}${c.name}` })),
                 ]}
               />
             </CtField>
@@ -567,7 +1492,7 @@ function ClipartDialog(props: {
           </div>
           {error && <p className="text-xs text-destructive">{error}</p>}
           <div className="flex gap-2 pt-2">
-            <CtButton variant="ghost" className="text-destructive" onClick={() => void remove()} disabled={busy || (usage?.length ?? 0) > 0}>
+            <CtButton variant="ghost" className="text-destructive" onClick={() => void remove()} disabled={busy}>
               <Trash2 className="h-3.5 w-3.5" /> Xoá
             </CtButton>
             <span className="flex-1" />
@@ -579,6 +1504,45 @@ function ClipartDialog(props: {
         </div>
       </div>
     </CtModal>
+  );
+}
+
+/** Select + "+" (new) + pencil (edit current). Also used by the AI dialog. */
+export function SelectWithEdit<T extends string>({
+  value,
+  onChange,
+  options,
+  onNew,
+  onEdit,
+  newLabel,
+  disabled,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: Array<{ value: T; label: string }>;
+  onNew: () => void;
+  onEdit?: () => void;
+  newLabel: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex gap-1.5">
+      <div className="min-w-0 flex-1">
+        <CtSelect<T> value={value} onChange={onChange} options={options} disabled={disabled} />
+      </div>
+      {onEdit && (
+        <CtTooltip label="Xem / sửa">
+          <CtButton size="icon" onClick={onEdit}>
+            <Pencil className="h-3.5 w-3.5" />
+          </CtButton>
+        </CtTooltip>
+      )}
+      <CtTooltip label={newLabel}>
+        <CtButton size="icon" onClick={onNew}>
+          <Plus className="h-3.5 w-3.5" />
+        </CtButton>
+      </CtTooltip>
+    </div>
   );
 }
 
@@ -602,8 +1566,8 @@ function PresetsTab() {
   return (
     <div className="flex-1 overflow-y-auto p-4">
       {error && <p className="mb-2 text-xs text-destructive">{error}</p>}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {(Object.keys(KIND_LABEL) as CtPresetKind[]).map((kind) => (
+      <div className="grid gap-6 lg:grid-cols-2">
+        {LIBRARY_KINDS.map((kind) => (
           <section key={kind}>
             <div className="mb-2 flex items-center">
               <h2 className="text-sm font-semibold">{KIND_LABEL[kind]}</h2>
@@ -619,7 +1583,6 @@ function PresetsTab() {
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium">{p.name}</span>
                       {p.user_id === null && <span className="rounded bg-muted px-1 text-[10px]">built-in</span>}
-                      {p.params.lockSilhouette && <span className="rounded bg-violet-500/15 px-1 text-[10px] text-violet-600">khoá silhouette</span>}
                     </div>
                     <p className="mt-1 line-clamp-3 text-[11px] text-muted-foreground">{p.prompt}</p>
                   </button>
@@ -633,26 +1596,275 @@ function PresetsTab() {
   );
 }
 
-function PresetDialog(props: { preset: CtPreset | null; kind: CtPresetKind; onClose: () => void; onSaved: () => void }) {
+/** A new material: printed artwork kept as is, details read from the description later. */
+const MATERIAL_PARAMS: CtPresetParams = { art: "print", specs: [] };
+
+const PROMPT_HINT: Record<CtPresetKind, string> = {
+  material:
+    "Chỉ VẺ NGOÀI của vật liệu (trong / màu, độ dày, viền, bề mặt, ánh phản chiếu) + những lỗi cần tránh (no haze, no glow…). Giữ nguyên artwork, nền do hệ thống tự lo — không cần ghi. Lỗ, dây, móc… thuộc danh mục, không ghi ở đây.",
+  style_pack:
+    "Cách VẼ chung cho cả bộ: nét (dày / màu viền), đổ bóng, bảng màu, ánh sáng, bề mặt, mức chi tiết. Không nhắc tên vật — 1 style pack dùng lại được cho nhiều danh mục. Không ghi nền / khung / không chữ (tự thêm). Viết tiếng Anh.",
+  scene: "Bối cảnh chụp mockup; dặn giữ nguyên sản phẩm.",
+};
+
+/** Style pack / material description: the reference photos also go to the image model. */
+const MAX_PRESET_REFS = 6;
+
+const DESCRIPTION_HINT: Record<"style_pack" | "material", string> = {
+  material:
+    "Chỉ VẬT LIỆU — dùng lại cho nhiều danh mục / sản phẩm: trong / màu, độ dày, viền, bề mặt. Lỗ, dây, móc… không ghi ở đây: chúng thuộc từng danh mục (“Chi tiết thành phẩm”). Mọi ảnh ở đây (cả ảnh đã lưu từ lần trước) đều gửi kèm model vẽ — đổi kiểu sản phẩm thì bấm × bỏ ảnh cũ.",
+  style_pack: "Thả ảnh mẫu nét vẽ muốn có + mô tả. Mọi ảnh ở đây (cả ảnh đã lưu từ lần trước) đều gửi kèm model vẽ mọi clipart dùng style pack này — đổi phong cách thì bấm × bỏ ảnh cũ.",
+};
+
+const NOTE_PLACEHOLDER: Record<"style_pack" | "material", string> = {
+  style_pack: "Mô tả chi tiết cách vẽ muốn có (tiếng Việt được), vd. sticker kawaii, viền nâu đậm dày, tô bóng mềm, màu pastel kẹo ngọt, bề mặt bóng như nhựa…",
+  material:
+    "Mô tả vật liệu (tiếng Việt được) + thả ảnh mẫu, vd. acrylic trong suốt 3mm, viền mảnh sáng bóng, không mờ đục…",
+};
+
+/** What becomes of the printed artwork — the AI reads it from the description (shown, not picked). */
+const ART_LABEL: Record<CtMaterialArt, string> = {
+  print: "hình in giữ nguyên, vật liệu bao quanh",
+  surface: "vật liệu phủ lên hình (glitter, thêu, foil…)",
+};
+
+/**
+ * Product details (hole, cord, a clip, a handle…) as the AI read them — shown, not edited: change the description
+ * and analyse again. Each is on every material version, or one more version of it.
+ */
+function SpecSummary(props: { specs: CtMaterialSpec[]; disabled: boolean; onRemove: (i: number) => void }) {
+  return (
+    <div className="space-y-1 text-xs">
+      {props.specs.map((x, i) => (
+        <div key={i} className="flex items-start gap-2 rounded-md border px-2 py-1.5">
+          <span className={cx("mt-px shrink-0 rounded px-1 text-[10px]", x.mode === "version" ? "bg-violet-500/15 text-violet-600" : "bg-muted text-muted-foreground")}>
+            {x.mode === "version" ? `bản thêm: ${x.label}` : "luôn có"}
+          </span>
+          <span className="flex-1">{x.text}</span>
+          {!props.disabled && (
+            <button className="rounded p-0.5 text-muted-foreground hover:bg-accent" onClick={() => props.onRemove(i)} title="Bỏ chi tiết này">
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A preset's / category's saved reference photos: the image model gets them, not only the prompt writer. */
+function SavedRefs(props: {
+  label: string;
+  hint: string;
+  urls: string[];
+  pending: number;
+  disabled: boolean;
+  onRemove: (url: string) => void;
+  /** Adds photos (uploaded by the caller); shows an "add" tile. */
+  onAdd?: (files: File[]) => Promise<void>;
+  onError?: (msg: string) => void;
+  /** Show the field even without photos. */
+  always?: boolean;
+}) {
+  const [adding, setAdding] = useState(false);
+  if (!props.urls.length && !props.pending && !props.onAdd && !props.always) return null;
+  const add = async (files: File[]) => {
+    if (!props.onAdd) return;
+    setAdding(true);
+    try {
+      await props.onAdd(files);
+    } catch (e) {
+      props.onError?.(e instanceof Error ? e.message : "Không tải được ảnh");
+    } finally {
+      setAdding(false);
+    }
+  };
+  return (
+    <CtField label={props.label} hint={props.hint}>
+      <div className="flex flex-wrap gap-1.5">
+        {props.urls.map((u) => (
+          <div key={u} className="relative h-14 w-14 overflow-hidden rounded border">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={u} alt="" className="h-full w-full object-cover" />
+            {!props.disabled && (
+              <button className="absolute right-0.5 top-0.5 rounded bg-black/60 p-0.5 text-white" onClick={() => props.onRemove(u)} title="Bỏ ảnh mẫu">
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        ))}
+        {props.onAdd && props.urls.length < 6 && (
+          <label className="flex h-14 w-14 cursor-pointer flex-col items-center justify-center gap-0.5 rounded border border-dashed text-[10px] text-muted-foreground hover:bg-accent">
+            {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />} thêm
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              multiple
+              className="hidden"
+              disabled={adding}
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                e.target.value = "";
+                if (files.length) void add(files);
+              }}
+            />
+          </label>
+        )}
+        {props.always && !props.urls.length && !props.onAdd && <span className="text-[11px] text-muted-foreground">(không có)</span>}
+        {props.pending > 0 && <span className="self-center text-[11px] text-muted-foreground">+ {props.pending} ảnh mới (lưu khi bấm Lưu)</span>}
+      </div>
+    </CtField>
+  );
+}
+
+const HISTORY_TIME = new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short" });
+
+/**
+ * How a style pack / material came to be (ct_preset_history): every AI analysis — the description and photos it
+ * read, what it wrote — and every save. Kept for people and for agents working on the preset later.
+ */
+function PresetHistory(props: { history: CtPresetHistoryEntry[]; disabled: boolean; onReuse: (h: CtPresetHistoryEntry) => void }) {
+  const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const analyses = props.history.filter((h) => h.event === "analysis").length;
+  return (
+    <div className="rounded-md border">
+      <button className="flex w-full items-center gap-1 px-2 py-1.5 text-[11px] font-medium" onClick={() => setOpen((v) => !v)}>
+        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        <History className="h-3 w-3" /> Lịch sử ({analyses} lần phân tích, {props.history.length - analyses} lần lưu)
+      </button>
+      {open && (
+        <div className="max-h-80 space-y-1.5 overflow-y-auto border-t p-2">
+          {props.history.map((h) => {
+            const more = expanded === h.id;
+            const specs = h.result.specs ?? h.result.params?.specs ?? [];
+            return (
+              <div key={h.id} className="space-y-1 rounded border p-2 text-[11px]">
+                <div className="flex items-center gap-1.5">
+                  <span className={cx("rounded px-1 text-[10px]", h.event === "analysis" ? "bg-sky-500/15 text-sky-600" : "bg-emerald-500/15 text-emerald-600")}>
+                    {h.event === "analysis" ? "Phân tích AI" : "Đã lưu"}
+                  </span>
+                  <span className="text-muted-foreground">{HISTORY_TIME.format(new Date(h.created_at))}</span>
+                  {!h.preset_id && <span className="text-muted-foreground">· chưa lưu</span>}
+                  <span className="flex-1" />
+                  <button className="text-muted-foreground hover:text-foreground" onClick={() => setExpanded(more ? null : h.id)}>
+                    {more ? "Thu gọn" : "Chi tiết"}
+                  </button>
+                  {!props.disabled && h.event === "analysis" && (
+                    <button className="font-medium text-sky-600 hover:underline" onClick={() => props.onReuse(h)} title="Lấy lại mô tả, ảnh và kết quả của lần này (bấm Lưu để giữ)">
+                      Dùng lại
+                    </button>
+                  )}
+                </div>
+                {h.note && <p className={cx("whitespace-pre-line", !more && "line-clamp-2")}>{h.note}</p>}
+                {h.ref_urls.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {h.ref_urls.map((u) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img key={u} src={u} alt="" className="h-9 w-9 rounded border object-cover" />
+                    ))}
+                  </div>
+                )}
+                {more && (
+                  <div className="space-y-1 border-t pt-1 text-muted-foreground">
+                    <p>
+                      <span className="font-medium text-foreground">Prompt:</span> {h.result.prompt}
+                    </p>
+                    {specs.map((x, i) => (
+                      <p key={i}>
+                        <span className="font-medium text-foreground">{x.mode === "version" ? `Bản thêm “${x.label}”:` : "Luôn có:"}</span> {x.text}
+                      </p>
+                    ))}
+                    {h.input.prompt && h.event === "analysis" && <p className="line-clamp-3">Prompt trước đó: {h.input.prompt}</p>}
+                    {h.model && <p>Model: {h.model}</p>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Create / edit a preset. Style pack / material: one description (text + reference photos) the AI turns into the
+ * prompt — and, for a material, its details (hole, cord…) and what becomes of the artwork. The prompt stays
+ * editable. `onSaved` gets the saved preset, or null after a delete.
+ */
+export function PresetDialog(props: { preset: CtPreset | null; kind: CtPresetKind; onClose: () => void; onSaved: (saved: CtPreset | null) => void }) {
   const p = props.preset;
   const [body, setBody] = useState<CtPresetBody>(() => ({
     kind: props.kind,
     name: p?.name ?? "",
     prompt: p?.prompt ?? "",
     reference_asset_ids: p?.reference_asset_ids ?? [],
-    params: p?.params ?? { lockSilhouette: props.kind === "material" },
+    // A material from before `art` moves to the current pipeline (artwork kept, details as versions) on save.
+    params: p ? (p.kind === "material" && !p.params.art ? { ...p.params, art: "print" } : p.params) : props.kind === "material" ? MATERIAL_PARAMS : {},
   }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const readOnly = p !== null && !p.can_edit;
+  const kind = props.kind === "scene" ? null : props.kind;
+  const [refs, setRefs] = useState<RefImage[]>([]);
+  const [writing, setWriting] = useState(false);
+  /** Analyses + saves of this preset (server), and analyses made here before it exists (preset_id null). */
+  const [history, setHistory] = useState<CtPresetHistoryEntry[]>([]);
+  const note = body.params.note ?? "";
+  const savedRefs = body.params.refs ?? [];
+  const setParams = (patch: Partial<CtPresetParams>) => setBody((b) => ({ ...b, params: { ...b.params, ...patch } }));
+
+  useEffect(() => {
+    if (!p || props.kind === "scene") return;
+    ctApi
+      .presetHistory(p.id)
+      .then((h) => setHistory((cur) => [...cur, ...h.filter((x) => !cur.some((c) => c.id === x.id))]))
+      .catch(() => undefined);
+  }, [p, props.kind]);
+
+  const write = async () => {
+    if (!kind) return;
+    setWriting(true);
+    setError(null);
+    try {
+      // Photos are uploaded first: the analysis is recorded with their urls (history), and they are the preset's anyway.
+      const uploaded = await Promise.all(refs.map((r) => ctApi.uploadPresetRef(r.blob)));
+      refs.forEach((r) => URL.revokeObjectURL(r.preview));
+      setRefs([]);
+      const urls = [...savedRefs, ...uploaded].slice(0, MAX_PRESET_REFS);
+      setParams({ refs: urls });
+      const s = await ctApi.suggestPresetPrompt({ kind, presetId: p?.id ?? null, name: body.name, note, prompt: body.prompt, images: [], savedRefs: urls });
+      setBody((b) => ({
+        ...b,
+        name: b.name.trim() || s.name,
+        prompt: s.prompt,
+        // Materials: the details and what becomes of the artwork come with the prompt.
+        params: kind === "material" ? { ...b.params, art: s.art ?? b.params.art ?? "print" } : b.params,
+      }));
+      const entry = s.history;
+      if (entry) setHistory((h) => [entry, ...h]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Lỗi");
+    } finally {
+      setWriting(false);
+    }
+  };
 
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
-      if (p) await ctApi.updatePreset(p.id, body);
-      else await ctApi.createPreset(body);
-      props.onSaved();
+      let params: CtPresetParams = body.params;
+      if (kind) {
+        // The reference photos of the description go to the image model too: saved with the preset.
+        const uploaded = await Promise.all(refs.map((r) => ctApi.uploadPresetRef(r.blob)));
+        params = { ...params, refs: [...savedRefs, ...uploaded].slice(0, MAX_PRESET_REFS) };
+      }
+      if (kind === "material") params = { ...params, specs: normalizeMaterialSpecs(params.specs ?? []) };
+      const next: CtPresetBody = { ...body, params, history_ids: p ? undefined : history.filter((h) => !h.preset_id).map((h) => h.id) };
+      const saved = p ? await ctApi.updatePreset(p.id, next) : await ctApi.createPreset(next);
+      props.onSaved(saved);
       props.onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lỗi");
@@ -662,45 +1874,86 @@ function PresetDialog(props: { preset: CtPreset | null; kind: CtPresetKind; onCl
   };
 
   const remove = async () => {
-    if (!p || !window.confirm(`Xoá preset “${p.name}”?`)) return;
+    if (!p || !(await ctConfirm({ title: `Xoá preset “${p.name}”?`, tone: "danger", confirmLabel: "Xoá" }))) return;
     try {
       await ctApi.deletePreset(p.id);
-      props.onSaved();
+      props.onSaved(null);
       props.onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lỗi");
     }
   };
 
+  /** Back to an earlier analysis: its description, photos and result (saved only with Lưu). */
+  const reuse = (h: CtPresetHistoryEntry) => {
+    refs.forEach((r) => URL.revokeObjectURL(r.preview));
+    setRefs([]);
+    setBody((b) => ({
+      ...b,
+      prompt: h.result.prompt || b.prompt,
+      params: {
+        ...b.params,
+        note: h.note,
+        refs: h.ref_urls,
+        ...(kind === "material" ? { art: h.result.art ?? h.result.params?.art ?? b.params.art } : {}),
+      },
+    }));
+  };
+
+  /** Details saved on the material by an older version — they belong to the category now (migration 009). */
+  const legacySpecs = body.params.specs ?? [];
   return (
     <CtModal open onOpenChange={(o) => !o && props.onClose()} title={`${KIND_LABEL[props.kind]}${p ? `: ${p.name}` : " mới"}`}>
       <div className="space-y-3 text-sm">
         <CtField label="Tên">
           <CtInput value={body.name} disabled={readOnly} onChange={(e) => setBody({ ...body, name: e.target.value })} />
         </CtField>
-        <CtField
-          label="Prompt"
-          hint={
-            props.kind === "material"
-              ? "Mô tả VẬT LIỆU thôi — luôn dặn giữ nguyên hình, màu, chữ, kích thước. Node FP Material ép lại alpha gốc khi bật khoá silhouette."
-              : props.kind === "style_pack"
-                ? "Cách vẽ chung cho cả bộ clipart (nét, màu, ánh sáng, độ bóng). Ghép trước prompt của danh mục và của từng clipart."
-                : "Bối cảnh chụp mockup; dặn giữ nguyên sản phẩm."
-          }
-        >
-          <CtTextarea rows={9} value={body.prompt} disabled={readOnly} onChange={(e) => setBody({ ...body, prompt: e.target.value })} />
-        </CtField>
-        {props.kind === "material" && (
-          <CtCheckbox
-            checked={Boolean(body.params.lockSilhouette)}
-            onChange={(lockSilhouette) => setBody({ ...body, params: { ...body.params, lockSilhouette } })}
-            label="Khoá silhouette"
-            hint="Kết quả AI được resize về đúng kích thước và cắt theo alpha của ảnh gốc."
-          />
+        {kind && (
+          <CtField
+            label={`${kind === "material" ? "Mô tả vật liệu" : "Mô tả cách vẽ"} · ảnh tham khảo ${savedRefs.length + refs.length}/${MAX_PRESET_REFS}`}
+            hint={DESCRIPTION_HINT[kind]}
+          >
+            <div className="space-y-2">
+              <RefNoteBox
+                refs={refs}
+                onRefs={setRefs}
+                note={note}
+                onNote={(v) => setParams({ note: v })}
+                onError={setError}
+                placeholder={NOTE_PLACEHOLDER[kind]}
+                saved={savedRefs}
+                onRemoveSaved={(u) => setParams({ refs: savedRefs.filter((x) => x !== u) })}
+                max={MAX_PRESET_REFS}
+                disabled={readOnly}
+              />
+              {!readOnly && (
+                <CtButton variant="primary" className="w-full justify-center" onClick={() => void write()} disabled={writing || (!note.trim() && refs.length + savedRefs.length === 0)}>
+                  {writing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}{" "}
+                  {body.prompt.trim() ? "Phân tích lại" : "Phân tích bằng AI"}
+                </CtButton>
+              )}
+            </div>
+          </CtField>
         )}
-        <CtField label="Model ưu tiên (tuỳ chọn)" hint="vd. gpt-image-2, fal-ai/nano-banana/edit — để trống thì node tự chọn.">
-          <CtInput value={body.params.model ?? ""} disabled={readOnly} onChange={(e) => setBody({ ...body, params: { ...body.params, model: e.target.value } })} />
+        {kind === "material" && body.params.art && <p className="text-xs text-muted-foreground">Hình in: {ART_LABEL[body.params.art]}.</p>}
+        {kind === "material" && legacySpecs.length > 0 && (
+          <CtField
+            label={`Chi tiết cũ của vật liệu (${legacySpecs.length})`}
+            hint="Chi tiết (lỗ, dây, móc…) giờ thuộc từng danh mục — mục “Chi tiết thành phẩm” trong dialog danh mục. Migration 009 chép các dòng này sang các danh mục đang dùng vật liệu này rồi xoá ở đây."
+          >
+            <SpecSummary specs={legacySpecs} disabled={readOnly} onRemove={(i) => setParams({ specs: legacySpecs.filter((_, k) => k !== i) })} />
+          </CtField>
+        )}
+        <CtField label="Prompt" hint={PROMPT_HINT[props.kind]}>
+          <CtTextarea
+            rows={kind ? 5 : 9}
+            value={body.prompt}
+            disabled={readOnly}
+            onChange={(e) => setBody({ ...body, prompt: e.target.value })}
+            placeholder={kind ? "AI viết prompt ở đây sau khi phân tích — sửa tay được." : undefined}
+          />
         </CtField>
+        {kind && history.length > 0 && <PresetHistory history={history} disabled={readOnly} onReuse={reuse} />}
         {readOnly && <p className="text-xs text-muted-foreground">Preset built-in / của người khác — chỉ admin sửa được.</p>}
         {error && <p className="text-xs text-destructive">{error}</p>}
         <div className="flex gap-2">
@@ -712,7 +1965,7 @@ function PresetDialog(props: { preset: CtPreset | null; kind: CtPresetKind; onCl
           <span className="flex-1" />
           <CtButton onClick={props.onClose}>Đóng</CtButton>
           {!readOnly && (
-            <CtButton variant="primary" onClick={() => void save()} disabled={busy || !body.name.trim() || !body.prompt.trim()}>
+            <CtButton variant="primary" onClick={() => void save()} disabled={busy || writing || !body.name.trim() || !body.prompt.trim()}>
               {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Lưu
             </CtButton>
           )}

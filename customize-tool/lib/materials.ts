@@ -8,7 +8,7 @@
  * "material", ComfyUI studio) into clipart renditions — no canvas simulation.
  */
 
-import type { CtMaterialConfig, CtMaterialId, CtMaterialShape } from "../types";
+import type { CtMaterialConfig, CtMaterialId, CtMaterialShape, CtMaterialSpec, CtMaterialSpecMode } from "../types";
 
 export interface CtMaterialPreset {
   id: CtMaterialId;
@@ -52,7 +52,7 @@ export function materialPreset(id: CtMaterialId | undefined): CtMaterialPreset {
 }
 
 export function defaultMaterialConfig(): CtMaterialConfig {
-  return { id: "none", shape: "main", widthMm: 140, borderMm: 0, thicknessMm: 0, display: "flat" };
+  return { id: "none", shape: "main", widthMm: 140, borderMm: 0, thicknessMm: 0, display: "flat", flatIds: [], version: "" };
 }
 
 /** The config a material starts with when picked (keeps the size). */
@@ -76,10 +76,39 @@ export function normalizeMaterialConfig(raw: Partial<CtMaterialConfig> | null | 
     borderMm: num(raw.borderMm, base.borderMm, 0, 50),
     thicknessMm: num(raw.thicknessMm, base.thicknessMm, 0, 30),
     display: raw.display === "rendition" ? "rendition" : "flat",
+    flatIds: Array.isArray(raw.flatIds) ? raw.flatIds.filter((x): x is string => typeof x === "string") : [],
+    version: typeof raw.version === "string" ? raw.version.slice(0, 60) : "",
   };
 }
 
 /** Main-asset pixels per millimetre. */
 export function pxPerMm(material: CtMaterialConfig, mainWidthPx: number): number {
   return mainWidthPx / Math.max(1, material.widthMm);
+}
+
+// ---------------------------------------------------------------------------
+// Material preset details (CtPresetParams.specs)
+// ---------------------------------------------------------------------------
+
+export const MATERIAL_SPEC_MODES: Array<{ value: CtMaterialSpecMode; label: string }> = [
+  { value: "always", label: "Luôn có" },
+  { value: "version", label: "Tạo thêm phiên bản" },
+];
+
+/** At most this many details per material (each "version" one is one more AI version per clipart). Studio: material.py MAX_SPECS. */
+export const MAX_MATERIAL_SPECS = 12;
+
+/** Details as stored / written by the AI: free text, each always on or an extra version (with its name). */
+export function normalizeMaterialSpecs(raw: unknown): CtMaterialSpec[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CtMaterialSpec[] = [];
+  for (const x of raw) {
+    const o = x && typeof x === "object" ? (x as Record<string, unknown>) : {};
+    const text = typeof o.text === "string" ? o.text.trim().slice(0, 600) : "";
+    if (!text) continue;
+    const mode = MATERIAL_SPEC_MODES.find((m) => m.value === o.mode)?.value ?? "always";
+    const label = typeof o.label === "string" ? o.label.trim().slice(0, 40) : "";
+    out.push({ text, mode, label: mode === "version" ? label || "bản thêm" : "" });
+  }
+  return out.slice(0, MAX_MATERIAL_SPECS);
 }

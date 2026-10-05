@@ -15,13 +15,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
+  ChevronDown,
+  ChevronRight,
+  Wallpaper,
   Circle,
+  Copy,
+  Crown,
   Hand,
   ImageIcon,
   Loader2,
   MousePointer2,
   Move,
   Pentagon,
+  Plus,
   Redo2,
   Printer,
   Rocket,
@@ -30,14 +36,16 @@ import {
   Type,
   Undo2,
   UserSquare,
+  X,
 } from "lucide-react";
 import { CT_CONFIG, ctGoogleFontsHref } from "../../config";
 import { CT_MAIN_KEY } from "../../types";
-import type { CtAsset, CtAssetRole, CtMainOptionConfig, CtPhotoSelection, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
+import type { CtAsset, CtMainFrame, CtMainOptionConfig, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection, CtStudioRecipe } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import {
   defaultProductConfig,
   defaultRegionSelection,
+  hasTestPhoto,
   isSelectionValid,
   makeItem,
   makeRegion,
@@ -45,20 +53,25 @@ import {
   normalizeProductConfig,
   normalizeRegion,
   selectedMainId,
+  selectedMainImageId,
 } from "../../lib/design";
-import { fitShapeToBounds, newId, shapeBounds, translateShape } from "../../lib/geometry";
-import { CtAutoWidthInput, CtButton, CtTooltip, CtTooltipProvider, cx } from "../ui";
+import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, pointInShape, shapeBounds, translateShape } from "../../lib/geometry";
+import { CHECKER_STYLE, CtAutoWidthInput, CtButton, CtTooltip, CtTooltipProvider, cx } from "../ui";
 import { Stage, type EditTarget, type StageTool } from "./stage";
 import { Inspector } from "./inspector";
 import { AssetPanel } from "./asset-panel";
-import { CleanupDialog } from "./cleanup-dialog";
 import { PreviewPanel } from "./preview-panel";
+import { SceneDialog } from "./scene-dialog";
 import { StorefrontPreview } from "./storefront-preview";
 import { PublishDialog } from "./publish-dialog";
-import { layoutView, setOwnLayout, updateItem, updateRegion, useDesign } from "./use-design";
+import { updateItem, updateRegion, useDesign, versionView } from "./use-design";
 import { PrintDialog } from "./print-dialog";
-import { PromoteDialog } from "./promote-dialog";
-import { openStudio } from "../../lib/studio-link";
+import { CLIPART_DRAG, type CtClipartDrag } from "./library-panel";
+import { ClipartPickerDialog } from "./clipart-picker";
+import { CtAiDialog, type CtAiTarget } from "../studio/ai-dialog";
+import { ctConfirm } from "../dialogs";
+import { asLayerClipart, asMainOption, asVersion } from "../../lib/library";
+import { claimSharedLayers, cloneLayers, fitMainFrame, mainFrameFor, versionLayers } from "../../lib/layout";
 
 /** Thiết kế = edit · Xem trước = the real storefront page · Tổ hợp & Mockup = composites + AI mockups. */
 type View = "design" | "preview" | "mockup";
@@ -67,6 +80,26 @@ type View = "design" | "preview" | "mockup";
 /** Kinds drawn with a frame tool. A custom layer is added at once instead: its frame is the image itself. */
 type DrawKind = "text" | "photo";
 type CenterAxis = "x" | "y" | "xy";
+
+/** localStorage: the "copy layers from version" list was folded for this product. */
+const COPY_PANEL_KEY = "ct-copy-layers-off:";
+
+function readCopyPanelOff(productId: string): boolean {
+  try {
+    return localStorage.getItem(COPY_PANEL_KEY + productId) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeCopyPanelOff(productId: string, off: boolean): void {
+  try {
+    if (off) localStorage.setItem(COPY_PANEL_KEY + productId, "1");
+    else localStorage.removeItem(COPY_PANEL_KEY + productId);
+  } catch {
+    // Storage blocked: the list just opens again next time.
+  }
+}
 
 /** How long "C" waits for its second key (X / Y / C). */
 const CENTER_CHORD_MS = 900;
@@ -121,12 +154,22 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [showOverlay, setShowOverlay] = useState(true);
   const [materialOpen, setMaterialOpen] = useState(false);
+  const [sceneOpen, setSceneOpen] = useState(false);
 
-  const [busy, setBusy] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [cleanup, setCleanup] = useState<CtAsset | null>(null);
-  const [promote, setPromote] = useState<CtAsset | null>(null);
+  /** Tổ hợp → "tạo bản vật liệu" (components/studio/ai-dialog.tsx) and a bump that reloads the Thư viện tab. */
+  const [ai, setAi] = useState<CtAiTarget | null>(null);
+  const [libraryVersion, setLibraryVersion] = useState(0);
+  /** The "copy layers from version" list (right column) is folded for this product. */
+  const [copyPanelOff, setCopyPanelOff] = useState(false);
+  /** "Thêm option": pick sub-options of this version among its own clipart set. */
+  const [optionsFor, setOptionsFor] = useState<CtAsset | null>(null);
+  /** Version column "+": one blank version slot (null = none); shown on the canvas while `blankShown`. */
+  const [blank, setBlank] = useState(false);
+  const [blankShown, setBlankShown] = useState(false);
+  /** The shown version's picture frame is selected (moved / resized on the canvas, numbers in the right column). */
+  const [mainSelected, setMainSelected] = useState(false);
 
   // ---------------------------------------------------------------- load
   useEffect(() => {
@@ -136,7 +179,22 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         setProduct(b.product);
         setNameDraft(b.product.name);
         setAssets(b.assets);
-        design.reset({ regions: b.regions.map(normalizeRegion), items: b.items, config: normalizeProductConfig(b.product.config) });
+        setCopyPanelOff(readCopyPanelOff(b.product.id));
+        const config = normalizeProductConfig(b.product.config);
+        // The design's own content (texts, choices, test photos) comes back as it was left.
+        setSelection(config.samples);
+        savedSamples.current = { json: JSON.stringify(config.samples), samples: config.samples };
+        samplesLoaded.current = true;
+        const regions = b.regions.map(normalizeRegion);
+        // Every main version has its own layers: an older design's shared layers belong to the default main.
+        const claimed = b.product.main_asset_id ? claimSharedLayers(regions, b.product.main_asset_id) : null;
+        if (claimed) {
+          // The default main never carried a layout of its own; other versions' old layouts no longer apply.
+          design.reset({ regions: claimed, items: b.items, config: { ...config, layouts: {} } }, true);
+          setNotice("Mỗi version main giờ có bộ layer riêng — layer cũ thuộc main mặc định, nhớ Lưu thiết kế");
+        } else {
+          design.reset({ regions, items: b.items, config });
+        }
       })
       .catch((e: Error) => setLoadError(e.message));
     // design.reset is stable
@@ -157,33 +215,46 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const main = useMemo(() => assets.find((a) => a.id === product?.main_asset_id) ?? null, [assets, product]);
   const mains = useMemo(() => mainVersions(assets, product?.main_asset_id ?? null), [assets, product]);
   const shownMainId = main ? selectedMainId(selection, assets, main.id) : null;
-  // A main version with its own layout: canvas + inspector edit THAT layout (lib/layout.ts).
-  const layoutMainId = shownMainId && shownMainId !== main?.id && config.layouts[shownMainId] ? shownMainId : null;
-  const layoutMain = layoutMainId ? (assets.find((a) => a.id === layoutMainId) ?? null) : null;
-  const ed = layoutView(design, layoutMainId);
+  const shownMainImageId = main ? selectedMainImageId(selection, assets, main.id) : null;
+  // Every main version has its own layers: canvas + inspector see and edit the shown version's (lib/layout.ts).
+  const ed = versionView(design, shownMainId);
   const { regions, items } = ed.state;
+  /** Main version id -> its layer count. */
+  const layerCounts = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const m of mains) out[m.id] = versionLayers(design.state.regions, design.state.items, m.id).regions.length;
+    return out;
+  }, [mains, design.state.regions, design.state.items]);
 
-  // Keep the preview selection valid as zones / items / assets change.
+  // Keep the preview selection valid as zones / items / assets change. Checked against the current selection
+  // first: dragging a zone changes `regions` every frame, and a setSelection per frame (even one returning the
+  // same object) piled up into React's "Maximum update depth exceeded".
+  // Checked against every version's layers, so choices survive switching versions.
+  const allRegions = design.state.regions;
+  const allItems = design.state.items;
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
   useEffect(() => {
-    setSelection((prev) => {
+    const reconcile = (prev: CtSelection): CtSelection => {
       const next: CtSelection = {};
       let changed = false;
       const curMain = prev[CT_MAIN_KEY];
       if (curMain?.kind === "main" && mains.some((m) => m.id === curMain.assetId)) next[CT_MAIN_KEY] = curMain;
       else if (curMain) changed = true;
-      for (const r of regions) {
+      for (const r of allRegions) {
         const cur = prev[r.id];
-        if (cur && isSelectionValid(r, cur, items, assets)) {
+        if (cur && isSelectionValid(r, cur, allItems, assets)) {
           next[r.id] = cur;
           continue;
         }
-        next[r.id] = defaultRegionSelection(r, items, assets);
+        next[r.id] = defaultRegionSelection(r, allItems, assets);
         changed = true;
       }
       if (Object.keys(prev).length !== Object.keys(next).length) changed = true;
       return changed ? next : prev;
-    });
-  }, [regions, items, assets, mains]);
+    };
+    if (reconcile(selectionRef.current) !== selectionRef.current) setSelection(reconcile);
+  }, [allRegions, allItems, assets, mains]);
 
   // Leaving object mode when the region/item context goes away.
   useEffect(() => {
@@ -194,17 +265,75 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         // Pick the first item of the newly selected image region automatically.
         const first = items.find((i) => i.region_id === selectedRegionId);
         if (first) setActiveItemId(first.id);
-        else setEditTarget("region");
+        // A photo zone's object is its child frame, not an item.
+        else if (regions.find((r) => r.id === selectedRegionId)?.kind !== "photo") setEditTarget("region");
       }
     }
-  }, [items, activeItemId, selectedRegionId, editTarget]);
+  }, [items, regions, activeItemId, selectedRegionId, editTarget]);
+
+  // ---------------------------------------------------------------- design samples (config.samples)
+  // What the designer chose / typed / uploaded in every version's layers is kept on the product (never published),
+  // so the Tổ hợp frames draw the finished artwork. Test photos are blob: URLs here — stored once on the way out.
+  const samplesLoaded = useRef(false);
+  const savedSamples = useRef<{ json: string; samples: CtSelection }>({ json: "{}", samples: {} });
+  const samplesJob = useRef<Promise<void>>(Promise.resolve());
+  const storedUrls = useRef(new Map<string, Promise<string>>());
+  const storedUrl = (u: string | null | undefined): Promise<string | null> => {
+    if (!u) return Promise.resolve(null);
+    if (!u.startsWith("blob:")) return Promise.resolve(u);
+    let job = storedUrls.current.get(u);
+    if (!job) {
+      job = fetch(u)
+        .then((r) => r.blob())
+        .then((b) => ctApi.uploadPackImage(b))
+        .then((r) => r.url);
+      job.catch(() => storedUrls.current.delete(u));
+      storedUrls.current.set(u, job);
+    }
+    return job;
+  };
+  /** Write the samples (queued: one write at a time, in order). */
+  const persistSamples = (productId: string, sel: CtSelection): Promise<void> => {
+    samplesJob.current = samplesJob.current.then(async () => {
+      const out: CtSelection = {};
+      for (const [k, v] of Object.entries(sel)) {
+        if (v.kind !== "photo") {
+          out[k] = v;
+          continue;
+        }
+        const [url, sourceUrl] = await Promise.all([storedUrl(v.url), storedUrl(v.sourceUrl)]);
+        out[k] = { ...v, url, sourceUrl };
+      }
+      const json = JSON.stringify(out);
+      if (json === savedSamples.current.json) return;
+      try {
+        await ctApi.updateProduct(productId, { samples: out });
+        savedSamples.current = { json, samples: out };
+      } catch (e) {
+        flash(e instanceof Error ? `Không lưu được nội dung thiết kế: ${e.message}` : "Không lưu được nội dung thiết kế");
+      }
+    });
+    return samplesJob.current;
+  };
+  const persistRef = useRef(persistSamples);
+  useEffect(() => {
+    persistRef.current = persistSamples;
+  });
+  useEffect(() => {
+    if (!product || !samplesLoaded.current) return;
+    const t = window.setTimeout(() => void persistRef.current(product.id, selection), 1200);
+    return () => window.clearTimeout(t);
+  }, [product, selection]);
 
   // ---------------------------------------------------------------- save
   const save = useCallback(async (): Promise<boolean> => {
     if (!product) return false;
     setSaving(true);
     try {
-      await ctApi.saveDesign(product.id, { regions: design.state.regions, items: design.state.items, config: design.state.config });
+      // Samples go their own way (above); the design save carries the stored ones so it never rolls them back.
+      await persistRef.current(product.id, selectionRef.current);
+      const config = { ...design.state.config, samples: savedSamples.current.samples };
+      await ctApi.saveDesign(product.id, { regions: design.state.regions, items: design.state.items, config });
       design.markSaved();
       setNotice("Đã lưu");
       setTimeout(() => setNotice(null), 1500);
@@ -261,6 +390,24 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         return { ...r, shape: translateShape(r.shape, dx, dy) };
       }),
     );
+  };
+
+  /** Delete a photo zone's child frame (its Layers sub-row) and the test photo rendered in it. The zone stays. */
+  const removePhotoFrame = (regionId: string) => {
+    ed.commit((s) =>
+      updateRegion(s, regionId, (r) => {
+        const n = normalizeRegion(r);
+        return { ...n, config: { ...n.config, photo: { ...n.config.photo, frame: { ...IDENTITY_PHOTO_FRAME, enabled: false, tilt: n.config.photo.frame?.tilt ?? null } } } };
+      }),
+    );
+    setSelection((cur) => {
+      const prev = cur[regionId];
+      if (prev?.kind !== "photo" || (!prev.url && !prev.sourceUrl)) return cur;
+      // The upload is freed; styled renders stay cached in the inspector (per source + style).
+      if (prev.sourceUrl?.startsWith("blob:")) URL.revokeObjectURL(prev.sourceUrl);
+      return { ...cur, [regionId]: { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM } } };
+    });
+    setEditTarget("region");
   };
 
   /** The first image placed in a custom layer reshapes the frame to that image's aspect. */
@@ -333,11 +480,18 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       else if (e.key === "Escape") {
         if (editTarget === "object") setEditTarget("region");
         else setSelectedRegionId(null);
+        setMainSelected(false);
       } else if (e.key === "Enter" && tool !== "polygon" && selectedRegionId) {
         const r = regions.find((x) => x.id === selectedRegionId);
-        if (r?.kind === "image") setEditTarget((t) => (t === "object" ? "region" : "object"));
+        if (r?.kind === "image" || (r?.kind === "photo" && hasTestPhoto(selection[r.id]))) setEditTarget((t) => (t === "object" ? "region" : "object"));
       } else if ((e.key === "Delete" || e.key === "Backspace") && tool !== "polygon" && selectedRegionId) {
         e.preventDefault();
+        // A photo zone's child frame is selected: remove the frame, keep the zone.
+        const r = regions.find((x) => x.id === selectedRegionId);
+        if (r?.kind === "photo" && editTarget === "object") {
+          removePhotoFrame(r.id);
+          return;
+        }
         ed.commit((s) => ({
           ...s,
           regions: s.regions.filter((r) => r.id !== selectedRegionId),
@@ -362,6 +516,11 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         } else {
           ed.commit((s) => updateRegion(s, selectedRegionId, (r) => ({ ...r, shape: translateShape(r.shape, dx, dy) })));
         }
+      } else if (e.key.startsWith("Arrow") && mainSelected && main && shownMainId) {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const f = mainFrameFor(config.layouts, shownMainId, main.width, main.height);
+        setMainFrame({ ...f, x: f.x + (e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0), y: f.y + (e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0) });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -372,51 +531,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const flash = (msg: string) => {
     setNotice(msg);
     setTimeout(() => setNotice(null), 3000);
-  };
-
-  const upload = async (role: CtAssetRole, files: File[], parentId: string | null): Promise<CtAsset[]> => {
-    if (!product) return [];
-    setBusy(`Đang upload ${files.length} ảnh…`);
-    const created: CtAsset[] = [];
-    try {
-      // A version of a library clipart joins its set in the library (every product using it gets it).
-      const libParent = parentId ? assets.find((a) => a.id === parentId && a.product_id === null) : undefined;
-      for (const f of files) {
-        created.push(
-          libParent
-            ? await ctApi.uploadClipart(f, { categoryId: libParent.category_id, parentId: libParent.id })
-            : await ctApi.uploadAsset(product.id, f, { role, parentId }),
-        );
-      }
-      if (role === "main" && !product.main_asset_id && created[0]) setProduct({ ...product, main_asset_id: created[0].id });
-    } catch (e) {
-      flash(e instanceof Error ? e.message : "Upload thất bại");
-    } finally {
-      setAssets((a) => [...a, ...created]);
-      setBusy(null);
-    }
-    return created;
-  };
-
-  /** A new option group in an image zone: first file becomes the group's sub asset, the rest its versions. */
-  const uploadGroup = async (regionId: string, files: File[]) => {
-    if (!product || files.length === 0) return;
-    setBusy(`Đang upload ${files.length} ảnh…`);
-    const created: CtAsset[] = [];
-    try {
-      const sub = await ctApi.uploadAsset(product.id, files[0], { role: "sub" });
-      created.push(sub);
-      for (const f of files.slice(1)) created.push(await ctApi.uploadAsset(product.id, f, { role: "variant", parentId: sub.id }));
-      const count = design.state.items.filter((i) => i.region_id === regionId).length;
-      const item = makeItem(regionId, sub.id, count);
-      design.commit((s) => ({ ...s, regions: fitLayerToFirstItem(s, regionId, sub), items: [...s.items, item] }));
-      setSelection((sel) => ({ ...sel, [regionId]: { kind: "image", assetId: sub.id } }));
-    } catch (e) {
-      flash(e instanceof Error ? e.message : "Upload thất bại");
-    } finally {
-      setAssets((a) => [...a, ...created]);
-      setBusy(null);
-    }
   };
 
   // Swatch colour pickers fire on every drag step: update locally at once,
@@ -435,39 +549,58 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     );
   };
 
-  const setMainConfig = (patch: Partial<CtMainOptionConfig>) => ed.commit((s) => ({ ...s, config: { ...s.config, main: { ...s.config.main, ...patch } } }));
+  const setScene = (scene: CtProductScene) => ed.commit((s) => ({ ...s, config: { ...s.config, scene } }));
 
-  /**
-   * AI generation lives in the ComfyUI studio: open the matching graph in a new
-   * tab (clipart / artwork pre-selected); results land in the library, which the
-   * Thư viện tab reloads when this tab regains focus.
-   */
-  const generateInStudio = (role: CtAssetRole, parentId: string | null) => {
-    const parent = parentId ? assets.find((a) => a.id === parentId) : undefined;
-    if (role === "variant" && parent) {
-      if (parent.product_id !== null) {
-        flash("Đưa clipart này vào thư viện trước, rồi tạo biến thể trong Studio");
-        setPromote(parent);
-        return;
-      }
-      openStudio({ template: "02-variant-set", clipart: parent.id });
-      return;
-    }
-    openStudio({ template: role === "main" ? "01-origin-set" : "03-element-pack" });
+  /** Mockup pack view: open the material recipe on the cliparts a mockup still lacks (one family). */
+  const createMaterialFor = (cliparts: CtAsset[]) => {
+    const first = cliparts[0];
+    if (!first) return;
+    const originId = first.parent_id ?? first.id;
+    const origin = assets.find((a) => a.id === originId) ?? first;
+    setAi({
+      recipe: "material",
+      clipart: origin,
+      family: assets.filter((a) => a.id === originId || a.parent_id === originId),
+      targetIds: cliparts.map((c) => c.id),
+    });
   };
 
+  /** Mockups are deleted without the usage checks of removeAsset (the panel asks first). */
+  const deleteMockup = async (asset: CtAsset) => {
+    try {
+      await ctApi.deleteAsset(asset.id);
+      setAssets((a) => a.filter((x) => x.id !== asset.id));
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Xoá thất bại");
+    }
+  };
+
+  const setMainConfig = (patch: Partial<CtMainOptionConfig>) => ed.commit((s) => ({ ...s, config: { ...s.config, main: { ...s.config.main, ...patch } } }));
+
+  /** Members / renditions of cliparts this product uses join its bundle at once; mockups too. */
+  const onAiSaved = (saved: CtAsset[], recipe: CtStudioRecipe) => {
+    setLibraryVersion((v) => v + 1);
+    flash(`AI: đã lưu ${saved.length} ảnh${recipe === "mockup" ? " vào sản phẩm" : " vào thư viện"}`);
+    setAssets((list) => {
+      const have = new Set(list.map((a) => a.id));
+      const join = saved.filter((a) => !have.has(a.id) && (recipe === "mockup" || (a.parent_id !== null && have.has(a.parent_id))));
+      return join.length ? [...list, ...join] : list;
+    });
+  };
 
   /** A library clipart is never deleted from here: the product just stops using it. */
   const unlinkLibraryAsset = async (asset: CtAsset) => {
     if (!product) return;
     const family = new Set(assets.filter((a) => a.id === asset.id || a.parent_id === asset.id).map((a) => a.id));
     const usedIn = items.filter((i) => family.has(i.asset_id)).length;
-    const what = asset.role === "main" ? "version main" : `nhóm option (${usedIn} vùng)`;
-    if (!window.confirm(`Gỡ “${asset.name || asset.role}” khỏi sản phẩm này? Bỏ ${what}. Clipart vẫn còn trong thư viện.`)) return;
+    const what = asset.role === "main" ? "version này (cùng layer và option con của nó)" : `nhóm option (${usedIn} vùng)`;
+    if (!(await ctConfirm({ title: `Gỡ “${asset.name || asset.role}” khỏi sản phẩm này?`, message: `Bỏ ${what}. Clipart vẫn còn trong thư viện.`, confirmLabel: "Gỡ" }))) return;
     try {
       if (asset.role === "main") {
         await ctApi.unlinkMain(product.id, asset.id);
         if (asset.id === product.main_asset_id) setProduct({ ...product, main_asset_id: null });
+        dropVersionLayers(asset.id);
+        setSubOptions(asset.id, []);
       }
       if (usedIn) design.commit((s) => ({ ...s, items: s.items.filter((i) => !family.has(i.asset_id)) }));
       setAssets((a) => a.filter((x) => !family.has(x.id)));
@@ -475,6 +608,97 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     } catch (e) {
       flash(e instanceof Error ? e.message : "Gỡ thất bại");
     }
+  };
+
+  /**
+   * A library clipart this product may use was replaced by its edited version (refine / "Sửa nhanh" → "Thay bản
+   * cũ"). The server already re-pointed the saved product; the open design follows, so the next save keeps it.
+   */
+  const swapLibraryAsset = (old: CtAsset, next: CtAsset) => {
+    if (!assets.some((a) => a.id === old.id)) return;
+    // Its material versions were drawn from the old art and are gone; its set members now belong to the new one.
+    setAssets((list) =>
+      list
+        .filter((a) => !(a.parent_id === old.id && a.role === "rendition"))
+        .map((a) => (a.id === old.id ? next : a.parent_id === old.id ? { ...a, parent_id: next.id } : a)),
+    );
+    design.commit((s) => {
+      const layouts = { ...s.config.layouts };
+      if (layouts[old.id]) {
+        layouts[next.id] = layouts[old.id];
+        delete layouts[old.id];
+      }
+      return {
+        ...s,
+        items: s.items.map((i) => (i.asset_id === old.id ? { ...i, asset_id: next.id } : i)),
+        regions: s.regions.map((r) => {
+          const hidden = r.config?.image?.hiddenAssetIds;
+          let out = hidden?.includes(old.id) ? { ...r, config: { ...r.config, image: { ...r.config.image, hiddenAssetIds: hidden.map((x) => (x === old.id ? next.id : x)) } } } : r;
+          // A layer of the replaced main version follows it.
+          if (out.config?.mainId === old.id) out = { ...out, config: { ...out.config, mainId: next.id } };
+          return out;
+        }),
+        config: { ...s.config, layouts },
+      };
+    });
+    if (product?.main_asset_id === old.id) setProduct({ ...product, main_asset_id: next.id, thumbnail_url: next.url });
+    setSelection((sel) => {
+      const out: CtSelection = {};
+      for (const [k, v] of Object.entries(sel)) out[k] = (v.kind === "image" || v.kind === "main") && v.assetId === old.id ? { ...v, assetId: next.id } : v;
+      return out;
+    });
+  };
+
+  /** A main version leaves the product: its own layers go with it. */
+  const dropVersionLayers = (mainId: string) => {
+    const gone = new Set(design.state.regions.filter((r) => r.config?.mainId === mainId).map((r) => r.id));
+    if (!gone.size) return;
+    design.commit((s) => ({ ...s, regions: s.regions.filter((r) => !gone.has(r.id)), items: s.items.filter((i) => !gone.has(i.region_id)) }));
+    if (selectedRegionId && gone.has(selectedRegionId)) setSelectedRegionId(null);
+  };
+
+  /** Show (and edit) main version `id` on the canvas. */
+  const showVersion = (id: string) => {
+    setBlankShown(false);
+    setMainSelected(false);
+    if (id === shownMainId) return;
+    setSelection((sel) => ({ ...sel, [CT_MAIN_KEY]: { kind: "main", assetId: id } }));
+    setSelectedRegionId(null);
+    setActiveItemId(null);
+    setEditTarget("region");
+  };
+
+  /** The shown version's layers become copies of version `from`'s (one click; replacing asks first, ⌘Z undoes). */
+  const copyLayersFrom = async (from: CtAsset) => {
+    if (!shownMainId || from.id === shownMainId) return;
+    const src = versionLayers(design.state.regions, design.state.items, from.id);
+    if (!src.regions.length) return;
+    const target = mains.find((m) => m.id === shownMainId);
+    if (
+      regions.length > 0 &&
+      !(await ctConfirm({
+        title: `Thay ${regions.length} layer của “${target?.name || "version này"}”?`,
+        message: `Layer hiện có của version này được thay bằng bản sao ${src.regions.length} layer của “${from.name || "version"}”. Hoàn tác được bằng ⌘Z.`,
+        confirmLabel: "Thay",
+      }))
+    )
+      return;
+    const ordered = [...src.regions].sort((a, b) => a.sort_order - b.sort_order).map((r, k) => ({ ...r, sort_order: k }));
+    const copy = cloneLayers(ordered, src.items, shownMainId);
+    ed.commit((s) => ({ ...s, regions: copy.regions, items: copy.items }));
+    // Object / text choices come along; a test photo stays with its own zone.
+    setSelection((sel) => {
+      const next = { ...sel };
+      for (const [from, to] of copy.idMap) {
+        const v = sel[from];
+        if (v && v.kind !== "photo") next[to] = v;
+      }
+      return next;
+    });
+    setSelectedRegionId(null);
+    setActiveItemId(null);
+    setEditTarget("region");
+    flash(`Đã sao chép ${copy.regions.length} layer từ “${from.name || "version"}”`);
   };
 
   const removeAsset = async (asset: CtAsset) => {
@@ -487,17 +711,18 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     const usedIn = items.filter((i) => i.asset_id === asset.id).length;
     const variants = assets.filter((a) => a.parent_id === asset.id).length;
     const warn = [
-      asset.id === product?.main_asset_id ? "Đây là main object đang dùng." : "",
+      asset.id === product?.main_asset_id ? "Đây là version mặc định." : "",
       usedIn ? `Đang được đặt trong ${usedIn} vùng.` : "",
       variants ? `Sẽ xoá kèm ${variants} version.` : "",
     ]
       .filter(Boolean)
       .join(" ");
-    if (!window.confirm(`Xoá "${asset.name || asset.role}"? ${warn}`)) return;
+    if (!(await ctConfirm({ title: `Xoá “${asset.name || asset.role}”?`, message: warn || undefined, tone: "danger", confirmLabel: "Xoá" }))) return;
     try {
       await ctApi.deleteAsset(asset.id);
       setAssets((a) => a.filter((x) => x.id !== asset.id && x.parent_id !== asset.id));
       if (usedIn) ed.commit((s) => ({ ...s, items: s.items.filter((i) => i.asset_id !== asset.id) }));
+      if (asset.role === "main") dropVersionLayers(asset.id);
       if (product && asset.id === product.main_asset_id) setProduct({ ...product, main_asset_id: null });
     } catch (e) {
       flash(e instanceof Error ? e.message : "Xoá thất bại");
@@ -507,63 +732,192 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const setMain = async (asset: CtAsset) => {
     if (!product) return;
     if (main && regions.length > 0 && (main.width !== asset.width || main.height !== asset.height)) {
-      if (!window.confirm(`Main mới có kích thước ${asset.width}×${asset.height} khác main hiện tại ${main.width}×${main.height}. Vùng custom tính theo pixel sẽ lệch. Tiếp tục?`)) return;
+      const ok = await ctConfirm({
+        title: "Kích thước main khác nhau",
+        message: `Main mới ${asset.width}×${asset.height} khác main hiện tại ${main.width}×${main.height}. Vùng custom tính theo pixel sẽ lệch. Tiếp tục?`,
+        confirmLabel: "Tiếp tục",
+      });
+      if (!ok) return;
     }
     try {
       setProduct(await ctApi.updateProduct(product.id, { main_asset_id: asset.id, thumbnail_url: asset.url }));
-      // The default main IS the base layout; an own layout it carried as a version no longer applies.
-      if (config.layouts[asset.id]) design.commit((s) => setOwnLayout(s, asset.id, false));
     } catch (e) {
       flash(e instanceof Error ? e.message : "Lỗi");
     }
   };
 
-  const place = (sub: CtAsset) => {
-    const r = regions.find((x) => x.id === selectedRegionId);
-    if (!r || r.kind !== "image") return;
+  /**
+   * `sub` becomes an option group of custom layer `r` (`isNew`: the layer is added in the same undo step);
+   * `hide`: its options the customer doesn't see until switched on (a gốc's đa sắc).
+   */
+  const placeInto = (r: CtRegion, sub: CtAsset, isNew: boolean, hide: string[] = []) => {
     if (items.some((i) => i.region_id === r.id && i.asset_id === sub.id)) {
-      flash("Sub object này đã có trong vùng");
+      flash("Clipart này đã có trong layer");
       return;
     }
     const count = items.filter((i) => i.region_id === r.id).length;
     const item = makeItem(r.id, sub.id, count);
-    design.commit((s) => ({ ...s, regions: fitLayerToFirstItem(s, r.id, sub), items: [...s.items, item] }));
+    ed.commit((s) => {
+      const withLayer = isNew ? { ...s, regions: [...s.regions, r] } : s;
+      const fitted = fitLayerToFirstItem(withLayer, r.id, sub);
+      const regions = hide.length
+        ? fitted.map((x) => {
+            if (x.id !== r.id) return x;
+            const n = normalizeRegion(x);
+            return { ...n, config: { ...n.config, image: { ...n.config.image, hiddenAssetIds: [...new Set([...n.config.image.hiddenAssetIds, ...hide])] } } };
+          })
+        : fitted;
+      return { ...withLayer, regions, items: [...s.items, item] };
+    });
+    setSelectedRegionId(r.id);
     setActiveItemId(item.id);
     setSelection((sel) => ({ ...sel, [r.id]: { kind: "image", assetId: sub.id } }));
   };
 
-  /** Library element: bring its set into the bundle, then place it like a product sub. */
-  const placeLibrary = (origin: CtAsset, family: CtAsset[]) => {
+  /**
+   * Library picture dropped on the canvas — used exactly as it is. With no main yet it becomes the first
+   * version; otherwise it is a layer clipart: it drops into the custom layer under the cursor (another option
+   * group), or becomes a new layer centred there. (A new version is dropped on the Version column instead.)
+   */
+  const dropClipart = (drag: CtClipartDrag, at: CtPoint | null) => {
+    if (!main) {
+      void addLibraryMain(drag);
+      return;
+    }
+    const head = asLayerClipart(drag.asset);
+    // A gốc brings its đa sắc as the group's options, hidden: the customer sees exactly the dragged picture
+    // until they are switched on in the inspector. Its vật liệu versions come along for the "rendition" display.
+    const members = drag.asset.parent_id === null ? drag.family.filter((a) => a.role === "variant" && a.parent_id === drag.asset.id) : [];
+    const family = [head, ...drag.family.filter((a) => a.id !== head.id && (a.role === "rendition" || members.includes(a)))];
     setAssets((list) => {
       const have = new Set(list.map((a) => a.id));
       return [...list, ...family.filter((a) => !have.has(a.id))];
     });
-    place(origin);
-  };
-
-  const addLibraryMain = async (main: CtAsset) => {
-    if (!product) return;
-    if (assets.some((a) => a.id === main.id)) {
-      flash("Version này đã có trong sản phẩm");
+    keepAsDragged([head.id]);
+    const p = at ?? { x: main.width / 2, y: main.height / 2 };
+    const hit = [...regions].reverse().find((r) => r.kind === "image" && pointInShape(p, r.shape));
+    if (hit) {
+      placeInto(hit, head, false, members.map((m) => m.id));
       return;
     }
-    const current = assets.find((a) => a.id === product.main_asset_id);
-    if (current && regions.length > 0 && (current.width !== main.width || current.height !== main.height)) {
-      if (!window.confirm(`${main.width}×${main.height} khác main mặc định ${current.width}×${current.height} — sẽ bị kéo giãn cho khớp vùng. Vẫn thêm?`)) return;
+    const size = Math.round(Math.min(main.width, main.height) * 0.3);
+    const x = Math.round(Math.min(Math.max(p.x - size / 2, 0), main.width - size));
+    const y = Math.round(Math.min(Math.max(p.y - size / 2, 0), main.height - size));
+    const layer = makeRegion(product?.id ?? "", "image", { type: "rect", x, y, w: size, h: size, radius: 0 }, regions.length);
+    placeInto({ ...layer, name: head.name || layer.name }, head, true, members.map((m) => m.id));
+    setEditTarget("region");
+    setTool("select");
+  };
+
+  /**
+   * Material display "rendition" swaps a clipart for its vật liệu version — not one dragged in: the product shows
+   * exactly the picture that was picked (config.material.flatIds).
+   */
+  const keepAsDragged = (ids: string[]) => {
+    if (!ids.length) return;
+    design.commit((s) => {
+      const m = s.config.material;
+      if (m.display !== "rendition" || ids.every((id) => m.flatIds.includes(id))) return s;
+      return { ...s, config: { ...s.config, material: { ...m, flatIds: [...new Set([...m.flatIds, ...ids])] } } };
+    });
+  };
+
+  /** A library picture becomes a version of this product, as it is (dropped on the Version column, or picked with "+"). */
+  const addLibraryMain = async (pick: CtClipartDrag): Promise<boolean> => {
+    if (!product) return false;
+    const { asset } = pick;
+    if (assets.some((a) => a.id === asset.id && a.role === "main")) {
+      flash("Version này đã có trong sản phẩm");
+      return false;
+    }
+    if (assets.some((a) => a.id === asset.id && a.role === "variant" && mains.some((m) => m.id === a.parent_id))) {
+      flash("Ảnh này đang là option con của 1 version — bỏ option đó trước");
+      return false;
     }
     try {
-      const res = await ctApi.linkMain(product.id, main.id);
+      const res = await ctApi.linkMain(product.id, asset.id);
+      // Already used as a layer clipart: it now reads as the version it also is.
       setAssets((list) => {
+        const fresh = new Map(res.assets.map((a) => [a.id, a]));
         const have = new Set(list.map((a) => a.id));
-        return [...list, ...res.assets.filter((a) => !have.has(a.id))];
+        const extra = [asVersion(asset), ...pick.family.filter((a) => a.role === "rendition" && a.parent_id === asset.id)];
+        const added = [...res.assets, ...extra.filter((a) => !fresh.has(a.id))];
+        return [...list.map((a) => fresh.get(a.id) ?? a), ...added.filter((a) => !have.has(a.id))];
       });
-      if (!product.main_asset_id) setProduct({ ...product, main_asset_id: res.main_asset_id, thumbnail_url: main.url });
+      keepAsDragged([asset.id]);
+      // Another shape than the artboard: its frame starts contain-fitted (no stretching) — move / resize it after.
+      const board = assets.find((a) => a.id === product.main_asset_id);
+      if (board && Math.abs(asset.width / asset.height - board.width / board.height) > 0.01) {
+        const frame = fitMainFrame(asset.width, asset.height, board.width, board.height);
+        design.commit((s) => ({ ...s, config: { ...s.config, layouts: { ...s.config.layouts, [asset.id]: { ...(s.config.layouts[asset.id] ?? { regions: {}, items: {} }), frame } } } }));
+      }
+      if (!product.main_asset_id) setProduct({ ...product, main_asset_id: res.main_asset_id, thumbnail_url: asset.url });
       // More than one version: let the customer pick.
       else if (!config.main.enabled) setMainConfig({ enabled: true });
-      flash("Đã thêm version main từ thư viện");
+      flash("Đã thêm version từ thư viện");
+      return true;
     } catch (e) {
       flash(e instanceof Error ? e.message : "Lỗi");
+      return false;
     }
+  };
+
+  /** A clipart dropped into the blank version slot (or onto the column): a new version, shown at once. */
+  const addVersionFromDrop = async (drag: CtClipartDrag) => {
+    if (!(await addLibraryMain(drag))) return;
+    setBlank(false);
+    setBlankShown(false);
+    showVersion(drag.asset.id);
+  };
+
+  /** The shown version's picture frame on the artboard (CtMainLayout.frame). */
+  const setMainFrame = (frame: CtMainFrame) => {
+    if (!shownMainId) return;
+    design.commit((s) => ({ ...s, config: { ...s.config, layouts: { ...s.config.layouts, [shownMainId]: { ...(s.config.layouts[shownMainId] ?? { regions: {}, items: {} }), frame } } } }));
+  };
+
+  // A layer selected → the main frame no longer is.
+  useEffect(() => {
+    if (selectedRegionId) setMainSelected(false);
+  }, [selectedRegionId]);
+
+  /** A version's sub-options ("Thêm option"), in order. */
+  const setSubOptions = (mainId: string, ids: string[]) =>
+    design.commit((s) => {
+      const rest = s.config.main.subOptions.filter((e) => e.mainId !== mainId);
+      const subOptions = ids.length ? [...rest, { mainId, ids }] : rest;
+      return { ...s, config: { ...s.config, main: { ...s.config.main, subOptions } } };
+    });
+
+  const addSubOptions = (version: CtAsset, picks: CtAsset[]) => {
+    setOptionsFor(null);
+    // One role per picture in a product: not a version, another version's option, or a layer's clipart already.
+    const taken = new Set([...mains.map((m) => m.id), ...config.main.subOptions.flatMap((e) => e.ids), ...design.state.items.map((i) => i.asset_id)]);
+    const fresh = picks.filter((a) => !taken.has(a.id));
+    if (!fresh.length) return flash("Các ảnh này đã có trong sản phẩm (version, option khác hoặc layer)");
+    const current = config.main.subOptions.find((e) => e.mainId === version.id)?.ids ?? [];
+    setSubOptions(version.id, [...current, ...fresh.map((a) => a.id)]);
+    setAssets((list) => [...list.filter((a) => !fresh.some((f) => f.id === a.id)), ...fresh.map((a) => asMainOption(a, version.id))]);
+    keepAsDragged(fresh.map((a) => a.id));
+    if (!config.main.enabled) setMainConfig({ enabled: true });
+    flash(`Đã thêm ${fresh.length} option cho “${version.name || "version"}” — nhớ Lưu thiết kế`);
+  };
+
+  const removeSubOption = (version: CtAsset, option: CtAsset) => {
+    const current = config.main.subOptions.find((e) => e.mainId === version.id)?.ids ?? [];
+    setSubOptions(version.id, current.filter((id) => id !== option.id));
+    // Still used elsewhere in the product (a layer clipart): keep it, as that.
+    if (!items.some((i) => i.asset_id === option.id)) setAssets((list) => list.filter((a) => a.id !== option.id));
+    setSelection((sel) => {
+      const m = sel[CT_MAIN_KEY];
+      return m?.kind === "main" && m.optionId === option.id ? { ...sel, [CT_MAIN_KEY]: { ...m, optionId: null } } : sel;
+    });
+  };
+
+  /** Show version `version` on the canvas with one of its pictures (null = itself). */
+  const showOption = (version: CtAsset, optionId: string | null) => {
+    if (version.id !== shownMainId) showVersion(version.id);
+    setSelection((sel) => ({ ...sel, [CT_MAIN_KEY]: { kind: "main", assetId: version.id, optionId } }));
   };
 
   const previewAsset = (asset: CtAsset) => {
@@ -571,6 +925,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       setSelection((sel) => ({ ...sel, [CT_MAIN_KEY]: { kind: "main", assetId: asset.id } }));
       return;
     }
+    const version = asset.role === "variant" ? mains.find((m) => m.id === asset.parent_id) : undefined;
+    if (version) return showOption(version, asset.id);
     const subId = asset.role === "variant" ? asset.parent_id : asset.id;
     const hits = items.filter((i) => i.asset_id === subId);
     if (hits.length === 0) return;
@@ -590,8 +946,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     }
   };
 
-  const saveComposites = async (list: Array<{ blob: Blob; selection: CtSelection }>) => {
-    if (!product) return;
+  const saveComposites = async (list: Array<{ blob: Blob; selection: CtSelection }>): Promise<CtAsset[]> => {
+    if (!product) return [];
     const created: CtAsset[] = [];
     try {
       for (const [i, c] of list.entries()) {
@@ -603,11 +959,11 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         );
       }
       setAssets((a) => [...a, ...created]);
-      flash(`Đã lưu ${created.length} tổ hợp`);
     } catch (e) {
       setAssets((a) => [...a, ...created]);
-      flash(e instanceof Error ? e.message : "Lưu tổ hợp thất bại");
+      flash(e instanceof Error ? e.message : "Lưu artwork thất bại");
     }
+    return created;
   };
 
   const renameProduct = async (name: string) => {
@@ -664,7 +1020,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     { axis: "y", text: "CY", label: "Canh vào trục Y giữa main (dịch trái / phải)", keys: ["C", "Y"] },
     { axis: "xy", text: "CC", label: "Canh giữa main theo cả X và Y", keys: ["C", "C"] },
   ];
-  const objectModeDisabled = selectedRegion?.kind !== "image" || !items.some((i) => i.region_id === selectedRegionId);
+  // Image layer: its items. Photo zone: the child frame the customer's photo goes in.
+  const objectModeDisabled = selectedRegion?.kind === "photo" ? false : selectedRegion?.kind !== "image" || !items.some((i) => i.region_id === selectedRegionId);
 
   return (
     <CtTooltipProvider>
@@ -693,7 +1050,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             [
               ["design", "Thiết kế"],
               ["preview", "Xem trước"],
-              ["mockup", "Tổ hợp & Mockup"],
+              ["mockup", "Tổ hợp"],
             ] as Array<[View, string]>
           ).map(([v, label]) => (
             <button
@@ -746,29 +1103,19 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           <AssetPanel
             assets={assets}
             mainAssetId={product.main_asset_id}
-            canPlace={selectedRegion?.kind === "image"}
-            busy={busy}
-            onUpload={(role, files, parentId) => void upload(role, files, parentId)}
-            onGenerate={generateInStudio}
+            libraryVersion={libraryVersion}
             onDelete={removeAsset}
             onSetMain={setMain}
-            onPlace={place}
-            onCleanup={setCleanup}
             onRename={rename}
             onPreview={previewAsset}
             mainConfig={config.main}
             onMainConfig={setMainConfig}
-            layouts={config.layouts}
-            onOwnLayout={(mainId, on) => {
-              design.commit((s) => setOwnLayout(s, mainId, on));
-              // Show the version whose layout is being edited.
-              if (on) setSelection((sel) => ({ ...sel, [CT_MAIN_KEY]: { kind: "main", assetId: mainId } }));
-            }}
+            layerCounts={layerCounts}
             shownMainId={shownMainId}
-            onSetSwatch={setSwatch}
-            onPlaceLibrary={placeLibrary}
-            onAddLibraryMain={(m) => void addLibraryMain(m)}
-            onPromote={setPromote}
+            shownMainImageId={shownMainImageId}
+            onAddOptions={setOptionsFor}
+            onRemoveOption={removeSubOption}
+            onShowOption={showOption}
           />
         </aside>
 
@@ -784,7 +1131,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                   </RailButton>
                 ))}
                 <RailDivider />
-                <RailButton label="Custom layer — thêm 1 layer (ảnh upload / AI tạo), khung chính là vị trí ảnh" keys={["L"]} disabled={!main} onClick={addCustomLayer}>
+                <RailButton label="Custom layer — thêm 1 layer trống (kéo clipart từ tab Thư viện vào), khung chính là vị trí ảnh" keys={["L"]} disabled={!main} onClick={addCustomLayer}>
                   <ImageIcon className="h-4 w-4" />
                 </RailButton>
                 {kinds.map((k) => (
@@ -806,7 +1153,13 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                 ))}
                 <RailDivider />
                 <RailButton
-                  label={objectModeDisabled ? "Chế độ Object — chọn Custom layer có ít nhất 1 ảnh" : "Chế độ Object — vị trí / scale / xoay ảnh trong layer"}
+                  label={
+                    objectModeDisabled
+                      ? "Chế độ Object — chọn Custom layer có ít nhất 1 ảnh, hoặc 1 vùng Ảnh khách"
+                      : selectedRegion?.kind === "photo"
+                        ? "Chế độ Object — khung ảnh khách bên trong vùng: vị trí / kích thước / độ nghiêng"
+                        : "Chế độ Object — vị trí / scale / xoay ảnh trong layer"
+                  }
                   keys={["↵"]}
                   active={editTarget === "object"}
                   disabled={objectModeDisabled}
@@ -814,21 +1167,67 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                 >
                   <Move className="h-4 w-4" />
                 </RailButton>
+                <RailDivider />
+                <RailButton label="Nền & khung main — ảnh nền phía sau, kéo / resize thiết kế trên nền" keys={[]} active={!!config.scene.url} disabled={!main} onClick={() => setSceneOpen(true)}>
+                  <Wallpaper className="h-4 w-4" />
+                </RailButton>
               </div>
               <div className="relative min-h-0 min-w-0 flex-1">
                 {main && (
-                  <div className="absolute right-3 top-2 z-10 flex items-center gap-2 whitespace-nowrap text-[11px] text-muted-foreground">
-                    {layoutMain && (
-                      <span className="rounded bg-violet-500/15 px-1.5 py-0.5 font-medium text-violet-500">
-                        Đang sửa vị trí riêng của version “{layoutMain.name || "main"}”
-                      </span>
-                    )}
-                    <span className="pointer-events-none">
-                      Main: {main.width}×{main.height}px · {regions.length} vùng
-                    </span>
+                  <div className="pointer-events-none absolute right-3 top-2 z-10 whitespace-nowrap text-[11px] text-muted-foreground">
+                    Main: {main.width}×{main.height}px · {regions.length} vùng
                   </div>
                 )}
-                {main ? (
+                {main && (
+                  <VersionRail
+                    mains={mains}
+                    defaultId={main.id}
+                    shownId={shownMainId}
+                    layerCounts={layerCounts}
+                    onShow={showVersion}
+                    onDropClipart={(drag) => void addVersionFromDrop(drag)}
+                    blank={blank}
+                    blankShown={blankShown}
+                    onAdd={() => {
+                      // One blank slot at most: "+" again only shows it.
+                      setBlank(true);
+                      setBlankShown(true);
+                      setMainSelected(false);
+                      setSelectedRegionId(null);
+                    }}
+                    onShowBlank={() => setBlankShown(true)}
+                    onRemoveBlank={() => {
+                      setBlank(false);
+                      setBlankShown(false);
+                    }}
+                  />
+                )}
+                {main && blankShown ? (
+                  // The blank version slot: an empty artboard waiting for a clipart.
+                  <div
+                    className="flex h-full items-center justify-center p-10"
+                    onDragOver={(e) => {
+                      if (!e.dataTransfer.types.includes(CLIPART_DRAG)) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "copy";
+                    }}
+                    onDrop={(e) => {
+                      const raw = e.dataTransfer.getData(CLIPART_DRAG);
+                      if (!raw) return;
+                      e.preventDefault();
+                      void addVersionFromDrop(JSON.parse(raw) as CtClipartDrag);
+                    }}
+                  >
+                    <div
+                      className="flex max-h-full w-full max-w-xl flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed text-center text-sm text-muted-foreground"
+                      style={{ ...CHECKER_STYLE, aspectRatio: `${main.width} / ${main.height}` }}
+                    >
+                      <span className="rounded-md bg-background/90 px-3 py-2">
+                        <b className="text-foreground">Version mới</b> — kéo 1 clipart từ tab Thư viện thả vào đây
+                      </span>
+                    </div>
+                  </div>
+                ) : main ? (
                   <Stage
                     productId={product.id}
                     main={main}
@@ -854,55 +1253,101 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     activeItemId={activeItemId}
                     showOverlay={showOverlay}
                     photoBusy={photoBusy}
+                    onDropClipart={dropClipart}
+                    scene={config.scene}
+                    versionId={shownMainId ?? main.id}
+                    mainSelected={mainSelected}
+                    onSelectMain={(on) => {
+                      setMainSelected(on);
+                      if (on) setEditTarget("region");
+                    }}
                   />
                 ) : (
-                  <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
+                  <div
+                    className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground"
+                    onDragOver={(e) => {
+                      if (!e.dataTransfer.types.includes(CLIPART_DRAG)) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "copy";
+                    }}
+                    onDrop={(e) => {
+                      const raw = e.dataTransfer.getData(CLIPART_DRAG);
+                      if (!raw) return;
+                      e.preventDefault();
+                      dropClipart(JSON.parse(raw) as CtClipartDrag, null);
+                    }}
+                  >
                     <ImageIcon className="h-10 w-10 opacity-40" />
-                    <p>Chưa có main object.</p>
-                    <p className="text-xs">Upload ở tab Main bên trái — ảnh đầu tiên tự thành main.</p>
+                    <p>Chưa có version nào.</p>
+                    <p className="text-xs">Mở tab Thư viện bên trái, kéo 1 clipart (gốc, đa sắc hay vật liệu) thả vào đây.</p>
                   </div>
                 )}
               </div>
             </div>
           ) : view === "preview" ? (
-            main ? null : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần main object trước.</div>
+            main ? null : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
           ) : main ? (
             <PreviewPanel
+              productId={product.id}
               main={main}
               mains={config.main.enabled ? mains : []}
-              mainConfig={config.main}
               layouts={config.layouts}
-              material={config.material}
               assets={assets}
-              regions={regions}
-              items={items}
-              selection={selection}
-              onSelectionChange={setSelection}
+              regions={allRegions}
+              items={allItems}
+              samples={selection}
               onSaveComposites={saveComposites}
-              onMockup={(ids) => openStudio({ template: "05-artwork-mockup", artwork: ids[0] ?? null })}
-              onDelete={removeAsset}
+              onAdded={(created) => setAssets((a) => [...a, ...created.filter((c) => !a.some((x) => x.id === c.id))])}
+              onCreateMaterial={createMaterialFor}
+              onDelete={deleteMockup}
+              flash={flash}
             />
           ) : (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần main object trước.</div>
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
           )}
           {previewMounted && main && (
             <div className={cx("min-h-0 flex-1", view !== "preview" && "hidden")}>
-              <StorefrontPreview product={product} assets={assets} regions={regions} items={items} config={config} />
+              <StorefrontPreview product={product} assets={assets} regions={allRegions} items={allItems} config={config} />
             </div>
           )}
         </main>
 
         {/* Right: layers + properties */}
         {view === "design" && (
-          <aside className="w-80 shrink-0 border-l">
+          <aside className="flex w-80 shrink-0 flex-col border-l">
+            {main && mains.length > 1 && (
+              <CopyLayersPanel
+                sources={mains.filter((m) => m.id !== shownMainId && (layerCounts[m.id] ?? 0) > 0)}
+                layerCounts={layerCounts}
+                onCopy={(m) => void copyLayersFrom(m)}
+                folded={copyPanelOff}
+                onFold={(off) => {
+                  setCopyPanelOff(off);
+                  writeCopyPanelOff(product.id, off);
+                }}
+              />
+            )}
+            <div className="min-h-0 flex-1">
             <Inspector
               design={ed}
-              layoutMain={layoutMain}
               assets={assets}
               selection={selection}
-              busy={busy}
-              onUploadGroup={(regionId, files) => void uploadGroup(regionId, files)}
-              onUploadOptions={(subId, files) => void upload("variant", files, subId)}
+              mainLayer={
+                main && shownMainId
+                  ? {
+                      asset: assets.find((a) => a.id === shownMainImageId) ?? main,
+                      frame: mainFrameFor(config.layouts, shownMainId, main.width, main.height),
+                      board: { w: main.width, h: main.height },
+                    }
+                  : null
+              }
+              mainSelected={mainSelected}
+              onSelectMain={() => {
+                setSelectedRegionId(null);
+                setMainSelected(true);
+                setBlankShown(false);
+              }}
+              onMainFrame={setMainFrame}
               onPreviewOption={(regionId, assetId) => setSelection((sel) => ({ ...sel, [regionId]: { kind: "image", assetId } }))}
               onSetSwatch={setSwatch}
               onPhotoSelection={(regionId, sel: CtPhotoSelection) =>
@@ -924,7 +1369,16 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                 })
               }
               selectedRegionId={selectedRegionId}
-              onSelectRegion={setSelectedRegionId}
+              onSelectRegion={(id) => {
+                setSelectedRegionId(id);
+                setEditTarget("region");
+              }}
+              frameSelected={editTarget === "object" && regions.find((r) => r.id === selectedRegionId)?.kind === "photo"}
+              onSelectFrame={(id) => {
+                setSelectedRegionId(id);
+                setEditTarget("object");
+              }}
+              onRemoveFrame={removePhotoFrame}
               activeItemId={activeItemId}
               onActiveItem={(id) => {
                 setActiveItemId(id);
@@ -935,22 +1389,34 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               showOverlay={showOverlay}
               onToggleOverlay={() => setShowOverlay((v) => !v)}
             />
+            </div>
           </aside>
         )}
       </div>
 
-      <PromoteDialog
-        asset={promote}
-        onClose={() => setPromote(null)}
-        onDone={(moved) => setAssets((list) => list.map((x) => moved.find((m) => m.id === x.id) ?? x))}
-      />
-      <CleanupDialog
-        asset={cleanup}
-        onClose={() => setCleanup(null)}
-        onSaved={(a) => setAssets((list) => list.map((x) => (x.id === a.id ? a : x)))}
+      <CtAiDialog target={ai} onClose={() => setAi(null)} onSaved={onAiSaved} onReplaced={swapLibraryAsset} />
+      <ClipartPickerDialog
+        version={optionsFor}
+        disabledIds={new Set([...mains.map((m) => m.id), ...config.main.subOptions.flatMap((e) => e.ids), ...allItems.map((i) => i.asset_id)])}
+        onClose={() => setOptionsFor(null)}
+        onPick={(picks) => optionsFor && addSubOptions(optionsFor, picks)}
       />
       {main && (
-        <PrintDialog open={materialOpen} onOpenChange={setMaterialOpen} design={design} product={product} main={main} assets={assets} selection={selection} />
+        <>
+          <SceneDialog
+            open={sceneOpen}
+            onClose={() => setSceneOpen(false)}
+            scene={config.scene}
+            onChange={setScene}
+            main={main}
+            assets={assets}
+            regions={allRegions}
+            items={allItems}
+            selection={selection}
+            layouts={config.layouts}
+          />
+          <PrintDialog open={materialOpen} onOpenChange={setMaterialOpen} design={design} product={product} main={main} assets={assets} selection={selection} />
+        </>
       )}
       <PublishDialog
         open={publishOpen}
@@ -996,4 +1462,146 @@ function RailButton(props: { label: string; keys: string[]; inlineKeys?: boolean
 
 function RailDivider() {
   return <div className="mx-1.5 my-1 h-px bg-border" />;
+}
+
+/**
+ * Main versions, top-left of the canvas beside the tool rail: click one to show
+ * it — the canvas, Layers and properties then edit that version's own layers.
+ * "+" opens ONE blank version slot (pressing it again just shows that slot): an
+ * empty artboard where a clipart dragged from the library becomes the new
+ * version. A clipart dropped on the column does the same.
+ */
+function VersionRail(props: {
+  mains: CtAsset[];
+  defaultId: string;
+  shownId: string | null;
+  layerCounts: Record<string, number>;
+  onShow: (id: string) => void;
+  onDropClipart: (drag: CtClipartDrag) => void;
+  /** A blank version slot exists / is on the canvas. */
+  blank: boolean;
+  blankShown: boolean;
+  onAdd: () => void;
+  onShowBlank: () => void;
+  onRemoveBlank: () => void;
+}) {
+  const [over, setOver] = useState(false);
+  return (
+    <div
+      className={cx(
+        // overflow-x hidden: 48 px tiles + padding + border are a hair wider than w-14 — no horizontal scrollbar.
+        "absolute left-2 top-2 z-10 flex max-h-[calc(100%-1rem)] w-[60px] flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden rounded-lg border bg-background/90 p-1 shadow-sm backdrop-blur",
+        over && "border-sky-500 ring-2 ring-sky-500/40",
+      )}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes(CLIPART_DRAG)) return;
+        // The canvas below must not take it as a layer.
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "copy";
+        setOver(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false);
+      }}
+      onDrop={(e) => {
+        setOver(false);
+        const raw = e.dataTransfer.getData(CLIPART_DRAG);
+        if (!raw) return;
+        e.preventDefault();
+        e.stopPropagation();
+        props.onDropClipart(JSON.parse(raw) as CtClipartDrag);
+      }}
+    >
+      <span className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Version</span>
+      {props.mains.map((m) => {
+        const count = props.layerCounts[m.id] ?? 0;
+        return (
+          <CtTooltip key={m.id} label={`${m.name || "Version"} · ${count ? `${count} layer` : "chưa có layer"}`} side="right">
+            <button
+              type="button"
+              onClick={() => props.onShow(m.id)}
+              className={cx(
+                "relative block h-12 w-12 shrink-0 overflow-hidden rounded-md border",
+                m.id === props.shownId && !props.blankShown ? "ring-2 ring-sky-500" : "opacity-75 hover:opacity-100",
+              )}
+              style={CHECKER_STYLE}
+            >
+              <img src={m.url} alt={m.name} className="h-full w-full object-contain" draggable={false} />
+              {m.id === props.defaultId && <Crown className="absolute left-0.5 top-0.5 h-3 w-3 text-amber-500 drop-shadow" />}
+              <span
+                className={cx(
+                  "absolute bottom-0.5 right-0.5 rounded px-1 text-[9px] font-semibold leading-tight",
+                  count ? "bg-foreground/80 text-background" : "bg-muted text-muted-foreground",
+                )}
+              >
+                {count}
+              </span>
+            </button>
+          </CtTooltip>
+        );
+      })}
+{props.blank && (
+        <div className="group relative shrink-0">
+          <CtTooltip label="Version mới (trống) — kéo 1 clipart từ tab Thư viện vào canvas" side="right">
+            <button
+              type="button"
+              onClick={props.onShowBlank}
+              className={cx("block h-12 w-12 rounded-md border border-dashed bg-muted/40", props.blankShown ? "ring-2 ring-sky-500" : "opacity-75 hover:opacity-100")}
+            />
+          </CtTooltip>
+          <button
+            type="button"
+            onClick={props.onRemoveBlank}
+            className="absolute -right-1 -top-1 hidden rounded-full bg-black/70 p-0.5 text-white group-hover:block"
+            aria-label="Bỏ version trống"
+          >
+            <X className="h-2.5 w-2.5" />
+          </button>
+        </div>
+      )}
+      <CtTooltip label="Thêm version: mở 1 ô trống, kéo clipart từ tab Thư viện vào (hoặc kéo thả thẳng vào cột này)" side="right">
+        <button
+          type="button"
+          onClick={props.onAdd}
+          className={cx(
+            "flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-dashed text-muted-foreground hover:border-sky-500 hover:bg-sky-500/10 hover:text-sky-500",
+            over && "border-sky-500 bg-sky-500/10 text-sky-500",
+          )}
+        >
+          <Plus className="h-4 w-4" />
+        </button>
+      </CtTooltip>
+    </div>
+  );
+}
+
+/** Right column: copy every layer of another version into the shown one — one click per card. Foldable. */
+function CopyLayersPanel(props: { sources: CtAsset[]; layerCounts: Record<string, number>; onCopy: (m: CtAsset) => void; folded: boolean; onFold: (folded: boolean) => void }) {
+  return (
+    <div className="shrink-0 border-b px-3 py-2">
+      <button type="button" onClick={() => props.onFold(!props.folded)} className="flex w-full items-center gap-1.5 text-left">
+        {props.folded ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+        <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-xs font-semibold">Sao chép layer từ version</span>
+      </button>
+      {props.folded ? null : props.sources.length === 0 ? (
+        <p className="mt-1.5 text-[11px] text-muted-foreground">Version khác chưa có layer nào để sao chép.</p>
+      ) : (
+        <div className="mt-1.5 grid max-h-44 grid-cols-3 gap-1.5 overflow-y-auto">
+          {props.sources.map((m) => (
+            <CtTooltip key={m.id} label={`Sao chép ${props.layerCounts[m.id] ?? 0} layer của “${m.name || "version"}” vào version đang sửa`}>
+              <button type="button" onClick={() => props.onCopy(m)} className="group rounded-md border p-1 text-left hover:border-sky-500 hover:bg-sky-500/5">
+                <span className="block aspect-square overflow-hidden rounded" style={CHECKER_STYLE}>
+                  <img src={m.url} alt={m.name} className="h-full w-full object-contain" draggable={false} />
+                </span>
+                <span className="mt-0.5 block truncate text-[11px] font-medium">{m.name || "Version"}</span>
+                <span className="block text-[10px] text-muted-foreground">{props.layerCounts[m.id] ?? 0} layer</span>
+              </button>
+            </CtTooltip>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

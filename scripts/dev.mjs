@@ -13,6 +13,7 @@ const SERVICES = [
   { name: "bg-remover", port: 7001, color: 35 },
   { name: "photo-style", port: 7002, color: 36 },
   { name: "material-render", port: 7003, color: 33 },
+  { name: "face-detect", port: 7004, color: 31 },
   // ComfyUI studio (first run installs ComfyUI into services/comfy/.comfy — a few minutes).
   { name: "comfy", port: 8188, color: 34 },
 ];
@@ -66,6 +67,11 @@ if (process.env.SKIP_SERVICES !== "1") {
   for (const s of SERVICES) {
     if (await portInUse(s.port)) {
       console.log(`\x1b[${s.color}m[${s.name}]\x1b[0m port ${s.port} already in use — assuming it's running`);
+      // A ComfyUI left over from an earlier run keeps the node pack it loaded: edits to custom_nodes/ (FP Material,
+      // recipes) do nothing until it is restarted.
+      if (s.name === "comfy") {
+        console.log(`\x1b[${s.color}m[${s.name}]\x1b[0m ⚠ it runs the node pack it loaded at start — after editing custom_nodes/, stop it (lsof -ti:${s.port} | xargs kill) and rerun npm run dev`);
+      }
       continue;
     }
     run(s.name, s.color, "./run-local.sh", [], path.join(root, "services", s.name), { critical: false });

@@ -18,14 +18,15 @@ import aiohttp
 
 UA = "FlexiPrint-Studio/1.0"
 
-# Shown in every model dropdown, first = default.
+# Shown in every model dropdown, first = default. Nano Banana first: it follows the instructions and keeps the
+# artwork where it is far better than gpt-image (which reframes, redraws, and fakes transparency with a checkerboard).
 MODELS = [
+    "fal:fal-ai/nano-banana-2/edit",
+    "fal:fal-ai/nano-banana/edit",
     "cpa:gpt-image-2",
     "cpa:gpt-image-2.5",
     "cpa:gpt-image-1.5",
     "cpa:grok-imagine-image-quality",
-    "fal:fal-ai/nano-banana-2/edit",
-    "fal:fal-ai/nano-banana/edit",
     "fal:fal-ai/bytedance/seedream/v4.5/edit",
 ]
 
@@ -81,7 +82,7 @@ async def _fal(model: str, body: dict) -> bytes:
 
 def fallbacks(model: str) -> list[str]:
     """The model first, then FP_FALLBACK_MODELS (comma list) — cpa pools hit usage limits."""
-    raw = os.environ.get("FP_FALLBACK_MODELS", "cpa:grok-imagine-image-quality,fal:fal-ai/nano-banana-2/edit")
+    raw = os.environ.get("FP_FALLBACK_MODELS", "fal:fal-ai/nano-banana-2/edit,fal:fal-ai/nano-banana/edit")
     chain = [model] + [m.strip() for m in raw.split(",") if m.strip()]
     return list(dict.fromkeys(chain))
 
@@ -91,11 +92,25 @@ def _retryable(e: ProviderError) -> bool:
     return any(f" {c}:" in msg for c in ("429", "500", "502", "503", "504")) or "chưa cấu hình" in msg or "không trả ảnh" in msg
 
 
-async def run(model: str, prompt: str, references: list[bytes] | None = None) -> tuple[bytes, str]:
-    """generate() with the fallback chain. Returns (image, model actually used)."""
+def supports_transparency(model: str) -> bool:
+    """gpt-image models can return a transparent PNG (images API background=transparent)."""
+    return model.startswith("cpa:gpt-image")
+
+
+async def run(model: str, prompt: str, references: list[bytes] | None = None, transparent: bool = False) -> tuple[bytes, str]:
+    """generate() with the fallback chain. Returns (image, model actually used).
+
+    transparent: ask the models that can for an alpha background (FP Cutout then keeps it, no BiRefNet)."""
     last: ProviderError | None = None
     for m in fallbacks(model):
         try:
+            if transparent and supports_transparency(m):
+                try:
+                    return await generate(m, prompt, references, transparent=True), m
+                except ProviderError as e:
+                    # The proxy / model refused the option: the same call on white, cut out later.
+                    if " 400:" not in str(e):
+                        raise
             return await generate(m, prompt, references), m
         except ProviderError as e:
             last = e
@@ -104,14 +119,15 @@ async def run(model: str, prompt: str, references: list[bytes] | None = None) ->
     raise last or ProviderError("Không model nào chạy được")
 
 
-async def generate(model: str, prompt: str, references: list[bytes] | None = None) -> bytes:
+async def generate(model: str, prompt: str, references: list[bytes] | None = None, transparent: bool = False) -> bytes:
     """Text (+ optional reference images) → one image (PNG/JPEG bytes)."""
     refs = references or []
     backend, _, name = model.partition(":")
     if backend == "cpa":
+        alpha = {"background": "transparent", "output_format": "png"} if transparent else {}
         if refs:
-            return await _cpa("/images/edits", {"model": name, "prompt": prompt, "images": [{"image_url": _data_uri(r)} for r in refs[:8]]})
-        return await _cpa("/images/generations", {"model": name, "prompt": prompt})
+            return await _cpa("/images/edits", {"model": name, "prompt": prompt, "images": [{"image_url": _data_uri(r)} for r in refs[:8]], **alpha})
+        return await _cpa("/images/generations", {"model": name, "prompt": prompt, **alpha})
     if backend == "fal":
         if not refs:
             # Edit endpoints need an image; their text-to-image siblings drop the /edit suffix.

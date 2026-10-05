@@ -55,6 +55,10 @@ export const CT_TABLES = {
   categories: "ct_clipart_categories",
   productMains: "ct_product_mains",
   presets: "ct_presets",
+  presetHistory: "ct_preset_history",
+  categoryHistory: "ct_category_history",
+  agentTasks: "ct_agent_tasks",
+  mockupPacks: "ct_mockup_packs",
 } as const;
 
 /** Fonts offered for text regions (Google Fonts families). */

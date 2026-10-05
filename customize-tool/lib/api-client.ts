@@ -4,6 +4,13 @@
 
 import { CT_CONFIG } from "../config";
 import type {
+  CtCategoryHistoryEntry,
+  CtAgentStatus,
+  CtAgentTask,
+  CtAgentTaskInput,
+  CtAgentTaskKind,
+  CtCategoryRevision,
+  CtCategorySnapshot,
   CtAiProviderInfo,
   CtAiStyle,
   CtAiStyleBody,
@@ -17,14 +24,24 @@ import type {
   CtClipartUsage,
   CtMaterialConfig,
   CtPhotoCapabilities,
+  CtMockupPack,
+  CtMockupPackBody,
   CtPreset,
   CtPresetBody,
   CtPresetKind,
+  CtDetailsSuggestion,
+  CtPresetHistoryEntry,
+  CtPresetPromptSuggestion,
+  CtPromptSuggestion,
+  CtRefineSuggestBody,
+  CtRefineSuggestion,
   CtProduct,
   CtProductBundle,
   CtProductListRow,
   CtPublishResponse,
   CtSaveDesignBody,
+  CtStudioRunBody,
+  CtStudioRunStatus,
   CtUpdateAssetBody,
   CtUpdateClipartBody,
   CtUpdateProductBody,
@@ -143,7 +160,14 @@ export const ctApi = {
   },
   updateClipart: (id: string, body: CtUpdateClipartBody) =>
     call<{ clipart: CtAsset }>(`library/cliparts/${id}`, json("PATCH", body)).then((r) => r.clipart),
-  deleteClipart: (id: string) => call<void>(`library/cliparts/${id}`, { method: "DELETE" }),
+  /** `force`: also take it out of the products that use it (otherwise 409 while used). */
+  deleteClipart: (id: string, force = false) => call<void>(`library/cliparts/${id}${force ? "?force=1" : ""}`, { method: "DELETE" }),
+  /**
+   * Products using clipart `id` switch to `withId`, then `id` is deleted (AI refine "replace the old one"). Its đa sắc
+   * move to `withId`; its vật liệu versions are deleted — or move too with `keepRenditions` (the caller makes them again).
+   */
+  replaceClipart: (id: string, withId: string, keepRenditions = false) =>
+    call<{ usage: CtClipartUsage[]; moved: string[] }>(`library/cliparts/${id}/replace`, json("POST", { with: withId, ...(keepRenditions ? { keep_renditions: true } : {}) })),
   clipartUsage: (id: string) => call<{ usage: CtClipartUsage[] }>(`library/cliparts/${id}/usage`).then((r) => r.usage),
   /** Move a product clipart (with its versions) into the library. */
   promoteAsset: (id: string, categoryId: string | null) =>
@@ -152,12 +176,127 @@ export const ctApi = {
     call<{ assets: CtAsset[]; main_asset_id: string }>(`products/${productId}/mains`, json("POST", { asset_id: assetId })),
   unlinkMain: (productId: string, assetId: string) => call<void>(`products/${productId}/mains/${assetId}`, { method: "DELETE" }),
 
+  listPacks: () => call<{ packs: CtMockupPack[]; admin: boolean }>("library/packs"),
+  createPack: (body: CtMockupPackBody) => call<{ pack: CtMockupPack }>("library/packs", json("POST", body)).then((r) => r.pack),
+  updatePack: (id: string, body: CtMockupPackBody) => call<{ pack: CtMockupPack }>(`library/packs/${id}`, json("PATCH", body)).then((r) => r.pack),
+  deletePack: (id: string) => call<void>(`library/packs/${id}`, { method: "DELETE" }),
+  /** A background / overlay / slot sample picture for a pack. */
+  uploadPackImage: (file: Blob) => {
+    const form = new FormData();
+    form.append("file", file);
+    return call<{ url: string; width: number; height: number }>("library/packs/images", { method: "POST", body: form });
+  },
+
   listPresets: (kind?: CtPresetKind) => call<{ presets: CtPreset[]; admin: boolean }>(`presets${kind ? `?kind=${kind}` : ""}`),
   createPreset: (body: CtPresetBody) => call<{ preset: CtPreset }>("presets", json("POST", body)).then((r) => r.preset),
   updatePreset: (id: string, body: CtPresetBody) => call<{ preset: CtPreset }>(`presets/${id}`, json("PATCH", body)).then((r) => r.preset),
   deletePreset: (id: string) => call<void>(`presets/${id}`, { method: "DELETE" }),
+  /** A style pack's / material's analyses and saves, newest first (migration 008). */
+  presetHistory: (id: string) => call<{ history: CtPresetHistoryEntry[] }>(`presets/${id}/history`).then((r) => r.history),
+  /** A preset's reference photo → its public url (kept in params.refs). */
+  uploadPresetRef: (file: Blob) => {
+    const form = new FormData();
+    form.append("file", file, "ref.png");
+    return call<{ url: string }>("presets/refs", { method: "POST", body: form }).then((r) => r.url);
+  },
+  /**
+   * Category dialog "Tạo bằng AI": name, spec, style pack, materials and details from a note / reference images,
+   * reusing the library's presets when they fit (server/ai/prompt-writer.ts).
+   */
+  suggestCategoryPrompts: (body: { name: string; spec: string; note: string; images: Blob[] }) => {
+    const form = new FormData();
+    form.append("name", body.name);
+    form.append("spec", body.spec);
+    form.append("note", body.note);
+    body.images.forEach((b, i) => form.append("file", b, `ref-${i}.jpg`));
+    return call<CtPromptSuggestion>("ai/prompt-suggest", { method: "POST", body: form });
+  },
+  /**
+   * Category dialog "Cập nhật bằng AI": what the editor dislikes (+ the numbered results, new photos uploaded
+   * first) → what to change in spec / style pack / materials / details (server/ai/prompt-writer.ts).
+   */
+  suggestCategoryRevision: (body: { category: CtCategorySnapshot & { id: string | null }; note: string; images: Array<{ image: Blob; label: string; url: string }>; refUrls: string[] }) => {
+    const form = new FormData();
+    form.append("category", JSON.stringify(body.category));
+    form.append("note", body.note);
+    body.images.forEach((im, i) => {
+      form.append("image_file", im.image, `result-${i + 1}.jpg`);
+      form.append("image_label", im.label);
+      form.append("image_url", im.url);
+    });
+    body.refUrls.forEach((u) => form.append("ref_url", u));
+    return call<CtCategoryRevision>("ai/category-revise", { method: "POST", body: form });
+  },
+  /**
+   * Category dialog "Kiểm tra prompt": the category's prompts read together as the image models get them →
+   * conflicts found + their fixes as an ordinary plan (server/ai/prompt-review.ts).
+   */
+  reviewCategory: (category: CtCategorySnapshot & { id: string | null }) => {
+    const form = new FormData();
+    form.append("category", JSON.stringify(category));
+    return call<CtCategoryRevision>("ai/category-review", { method: "POST", body: form });
+  },
+  /** Is the @flexiprint agent (agent_ide) configured and answering — server/agent/tasks.ts. */
+  agentStatus: () => call<CtAgentStatus>("ai/agent-status"),
+  /** Hand the dialog's AI work to the agent instead of the built-in LLM (migration 011). */
+  createAgentTask: (body: { kind: CtAgentTaskKind; input: CtAgentTaskInput }) => call<CtAgentTask>("ai/agent-tasks", json("POST", body)),
+  agentTask: (id: string) => call<CtAgentTask>(`ai/agent-tasks/${id}`),
+  cancelAgentTask: (id: string) => call<CtAgentTask>(`ai/agent-tasks/${id}/cancel`, { method: "POST" }),
+  /** A category's AI revisions and saves, newest first (migration 010). */
+  categoryHistory: (id: string) => call<{ history: CtCategoryHistoryEntry[] }>(`library/categories/${id}/history`).then((r) => r.history),
+  /** Category dialog "Chi tiết thành phẩm": the product's details from a description + photos (uploaded first). */
+  suggestDetails: (body: { name: string; spec: string; note: string; refUrls: string[] }) => {
+    const form = new FormData();
+    form.append("name", body.name);
+    form.append("spec", body.spec);
+    form.append("note", body.note);
+    body.refUrls.forEach((u) => form.append("ref_url", u));
+    return call<CtDetailsSuggestion>("ai/details-suggest", { method: "POST", body: form });
+  },
+  /** Style pack / material dialog "Tạo prompt bằng AI": description + reference images → name + prompt. */
+  suggestPresetPrompt: (body: { kind: "style_pack" | "material"; presetId: string | null; name: string; note: string; prompt: string; images: Blob[]; savedRefs: string[] }) => {
+    const form = new FormData();
+    form.append("kind", body.kind);
+    if (body.presetId) form.append("preset_id", body.presetId);
+    form.append("name", body.name);
+    form.append("note", body.note);
+    form.append("prompt", body.prompt);
+    body.savedRefs.forEach((u) => form.append("ref_url", u));
+    body.images.forEach((b, i) => form.append("file", b, `ref-${i}.jpg`));
+    return call<CtPresetPromptSuggestion>("ai/preset-prompt", { method: "POST", body: form });
+  },
+  /** AI dialog "Chỉnh sửa": feedback on generated cliparts → edit instruction + optional spec / style rewrite. */
+  suggestRefine: (body: CtRefineSuggestBody) => {
+    const form = new FormData();
+    form.append("fix", body.fix);
+    // Parallel lists: the n-th url, name and spec are the same clipart.
+    body.images.forEach((im, i) => {
+      form.append("image_file", im.image, `clipart-${i + 1}.jpg`);
+      form.append("image_name", im.name);
+      form.append("image_spec", im.spec);
+    });
+    body.refs.forEach((b, i) => {
+      form.append("file", b, `ref-${i}.jpg`);
+      form.append("ref_name", body.refNames[i] ?? "");
+    });
+    form.append("category", JSON.stringify(body.category));
+    form.append("style", JSON.stringify(body.style));
+    if (body.updateSpec) form.append("update_spec", "1");
+    if (body.updateStyle) form.append("update_style", "1");
+    return call<CtRefineSuggestion>("ai/refine-suggest", { method: "POST", body: form });
+  },
 
   /** Sets the fp_studio cookie the studio's nginx gate checks. */
   studioSession: () => call<{ url: string }>("studio/session", { method: "POST" }),
+  /** AI dialog: the recipes run by ComfyUI (server/studio.ts). */
+  studioModels: () => call<{ models: string[] }>("studio/models").then((r) => r.models),
+  studioRun: (body: CtStudioRunBody) => call<{ run_id: string }>("studio/runs", json("POST", body)).then((r) => r.run_id),
+  studioRunStatus: (runId: string) => call<CtStudioRunStatus>(`studio/runs/${runId}`),
+  studioUploadRef: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return call<{ name: string }>("studio/refs", { method: "POST", body: form }).then((r) => r.name);
+  },
+  studioDraft: (body: CtStudioRunBody) => call<{ draft_id: string }>("studio/drafts", json("POST", body)).then((r) => r.draft_id),
 
 };

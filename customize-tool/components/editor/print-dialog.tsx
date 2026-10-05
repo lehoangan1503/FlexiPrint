@@ -7,8 +7,12 @@
  *   Vật liệu    acrylic / ceramic / metal / wood — outline, size, border,
  *               thickness. Only production facts: how a material LOOKS is
  *               AI-rendered in the studio (ComfyUI) into clipart renditions.
- *   Hiển thị    storefront shows the flat cliparts, or their renditions.
- *   Xuất file   the current selection, full resolution, flat → services/material-render
+ *   Hiển thị    the product is drawn with the flat cliparts, or their renditions
+ *               (one of their material versions: "có dây"…).
+ *   Gửi xưởng   print.png — the current selection FLAT, full resolution (what is
+ *               printed) + mockup.png — the same drawn with a material version, so
+ *               the factory sees where the hole / cord / details go. No service.
+ *   Xuất file   the flat selection → services/material-render
  *               → print.png + white.png + cut.svg (mm) + meta.json.
  *
  * Settings live in the design (config.material) so they save / undo / publish with it.
@@ -18,11 +22,24 @@ import { useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import type { CtAsset, CtMaterialConfig, CtMaterialDisplay, CtMaterialShape, CtProduct, CtSelection } from "../../types";
 import { CT_MATERIALS, applyMaterialPreset, materialPreset } from "../../lib/materials";
+import { displayAssets, materialVersions } from "../../lib/library";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
-import { selectedMainId } from "../../lib/design";
+import { selectedMainImageId } from "../../lib/design";
 import { ctApi } from "../../lib/api-client";
 import { CtButton, CtField, CtModal, CtNumber, CtSelect, cx } from "../ui";
 import type { DesignApi } from "./use-design";
+
+/** The select can't hold "" — the base material version. */
+const BASE = "__base";
+
+function download(blob: Blob, name: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 export interface PrintDialogProps {
   open: boolean;
@@ -44,6 +61,10 @@ export function PrintDialog(props: PrintDialogProps) {
   const [dpi, setDpi] = useState("300");
   const [error, setError] = useState<string | null>(null);
   const renditions = assets.filter((a) => a.role === "rendition").length;
+  const versions = materialVersions(assets);
+  /** The material version the factory mockup shows: the one with the details (cord…) by default. */
+  const [mockupVersion, setMockupVersion] = useState<string>(versions[0] ?? BASE);
+  const [sending, setSending] = useState(false);
 
   const set = (patch: Partial<CtMaterialConfig>) => design.commit((s) => ({ ...s, config: { ...s.config, material: { ...s.config.material, ...patch } } }));
 
@@ -54,12 +75,13 @@ export function PrintDialog(props: PrintDialogProps) {
     setExporting(true);
     setError(null);
     try {
-      // Always the flat art: renditions are for display only.
-      const flat = await renderComposite({ main, assets: assets.filter((a) => a.role !== "rendition"), regions, items, selection, scale: 1, layouts: config.layouts });
-      const designBlob = await canvasToBlob(flat, "image/png");
+      // What is printed is the flat artwork: a material version is how the finished product looks, not ink.
+      const shownAssets = displayAssets(assets, "flat");
+      const art = await renderComposite({ main, assets: shownAssets, regions, items, selection, scale: 1, layouts: config.layouts });
+      const designBlob = await canvasToBlob(art, "image/png");
       let mainBlob: Blob | null = null;
       if (material.shape === "main") {
-        const shown = assets.find((a) => a.id === selectedMainId(selection, assets, main.id)) ?? main;
+        const shown = shownAssets.find((a) => a.id === selectedMainImageId(selection, shownAssets, main.id)) ?? main;
         mainBlob = await fetch(shown.url).then((r) => r.blob());
       }
       const zip = await ctApi.printPack(props.product.id, { design: designBlob, main: mainBlob, material, dpi: Number(dpi) });
@@ -73,6 +95,25 @@ export function PrintDialog(props: PrintDialogProps) {
       setError(e instanceof Error ? e.message : "Xuất file thất bại");
     } finally {
       setExporting(false);
+    }
+  };
+
+  /** print.png (flat, full resolution) + mockup.png (a material version, its plate / hole / cord included). */
+  const sendToFactory = async () => {
+    setSending(true);
+    setError(null);
+    try {
+      const base = props.product.name.replace(/[^\w-]+/g, "-") || "product";
+      const flat = displayAssets(assets, "flat");
+      const print = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts: config.layouts });
+      download(await canvasToBlob(print, "image/png"), `${base}-print.png`);
+      const look = displayAssets(assets, "rendition", material.flatIds, mockupVersion === BASE ? "" : mockupVersion);
+      const mock = await renderComposite({ main, assets: look, regions, items, selection, scale: 1, layouts: config.layouts, bleed: true });
+      download(await canvasToBlob(mock, "image/png"), `${base}-mockup.png`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Xuất file thất bại");
+    } finally {
+      setSending(false);
     }
   };
 
@@ -137,7 +178,7 @@ export function PrintDialog(props: PrintDialogProps) {
 
         <CtField
           label="Hiển thị trên storefront"
-          hint={`Bản vật liệu = rendition AI của từng clipart (tạo trong Studio bằng preset vật liệu, giữ nguyên silhouette). Clipart chưa có rendition vẫn hiện bản phẳng. Sản phẩm này đang có ${renditions} rendition.`}
+          hint={`Bản vật liệu = bản AI của từng clipart (tạo bằng preset vật liệu). Clipart chưa có bản vật liệu dùng bản phẳng. Storefront và ảnh giỏ hàng dùng bản chọn ở đây; file in luôn là bản phẳng. Sản phẩm này đang có ${renditions} bản vật liệu.`}
         >
           <CtSelect<CtMaterialDisplay>
             value={material.display}
@@ -147,7 +188,35 @@ export function PrintDialog(props: PrintDialogProps) {
               { value: "rendition", label: "Bản vật liệu AI (acrylic, glitter…)" },
             ]}
           />
+          {material.display === "rendition" && versions.length > 0 && (
+            <CtSelect<string>
+              value={material.version || BASE}
+              onChange={(v) => set({ version: v === BASE ? "" : v })}
+              options={[{ value: BASE, label: "Phiên bản: bản gốc" }, ...versions.map((v) => ({ value: v, label: `Phiên bản: ${v}` }))]}
+            />
+          )}
         </CtField>
+
+        <div className="space-y-2 rounded-md border p-3">
+          <div className="text-xs font-semibold">Gửi xưởng</div>
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            print.png = tổ hợp đang chọn, bản phẳng, full độ phân giải (file in). mockup.png = cùng tổ hợp vẽ bằng bản vật liệu — xưởng thấy vị trí lỗ, dây, chi tiết.
+          </p>
+          <div className="flex items-end gap-2">
+            {renditions > 0 && (
+              <CtField label="Mockup dùng">
+                <CtSelect<string>
+                  value={mockupVersion}
+                  onChange={setMockupVersion}
+                  options={[{ value: BASE, label: "Bản gốc" }, ...versions.map((v) => ({ value: v, label: v }))]}
+                />
+              </CtField>
+            )}
+            <CtButton className="flex-1 justify-center" onClick={() => void sendToFactory()} disabled={sending}>
+              {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Tải file gửi xưởng (print.png + mockup.png)
+            </CtButton>
+          </div>
+        </div>
 
         {material.id !== "none" && (
           <div className="space-y-2 border-t pt-3">
@@ -160,7 +229,7 @@ export function PrintDialog(props: PrintDialogProps) {
               </CtButton>
             </div>
             <p className="text-[11px] leading-snug text-muted-foreground">
-              Tổ hợp đang chọn (art phẳng) → print.png · white.png (lớp mực trắng, acrylic) · cut.svg (đường cắt laser, mm) · meta.json. Cần service{" "}
+              Tổ hợp đang chọn (bản phẳng) → print.png · white.png (lớp mực trắng, acrylic) · cut.svg (đường cắt laser, mm) · meta.json. Cần service{" "}
               <code>material-render</code> (CT_MATERIAL_URL).
             </p>
           </div>

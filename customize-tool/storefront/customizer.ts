@@ -27,8 +27,9 @@
 import { CT_MAIN_KEY } from "../types";
 import type { CtOptionDisplay, CtPhotoSelection, CtPhotoStyleRef, CtRegion, CtRenderAsset, CtSelection, CtTemplate, CtTransform } from "../types";
 import { ctGoogleFontsHref } from "../config";
-import { canvasToBlob, drawComposite, loadImage, renderComposite } from "../lib/compositor";
-import { isHidden, layoutFor } from "../lib/layout";
+import { canvasToBlob, compositeBleed, drawComposite, loadImage, renderComposite } from "../lib/compositor";
+import { isHidden, layoutFor, onVersion } from "../lib/layout";
+import { drawOnScene } from "../lib/scene";
 import {
   defaultRegionSelection,
   defaultSelection,
@@ -36,12 +37,14 @@ import {
   isSelectionValid,
   formOrder,
   locateOption,
+  mainSubOptions,
   mainVersions,
   normalizeProductConfig,
   normalizeRegion,
   optionInGroup,
   regionGroups,
   selectedMainId,
+  selectedMainImageId,
 } from "../lib/design";
 import { IDENTITY_TRANSFORM, shapeBounds } from "../lib/geometry";
 import { processPhoto, shrinkImage } from "../lib/photo-process";
@@ -339,7 +342,13 @@ export class Customizer {
     if (!canvas || this.stage?.hidden) return;
     const token = ++this.renderToken;
     const box = canvas.parentElement?.clientWidth || canvas.clientWidth || 600;
-    const off = await this.product(this.selection, box * (window.devicePixelRatio || 1)).catch(() => null);
+    const side = box * (window.devicePixelRatio || 1);
+    // The design on the product's background (Thiết kế → Nền), when it has one.
+    const b = compositeBleed({ main: this.main, assets: this.tpl.assets, selection: this.selection, layouts: this.tpl.config.layouts });
+    const bleed = { x: b.x / this.main.width, y: b.y / this.main.height };
+    const off = await this.product(this.selection, side)
+      .then((c) => drawOnScene(this.tpl.config.scene, c, side, bleed))
+      .catch(() => null);
     if (!off || token !== this.renderToken) return;
     canvas.width = off.width;
     canvas.height = off.height;
@@ -351,15 +360,22 @@ export class Customizer {
     return renderComposite({ main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, scale, layouts: this.tpl.config.layouts });
   }
 
-  /** The product as the customer sees it (material renditions are already swapped in by the template), long side `maxSide`. */
+  /**
+   * The product as the customer sees it (material renditions are already swapped in by the template), long side
+   * `maxSide` — grown by the material version's padding, so its plate / cord are not cut off.
+   */
   private product(selection: CtSelection, maxSide: number): Promise<HTMLCanvasElement> {
-    return this.compose(selection, Math.min(1, maxSide / Math.max(this.main.width, this.main.height)));
+    const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts };
+    const b = compositeBleed(input);
+    const scale = Math.min(1, maxSide / Math.max(this.main.width + 2 * b.x, this.main.height + 2 * b.y));
+    return renderComposite({ ...input, scale, bleed: true });
   }
 
-  /** Zones the chosen main version uses (its layout may hide some — "1 person" hides photo 2 and 3). */
+  /** Zones the chosen main version uses: its own layers (older templates: a layout may hide some). */
   private shownRegions(selection: CtSelection = this.selection): CtRegion[] {
-    const layout = layoutFor(this.tpl.config.layouts, selectedMainId(selection, this.tpl.assets, this.tpl.mainAssetId));
-    return formOrder(this.regions).filter((r) => !isHidden(layout, r.id));
+    const mainId = selectedMainId(selection, this.tpl.assets, this.tpl.mainAssetId);
+    const layout = layoutFor(this.tpl.config.layouts, mainId);
+    return formOrder(this.regions).filter((r) => onVersion(r, mainId) && !isHidden(layout, r.id));
   }
 
   private change(key: string, value: CtSelection[string]): void {
@@ -383,15 +399,36 @@ export class Customizer {
           tpl.config.main.label,
           this.picker(
             tpl.config.main.display,
-            mains.map((m) => ({ id: m.id, label: m.name, image: m.url, swatch: m.meta.swatch })),
+            mains.map((m) => ({ id: m.id, label: m.name, image: m.meta.thumb ?? m.url, swatch: m.meta.swatch })),
             current,
             false,
-            (id) => id && this.change(CT_MAIN_KEY, { kind: "main", assetId: id }),
+            (id) => id && this.change(CT_MAIN_KEY, { kind: "main", assetId: id, optionId: null }),
           ),
           true,
           mains.find((m) => m.id === current)?.name,
         ),
       );
+      // The chosen version's sub-options ("Thêm option"): the version itself first, then its other pictures.
+      const version = mains.find((m) => m.id === current);
+      const subs = version ? mainSubOptions(tpl.assets, tpl.config.main, version.id) : [];
+      if (version && subs.length) {
+        const shown = selectedMainImageId(this.selection, tpl.assets, tpl.mainAssetId);
+        const list = [version, ...subs];
+        wrap.append(
+          this.field(
+            version.name,
+            this.picker(
+              tpl.config.main.display,
+              list.map((m) => ({ id: m.id, label: m.name, image: m.meta.thumb ?? m.url, swatch: m.meta.swatch })),
+              shown,
+              false,
+              (id) => id && this.change(CT_MAIN_KEY, { kind: "main", assetId: version.id, optionId: id === version.id ? null : id }),
+            ),
+            true,
+            list.find((m) => m.id === shown)?.name,
+          ),
+        );
+      }
     }
 
     for (const r of this.shownRegions()) {
@@ -878,6 +915,8 @@ export class Customizer {
     if (tpl.config.main.enabled) {
       const m = byId.get(selectedMainId(selection, tpl.assets, tpl.mainAssetId));
       if (m) add(tpl.config.main.label, m.name);
+      const pic = byId.get(selectedMainImageId(selection, tpl.assets, tpl.mainAssetId));
+      if (m && pic && pic.id !== m.id) add(m.name, pic.name);
     }
     for (const r of this.shownRegions(selection)) {
       const sel = selection[r.id];

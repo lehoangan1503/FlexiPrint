@@ -14,6 +14,7 @@ import type {
   CtCreateProductBody,
   CtGeneration,
   CtProduct,
+  CtProductConfig,
   CtProductBundle,
   CtProductListRow,
   CtPublicUploadResponse,
@@ -25,7 +26,7 @@ import type {
   CtUpdateAssetBody,
   CtUpdateProductBody,
 } from "../types";
-import { normalizeProductConfig, normalizeRegion } from "../lib/design";
+import { normalizeProductConfig, normalizeRegion, normalizeSamples } from "../lib/design";
 import { ctServiceClient, type CtSession } from "./supabase";
 import { ctLibraryPath, ctPublicUploadPath, ctRemove, ctStoragePath, ctUpload } from "./storage";
 import { buildTemplate } from "../lib/template";
@@ -112,8 +113,11 @@ export async function getBundle(s: CtSession, productId: string): Promise<NextRe
 }
 
 export async function updateProduct(s: CtSession, productId: string, body: CtUpdateProductBody): Promise<NextResponse> {
-  if (!(await ownedProduct(s, productId))) return jsonError("Không có quyền sửa sản phẩm này", 403);
-  const patch: CtUpdateProductBody = {};
+  const product = await ownedProduct(s, productId);
+  if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
+  const patch: Omit<CtUpdateProductBody, "samples"> & { config?: CtProductConfig } = {};
+  // Design samples: only that part of the stored config changes.
+  if (body.samples !== undefined) patch.config = { ...normalizeProductConfig(product.config), samples: normalizeSamples(body.samples) };
   if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
   if (body.status === "draft" || body.status === "ready" || body.status === "archived") patch.status = body.status;
   if (body.main_asset_id !== undefined) patch.main_asset_id = body.main_asset_id;

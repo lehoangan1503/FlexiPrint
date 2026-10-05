@@ -13,6 +13,7 @@ import { CT_AI_STYLE_DEFAULT_MODEL, CT_AI_STYLE_DEFAULT_PARAMS, CT_AI_STYLE_MODE
 import { ctApi } from "../../lib/api-client";
 import { CtButton, CtCheckbox, CtField, CtInput, CtModal, CtSelect, CtTextarea } from "../ui";
 import { dropAiStyle, putAiStyle } from "./ai-styles-store";
+import { ctConfirm } from "../dialogs";
 
 export interface AiStyleDialogProps {
   /** Render with key={target id | "new"} so the form resets per style. null = closed; "new" = create; a style = edit (or view). */
@@ -53,7 +54,9 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
   };
 
   const remove = async () => {
-    if (!editing || !window.confirm(`Xoá style "${editing.name}"? Vùng ảnh đang dùng style này sẽ không còn hiện nó cho khách.`)) return;
+    if (!editing) return;
+    const ok = await ctConfirm({ title: `Xoá style “${editing.name}”?`, message: "Vùng ảnh đang dùng style này sẽ không còn hiện nó cho khách.", tone: "danger", confirmLabel: "Xoá" });
+    if (!ok) return;
     setSaving(true);
     try {
       await ctApi.deleteAiStyle(editing.id);

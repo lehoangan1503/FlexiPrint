@@ -6,7 +6,7 @@
  * the option GROUPS placed in it (each group = one sub asset + its versions).
  */
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -14,9 +14,9 @@ import {
   Crown,
   Eye,
   EyeOff,
+  Frame,
   GripVertical,
   ImageIcon,
-  ImagePlus,
   Loader2,
   Move,
   Pentagon,
@@ -27,14 +27,18 @@ import {
   Upload,
   UserSquare,
   X,
+  HelpCircle,
 } from "lucide-react";
 import { CT_FONTS } from "../../config";
 import type {
   CtAsset,
+  CtMainFrame,
   CtOptionDisplay,
   CtPhotoCapabilities,
   CtPhotoSelection,
   CtAiStyle,
+  CtPhotoFrame,
+  CtPhotoMode,
   CtPhotoStyleRef,
   CtRegion,
   CtRegionItem,
@@ -44,9 +48,11 @@ import type {
   CtTextAlign,
   CtTransform,
 } from "../../types";
-import { fitShapeToBounds, IDENTITY_TRANSFORM, shapeBounds } from "../../lib/geometry";
-import { formOrder, normalizeRegion, variantsOf } from "../../lib/design";
-import { CT_PHOTO_STYLES, aiStyleRef, isAiStyleRef, needsServer, styleEngine, styleLabel } from "../../lib/photo-styles";
+import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, orientedBox, resolvePhotoFrame, shapeBounds } from "../../lib/geometry";
+import { useImageSize } from "./use-image-size";
+import { formOrder, hasTestPhoto, normalizeRegion, variantsOf } from "../../lib/design";
+import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
+import { PhotoGuideDialog } from "./photo-guide-dialog";
 import { aiStyleModel } from "../../lib/ai-style-models";
 import { AiStyleDialog } from "./ai-style-dialog";
 import { useAiStyles } from "./ai-styles-store";
@@ -54,8 +60,7 @@ import { processPhoto } from "../../lib/photo-process";
 import { ctApi } from "../../lib/api-client";
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtNumber, CtSelect, CtTextarea, CtTooltip, cx } from "../ui";
 import type { DesignApi } from "./use-design";
-import { setZoneHidden, updateItem, updateRegion } from "./use-design";
-import { isHidden } from "../../lib/layout";
+import { updateItem, updateRegion } from "./use-design";
 
 const KIND_ICON: Record<CtRegionKind, typeof ImageIcon> = { image: ImageIcon, text: Type, photo: UserSquare };
 const SHAPE_ICON: Record<CtShape["type"], typeof Square> = { rect: Square, ellipse: Circle, polygon: Pentagon };
@@ -69,21 +74,19 @@ export const DISPLAY_OPTIONS: Array<{ value: CtOptionDisplay; label: string }> =
 
 export interface InspectorProps {
   design: DesignApi;
-  /** Main version whose own layout is being edited (lib/layout.ts); null = the base layout. */
-  layoutMain: CtAsset | null;
   assets: CtAsset[];
   selection: CtSelection;
-  busy: string | null;
   selectedRegionId: string | null;
   onSelectRegion: (id: string | null) => void;
   activeItemId: string | null;
   onActiveItem: (id: string | null) => void;
+  /** The selected photo zone's child frame is selected (its Layers sub-row), not the zone. */
+  frameSelected: boolean;
+  onSelectFrame: (regionId: string) => void;
+  /** Delete a photo zone's child frame; the zone stays. */
+  onRemoveFrame: (regionId: string) => void;
   showOverlay: boolean;
   onToggleOverlay: () => void;
-  /** New group in an image zone: first file = the group's sub asset, the rest its versions. */
-  onUploadGroup: (regionId: string, files: File[]) => void;
-  /** More options (versions) for a group. */
-  onUploadOptions: (subId: string, files: File[]) => void;
   /** Show an option on the canvas. */
   onPreviewOption: (regionId: string, assetId: string) => void;
   onSetSwatch: (asset: CtAsset, color: string) => void;
@@ -91,6 +94,11 @@ export interface InspectorProps {
   onPhotoSelection: (regionId: string, sel: CtPhotoSelection) => void;
   /** A test photo is being processed (label for the canvas spinner); null = done. */
   onPhotoBusy: (regionId: string, label: string | null) => void;
+  /** The shown version's picture, as the bottom row of Layers: a frame moved / resized like a layer. */
+  mainLayer: { asset: CtAsset; frame: CtMainFrame; board: { w: number; h: number } } | null;
+  mainSelected: boolean;
+  onSelectMain: () => void;
+  onMainFrame: (f: CtMainFrame) => void;
 }
 
 export function Inspector(props: InspectorProps) {
@@ -159,14 +167,16 @@ export function Inspector(props: InspectorProps) {
       </div>
       <div className="max-h-[32%] overflow-y-auto border-b">
         {ordered.length === 0 && (
-          <p className="px-3 py-4 text-xs text-muted-foreground">Chưa có vùng nào. Chọn công cụ R / O / P rồi vẽ lên main object.</p>
+          <p className="px-3 py-4 text-xs text-muted-foreground">Chưa có vùng nào. Chọn công cụ R / O / P rồi vẽ lên version.</p>
         )}
         {ordered.map((r, index) => {
           const Icon = KIND_ICON[r.kind];
           const ShapeIcon = SHAPE_ICON[r.shape.type];
+          const hasFrame = r.kind === "photo" && r.config.photo?.frame?.enabled !== false && hasTestPhoto(props.selection[r.id]);
+          const frameActive = hasFrame && r.id === selectedRegionId && props.frameSelected;
           return (
+            <Fragment key={r.id}>
             <div
-              key={r.id}
               draggable={renaming !== r.id}
               onDragStart={(e) => {
                 e.dataTransfer.effectAllowed = "move";
@@ -190,7 +200,7 @@ export function Inspector(props: InspectorProps) {
               onClick={() => props.onSelectRegion(r.id)}
               className={cx(
                 "group relative flex cursor-pointer items-center gap-2 px-3 py-1.5",
-                r.id === selectedRegionId ? "bg-sky-500/15" : "hover:bg-accent",
+                r.id === selectedRegionId && !frameActive ? "bg-sky-500/15" : "hover:bg-accent",
                 r.id === dragId && "opacity-40",
               )}
             >
@@ -201,11 +211,6 @@ export function Inspector(props: InspectorProps) {
               <GripVertical className="-ml-2 h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/50 active:cursor-grabbing" />
               <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <ShapeIcon className="h-3 w-3 shrink-0 text-muted-foreground/70" />
-              {props.layoutMain && isHidden(design.state.config.layouts[props.layoutMain.id], r.id) && (
-                <CtTooltip label={`Ẩn ở version “${props.layoutMain.name}”`} side="left">
-                  <EyeOff className="h-3 w-3 shrink-0 text-violet-500" />
-                </CtTooltip>
-              )}
               {renaming === r.id ? (
                 <input
                   autoFocus
@@ -241,16 +246,111 @@ export function Inspector(props: InspectorProps) {
                 </span>
               )}
             </div>
+            {hasFrame && (
+              // The child frame: its own row under the zone — select it to move / turn it, delete it without the zone.
+              <div
+                onClick={() => props.onSelectFrame(r.id)}
+                className={cx("group flex cursor-pointer items-center gap-2 py-1 pl-9 pr-3 text-xs", frameActive ? "bg-purple-500/15" : "hover:bg-accent")}
+              >
+                <Frame className="h-3.5 w-3.5 shrink-0 text-purple-500" />
+                <span className="flex-1 truncate text-muted-foreground">
+                  Khung ảnh{r.config.photo.frame.auto ? " · tự khớp" : ""}
+                </span>
+                <span className="hidden gap-0.5 group-hover:flex">
+                  <LayerButton label="Xoá khung ảnh (giữ vùng)" shortcut={["Del"]} danger onClick={() => props.onRemoveFrame(r.id)}>
+                    <Trash2 className="h-3 w-3" />
+                  </LayerButton>
+                </span>
+              </div>
+            )}
+            </Fragment>
           );
         })}
+        {props.mainLayer && (
+          // The version's own picture: always the bottom row (layers marked "dưới main" are drawn behind it).
+          <div
+            onClick={props.onSelectMain}
+            className={cx("flex cursor-pointer items-center gap-2 border-t px-3 py-1.5 text-xs", props.mainSelected && !region ? "bg-emerald-500/15" : "hover:bg-accent")}
+          >
+            <span className="h-5 w-5 shrink-0 overflow-hidden rounded border" style={CHECKER_STYLE}>
+              <img src={props.mainLayer.asset.url} alt="" className="h-full w-full object-contain" />
+            </span>
+            <span className="flex-1 truncate">
+              Main · <span className="text-muted-foreground">{props.mainLayer.asset.name || "version"}</span>
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {region ? (
           <RegionProps {...props} region={normalizeRegion(region)} />
+        ) : props.mainSelected && props.mainLayer ? (
+          <MainFrameProps layer={props.mainLayer} onChange={props.onMainFrame} />
         ) : (
           <p className="px-3 py-4 text-xs text-muted-foreground">Chọn một vùng để chỉnh thuộc tính.</p>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** The version's picture frame on the artboard: position, size, turn; fit / fill the artboard. */
+function MainFrameProps({ layer, onChange }: { layer: NonNullable<InspectorProps["mainLayer"]>; onChange: (f: CtMainFrame) => void }) {
+  const f = layer.frame;
+  const { w: bw, h: bh } = layer.board;
+  const aspect = layer.asset.width / Math.max(1, layer.asset.height);
+  const [lock, setLock] = useState(true);
+  const set = (patch: Partial<CtMainFrame>) => onChange({ ...f, ...patch });
+  const round = (v: number) => Math.round(v * 10) / 10;
+  const fit = (cover: boolean) => {
+    const s = cover ? Math.max(bw / layer.asset.width, bh / layer.asset.height) : Math.min(bw / layer.asset.width, bh / layer.asset.height);
+    const w = layer.asset.width * s;
+    const h = layer.asset.height * s;
+    onChange({ x: (bw - w) / 2, y: (bh - h) / 2, w, h, rotation: 0 });
+  };
+  return (
+    <div className="space-y-3 p-3">
+      <div>
+        <div className="text-xs font-semibold">Khung main</div>
+        <p className="text-[11px] text-muted-foreground">
+          Ảnh của version này trên khung edit {bw}×{bh}px (khung edit không đổi). Kéo trên canvas, hoặc nhập số.
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <CtField label="X">
+          <CtNumber value={round(f.x)} onChange={(x) => set({ x })} />
+        </CtField>
+        <CtField label="Y">
+          <CtNumber value={round(f.y)} onChange={(y) => set({ y })} />
+        </CtField>
+        <CtField label="Rộng">
+          <CtNumber value={round(f.w)} min={4} onChange={(w) => set(lock ? { w, h: w / aspect } : { w })} />
+        </CtField>
+        <CtField label="Cao">
+          <CtNumber value={round(f.h)} min={4} onChange={(h) => set(lock ? { h, w: h * aspect } : { h })} />
+        </CtField>
+        <CtField label="Xoay °">
+          <CtNumber value={round(f.rotation)} onChange={(rotation) => set({ rotation })} />
+        </CtField>
+        <CtField label="Tỉ lệ">
+          <CtNumber value={Math.round((f.w / Math.max(1, layer.asset.width)) * 1000) / 10} onChange={(pct) => set({ w: (layer.asset.width * pct) / 100, h: (layer.asset.height * pct) / 100 })} />
+        </CtField>
+      </div>
+      <CtCheckbox checked={lock} onChange={setLock} label="Giữ tỉ lệ ảnh" />
+      <div className="flex flex-wrap gap-1.5">
+        <CtButton size="sm" onClick={() => fit(false)}>
+          Vừa khung
+        </CtButton>
+        <CtButton size="sm" onClick={() => fit(true)}>
+          Phủ kín khung
+        </CtButton>
+        <CtButton size="sm" onClick={() => set({ x: (bw - f.w) / 2, y: (bh - f.h) / 2 })}>
+          Canh giữa
+        </CtButton>
+        <CtButton size="sm" variant="ghost" onClick={() => onChange({ x: 0, y: 0, w: bw, h: bh, rotation: 0 })}>
+          Reset
+        </CtButton>
       </div>
     </div>
   );
@@ -292,24 +392,8 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
   const cfg = region.config;
   const setText = (patch: Partial<typeof cfg.text>) => set((r) => ({ ...r, config: { ...r.config, text: { ...r.config.text, ...patch } } }));
 
-  const layoutMain = props.layoutMain;
-  const hidden = layoutMain ? isHidden(design.state.config.layouts[layoutMain.id], region.id) : false;
-
   return (
     <div className="space-y-4 p-3">
-      {layoutMain && (
-        <div className="space-y-2 rounded-md border border-violet-500/40 bg-violet-500/5 p-2">
-          <p className="text-[11px] leading-snug text-muted-foreground">
-            Vị trí / kích thước sửa lúc này chỉ áp cho version <b className="text-foreground">{layoutMain.name || "main"}</b>. Tên, nội dung, style… vẫn dùng chung.
-          </p>
-          <CtCheckbox
-            checked={hidden}
-            onChange={(v) => design.commit((s) => setZoneHidden(s, layoutMain.id, region.id, v))}
-            label="Ẩn vùng này ở version này"
-            hint="Vd. version “1 người” ẩn ảnh khách 2, 3 — khách không thấy ô upload đó."
-          />
-        </div>
-      )}
       <CtField label="Tên vùng">
         <CtInput value={region.name} onChange={(e) => set((r) => ({ ...r, name: e.target.value }))} />
       </CtField>
@@ -333,6 +417,19 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
           </CtField>
         ))}
       </div>
+      {region.kind === "photo" && region.config.photo.frame.enabled && (
+        <ZoneTiltField
+          region={region}
+          onChange={(tilt) =>
+            set((r) => {
+              const f = r.config.photo.frame;
+              // An auto frame follows the tilt by itself; a frame placed by hand is turned to it, where it is.
+              const frame = f.auto ? { ...f, tilt } : { ...f, tilt, rotation: tilt ?? orientedBox(r.shape).rotation };
+              return { ...r, config: { ...r.config, photo: { ...r.config.photo, frame } } };
+            })
+          }
+        />
+      )}
       {region.shape.type === "rect" && (
         <CtField label="Bo góc (px)">
           <CtNumber
@@ -446,15 +543,19 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
     design.commit((s) => updateRegion(s, region.id, (r) => { const n = normalizeRegion(r); return { ...n, config: { ...n.config, photo: { ...n.config.photo, ...patch } } }; }));
   const cur = selection[region.id];
   const sel: CtPhotoSelection = cur?.kind === "photo" ? cur : { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM } };
+  /** The test photo's size: an auto frame takes its shape. */
+  const photoSize = useImageSize(sel.url);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const setT = (patch: Partial<CtTransform>) => onPhotoSelection(region.id, { ...sel, transform: { ...sel.transform, ...patch } });
   const styles = cfg.photo.styles;
   const [caps, setCaps] = useState<CtPhotoCapabilities | null>(null);
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // AI is always the default mode: opening a zone lands on the AI tab, and the effect below
-  // replaces any free filters with the AI style. Free only applies once the tab is clicked.
-  const [tab, setTab] = useState<"free" | "ai">("ai");
+  // What customers get (CtPhotoConfig.mode / styles) vs the tab open here. The tab last picked is saved as the
+  // zone's `mode` and opens again next time; a zone never given a tab opens with none (pick one first).
+  const configured = photoMode(cfg.photo);
+  const [tab, setTab] = useState<CtPhotoMode | null>(cfg.photo.mode ?? null);
+  const [guide, setGuide] = useState(false);
   const [dialog, setDialog] = useState<CtAiStyle | "new" | null>(null);
   const ai = useAiStyles();
   /** `${sourceUrl}|${style}|${cutout}|${fadeCrop}|${version}` → rendered blob URL, so flipping styles doesn't re-bill the AI. */
@@ -473,7 +574,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
     return pick ? aiStyleRef(pick.id) : null;
   };
 
-  // The AI tab always has exactly one style: no "none → Real photo" state there.
+  // The AI tab always has exactly one style: the default one as soon as the tab is picked.
   useEffect(() => {
     if (tab !== "ai" || !ai.loaded || selectedAi) return;
     const ref = defaultAi();
@@ -481,10 +582,23 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, ai.loaded, ai.styles, selectedAi]);
 
-  /** The tabs are the mode: Free = no-AI filters, AI = one generative style. */
-  const switchTab = (t: "free" | "ai") => {
+  /** The tabs are the mode: Free = no-AI filters, AI = one generative style, Face = face crop + colour filters. */
+  const switchTab = (t: CtPhotoMode) => {
     setTab(t);
-    if (t === "free" && styles.some(isAiStyleRef)) set({ styles: ["original"], defaultStyle: "original" });
+    if (t === configured) {
+      // An older zone's family was only implied by its styles: save the pick.
+      if (cfg.photo.mode !== t) set({ mode: t });
+      return;
+    }
+    const same = styles.filter((s) => styleFamily(s) === t);
+    if (t === "ai") {
+      const ref = selectedAi ?? defaultAi();
+      set(ref ? { mode: t, styles: [ref], defaultStyle: ref } : { mode: t });
+    } else {
+      const list: CtPhotoStyleRef[] = t === "face" ? CT_FACE_STYLES.map((s) => s.id) : same.length ? same : ["original"];
+      // A face is a trimmed head cut-out: "contain" keeps its ears / chin inside the frame, which fits itself to the head.
+      set({ mode: t, styles: list, defaultStyle: list[0], ...(t === "face" ? { fit: "contain" as const, frame: { ...IDENTITY_PHOTO_FRAME, auto: true } } : {}) });
+    }
   };
 
   /**
@@ -497,8 +611,9 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
       set(on ? { styles: [ref], defaultStyle: ref } : { styles: ["original"], defaultStyle: "original" });
       return;
     }
-    const free = styles.filter((s) => !isAiStyleRef(s));
-    const next: CtPhotoStyleRef[] = CT_PHOTO_STYLES.map((s) => s.id).filter((s) => (s === ref ? on : free.includes(s)));
+    const family = styleFamily(ref);
+    const catalog = family === "face" ? CT_FACE_STYLES : CT_FREE_STYLES;
+    const next: CtPhotoStyleRef[] = catalog.map((s) => s.id).filter((s) => (s === ref ? on : styles.includes(s)));
     if (next.length === 0) return;
     set({ styles: next, defaultStyle: next.includes(cfg.photo.defaultStyle) ? cfg.photo.defaultStyle : next[0] });
   };
@@ -545,6 +660,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
     caps && styles.includes("oil") && !caps.styleService && !caps.ai ? "Oil painting cần service photo-style (CT_PHOTO_STYLE_URL) hoặc GEMINI_API_KEY / OPENAI_API_KEY." : "",
     caps && styles.some(isAiStyleRef) && !caps.aiStyles ? "Style AI cần FAL_KEY trên server." : "",
     caps && cfg.photo.cutout && !caps.cutout ? "Tách nền cần CT_BG_REMOVER_URL, FAL_KEY hoặc 1 AI provider." : "",
+    caps && tab === "face" && !caps.faceDetect ? "Face cần service face-detect (CT_FACE_DETECT_URL)." : "",
     ai.error ?? "",
   ].filter(Boolean);
 
@@ -562,12 +678,30 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
       </CtField>
       <CtCheckbox checked={cfg.photo.required} onChange={(v) => set({ required: v })} label="Bắt buộc upload trước khi thêm vào giỏ" />
 
+      {!hasTestPhoto(cur) ? null : cfg.photo.frame?.enabled !== false ? (
+        <PhotoFrameFields
+          frame={resolvePhotoFrame(cfg.photo, region.shape, photoSize)}
+          auto={cfg.photo.frame?.auto ?? false}
+          onChange={(frame) => set({ frame })}
+        />
+      ) : (
+        <CtButton size="sm" variant="outline" className="w-full" onClick={() => set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true } })}>
+          <Frame className="h-3.5 w-3.5" /> Thêm khung ảnh (frame con)
+        </CtButton>
+      )}
+
       {/* Subject cut-out + cropped-edge fade are always applied (lib/design.ts normalizePhotoConfig). */}
       <div className="space-y-2.5 rounded-md border p-2.5">
-        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Style cho khách chọn</div>
-        <div className="grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs">
-          {(["free", "ai"] as const).map((t) => {
-            const n = t === "free" ? styles.filter((s) => !isAiStyleRef(s)).length : styles.filter(isAiStyleRef).length;
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Style cho khách chọn</span>
+          <button type="button" className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-sky-600 hover:bg-sky-500/10" onClick={() => setGuide(true)}>
+            <HelpCircle className="h-3.5 w-3.5" /> Hướng dẫn
+          </button>
+        </div>
+        <div className="grid grid-cols-3 rounded-md bg-muted p-0.5 text-xs">
+          {(["free", "ai", "face"] as const).map((t) => {
+            // The badge marks the family customers get, even while no tab is open.
+            const n = configured === t ? styles.length : 0;
             return (
               <button
                 key={t}
@@ -575,16 +709,37 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
                 onClick={() => switchTab(t)}
                 className={cx("rounded px-2 py-1 font-medium", tab === t ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground")}
               >
-                {t === "free" ? "Free" : "AI tạo ảnh"}
+                {t === "free" ? "Free" : t === "ai" ? "AI tạo ảnh" : "Face"}
                 {n > 0 && <span className="ml-1 rounded-full bg-sky-500/15 px-1.5 text-[10px] text-sky-600">{n}</span>}
               </button>
             );
           })}
         </div>
 
-        {tab === "free" ? (
+        {tab === null ? (
+          <div className="space-y-1 rounded border border-dashed p-2 text-center text-[11px] text-muted-foreground">
+            <p>Chọn 1 tab để chỉnh / thử ảnh: Free (lọc ảnh), AI tạo ảnh (tính phí), hoặc Face (cắt khuôn mặt). Chưa rõ? Bấm “Hướng dẫn”.</p>
+            <p className="text-foreground">
+              Khách đang thấy:{" "}
+              {configured ? `${configured === "free" ? "Free" : configured === "ai" ? "AI" : "Face"} — ${styles.map(label).join(", ")}` : "Real photo (chưa chọn tab nào)"}
+            </p>
+          </div>
+        ) : tab === "face" ? (
           <div className="space-y-1.5">
-            {CT_PHOTO_STYLES.map((s) => (
+            <div className="flex flex-wrap gap-1">
+              {CT_FACE_STYLES.map((s) => (
+                <span key={s.id} className="rounded-full border px-2 py-0.5 text-[11px]" title={s.hint}>
+                  {s.label.replace(/^Face · /, "")}
+                </span>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Bộ 5 màu mặc định — khách chọn 1. Không tốn phí AI: tách nền, tự tìm khuôn mặt (người, mèo — chó / khác nhờ AI tìm, rất rẻ), chỉ giữ phần đầu (không cổ, không thân), rồi lọc màu.
+            </p>
+          </div>
+        ) : tab === "free" ? (
+          <div className="space-y-1.5">
+            {CT_FREE_STYLES.map((s) => (
               <CtCheckbox key={s.id} checked={styles.includes(s.id)} onChange={(v) => toggleStyle(s.id, v)} label={s.label} hint={s.hint} />
             ))}
             <p className="text-[11px] text-muted-foreground">Không tốn phí AI.</p>
@@ -624,7 +779,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
           </div>
         )}
 
-        {tab === "free" && styles.length > 1 && !styles.some(isAiStyleRef) && (
+        {(tab === "free" || tab === "face") && styles.length > 1 && !styles.some(isAiStyleRef) && (
           <div className="grid grid-cols-2 gap-2">
             <CtField label="Nhãn dropdown">
               <CtInput value={cfg.photo.styleLabel} placeholder="Choose style" onChange={(e) => set({ styleLabel: e.target.value })} />
@@ -642,17 +797,35 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
           <p key={w} className="rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">{w}</p>
         ))}
       </div>
+      <PhotoGuideDialog
+        open={guide}
+        onClose={() => setGuide(false)}
+        productId={region.product_id}
+        aiStyle={(() => {
+          const ref = selectedAi ?? defaultAi();
+          return ref ? { ref, name: label(ref) } : null;
+        })()}
+      />
       <AiStyleDialog key={dialog === null ? "closed" : dialog === "new" ? "new" : dialog.id} target={dialog} onClose={() => setDialog(null)} onSaved={(st) => !styles.includes(aiStyleRef(st.id)) && dialog === "new" && toggleStyle(aiStyleRef(st.id), true)} />
 
       <div className="space-y-2 rounded-md border p-2.5">
         <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Thử ảnh khách</div>
         <p className="text-[11px] leading-snug text-muted-foreground">Upload một ảnh mẫu để xem kết quả cuối trên canvas. Ảnh chỉ dùng để thử, không lưu vào thiết kế.</p>
         <div className="flex gap-1.5">
-          <CtButton size="sm" variant="primary" disabled={working !== null} onClick={() => fileRef.current?.click()}>
+          <CtButton
+            size="sm"
+            variant="primary"
+            disabled={working !== null}
+            onClick={() => (tab === null ? setError("Chọn 1 style trước (Free / AI tạo ảnh / Face) — rồi mới thử ảnh.") : fileRef.current?.click())}
+          >
             <Upload className="h-3.5 w-3.5" /> {sel.url ? "Đổi ảnh test" : "Upload ảnh test"}
           </CtButton>
           {(sel.url || sel.sourceUrl) && (
-            <CtButton size="sm" variant="ghost" disabled={working !== null} onClick={() => onPhotoSelection(region.id, { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM } })}>
+            <CtButton size="sm" variant="ghost" disabled={working !== null} onClick={() => {
+                // The frame goes with the photo; the next upload works out a new one. Customers get the auto frame.
+                if (!cfg.photo.frame.auto || !cfg.photo.frame.enabled) set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true, tilt: cfg.photo.frame.tilt } });
+                onPhotoSelection(region.id, { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM } });
+              }}>
               <X className="h-3.5 w-3.5" /> Bỏ
             </CtButton>
           )}
@@ -667,6 +840,10 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
             e.target.value = "";
             if (!f) return;
             const sourceUrl = URL.createObjectURL(f);
+            // A new photo always gets a fresh child frame — also after the frame was deleted: worked out again from the
+            // zone (its outline, tilt) and this photo. The zone's tilt is the zone's: it stays.
+            const fr = cfg.photo.frame;
+            if (!fr.enabled || !fr.auto) set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true, tilt: fr.tilt } });
             // The raw upload never goes into the frame: the zone stays empty (with a spinner) until the processed photo is ready.
             const base: CtPhotoSelection = { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM }, style: cfg.photo.defaultStyle, sourceUrl };
             onPhotoSelection(region.id, base);
@@ -702,6 +879,78 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
   );
 }
 
+/**
+ * The zone's child frame (CtPhotoFrame) as numbers — the same frame Object mode (↵ / double-click) drags on the canvas.
+ * `frame` is the frame in use (worked out for the test photo when auto); editing a number pins it (auto off).
+ */
+function PhotoFrameFields({ frame, auto, onChange }: { frame: CtPhotoFrame; auto: boolean; onChange: (f: CtPhotoFrame) => void }) {
+  const set = (patch: Partial<CtPhotoFrame>) => onChange({ ...frame, ...patch, auto: false });
+  const pct = (v: number) => Math.round(v * 1000) / 10;
+  const moved = frame.offsetX !== 0 || frame.offsetY !== 0 || frame.scaleX !== 1 || frame.scaleY !== 1 || frame.rotation !== 0;
+  return (
+    <div className="space-y-2 rounded-md border p-2.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Khung ảnh (frame con)</span>
+        {!auto && moved && (
+          <button type="button" className="text-[11px] text-sky-600 hover:underline" onClick={() => onChange({ ...IDENTITY_PHOTO_FRAME, auto: true, tilt: frame.tilt })}>
+            Đặt lại
+          </button>
+        )}
+      </div>
+      <CtCheckbox
+        checked={auto}
+        onChange={(v) => onChange(v ? { ...frame, auto: true } : { ...frame, auto: false })}
+        label="Tự khớp theo vùng & ảnh"
+        hint="Mặt khách được dựng thẳng (0°) theo đường mắt, rồi khung xoay theo độ nghiêng của vùng. Khung đặt ở tâm vòng tròn bao trọn viền vùng; ảnh mặt nằm vừa trong hình vuông của vòng tròn đó, nới thêm 15% mỗi cạnh để mặt phủ kín vùng, cộng 1 lề nhỏ quanh mặt. Tính lại cho từng ảnh mới."
+      />
+      <p className="text-[11px] leading-snug text-muted-foreground">
+        Ảnh khách nằm trong khung này (giữ đúng tỉ lệ, chỉ scale 1 lần khi render); vùng bên ngoài vẫn là mặt nạ. Chỉnh trên canvas: chọn vùng rồi ↵ (hoặc double-click) — kéo tay sẽ tắt tự khớp. Mỗi ảnh test mới luôn được tính lại khung mới.
+      </p>
+      <div className="grid grid-cols-3 gap-2">
+        <CtField label="Độ nghiêng °">
+          <CtNumber value={frame.rotation} step={1} min={-180} max={180} onChange={(rotation) => set({ rotation })} />
+        </CtField>
+        <CtField label="Rộng %">
+          <CtNumber value={pct(frame.scaleX)} step={1} min={2} max={2000} onChange={(v) => set({ scaleX: v / 100 })} />
+        </CtField>
+        <CtField label="Cao %">
+          <CtNumber value={pct(frame.scaleY)} step={1} min={2} max={2000} onChange={(v) => set({ scaleY: v / 100 })} />
+        </CtField>
+        <CtField label="Ngang %">
+          <CtNumber value={pct(frame.offsetX)} step={1} min={-500} max={500} onChange={(v) => set({ offsetX: v / 100 })} />
+        </CtField>
+        <CtField label="Dọc %">
+          <CtNumber value={pct(frame.offsetY)} step={1} min={-500} max={500} onChange={(v) => set({ offsetY: v / 100 })} />
+        </CtField>
+        <CtField label="Lề %">
+          <CtNumber value={pct(frame.padding)} step={1} min={0} max={45} onChange={(v) => set({ padding: Math.min(0.45, Math.max(0, v / 100)) })} />
+        </CtField>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The zone's own tilt (CtPhotoFrame.tilt) — what the child frame turns by. Empty = read from the outline
+ * (a quad drawn on a tilted helmet); the value read is shown as the placeholder.
+ */
+function ZoneTiltField({ region, onChange }: { region: CtRegion; onChange: (tilt: number | null) => void }) {
+  const tilt = region.config.photo.frame.tilt;
+  const detected = orientedBox(region.shape).rotation;
+  return (
+    <CtField label="Độ nghiêng vùng °" hint={tilt === null ? `Tự đọc từ viền vùng: ${detected}°. Nhập số để đặt tay — khung ảnh (frame con) xoay theo.` : "Khung ảnh (frame con) xoay theo độ nghiêng này."}>
+      <div className="flex gap-1.5">
+        <CtNumber value={tilt ?? detected} step={1} min={-180} max={180} onChange={(v) => onChange(Math.round(v * 10) / 10)} />
+        {tilt !== null && (
+          <CtButton size="sm" variant="ghost" onClick={() => onChange(null)}>
+            Tự động
+          </CtButton>
+        )}
+      </div>
+    </CtField>
+  );
+}
+
 function RangeField({ label, min, max, value, onChange }: { label: string; min: number; max: number; value: number; onChange: (v: number) => void }) {
   return (
     <CtField label={label}>
@@ -715,13 +964,12 @@ function RangeField({ label, min, max, value, onChange }: { label: string; min: 
 // ---------------------------------------------------------------------------
 
 function ImageProps(props: InspectorProps & { region: CtRegion }) {
-  const { design, region, assets, busy } = props;
+  const { design, region, assets } = props;
   const cfg = region.config.image;
   const set = (patch: Partial<typeof cfg>) =>
     design.commit((s) => updateRegion(s, region.id, (r) => { const n = normalizeRegion(r); return { ...n, config: { ...n.config, image: { ...n.config.image, ...patch } } }; }));
   const items = design.state.items.filter((i) => i.region_id === region.id).sort((a, c) => a.sort_order - c.sort_order);
   const byId = new Map(assets.map((a) => [a.id, a]));
-  const fileRef = useRef<HTMLInputElement | null>(null);
 
   return (
     <div className="space-y-3 border-t pt-3">
@@ -757,22 +1005,9 @@ function ImageProps(props: InspectorProps & { region: CtRegion }) {
             <GroupCard key={it.id} {...props} item={it} sub={byId.get(it.asset_id)} />
           ))}
         </div>
-        <CtButton size="sm" variant="primary" className="mt-2 w-full justify-center" disabled={busy !== null} onClick={() => fileRef.current?.click()}>
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} Thêm nhóm — upload nhiều ảnh
-        </CtButton>
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          accept="image/png,image/jpeg,image/webp"
-          className="hidden"
-          onChange={(e) => {
-            const files = Array.from(e.target.files ?? []);
-            e.target.value = "";
-            if (files.length) props.onUploadGroup(region.id, files);
-          }}
-        />
-        <p className="mt-1.5 text-[11px] text-muted-foreground">Hoặc bấm “Đặt vào vùng” trên một sub object ở panel trái.</p>
+        <p className="mt-1.5 text-[11px] text-muted-foreground">
+          Thêm nhóm: kéo clipart từ tab Thư viện thả lên layer này. Ảnh mờ = đang ẩn với khách — bấm con mắt để bật.
+        </p>
       </div>
     </div>
   );
@@ -782,7 +1017,6 @@ function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionIte
   const { design, region, item, sub, assets, activeItemId, selection } = props;
   const cfg = region.config.image;
   const active = item.id === activeItemId;
-  const fileRef = useRef<HTMLInputElement | null>(null);
   if (!sub) return null;
   const options = [sub, ...variantsOf(assets, sub.id)];
   const hidden = new Set(cfg.hiddenAssetIds);
@@ -818,7 +1052,7 @@ function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionIte
             <Move className="h-3.5 w-3.5" />
           </button>
         </CtTooltip>
-        <CtTooltip label="Gỡ nhóm khỏi vùng (ảnh vẫn còn trong tab Sub)">
+        <CtTooltip label="Gỡ nhóm khỏi layer (clipart vẫn trong thư viện)">
           <button className="rounded p-1 text-destructive hover:bg-accent" onClick={() => design.commit((s) => ({ ...s, items: s.items.filter((i) => i.id !== item.id) }))}>
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -858,27 +1092,6 @@ function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionIte
             </div>
           );
         })}
-        <CtTooltip label="Upload thêm option vào nhóm này">
-          <button
-            className="flex aspect-square items-center justify-center rounded border border-dashed text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
-            disabled={props.busy !== null}
-            onClick={() => fileRef.current?.click()}
-          >
-            <ImagePlus className="h-4 w-4" />
-          </button>
-        </CtTooltip>
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          accept="image/png,image/jpeg,image/webp"
-          className="hidden"
-          onChange={(e) => {
-            const files = Array.from(e.target.files ?? []);
-            e.target.value = "";
-            if (files.length) props.onUploadOptions(sub.id, files);
-          }}
-        />
       </div>
 
       {active && (

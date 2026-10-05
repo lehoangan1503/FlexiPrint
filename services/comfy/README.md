@@ -9,7 +9,8 @@ this is CPU only and holds no model weights.
 - **Models:** `cpa:*` goes to the team's OpenAI-compatible images API (`CPA_BASE_URL`, `CPA_API_KEY`).
   `fal:*` goes to fal.ai (`FAL_KEY`).
 - **Fallback:** a 429 or 5xx falls back along `FP_FALLBACK_MODELS`
-  (default `cpa:grok-imagine-image-quality,fal:fal-ai/nano-banana-2/edit`).
+  (default `fal:fal-ai/nano-banana-2/edit,fal:fal-ai/nano-banana/edit` — Nano Banana is the default model
+  everywhere: it keeps the artwork in place and follows the prompt; gpt-image stays selectable).
 
 ## Nodes (`custom_nodes/flexiprint/nodes.py`)
 
@@ -18,6 +19,7 @@ this is CPU only and holds no model weights.
 | FP Style Pack | Preset `style_pack`: how the whole set is drawn |
 | FP Category | A library category: shared spec + rules (canvas, fill, anchor, background, silhouette lock). Decides where cliparts are saved and whether they are main or element |
 | FP Context Note | Extra context added to every prompt downstream |
+| FP Rules | Per-graph override of the category rules (canvas, fill, anchor); 0 = keep the category's |
 | FP Origin Generate | One line = one **original clipart** of the category (each car model, each hobby icon). `chain_reference` keeps the set consistent |
 | FP Cutout + Normalize | Cuts out the subject (white key / BiRefNet), trims it, fits it to the category canvas and fill, places it by anchor |
 | FP Variant Set | One origin → a **set of colours / styles** with the same silhouette. `recolor` is deterministic; `ai_edit_locked` edits with AI, realigns, re-applies the origin's alpha, and reports IoU |
@@ -33,6 +35,23 @@ this is CPU only and holds no model weights.
 **Templates:** `example_workflows/` holds 01 origin set, 02 variant set, 03 element pack,
 04 clipart material and 05 artwork → mockup. They appear under *Templates → flexiprint*.
 To regenerate them, run `python tools/build_workflows.py` against a running ComfyUI.
+
+## AI dialog (recipes)
+
+The editor's **Tạo bằng AI** dialog (`customize-tool/components/studio/ai-dialog.tsx`) doesn't
+draw graphs. It sends one of four standard recipes and `recipes.py` expands it into the same FP nodes:
+
+| Recipe | Graph |
+|---|---|
+| `origin` | Style Pack? → Category → Note? → Rules? → Origin Generate → Cutout → Save (origin). Main or element comes from the category |
+| `variant` | Load Clipart → Variant Set (recolor lines: no AI; AI lines: silhouette locked) → Save (set_member) |
+| `material` | For each picked clipart: Load Clipart → Material → Save (rendition) |
+| `mockup` | Load Artwork → Material? → Mockup Scene → Save Mockup |
+
+The routes live in `routes.py` and need `Bearer FP_COMFY_TOKEN`: `POST /flexi/run`, `GET /flexi/run/<id>`
+and `POST /flexi/draft`. `GET /flexi/draft/<id>` needs no token; the studio opens it through
+`?fp_draft=` ("Mở trong Studio"). The app calls them at `CT_COMFY_URL`: `http://comfy:8188` in
+compose, `http://127.0.0.1:8188` by default.
 
 ## How it connects
 

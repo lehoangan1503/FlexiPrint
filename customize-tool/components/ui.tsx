@@ -303,7 +303,13 @@ export function CtNumber({
   className?: string;
 }) {
   const [draft, setDraft] = React.useState(String(round(value)));
-  React.useEffect(() => setDraft(String(round(value))), [value]);
+  // Follow outside changes during render, not in an effect: dragging a zone changes these values every
+  // frame, and a setState-in-effect per field per frame tripped React's "Maximum update depth exceeded".
+  const [shown, setShown] = React.useState(value);
+  if (shown !== value) {
+    setShown(value);
+    if (Number(draft) !== value) setDraft(String(round(value)));
+  }
   return (
     <CtInput
       type="number"
@@ -368,13 +374,22 @@ export function CtModal({
   title,
   children,
   wide,
+  keepOpenOnOutside = true,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   title: string;
   children: React.ReactNode;
   wide?: boolean;
+  /**
+   * Default true: only the close button / X / Esc close it (through onOpenChange) — a click, a focus move
+   * or the end of a drag outside the panel never does, so work in a dialog is not lost by a stray click.
+   */
+  keepOpenOnOutside?: boolean;
 }) {
+  const stay = (e: Event) => {
+    if (keepOpenOnOutside) e.preventDefault();
+  };
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
@@ -384,6 +399,9 @@ export function CtModal({
             "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 max-h-[90vh] overflow-y-auto rounded-xl border bg-background p-5 shadow-2xl",
             wide ? "w-[min(1100px,95vw)]" : "w-[min(560px,95vw)]",
           )}
+          onPointerDownOutside={stay}
+          onInteractOutside={stay}
+          onFocusOutside={stay}
         >
           <div className="mb-4 flex items-center justify-between">
             <DialogPrimitive.Title className="text-base font-semibold">{title}</DialogPrimitive.Title>

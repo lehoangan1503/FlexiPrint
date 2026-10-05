@@ -13,6 +13,7 @@ import { CT_CONFIG } from "../config";
 import type { CtProductListRow, CtProductStatus } from "../types";
 import { ctApi } from "../lib/api-client";
 import { CHECKER_STYLE, CtButton, CtInput, cx } from "./ui";
+import { ctConfirm, ctPrompt } from "./dialogs";
 
 const STATUS_LABEL: Record<CtProductStatus, string> = { draft: "Nháp", ready: "Sẵn sàng", archived: "Lưu trữ" };
 const STATUS_CLASS: Record<CtProductStatus, string> = {
@@ -47,7 +48,7 @@ export function CustomizeProductList({ tabs, currentUserId }: { tabs?: React.Rea
   }, [search, load]);
 
   const create = async () => {
-    const name = window.prompt("Tên sản phẩm custom mới", "New custom ornament");
+    const name = await ctPrompt({ title: "Sản phẩm custom mới", label: "Tên sản phẩm", defaultValue: "New custom ornament", confirmLabel: "Tạo" });
     if (!name?.trim()) return;
     setCreating(true);
     try {
@@ -60,7 +61,7 @@ export function CustomizeProductList({ tabs, currentUserId }: { tabs?: React.Rea
   };
 
   const remove = async (p: CtProductListRow) => {
-    if (!window.confirm(`Xoá "${p.name}" cùng toàn bộ asset, vùng custom và mockup?`)) return;
+    if (!(await ctConfirm({ title: `Xoá “${p.name}”?`, message: "Xoá cùng toàn bộ asset, vùng custom và mockup của sản phẩm. Không hoàn tác được.", tone: "danger", confirmLabel: "Xoá" }))) return;
     try {
       await ctApi.deleteProduct(p.id);
       setProducts((list) => list.filter((x) => x.id !== p.id));

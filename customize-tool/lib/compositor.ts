@@ -5,10 +5,10 @@
  * scaled once at the end, so preview and full-res export are the same picture.
  */
 
-import type { CtMainLayout, CtRegion, CtRegionItem, CtRenderAsset, CtSelection, CtTextConfig, CtTransform } from "../types";
-import { itemPlacement, shapeBounds } from "./geometry";
-import { normalizeRegion, selectedMainId } from "./design";
-import { resolveLayout } from "./layout";
+import type { CtMainLayout, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtTextConfig, CtTransform } from "../types";
+import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds } from "./geometry";
+import { normalizeRegion, selectedMainId, selectedMainImageId } from "./design";
+import { mainFrameFor, resolveLayout } from "./layout";
 
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 
@@ -42,20 +42,41 @@ export interface CompositeInput {
   background?: string;
   /** Per-main-version layouts (CtProductConfig.layouts): the selected version's overrides apply. */
   layouts?: Record<string, CtMainLayout>;
+  /**
+   * Grow the canvas by the shown main's rendition padding (its acrylic plate, a cord above it), so nothing
+   * of the material version is cut off. Off (default): the canvas is the main's own box, as the print uses.
+   */
+  bleed?: boolean;
+}
+
+/** Extra room around the main's box the shown main version's rendition needs, in main pixels. */
+export function compositeBleed(input: Pick<CompositeInput, "main" | "assets" | "selection" | "layouts">): { x: number; y: number } {
+  const { main } = input;
+  const imageId = selectedMainImageId(input.selection, input.assets, main.id);
+  const f = mainFrameFor(input.layouts, selectedMainId(input.selection, input.assets, main.id), main.width, main.height);
+  const pad = input.assets.find((a) => a.id === imageId)?.meta?.pad;
+  const px = (pad?.x ?? 0) * f.w;
+  const py = (pad?.y ?? 0) * f.h;
+  // How far the picture (frame + its rendition's plate / cord) reaches past the artboard.
+  const x = Math.max(0, px - f.x, f.x + f.w + px - main.width);
+  const y = Math.max(0, py - f.y, f.y + f.h + py - main.height);
+  return { x: Math.round(x), y: Math.round(y) };
 }
 
 export async function renderComposite(input: CompositeInput): Promise<HTMLCanvasElement> {
   const { main, scale } = input;
+  const b = input.bleed ? compositeBleed(input) : { x: 0, y: 0 };
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(main.width * scale));
-  canvas.height = Math.max(1, Math.round(main.height * scale));
+  canvas.width = Math.max(1, Math.round((main.width + 2 * b.x) * scale));
+  canvas.height = Math.max(1, Math.round((main.height + 2 * b.y) * scale));
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D không khả dụng");
-  await drawComposite(ctx, input);
+  await drawComposite(ctx, input, b);
   return canvas;
 }
 
-export async function drawComposite(ctx: CanvasRenderingContext2D, input: CompositeInput): Promise<void> {
+/** `offset`: where the main's box starts on the canvas, main pixels (renderComposite's bleed). */
+export async function drawComposite(ctx: CanvasRenderingContext2D, input: CompositeInput, offset = { x: 0, y: 0 }): Promise<void> {
   const { main, assets, selection, scale, background } = input;
   // A main version (selection[CT_MAIN_KEY]) is drawn into the default main's
   // box, so every zone keeps its place whichever version is showing — unless
@@ -74,21 +95,33 @@ export async function drawComposite(ctx: CanvasRenderingContext2D, input: Compos
       .map((r) => document.fonts.load(`${r.config.text.fontWeight} 32px "${r.config.text.fontFamily}"`).catch(() => [])),
   );
 
-  const mainImg = await loadImage((byId.get(mainId) ?? main).url);
+  // A sub-option of the version ("Thêm option") swaps the picture only; layers and layout stay the version's.
+  const imageId = selectedMainImageId(selection, assets, main.id);
+  const mainImg = await loadImage((byId.get(imageId) ?? byId.get(mainId) ?? main).url);
 
   ctx.save();
-  ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  ctx.clearRect(0, 0, main.width, main.height);
+  ctx.setTransform(scale, 0, 0, scale, offset.x * scale, offset.y * scale);
+  ctx.clearRect(-offset.x, -offset.y, main.width + 2 * offset.x, main.height + 2 * offset.y);
   if (background) {
     ctx.fillStyle = background;
-    ctx.fillRect(0, 0, main.width, main.height);
+    ctx.fillRect(-offset.x, -offset.y, main.width + 2 * offset.x, main.height + 2 * offset.y);
   }
 
   const below = regions.filter((r) => !r.config.aboveMain);
   const above = regions.filter((r) => r.config.aboveMain);
 
   for (const r of below) await drawRegion(ctx, r, items, byId, selection);
-  ctx.drawImage(mainImg, 0, 0, main.width, main.height);
+  // The version's picture lands in its frame on the artboard (moved / resized / turned in the editor); a rendition
+  // on a larger canvas brings its plate / cord around that box.
+  const f = mainFrameFor(input.layouts, mainId, main.width, main.height);
+  const mainPad = (byId.get(imageId) ?? byId.get(mainId))?.meta?.pad;
+  const px = (mainPad?.x ?? 0) * f.w;
+  const py = (mainPad?.y ?? 0) * f.h;
+  ctx.save();
+  ctx.translate(f.x + f.w / 2, f.y + f.h / 2);
+  if (f.rotation) ctx.rotate((f.rotation * Math.PI) / 180);
+  ctx.drawImage(mainImg, -f.w / 2 - px, -f.h / 2 - py, f.w + 2 * px, f.h + 2 * py);
+  ctx.restore();
   for (const r of above) await drawRegion(ctx, r, items, byId, selection);
 
   ctx.restore();
@@ -134,29 +167,42 @@ async function drawRegion(
     const item = asset ? itemFor(region, items, asset) : undefined;
     if (asset && item) {
       const img = await loadImage(asset.url);
-      drawPlaced(ctx, img, bounds, item.transform, "contain");
+      drawPlaced(ctx, img, bounds, item.transform, "contain", asset.meta?.pad);
     }
   } else if (region.kind === "photo" && sel.kind === "photo" && sel.url) {
     const img = await loadImage(sel.url);
-    drawPlaced(ctx, img, bounds, sel.transform, region.config.photo.fit);
+    // The photo lives in the zone's child frame (moved / resized / tilted — or fitted to this photo), clipped to it and to the zone.
+    const f = photoFrameBox(bounds, resolvePhotoFrame(region.config.photo, region.shape, { width: img.naturalWidth, height: img.naturalHeight }));
+    ctx.translate(f.cx, f.cy);
+    ctx.rotate((f.rotation * Math.PI) / 180);
+    ctx.beginPath();
+    ctx.rect(-f.w / 2, -f.h / 2, f.w, f.h);
+    ctx.clip();
+    // Fitted inside the frame's margin: the photo at its own aspect, sized by the frame — it is only ever scaled here, once.
+    const m = f.margin;
+    drawPlaced(ctx, img, { x: -f.w / 2 + m, y: -f.h / 2 + m, w: Math.max(1, f.w - 2 * m), h: Math.max(1, f.h - 2 * m) }, sel.transform, region.config.photo.fit);
   } else if (region.kind === "text" && sel.kind === "text") {
     drawText(ctx, sel.text, region.config.text, bounds);
   }
   ctx.restore();
 }
 
+/** `pad`: the image is a rendition on a larger canvas — placed by its art's box, the padding drawn around it. */
 function drawPlaced(
   ctx: CanvasRenderingContext2D,
   img: HTMLImageElement,
   bounds: { x: number; y: number; w: number; h: number },
   t: CtTransform,
   fit: "contain" | "cover",
+  pad?: CtRenditionPad,
 ): void {
-  const p = itemPlacement(bounds, img.naturalWidth, img.naturalHeight, t, fit);
+  const kx = 1 + 2 * (pad?.x ?? 0);
+  const ky = 1 + 2 * (pad?.y ?? 0);
+  const p = itemPlacement(bounds, img.naturalWidth / kx, img.naturalHeight / ky, t, fit);
   ctx.save();
   ctx.translate(p.cx, p.cy);
   ctx.rotate((p.rotation * Math.PI) / 180);
-  ctx.drawImage(img, -p.w / 2, -p.h / 2, p.w, p.h);
+  ctx.drawImage(img, (-p.w * kx) / 2, (-p.h * ky) / 2, p.w * kx, p.h * ky);
   ctx.restore();
 }
 

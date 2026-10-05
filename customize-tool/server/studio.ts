@@ -20,19 +20,36 @@
  *    GET  internal/products                    → { products: [{ id, name, composites }] }
  *    POST internal/cliparts                    multipart: file, category_id?, parent_id?, rendition=1?, name, spec?, tags?,
  *                                              meta?, prompt?, resolved_prompt?, model?, workflow? → { clipart }
- *    POST internal/mockups                     multipart: file, product_id, name?, prompt?, model? → { asset }
+ *    POST internal/mockups                     multipart: file, product_id, name?, prompt?, model?, parent_id?, material? → { asset }
+ *                                              parent_id = an artwork (composite) of the product: saved as its AI material
+ *                                              version (role rendition), which the editor's Tổ hợp draws instead
  *
  *    Everything the studio creates is logged in ct_generations (provider
  *    "comfy", the resolved prompt and the graph that ran) and owned by
  *    CT_STUDIO_USER_ID (falls back to the first superadmin).
+ *
+ * 3. AI dialog (signed-in user). The editor's "Tạo bằng AI" dialog doesn't
+ *    draw graphs: it sends one of the four recipes (origin / variant /
+ *    material / mockup; the Tổ hợp tab also artwork_material / mockup_enhance)
+ *    and ComfyUI expands it into the same FP nodes
+ *    (services/comfy/custom_nodes/flexiprint/recipes.py). The app reaches
+ *    ComfyUI directly at CT_COMFY_URL (docker: http://comfy:8188, dev:
+ *    http://127.0.0.1:8188) with CT_COMFY_TOKEN.
+ *
+ *    GET  studio/models        → { models }
+ *    POST studio/runs          CtStudioRunBody → { run_id }
+ *    GET  studio/runs/:id      → CtStudioRunStatus (assets = what it saved)
+ *    POST studio/drafts        CtStudioRunBody → { draft_id }  (open it: /studio?draft=)
+ *    POST studio/refs          multipart file → { name }  reference photo for an origin line
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { CT_TABLES } from "../config";
-import type { CtAsset, CtAssetMeta, CtAssetRole, CtClipartCategory, CtPreset, CtProduct } from "../types";
+import type { CtAsset, CtAssetMeta, CtAssetRole, CtClipartCategory, CtPreset, CtProduct, CtStudioRunBody, CtStudioRunState, CtStudioRunStatus } from "../types";
 import { normalizeCategoryRules } from "../lib/library";
 import { readImageInfo } from "./image-size";
+import type { LibraryDb } from "./ai/library-tools";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctRemove, ctStoragePath, ctUpload } from "./storage";
 import { insertClipart } from "./library";
@@ -103,7 +120,7 @@ export function studioAuth(req: NextRequest): NextResponse {
 let studioOwner: string | null = null;
 
 /** Who owns what the studio creates. */
-async function ownerId(db: CtServiceClient): Promise<string | null> {
+export async function ownerId(db: CtServiceClient): Promise<string | null> {
   if (process.env.CT_STUDIO_USER_ID) return process.env.CT_STUDIO_USER_ID;
   if (studioOwner) return studioOwner;
   const { data } = await db.auth.admin.listUsers({ perPage: 200 });
@@ -111,7 +128,7 @@ async function ownerId(db: CtServiceClient): Promise<string | null> {
   return studioOwner;
 }
 
-function internalAuthorized(req: NextRequest): boolean {
+export function internalAuthorized(req: NextRequest): boolean {
   const token = process.env.CT_COMFY_TOKEN;
   return Boolean(token) && req.headers.get("authorization") === `Bearer ${token}`;
 }
@@ -235,25 +252,36 @@ async function saveMockup(db: CtServiceClient, form: FormData): Promise<NextResp
   const data = Buffer.from(await file.arrayBuffer());
   const info = readImageInfo(data);
   if (!info) return jsonError("File không phải ảnh PNG/JPEG/WebP hợp lệ", 400);
+  // An artwork's AI material version: a rendition of that composite.
+  const parentId = str(form, "parent_id");
+  let role: CtAssetRole = "mockup";
+  if (parentId) {
+    if (!UUID.test(parentId)) return jsonError("parent_id không hợp lệ", 400);
+    const { data: parent } = await db.from(CT_TABLES.assets).select("id,product_id,role").eq("id", parentId).maybeSingle<Pick<CtAsset, "id" | "product_id" | "role">>();
+    if (!parent || parent.product_id !== productId || parent.role !== "composite") return jsonError("parent_id phải là artwork của sản phẩm", 400);
+    role = "rendition";
+  }
+  const material = str(form, "material");
   const generationId = await logGeneration(db, {
     userId: product.user_id,
     productId,
     categoryId: null,
-    role: "mockup",
-    parentId: null,
+    role,
+    parentId: parentId || null,
     model: str(form, "model"),
     prompt: str(form, "prompt"),
     resolvedPrompt: str(form, "resolved_prompt"),
     workflow: jsonField<object | null>(form, "workflow", null),
   });
-  const path = ctStoragePath(product.user_id, productId, "mockup", info.mime);
+  const path = ctStoragePath(product.user_id, productId, role, info.mime);
   const url = await ctUpload(path, data, info.mime);
   const { data: asset, error } = await db
     .from(CT_TABLES.assets)
     .insert({
       user_id: product.user_id,
       product_id: productId,
-      role: "mockup",
+      role,
+      parent_id: parentId || null,
       generation_id: generationId,
       name: str(form, "name") || "Studio mockup",
       url,
@@ -262,7 +290,7 @@ async function saveMockup(db: CtServiceClient, form: FormData): Promise<NextResp
       height: info.height,
       mime: info.mime,
       source: "ai",
-      meta: {},
+      meta: role === "rendition" && UUID.test(material) ? { material } : {},
     })
     .select("*")
     .single<CtAsset>();
@@ -329,4 +357,121 @@ export async function dispatchInternal(req: NextRequest, path: string[]): Promis
   if (resource === "cliparts" && method === "POST" && !id) return saveClipart(db, await req.formData());
   if (resource === "mockups" && method === "POST") return saveMockup(db, await req.formData());
   return jsonError("Not found", 404);
+}
+
+// ---------------------------------------------------------------------------
+// AI dialog → ComfyUI recipes
+// ---------------------------------------------------------------------------
+
+const RECIPES = new Set(["origin", "refine", "adjust", "variant", "material", "mockup", "artwork_material", "mockup_enhance"]);
+
+/** What ComfyUI's /flexi/run/:id answers. */
+interface ComfyRunStatus {
+  status: CtStudioRunState;
+  position?: number;
+  node?: string | null;
+  error?: string;
+  ids: string[];
+}
+
+interface ComfyError {
+  error?: string;
+}
+
+async function comfy<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = process.env.CT_COMFY_TOKEN;
+  if (!token) throw new StudioError("Studio chưa cấu hình (CT_COMFY_TOKEN)", 501);
+  const base = (process.env.CT_COMFY_URL || "http://127.0.0.1:8188").replace(/\/$/, "");
+  let res: Response;
+  try {
+    res = await fetch(`${base}${path}`, {
+      ...init,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    throw new StudioError(`Không kết nối được ComfyUI (${base}) — studio đang chạy chưa?`, 502);
+  }
+  const body = (await res.json().catch(() => ({}))) as T & ComfyError;
+  if (!res.ok) throw new StudioError(body.error || `ComfyUI HTTP ${res.status}`, res.status >= 500 ? 502 : res.status);
+  return body;
+}
+
+class StudioError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+async function studioCall(fn: () => Promise<NextResponse>): Promise<NextResponse> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof StudioError) return jsonError(e.message, e.status);
+    throw e;
+  }
+}
+
+function validRunBody(body: CtStudioRunBody | null): body is CtStudioRunBody {
+  return Boolean(body && RECIPES.has(body.recipe) && body.params && typeof body.params === "object");
+}
+
+/** POST studio/refs — a reference photo, stored in ComfyUI's input folder. */
+export async function studioUploadRef(form: FormData): Promise<NextResponse> {
+  const file = form.get("file");
+  if (!(file instanceof Blob)) return jsonError("Thiếu file", 400);
+  if (file.size > 20 * 1024 * 1024) return jsonError("Ảnh quá lớn (tối đa 20 MB)", 413);
+  const token = process.env.CT_COMFY_TOKEN;
+  if (!token) return jsonError("Studio chưa cấu hình (CT_COMFY_TOKEN)", 501);
+  const base = (process.env.CT_COMFY_URL || "http://127.0.0.1:8188").replace(/\/$/, "");
+  const out = new FormData();
+  out.append("file", file, "ref.png");
+  try {
+    const res = await fetch(`${base}/flexi/refs`, { method: "POST", body: out, headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+    const body = (await res.json().catch(() => ({}))) as { name?: string } & ComfyError;
+    if (!res.ok || !body.name) return jsonError(body.error || `ComfyUI HTTP ${res.status}`, res.ok ? 502 : res.status);
+    return NextResponse.json({ name: body.name });
+  } catch {
+    return jsonError(`Không kết nối được ComfyUI (${base})`, 502);
+  }
+}
+
+/** GET studio/models */
+export function studioModels(): Promise<NextResponse> {
+  return studioCall(async () => NextResponse.json(await comfy<{ models: string[] }>("/flexi/models")));
+}
+
+/** POST studio/runs */
+export function studioRun(body: CtStudioRunBody | null): Promise<NextResponse> {
+  if (!validRunBody(body)) return Promise.resolve(jsonError("Body không hợp lệ", 400));
+  return studioCall(async () => NextResponse.json(await comfy<{ run_id: string }>("/flexi/run", { method: "POST", body: JSON.stringify(body) }), { status: 202 }));
+}
+
+/** POST studio/drafts */
+export function studioDraft(body: CtStudioRunBody | null): Promise<NextResponse> {
+  if (!validRunBody(body)) return Promise.resolve(jsonError("Body không hợp lệ", 400));
+  return studioCall(async () => NextResponse.json(await comfy<{ draft_id: string }>("/flexi/draft", { method: "POST", body: JSON.stringify(body) })));
+}
+
+/** GET studio/runs/:id — the run's state plus the assets it saved (the user's own client, or the MCP's). */
+export function studioRunStatus(db: LibraryDb, runId: string): Promise<NextResponse> {
+  if (!UUID.test(runId)) return Promise.resolve(jsonError("id không hợp lệ", 400));
+  return studioCall(async () => {
+    const run = await comfy<ComfyRunStatus>(`/flexi/run/${runId}`);
+    const ids = (run.ids ?? []).filter((id) => UUID.test(id));
+    const { data } = ids.length ? await db.from(CT_TABLES.assets).select("*").in("id", ids).returns<CtAsset[]>() : { data: [] as CtAsset[] };
+    const byId = new Map((data ?? []).map((a) => [a.id, a]));
+    const out: CtStudioRunStatus = {
+      status: run.status,
+      position: run.position,
+      node: run.node ?? null,
+      error: run.error,
+      assets: ids.map((id) => byId.get(id)).filter((a): a is CtAsset => a !== undefined),
+    };
+    return NextResponse.json(out);
+  });
 }

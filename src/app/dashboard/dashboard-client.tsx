@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Printer } from "lucide-react";
+import Link from "next/link";
+import { Library, Printer } from "lucide-react";
 import type { UserProfile } from "@/types/auth";
 import { UserDropdown } from "@/components/user-dropdown";
 import { FirstLoginDialog } from "@/components/first-login-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Button } from "@/components/ui/button";
 import { CustomizeProductList } from "../../../customize-tool/components/product-list";
 
 export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfile; isSuperAdmin: boolean }) {
@@ -19,6 +21,11 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
           <Printer className="h-5 w-5 text-primary" />
           <h1 className="text-lg font-semibold">FlexiPrint</h1>
           <div className="ml-auto flex items-center gap-2">
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/library">
+                <Library className="h-4 w-4" /> Thư viện
+              </Link>
+            </Button>
             <ThemeToggle />
             <UserDropdown key={current.nickname ?? ""} profile={current} isSuperAdmin={isSuperAdmin} />
           </div>

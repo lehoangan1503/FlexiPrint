@@ -1,0 +1,7 @@
+# What agent_ide and the agent write inside this project folder (it is a git checkout on the agent_ide machine):
+# notes, agent memory, job inbox/outbox, local settings — never committed, never block `git pull`.
+notes/
+agent/
+.agent-jobs/
+.mcp.json
+.claude/settings.local.json

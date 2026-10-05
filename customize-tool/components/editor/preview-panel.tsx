@@ -1,489 +1,1101 @@
 "use client";
 
 /**
- * "Tổ hợp & Mockup": pick combinations, save them as composite images, then
- * hand those composites to AI for a professional multi-product mockup — no
- * download/re-upload round trip. (The customer-facing page is the "Xem trước"
- * tab, storefront-preview.tsx.)
+ * "Tổ hợp": make the product's mockups by hand, Photoshop-style — a stack of
+ * independent frames.
+ *
+ *   toolbar  what can go in: the main versions — each the FINISHED artwork,
+ *            drawn with the design's own content (config.samples: texts,
+ *            choices, test photos from the Thiết kế tab) and the MATERIAL
+ *            version of every clipart (lib/mockup.ts frameArt) — dragged or
+ *            clicked in as a product frame; an Image frame (a photo, the
+ *            size of the edit frame); a background (colour or gradient,
+ *            lib/gradients.ts); text.
+ *   centre   the edit frame: move / resize / rotate the selected frame.
+ *   right    the frames, top first: drag to restack, eye, delete; the
+ *            selected frame's settings (size typed in, …) or, with none
+ *            selected, the edit frame's size.
+ *   bottom   "Lưu tổ hợp" saves the picture + its scene (meta.scene) as a
+ *            product mockup, numbered #1, #2… Pick some → "Lưu làm template"
+ *            (a named set in the library); another product of the kind →
+ *            "Dùng template": its own versions + design go in the frames.
+ *            "Tăng chất lượng với AI" remakes them photoreal (enhance-dialog).
+ *
+ * A frame needs the material of every clipart it shows ("Tạo vật liệu").
+ * Designs whose custom parts reach outside the main can get an AI material
+ * of the whole artwork instead ("Vật liệu AI cho artwork").
+ * (The customer-facing page is the "Xem trước" tab, storefront-preview.tsx.)
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Download, Loader2, Shuffle, Sparkles, Trash2, Save } from "lucide-react";
-import { CT_MAIN_KEY } from "../../types";
-import type { CtAsset, CtMainLayout, CtMaterialConfig, CtMainOptionConfig, CtOptionDisplay, CtPhotoSelection, CtPhotoStyleRef, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import {
-  enumerateCombinations,
-  formOrder,
-  locateOption,
-  normalizeRegion,
-  optionInGroup,
-  randomSelection,
-  regionGroups,
-  selectedMainId,
-} from "../../lib/design";
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  Check,
+  Download,
+  Eye,
+  EyeOff,
+  GripVertical,
+  ImagePlus,
+  Layers,
+  Loader2,
+  Maximize,
+  Package,
+  PaintBucket,
+  Redo2,
+  Save,
+  Sparkles,
+  Trash2,
+  Type,
+  Undo2,
+} from "lucide-react";
+import { CT_FONTS } from "../../config";
+import type {
+  CtAsset,
+  CtMainLayout,
+  CtMockupPack,
+  CtPackBlend,
+  CtPackBox,
+  CtPackFillLayer,
+  CtPackFrameLayer,
+  CtPackImageLayer,
+  CtPackLayer,
+  CtPackSlide,
+  CtPackTextLayer,
+  CtPreset,
+  CtRegion,
+  CtRegionItem,
+  CtSelection,
+} from "../../types";
+import { normalizeRegion } from "../../lib/design";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
-import { withRenditions } from "../../lib/library";
-import { IDENTITY_TRANSFORM } from "../../lib/geometry";
-import { aiStyleRef, isAiStyleRef, needsServer, styleEngine, styleLabel } from "../../lib/photo-styles";
-import { processPhoto } from "../../lib/photo-process";
+import { renditionOf } from "../../lib/library";
+import { CT_GRADIENTS } from "../../lib/gradients";
+import {
+  fillCss,
+  frameArt,
+  frameMain,
+  frameMissing,
+  frameSelection,
+  gradientCss,
+  LAYER_LABEL,
+  newFrame,
+  newLayer,
+  newSlide,
+  normalizeSlide,
+  renderSlide,
+  resizeSlide,
+  sceneArts,
+  sceneForProduct,
+  sceneIsOpaque,
+  type CtFrameContext,
+  type CtSlotArt,
+} from "../../lib/mockup";
 import { ctApi } from "../../lib/api-client";
-import { useAiStyles } from "./ai-styles-store";
-import { CHECKER_STYLE, CtButton, CtField, CtInput, CtSelect, cx } from "../ui";
+import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtNumber, CtSelect, CtTextarea, CtTooltip, cx } from "../ui";
+import { ctConfirm, ctPrompt } from "../dialogs";
+import { PackCanvas } from "../mockup/pack-canvas";
+import { pickImageFile } from "./scene-dialog";
+import { EnhanceDialog, type EnhanceItem } from "./enhance-dialog";
+
+/** dataTransfer type of a main version dragged from the strip. */
+const VERSION_DRAG = "application/x-ct-version";
+/** dataTransfer type of a layer row being restacked. */
+const LAYER_DRAG = "application/x-ct-layer";
+/** Longest side a saved tổ hợp is rendered at. */
+const SAVE_MAX_SIDE = 3000;
+
+const BLENDS: CtPackBlend[] = ["normal", "multiply", "screen", "overlay", "soft-light", "darken", "lighten"];
+
+const SIZE_PRESETS: Array<{ label: string; w: number; h: number }> = [
+  { label: "1:1", w: 2000, h: 2000 },
+  { label: "4:5", w: 1600, h: 2000 },
+  { label: "3:4", w: 1500, h: 2000 },
+  { label: "4:3", w: 2000, h: 1500 },
+  { label: "16:9", w: 2400, h: 1350 },
+  { label: "9:16", w: 1350, h: 2400 },
+];
+
+/** The scene being edited, per product — survives switching tabs. */
+const drafts = new Map<string, { scene: CtPackSlide; openedId: string | null }>();
 
 export interface PreviewPanelProps {
+  productId: string;
   main: CtAsset;
-  /** Main versions offered to the customer; empty when the option is off. */
+  /** Main versions offered to the customer, default first; empty when the option is off. */
   mains: CtAsset[];
-  mainConfig: CtMainOptionConfig;
   /** Per-main-version layouts (config.layouts). */
   layouts: Record<string, CtMainLayout>;
-  material: CtMaterialConfig;
   assets: CtAsset[];
   regions: CtRegion[];
   items: CtRegionItem[];
-  selection: CtSelection;
-  onSelectionChange: (s: CtSelection) => void;
-  onSaveComposites: (blobs: Array<{ blob: Blob; selection: CtSelection }>) => Promise<void>;
-  /** AI plugin — omitted when no provider is configured. */
-  onMockup?: (compositeIds: string[]) => void;
-  onDelete: (a: CtAsset) => void;
+  /** The design's own content (Thiết kế tab) — every product frame draws it. */
+  samples: CtSelection;
+  /** Save flat artworks (composites) — the AI artwork material starts from one. */
+  onSaveComposites: (blobs: Array<{ blob: Blob; selection: CtSelection }>) => Promise<CtAsset[]>;
+  /** New product assets (mockups, AI artwork materials). */
+  onAdded: (assets: CtAsset[]) => void;
+  /** Open the AI material recipe for these cliparts (one family). */
+  onCreateMaterial: (cliparts: CtAsset[]) => void;
+  /** Delete without asking (the panel asks first). */
+  onDelete: (a: CtAsset) => Promise<void>;
+  flash: (msg: string) => void;
+}
+
+function imageSize(url: string): Promise<{ w: number; h: number }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+    img.onerror = () => resolve({ w: 1, h: 1 });
+    img.src = url;
+  });
 }
 
 export function PreviewPanel(props: PreviewPanelProps) {
-  const { main, assets, items, selection, layouts, material } = props;
-  /** Show / download with the AI material renditions (what the storefront shows) instead of the flat art. */
-  const [withMaterial, setWithMaterial] = useState(true);
-  const hasRenditions = assets.some((a) => a.role === "rendition");
-  const showMaterial = withMaterial && hasRenditions && material.display === "rendition";
-  const shownAssets = useMemo(() => (showMaterial ? withRenditions(assets) : assets), [assets, showMaterial]);
+  const { main, assets, items, layouts, samples } = props;
   const regions = useMemo(() => props.regions.map(normalizeRegion).sort((a, b) => a.sort_order - b.sort_order), [props.regions]);
-  const hostRef = useRef<HTMLDivElement | null>(null);
+  const versions = useMemo(() => (props.mains.length ? props.mains : [main]), [props.mains, main]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [presets, setPresets] = useState<CtPreset[]>([]);
+  const [packs, setPacks] = useState<CtMockupPack[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
-  const [bulk, setBulk] = useState(6);
-  const composites = assets.filter((a) => a.role === "composite");
-  const mockups = assets.filter((a) => a.role === "mockup");
+  const [enhanceOpen, setEnhanceOpen] = useState(false);
 
-  // Live preview at a size that fits the panel.
+  useEffect(() => {
+    ctApi
+      .listPresets("material")
+      .then((r) => setPresets(r.presets))
+      .catch(() => undefined);
+    ctApi
+      .listPacks()
+      .then((r) => setPacks(r.packs))
+      .catch(() => undefined);
+  }, []);
+
+  // ---------------------------------------------------------------- scene + history
+  const draft = drafts.get(props.productId);
+  const [scene, setSceneState] = useState<CtPackSlide>(() => draft?.scene ?? newSlide("Tổ hợp 1"));
+  const [openedId, setOpenedId] = useState<string | null>(() => draft?.openedId ?? null);
+  const [past, setPast] = useState<CtPackSlide[]>([]);
+  const [future, setFuture] = useState<CtPackSlide[]>([]);
+  const [layerId, setLayerId] = useState<string | null>(null);
+  const dragBase = useRef<CtPackSlide | null>(null);
+  useEffect(() => {
+    drafts.set(props.productId, { scene, openedId });
+  }, [props.productId, scene, openedId]);
+
+  const commit = (next: CtPackSlide) => {
+    setPast((p) => [...p.slice(-60), dragBase.current ?? scene]);
+    setFuture([]);
+    dragBase.current = null;
+    setSceneState(next);
+  };
+  const live = (next: CtPackSlide) => {
+    if (!dragBase.current) dragBase.current = scene;
+    setSceneState(next);
+  };
+  const undo = () => {
+    const prev = past[past.length - 1];
+    if (!prev) return;
+    setPast(past.slice(0, -1));
+    setFuture([scene, ...future]);
+    setSceneState(prev);
+  };
+  const redo = () => {
+    const next = future[0];
+    if (!next) return;
+    setPast([...past, scene]);
+    setFuture(future.slice(1));
+    setSceneState(next);
+  };
+  const keys = useRef({ undo, redo, remove: () => {} });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable || t.closest('[role="dialog"]'))) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) keys.current.redo();
+        else keys.current.undo();
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        keys.current.remove();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const layer = scene.layers.find((l) => l.id === layerId) ?? null;
+  const patchLayer = (id: string, patch: Partial<CtPackLayer>, how: "commit" | "live" = "commit") => {
+    const next = { ...scene, layers: scene.layers.map((l) => (l.id === id ? ({ ...l, ...patch } as CtPackLayer) : l)) };
+    if (how === "live") live(next);
+    else commit(next);
+  };
+  const removeLayer = (id: string) => {
+    commit({ ...scene, layers: scene.layers.filter((l) => l.id !== id) });
+    if (layerId === id) setLayerId(null);
+  };
+  /** Restack: `id` goes where `targetId` is (both in scene order, bottom first). */
+  const restack = (id: string, targetId: string) => {
+    const from = scene.layers.findIndex((l) => l.id === id);
+    const to = scene.layers.findIndex((l) => l.id === targetId);
+    if (from < 0 || to < 0 || from === to) return;
+    const list = [...scene.layers];
+    const [moved] = list.splice(from, 1);
+    list.splice(to, 0, moved);
+    commit({ ...scene, layers: list });
+  };
+  /** New frames go on top — a background goes to the bottom. */
+  const addLayer = (l: CtPackLayer) => {
+    commit({ ...scene, layers: l.type === "fill" ? [l, ...scene.layers] : [...scene.layers, l] });
+    setLayerId(l.id);
+  };
+  useEffect(() => {
+    keys.current = { undo, redo, remove: () => layerId && removeLayer(layerId) };
+  });
+
+  // ---------------------------------------------------------------- frames
+  const ctx = useMemo<CtFrameContext>(
+    () => ({ samples, main, mains: versions, assets, regions, items, layouts, presets }),
+    [samples, main, versions, assets, regions, items, layouts, presets],
+  );
+  const frames = scene.layers.filter((l): l is CtPackFrameLayer => l.type === "frame");
+  /** Only what changes a frame's picture — not its box. */
+  const framesKey = JSON.stringify(frames.map((f) => [f.id, f.mainIndex, f.artworkId, f.hidden]));
+  const [arts, setArts] = useState<Record<string, CtSlotArt>>({});
   useEffect(() => {
     let cancelled = false;
-    const scale = Math.min(1, 1400 / Math.max(main.width, main.height));
-    renderComposite({ main, assets: shownAssets, regions, items, selection, scale, layouts })
-      .then((c) => {
-        if (cancelled || !hostRef.current) return;
-        c.className = "max-h-full max-w-full object-contain";
-        hostRef.current.replaceChildren(c);
-      })
-      .catch(() => undefined);
+    void sceneArts(scene, ctx).then((a) => !cancelled && setArts(a));
     return () => {
       cancelled = true;
     };
-  }, [main, shownAssets, regions, items, selection, layouts]);
+    // scene is read through framesKey: moving a frame must not re-render pictures
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [framesKey, ctx]);
 
-  const render = async (sel: CtSelection) => {
-    const canvas = await renderComposite({ main, assets, regions, items, selection: sel, scale: 1, layouts });
-    return canvasToBlob(canvas, "image/png");
+  /** Every version as the finished artwork (same render a frame uses, so dragging one in is instant). */
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all(
+      versions.map((v, i) =>
+        frameArt(newFrame({ width: 1000, height: 1000 }, i, null, 1), ctx)
+          .then((a): [string, string] => [v.id, a.url])
+          .catch(() => null),
+      ),
+    ).then((list) => {
+      if (!cancelled) setThumbs(Object.fromEntries(list.filter((x): x is [string, string] => x !== null)));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [versions, ctx]);
+
+  const missing = useMemo(() => {
+    const map = new Map<string, CtAsset>();
+    for (const f of frames) if (!f.hidden) for (const m of frameMissing(f, ctx)) map.set(m.id, m);
+    return [...map.values()];
+    // frames is derived from scene; framesKey tracks what matters
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [framesKey, ctx]);
+
+  const createMaterial = (list: CtAsset[]) => {
+    const own = list.find((a) => a.product_id !== null);
+    if (own) return props.flash(`“${own.name}” là clipart riêng của sản phẩm — đưa vào thư viện trước rồi tạo vật liệu`);
+    const origin = (a: CtAsset) => a.parent_id ?? a.id;
+    const first = list[0];
+    if (first) props.onCreateMaterial(list.filter((a) => origin(a) === origin(first)));
   };
 
-  const saveCurrent = async () => {
+  const addFrame = (versionId: string, at: { x: number; y: number } | null) => {
+    const index = Math.max(0, versions.findIndex((v) => v.id === versionId));
+    const v = versions[index] ?? main;
+    const f = newFrame(scene, index, at, main.width / main.height);
+    f.name = v.name || `Version ${index + 1}`;
+    addLayer(f);
+  };
+
+  // ---------------------------------------------------------------- image frames, background, text
+  const upload = async (): Promise<{ url: string; w: number; h: number } | null> => {
+    const file = await pickImageFile();
+    if (!file) return null;
+    setBusy("Đang upload ảnh…");
+    setError(null);
+    try {
+      const r = await ctApi.uploadPackImage(file);
+      return { url: r.url, w: r.width, h: r.height };
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload thất bại");
+      return null;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** An image frame fills the edit frame (cover); its size is typed in on the right. */
+  const addImageFrame = async () => {
+    const img = await upload();
+    if (img) addLayer(newLayer("image", scene.width, scene.height, { url: img.url }));
+  };
+
+  const replaceImage = async (l: CtPackImageLayer) => {
+    const img = await upload();
+    if (img) patchLayer(l.id, { url: img.url });
+  };
+
+  /** The edit frame takes the photo's proportions (same area); the photo then fills it. */
+  const frameToImage = async (l: CtPackImageLayer) => {
+    const { w, h } = await imageSize(l.url);
+    if (w < 2 || h < 2) return;
+    const area = scene.width * scene.height;
+    const width = Math.sqrt((area * w) / h);
+    const resized = resizeSlide(scene, width, (width * h) / w);
+    commit({ ...resized, layers: resized.layers.map((x) => (x.id === l.id ? { ...x, box: { x: 0, y: 0, w: resized.width, h: resized.height, rotation: 0 } } : x)) });
+  };
+
+  // ---------------------------------------------------------------- save / templates
+  const saved = useMemo(() => assets.filter((a) => a.role === "mockup").sort((a, b) => a.created_at.localeCompare(b.created_at)), [assets]);
+  const savedScenes = saved.filter((m) => m.meta.scene);
+  /** "#n" of a saved tổ hợp: its place in the list. */
+  const numbered: EnhanceItem[] = saved.map((asset, i) => ({ asset, number: i + 1 }));
+
+  const renderScene = async (s: CtPackSlide, a: Record<string, CtSlotArt>) => {
+    const scale = Math.min(1, SAVE_MAX_SIDE / Math.max(s.width, s.height));
+    const canvas = await renderSlide({ slide: s, arts: a, scale });
+    return canvasToBlob(canvas, sceneIsOpaque(s) ? "image/jpeg" : "image/png", 0.92);
+  };
+
+  const saveScene = async () => {
+    if (missing.length) return setError("Còn clipart chưa có vật liệu — tạo vật liệu trước khi lưu");
+    if (!scene.layers.some((l) => !l.hidden)) return setError("Vùng edit đang trống");
     setBusy("Đang lưu tổ hợp…");
+    setError(null);
     try {
-      await props.onSaveComposites([{ blob: await render(selection), selection }]);
+      const old = openedId ? saved.find((m) => m.id === openedId) : undefined;
+      const replace =
+        old &&
+        (await ctConfirm({ title: `Ghi đè “${old.name}”?`, message: "Không = lưu thành tổ hợp mới.", confirmLabel: "Ghi đè", cancelLabel: "Lưu mới" }));
+      const name = replace && old ? old.name : `Tổ hợp ${saved.length + 1}`;
+      const blob = await renderScene(scene, arts);
+      const asset = await ctApi.uploadAsset(props.productId, blob, { role: "mockup", name, meta: { scene: { ...scene, name } } });
+      if (replace && old) await props.onDelete(old);
+      props.onAdded([asset]);
+      setOpenedId(asset.id);
+      setSceneState({ ...scene, name });
+      props.flash(`Đã lưu “${name}”`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Lưu thất bại");
     } finally {
       setBusy(null);
     }
   };
 
-  const saveBulk = async (mode: "all" | "random") => {
-    const combos =
-      mode === "all"
-        ? enumerateCombinations(regions, items, assets, selection, bulk, props.mains)
-        : Array.from({ length: bulk }, () => randomSelection(regions, items, assets, selection, props.mains));
-    setBusy(`Đang render ${combos.length} tổ hợp…`);
-    try {
-      const out: Array<{ blob: Blob; selection: CtSelection }> = [];
-      for (const c of combos) out.push({ blob: await render(c), selection: c });
-      await props.onSaveComposites(out);
-    } finally {
-      setBusy(null);
-    }
+  const openSaved = (m: CtAsset) => {
+    if (!m.meta.scene) return;
+    commit(normalizeSlide(m.meta.scene));
+    setOpenedId(m.id);
+    setLayerId(null);
   };
 
   const download = async () => {
-    const blob = showMaterial
-      ? await canvasToBlob(await renderComposite({ main, assets: shownAssets, regions, items, selection, scale: 1, layouts }), "image/png")
-      : await render(selection);
+    const blob = await renderScene(scene, arts);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "design.png";
+    a.download = `${scene.name || "to-hop"}.${blob.type === "image/png" ? "png" : "jpg"}`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  const setSel = (regionId: string, value: CtSelection[string]) => props.onSelectionChange({ ...selection, [regionId]: value });
-
-  // Customer photo, rendered exactly like the storefront does (style + cut-out + fade), cached per style.
-  const { names: aiNames, styles: aiLib } = useAiStyles();
-  const photoRenders = useRef(new Map<string, Promise<string>>());
-  const [photoBusy, setPhotoBusy] = useState<Record<string, string>>({});
-  const [photoError, setPhotoError] = useState<Record<string, string>>({});
-  const selectionRef = useRef(selection);
-  selectionRef.current = selection;
-
-  const renderPhoto = (r: CtRegion, sourceUrl: string, style: CtPhotoStyleRef): Promise<string> => {
-    const cfg = r.config.photo;
-    const ver = isAiStyleRef(style) ? aiLib.find((x) => aiStyleRef(x.id) === style)?.updated_at ?? "" : "";
-    const key = `${sourceUrl}|${style}|${cfg.cutout}|${cfg.fadeCrop}|${ver}`;
-    const hit = photoRenders.current.get(key);
-    if (hit) return hit;
-    const endpoint = ctApi.photoEndpoint(r.product_id);
-    const job = (async () => {
-      const engine = styleEngine(style);
-      if (engine === "none" && !cfg.cutout) return sourceUrl;
-      if (engine === "local" && cfg.cutout) {
-        const base = await fetch(await renderPhoto(r, sourceUrl, "original")).then((x) => x.blob());
-        return URL.createObjectURL(await processPhoto({ source: base, style, cutout: false, endpoint }));
-      }
-      const source = await fetch(sourceUrl).then((x) => x.blob());
-      return URL.createObjectURL(await processPhoto({ source, style, cutout: cfg.cutout, fadeCrop: cfg.fadeCrop, endpoint }));
-    })();
-    photoRenders.current.set(key, job);
-    job.catch(() => photoRenders.current.delete(key));
-    return job;
-  };
-
-  const applyStyle = async (r: CtRegion, base: CtPhotoSelection, style: CtPhotoStyleRef) => {
-    if (!base.sourceUrl) return;
-    setPhotoError((e) => ({ ...e, [r.id]: "" }));
-    if (needsServer(style, r.config.photo.cutout)) {
-      setPhotoBusy((b) => ({ ...b, [r.id]: `Đang tạo ${styleLabel(style, aiNames)}${isAiStyleRef(style) ? " (AI)" : ""}…` }));
-    }
+  /** The ticked tổ hợp (none ticked = all of them) as a template other products reuse. */
+  const saveTemplate = async () => {
+    const list = picked.length ? savedScenes.filter((m) => picked.includes(m.id)) : savedScenes;
+    if (!list.length) return setError("Chưa có tổ hợp nào để lưu làm template");
+    const name = await ctPrompt({
+      title: `Lưu template (${list.length} tổ hợp)`,
+      message: "Sản phẩm khác cùng loại chọn “Dùng template” — version và thiết kế của nó tự vào đúng các frame.",
+      label: "Tên template",
+      placeholder: "vd. Ornament acrylic · Christmas",
+      confirmLabel: "Lưu template",
+    });
+    if (!name?.trim()) return;
     try {
-      const url = await renderPhoto(r, base.sourceUrl, style);
-      const now = selectionRef.current[r.id];
-      const transform = now?.kind === "photo" ? now.transform : base.transform;
-      props.onSelectionChange({ ...selectionRef.current, [r.id]: { ...base, transform, url, style } });
-    } catch (e) {
-      setPhotoError((x) => ({ ...x, [r.id]: e instanceof Error ? e.message : "Xử lý ảnh thất bại" }));
-    } finally {
-      setPhotoBusy((b) => {
-        const rest = { ...b };
-        delete rest[r.id];
-        return rest;
+      const pack = await ctApi.createPack({
+        name: name.trim(),
+        notes: "",
+        slides: list.map((m) => ({ ...normalizeSlide(m.meta.scene ?? {}), name: m.name })),
+        thumbnail_url: list[0].url,
       });
+      setPacks((p) => [...p, pack]);
+      setPicked([]);
+      props.flash(`Đã lưu template “${pack.name}”`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Lưu template thất bại");
     }
   };
+
+  const applyTemplate = async (packId: string) => {
+    const pack = packs.find((p) => p.id === packId);
+    if (!pack) return;
+    // The frames take this product's versions (same positions) with this product's design.
+    const scenes = pack.slides.map((s) => sceneForProduct(normalizeSlide(s)));
+    const lacking = new Map<string, CtAsset>();
+    for (const s of scenes) for (const l of s.layers) if (l.type === "frame") for (const m of frameMissing(l, ctx)) lacking.set(m.id, m);
+    if (lacking.size) {
+      setError(`Template cần vật liệu cho: ${[...lacking.values()].map((m) => m.name).join(", ")}`);
+      createMaterial([...lacking.values()]);
+      return;
+    }
+    if (!(await ctConfirm({ title: `Dùng template “${pack.name}”?`, message: `Tạo ${scenes.length} tổ hợp với các version + thiết kế của sản phẩm này.`, confirmLabel: "Tạo" }))) return;
+    const created: CtAsset[] = [];
+    try {
+      for (const [i, s] of scenes.entries()) {
+        setBusy(`Render ${i + 1}/${scenes.length}…`);
+        const blob = await renderScene(s, await sceneArts(s, ctx));
+        created.push(await ctApi.uploadAsset(props.productId, blob, { role: "mockup", name: s.name, meta: { scene: s } }));
+      }
+      props.flash(`Đã tạo ${created.length} tổ hợp từ template “${pack.name}”`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Render thất bại");
+    } finally {
+      props.onAdded(created);
+      setBusy(null);
+    }
+  };
+
+  /** AI material of the whole artwork (custom parts outside the main get the material too). */
+  const aiMaterial = async (f: CtPackFrameLayer) => {
+    const v = frameMain(f, ctx);
+    const materialId = renditionOf(assets, v.id)?.meta.material;
+    if (!materialId) return setError("Version này chưa có vật liệu — tạo vật liệu cho nó trước (để biết dùng vật liệu nào)");
+    setBusy("Lưu artwork phẳng…");
+    setError(null);
+    try {
+      const sel = frameSelection(f, ctx);
+      const canvas = await renderComposite({ main, assets, regions, items, selection: sel, scale: 1, layouts });
+      const [artwork] = await props.onSaveComposites([{ blob: await canvasToBlob(canvas, "image/png"), selection: sel }]);
+      if (!artwork) throw new Error("Không lưu được artwork");
+      setBusy("AI đang tạo vật liệu cho artwork…");
+      const runId = await ctApi.studioRun({
+        recipe: "artwork_material",
+        params: { artwork_id: artwork.id, material_id: materialId, edge_px: 0, extra: "", model: "", name: `${f.name} · vật liệu AI` },
+      });
+      for (;;) {
+        await new Promise((r) => window.setTimeout(r, 2500));
+        const st = await ctApi.studioRunStatus(runId);
+        if (st.status === "error") throw new Error(st.error ?? "AI lỗi");
+        if (st.status === "done") {
+          props.onAdded(st.assets);
+          patchLayer(f.id, { artworkId: artwork.id } as Partial<CtPackFrameLayer>);
+          props.flash("Đã có vật liệu AI cho artwork — frame dùng bản này");
+          break;
+        }
+        setBusy(st.status === "queued" ? `AI: đang chờ${st.position ? ` (#${st.position})` : ""}…` : `AI: ${st.node ?? "đang chạy"}…`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "AI thất bại");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** Small picture of a layer for the list. */
+  const layerThumb = (l: CtPackLayer) => {
+    if (l.type === "fill") return <span className="block h-full w-full" style={{ background: fillCss(l) }} />;
+    if (l.type === "image") return l.url ? <img src={l.url} alt="" className="h-full w-full object-cover" /> : null;
+    if (l.type === "frame") {
+      const url = arts[l.id]?.url;
+      return url ? <img src={url} alt="" className="h-full w-full object-contain" /> : <Package className="m-auto h-3.5 w-3.5" />;
+    }
+    return <Type className="m-auto h-3.5 w-3.5" />;
+  };
+
+  const shown = [...scene.layers].reverse();
+  const [dragRow, setDragRow] = useState<string | null>(null);
+  const [overRow, setOverRow] = useState<string | null>(null);
 
   return (
     <div className="grid h-full grid-cols-[1fr_320px] overflow-hidden">
       <div className="flex min-h-0 flex-col">
-        <div className="flex min-h-0 flex-1 items-center justify-center p-6" style={CHECKER_STYLE}>
-          <div ref={hostRef} className="flex h-full w-full items-center justify-center" />
+        {/* Toolbar: what can go in — each becomes its own frame */}
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b bg-background px-3 py-2">
+          <span className="text-[11px] text-muted-foreground">Kéo vào:</span>
+          {versions.map((v) => (
+            <CtTooltip key={v.id} label={`${v.name} — artwork hoàn chỉnh, kéo vào vùng edit (hoặc click)`}>
+              <button
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(VERSION_DRAG, v.id);
+                  e.dataTransfer.effectAllowed = "copy";
+                }}
+                onClick={() => addFrame(v.id, null)}
+                className="relative h-10 w-10 cursor-grab overflow-hidden rounded-md border hover:border-sky-500"
+                style={CHECKER_STYLE}
+              >
+                {thumbs[v.id] ? (
+                  <img src={thumbs[v.id]} alt="" className="h-full w-full object-contain" draggable={false} />
+                ) : (
+                  <Loader2 className="m-auto h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                )}
+                {!renditionOf(assets, v.id) && <span className="absolute inset-x-0 bottom-0 bg-amber-500 text-[8px] font-medium leading-tight text-white">chưa VL</span>}
+              </button>
+            </CtTooltip>
+          ))}
+          <span className="mx-1 h-6 w-px bg-border" />
+          <CtTooltip label="Ảnh (nền, tay cầm, sticker…) — mặc định phủ kín khung edit">
+            <CtButton size="sm" onClick={() => void addImageFrame()} disabled={!!busy}>
+              <ImagePlus className="h-3.5 w-3.5" /> Image frame
+            </CtButton>
+          </CtTooltip>
+          <CtTooltip label="Nền màu hoặc gradient, phủ kín khung edit (luôn vào dưới cùng)">
+            <CtButton size="sm" onClick={() => addLayer(newLayer("fill", scene.width, scene.height))}>
+              <PaintBucket className="h-3.5 w-3.5" /> Nền
+            </CtButton>
+          </CtTooltip>
+          <CtButton size="sm" onClick={() => addLayer(newLayer("text", scene.width, scene.height))}>
+            <Type className="h-3.5 w-3.5" /> Chữ
+          </CtButton>
+          <span className="ml-auto flex items-center gap-0.5">
+            <CtTooltip label="Hoàn tác (⌘Z)">
+              <CtButton size="icon" variant="ghost" disabled={!past.length} onClick={undo}>
+                <Undo2 className="h-4 w-4" />
+              </CtButton>
+            </CtTooltip>
+            <CtTooltip label="Làm lại (⇧⌘Z)">
+              <CtButton size="icon" variant="ghost" disabled={!future.length} onClick={redo}>
+                <Redo2 className="h-4 w-4" />
+              </CtButton>
+            </CtTooltip>
+            <button className="ml-1 text-[11px] text-muted-foreground hover:text-foreground" onClick={() => setLayerId(null)} title="Kích thước khung edit">
+              {scene.width}×{scene.height}
+            </button>
+          </span>
         </div>
-        <div className="border-t bg-background p-3">
+
+        <div className="relative min-h-0 flex-1">
+          <PackCanvas
+            className="h-full w-full bg-muted/40"
+            slide={scene}
+            arts={arts}
+            selectedId={layerId}
+            onSelect={setLayerId}
+            onBox={(id, box, done) => patchLayer(id, { box }, done ? "commit" : "live")}
+            dropType={VERSION_DRAG}
+            onDropAt={(id, at) => addFrame(id, at)}
+          />
+          {scene.layers.length === 0 && (
+            <div className="pointer-events-none absolute inset-x-0 top-6 text-center text-xs text-muted-foreground">
+              Kéo các version ở trên vào (artwork đã có nội dung thiết kế) — thêm Nền, Image frame, Chữ → Lưu tổ hợp.
+            </div>
+          )}
+        </div>
+
+        {missing.length > 0 && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-t bg-amber-500/10 px-3 py-2 text-xs">
+            <span>
+              Chưa có vật liệu: <b>{missing.map((m) => m.name || "clipart").join(", ")}</b> — mockup luôn dùng bản vật liệu.
+            </span>
+            <CtButton size="sm" onClick={() => createMaterial(missing)}>
+              <Sparkles className="h-3.5 w-3.5" /> Tạo vật liệu
+            </CtButton>
+          </div>
+        )}
+
+        {/* Saved tổ hợp + templates + AI */}
+        <div className="shrink-0 border-t bg-background p-3">
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold">Tổ hợp đã lưu ({composites.length})</span>
-            {props.onMockup ? (
-              <>
-                <span className="text-[11px] text-muted-foreground">Chọn 1 tổ hợp → mở Studio: vật liệu AI + bối cảnh → lưu mockup</span>
-                <CtButton size="sm" variant="primary" className="ml-auto" disabled={picked.length === 0} onClick={() => props.onMockup?.(picked)}>
-                  <Sparkles className="h-3.5 w-3.5" /> Mockup AI trong Studio
-                </CtButton>
-              </>
-            ) : (
-              <span className="text-[11px] text-muted-foreground">Click ảnh để mở trong tab mới · double-click để mở lại tổ hợp</span>
-            )}
+            <span className="text-xs font-semibold">Tổ hợp đã lưu ({saved.length})</span>
+            <span className="text-[11px] text-muted-foreground">Click để mở lại · tick để chọn</span>
+            <span className="ml-auto flex items-center gap-1.5">
+              <CtTooltip label={picked.length ? "Lưu các tổ hợp đã tick làm template" : "Lưu tất cả tổ hợp làm template (tick để chọn bớt)"}>
+                <span>
+                  <CtButton size="sm" disabled={!savedScenes.length} onClick={() => void saveTemplate()}>
+                    <Layers className="h-3.5 w-3.5" /> Lưu làm template ({picked.length || savedScenes.length})
+                  </CtButton>
+                </span>
+              </CtTooltip>
+              {packs.length > 0 && (
+                <CtSelect className="h-8 w-52" value="" placeholder="Dùng template…" onChange={(id) => void applyTemplate(id)} options={packs.map((p) => ({ value: p.id, label: `${p.name} (${p.slides.length})` }))} />
+              )}
+            </span>
           </div>
           <div className="flex gap-2 overflow-x-auto pb-1">
-            {composites.map((c) => {
-              const on = picked.includes(c.id);
+            {numbered.map(({ asset: m, number }) => {
+              const on = picked.includes(m.id);
               return (
-                <div key={c.id} className="group relative shrink-0">
+                <div key={m.id} className="group relative shrink-0">
                   <button
-                    className={cx("h-24 w-24 overflow-hidden rounded border", on && "ring-2 ring-sky-500")}
+                    className={cx("block h-24 w-24 overflow-hidden rounded border", m.id === openedId && "ring-2 ring-sky-500")}
                     style={CHECKER_STYLE}
-                    onClick={() =>
-                      props.onMockup ? setPicked((p) => (on ? p.filter((x) => x !== c.id) : [...p, c.id])) : window.open(c.url, "_blank", "noopener")
-                    }
-                    onDoubleClick={() => c.meta.selection && props.onSelectionChange(c.meta.selection)}
-                    title="Click để chọn · double-click để mở lại tổ hợp"
+                    onClick={() => (m.meta.scene ? openSaved(m) : window.open(m.url, "_blank", "noopener"))}
+                    title={m.meta.scene ? `${m.name} — click để mở lại` : `${m.name} (ảnh AI)`}
                   >
-                    <img src={c.url} alt="" className="h-full w-full object-contain" loading="lazy" />
-                    {on && (
-                      <span className="absolute right-1 top-1 rounded-full bg-sky-500 p-0.5 text-white">
-                        <Check className="h-3 w-3" />
-                      </span>
-                    )}
+                    <img src={m.url} alt="" className="h-full w-full object-cover" loading="lazy" />
                   </button>
-                  <button className="absolute left-1 top-1 hidden rounded bg-black/60 p-0.5 text-white group-hover:block" onClick={() => props.onDelete(c)}>
+                  <span className="absolute bottom-5 left-1 rounded bg-black/70 px-1 text-[10px] font-semibold text-white">#{number}</span>
+                  <button
+                    className={cx("absolute right-1 top-1 rounded-full border bg-background/90 p-0.5", on ? "border-sky-500 bg-sky-500 text-white" : "text-transparent hover:text-muted-foreground")}
+                    onClick={() => setPicked((p) => (on ? p.filter((x) => x !== m.id) : [...p, m.id]))}
+                    title="Chọn"
+                  >
+                    <Check className="h-3 w-3" />
+                  </button>
+                  <button
+                    className="absolute left-1 top-1 hidden rounded bg-black/60 p-0.5 text-white group-hover:block"
+                    onClick={async () => {
+                      if (await ctConfirm({ title: `Xoá “${m.name}”?`, tone: "danger", confirmLabel: "Xoá" })) await props.onDelete(m);
+                    }}
+                  >
                     <Trash2 className="h-3 w-3" />
                   </button>
+                  <p className="w-24 truncate text-[10px] text-muted-foreground">{m.name}</p>
                 </div>
               );
             })}
-            {composites.length === 0 && <p className="py-6 text-xs text-muted-foreground">Chưa có — bấm “Lưu tổ hợp này” ở bên phải.</p>}
+            {saved.length === 0 && <p className="py-6 text-xs text-muted-foreground">Chưa có — làm xong vùng edit thì bấm “Lưu tổ hợp”.</p>}
           </div>
-          {mockups.length > 0 && (
-            <>
-              <div className="mb-2 mt-3 text-xs font-semibold">Mockup ({mockups.length})</div>
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {mockups.map((m) => (
-                  <div key={m.id} className="group relative shrink-0">
-                    <a href={m.url} target="_blank" rel="noreferrer" className="block h-32 w-32 overflow-hidden rounded border">
-                      <img src={m.url} alt="" className="h-full w-full object-cover" loading="lazy" />
-                    </a>
-                    <button className="absolute left-1 top-1 hidden rounded bg-black/60 p-0.5 text-white group-hover:block" onClick={() => props.onDelete(m)}>
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </>
+          {saved.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-dashed px-3 py-2">
+              <span className="text-xs text-muted-foreground">Chưa hài lòng về chất lượng?</span>
+              <CtButton size="sm" variant="primary" onClick={() => setEnhanceOpen(true)}>
+                <Sparkles className="h-3.5 w-3.5" /> Tăng chất lượng với AI tạo ảnh
+              </CtButton>
+              <span className="text-[11px] text-muted-foreground">AI làm lại từng tổ hợp thành ảnh thật, lấy các tổ hợp khác (#1, #2…) làm tham khảo.</span>
+            </div>
           )}
         </div>
       </div>
 
+      {/* Right: the frames, then the selected one's settings */}
       <div className="flex min-h-0 flex-col border-l">
-        <div className="border-b px-3 py-2 text-sm font-semibold">Tuỳ chọn khách hàng</div>
-        <div className="flex-1 space-y-4 overflow-y-auto p-3">
-          {regions.length === 0 && props.mains.length < 2 && <p className="text-xs text-muted-foreground">Chưa có vùng custom nào.</p>}
-          {props.mains.length > 1 && (
-            <CtField label={props.mainConfig.label || "Main"}>
-              <OptionPicker
-                display={props.mainConfig.display}
-                value={selectedMainId(selection, assets, main.id)}
-                options={props.mains.map((m) => ({ id: m.id, label: m.name, image: m.url, swatch: m.meta.swatch }))}
-                onChange={(id) => id && props.onSelectionChange({ ...selection, [CT_MAIN_KEY]: { kind: "main", assetId: id } })}
-              />
-            </CtField>
-          )}
-          {formOrder(regions).map((r) => {
-            const sel = selection[r.id];
-            if (r.kind === "image") {
-              const groups = regionGroups(r, items, assets);
-              const current = sel?.kind === "image" ? sel.assetId : null;
-              const at = locateOption(groups, current);
-              const group = groups[Math.max(0, at.group)];
-              return (
-                <div key={r.id} className="space-y-3">
-                  {groups.length > 1 && (
-                    <CtField label={r.config.image.groupLabel || "Style"}>
-                      <OptionPicker
-                        display={r.config.image.groupDisplay}
-                        value={group?.item.id ?? null}
-                        options={groups.map((g) => ({ id: g.item.id, label: g.name, image: g.options[0].url, swatch: g.options[0].meta.swatch }))}
-                        onChange={(id) => {
-                          const gi = groups.findIndex((g) => g.item.id === id);
-                          setSel(r.id, { kind: "image", assetId: optionInGroup(groups, gi, current) });
-                        }}
-                      />
-                    </CtField>
-                  )}
-                  <CtField label={r.config.image.label || r.name}>
-                    {group ? (
-                      <OptionPicker
-                        display={r.config.image.display}
-                        allowNone={r.config.image.allowNone}
-                        value={current}
-                        options={group.options.map((o) => ({ id: o.id, label: o.name, image: o.url, swatch: o.meta.swatch }))}
-                        onChange={(id) => setSel(r.id, { kind: "image", assetId: id })}
-                      />
-                    ) : (
-                      <span className="text-[11px] text-muted-foreground">Vùng chưa có option.</span>
-                    )}
-                  </CtField>
-                </div>
-              );
-            }
-            if (r.kind === "text") {
-              const text = sel?.kind === "text" ? sel.text : "";
-              const choices = r.config.text.choices.filter(Boolean);
-              if (choices.length > 0) {
-                return (
-                  <CtField key={r.id} label={r.config.text.label}>
-                    <CtSelect value={text} onChange={(v) => setSel(r.id, { kind: "text", text: v })} options={choices.map((c) => ({ value: c, label: c }))} />
-                  </CtField>
-                );
-              }
-              return (
-                <CtField key={r.id} label={`${r.config.text.label} (${text.length}/${r.config.text.maxChars})`}>
-                  <CtInput
-                    value={text}
-                    maxLength={r.config.text.maxChars}
-                    placeholder={r.config.text.placeholder}
-                    onChange={(e) => setSel(r.id, { kind: "text", text: e.target.value })}
-                  />
-                </CtField>
-              );
-            }
-            const photoUrl = sel?.kind === "photo" ? sel.url : null;
-            const pcfg = r.config.photo;
-            return (
-              <CtField key={r.id} label={r.config.photo.label}>
-                <label className="flex h-8 cursor-pointer items-center justify-center rounded-md border border-dashed text-xs hover:bg-accent">
-                  {photoUrl ? "Đổi ảnh" : "Upload ảnh"}
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      e.target.value = "";
-                      if (!f) return;
-                      const sourceUrl = URL.createObjectURL(f);
-                      // Not drawn until processed (cut-out + style): the zone stays empty meanwhile.
-                      const base: CtPhotoSelection = { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM }, style: pcfg.defaultStyle, sourceUrl };
-                      setSel(r.id, base);
-                      void applyStyle(r, base, pcfg.defaultStyle);
-                    }}
-                  />
-                </label>
-                {/* Same picker the storefront's Edit photo dialog shows (free + AI styles of this zone). */}
-                {sel?.kind === "photo" && sel.sourceUrl && pcfg.styles.length > 1 && (
-                  <CtField label={pcfg.styleLabel || "Choose style"}>
-                    <CtSelect<CtPhotoStyleRef>
-                      value={sel.style ?? "original"}
-                      disabled={photoBusy[r.id] !== undefined}
-                      onChange={(style) => void applyStyle(r, sel, style)}
-                      options={pcfg.styles.map((id) => ({ value: id, label: styleLabel(id, aiNames) }))}
-                    />
-                  </CtField>
-                )}
-                {photoBusy[r.id] && (
-                  <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <Loader2 className="h-3 w-3 animate-spin" /> {photoBusy[r.id]}
-                  </p>
-                )}
-                {photoError[r.id] && <p className="text-[11px] text-destructive">{photoError[r.id]}</p>}
-                {photoUrl && sel?.kind === "photo" && (
-                  <div className="grid grid-cols-2 gap-1.5 pt-1">
-                    <CtField label="Zoom">
-                      <input type="range" min={20} max={400} value={sel.transform.scale * 100} className="w-full accent-sky-500"
-                        onChange={(e) => setSel(r.id, { ...sel, transform: { ...sel.transform, scale: Number(e.target.value) / 100 } })} />
-                    </CtField>
-                    <CtField label="Xoay">
-                      <input type="range" min={-180} max={180} value={sel.transform.rotation} className="w-full accent-sky-500"
-                        onChange={(e) => setSel(r.id, { ...sel, transform: { ...sel.transform, rotation: Number(e.target.value) } })} />
-                    </CtField>
-                    <CtField label="X">
-                      <input type="range" min={-100} max={100} value={sel.transform.offsetX * 100} className="w-full accent-sky-500"
-                        onChange={(e) => setSel(r.id, { ...sel, transform: { ...sel.transform, offsetX: Number(e.target.value) / 100 } })} />
-                    </CtField>
-                    <CtField label="Y">
-                      <input type="range" min={-100} max={100} value={sel.transform.offsetY * 100} className="w-full accent-sky-500"
-                        onChange={(e) => setSel(r.id, { ...sel, transform: { ...sel.transform, offsetY: Number(e.target.value) / 100 } })} />
-                    </CtField>
-                  </div>
-                )}
-              </CtField>
-            );
-          })}
+        <div className="flex items-center justify-between border-b px-3 py-2">
+          <span className="text-sm font-semibold">Layers</span>
+          <span className="text-[11px] text-muted-foreground">kéo để đổi thứ tự</span>
         </div>
-        <div className="space-y-2 border-t p-3">
-          {hasRenditions && material.display === "rendition" && (
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-              <input type="checkbox" className="accent-sky-500" checked={withMaterial} onChange={(e) => setWithMaterial(e.target.checked)} />
-              Xem / tải bằng bản vật liệu AI (tổ hợp lưu vẫn là art phẳng)
-            </label>
+        <div className="max-h-[40%] shrink-0 overflow-y-auto border-b">
+          {shown.map((l) => (
+            <div
+              key={l.id}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData(LAYER_DRAG, l.id);
+                e.dataTransfer.effectAllowed = "move";
+                setDragRow(l.id);
+              }}
+              onDragEnd={() => {
+                setDragRow(null);
+                setOverRow(null);
+              }}
+              onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes(LAYER_DRAG)) return;
+                e.preventDefault();
+                setOverRow(l.id);
+              }}
+              onDrop={(e) => {
+                const id = e.dataTransfer.getData(LAYER_DRAG);
+                setDragRow(null);
+                setOverRow(null);
+                if (id) restack(id, l.id);
+              }}
+              onClick={() => setLayerId(l.id)}
+              className={cx(
+                "group flex cursor-pointer items-center gap-1.5 border-b px-2 py-1.5 text-xs last:border-b-0",
+                l.id === layerId ? "bg-sky-500/15" : "hover:bg-accent",
+                overRow === l.id && dragRow !== l.id && "border-t-2 border-t-sky-500",
+                dragRow === l.id && "opacity-40",
+                l.hidden && "text-muted-foreground",
+              )}
+            >
+              <GripVertical className="h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground" />
+              <span className="flex h-7 w-7 shrink-0 overflow-hidden rounded border" style={CHECKER_STYLE}>
+                {layerThumb(l)}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{l.name || LAYER_LABEL[l.type]}</span>
+                <span className="block text-[10px] text-muted-foreground">{LAYER_LABEL[l.type]}</span>
+              </span>
+              <button
+                className="rounded p-1 hover:bg-background"
+                title={l.hidden ? "Hiện" : "Ẩn"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  patchLayer(l.id, { hidden: !l.hidden });
+                }}
+              >
+                {l.hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+              <button
+                className="rounded p-1 text-destructive hover:bg-background"
+                title="Xoá frame"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeLayer(l.id);
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+          {shown.length === 0 && <p className="px-3 py-4 text-xs text-muted-foreground">Chưa có frame nào.</p>}
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+          {layer ? (
+            <LayerSettings
+              key={layer.id}
+              layer={layer}
+              scene={scene}
+              versions={versions}
+              assets={assets}
+              busy={!!busy}
+              onPatch={(patch, how) => patchLayer(layer.id, patch, how)}
+              onCommit={() => commit(scene)}
+              onReplaceImage={(l) => void replaceImage(l)}
+              onFrameToImage={(l) => void frameToImage(l)}
+              onAiMaterial={(f) => void aiMaterial(f)}
+            />
+          ) : (
+            <SceneSettings scene={scene} onRename={(name) => commit({ ...scene, name })} onResize={(w, h) => commit(resizeSlide(scene, w, h))} />
           )}
-          <div className="flex gap-1.5">
-            <CtButton size="sm" className="flex-1 justify-center" onClick={() => props.onSelectionChange(randomSelection(regions, items, assets, selection, props.mains))}>
-              <Shuffle className="h-3.5 w-3.5" /> Random
-            </CtButton>
-            <CtButton size="sm" className="flex-1 justify-center" onClick={download}>
-              <Download className="h-3.5 w-3.5" /> Tải PNG
-            </CtButton>
-          </div>
-          <CtButton variant="primary" className="w-full justify-center" onClick={saveCurrent} disabled={busy !== null}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Lưu tổ hợp này
+        </div>
+
+        <div className="space-y-2 border-t p-3">
+          <CtButton size="sm" className="w-full justify-center" onClick={() => void download()} disabled={!scene.layers.length}>
+            <Download className="h-3.5 w-3.5" /> Tải ảnh
           </CtButton>
-          <div className="flex items-center gap-1.5">
-            <CtInput type="number" min={1} max={50} value={bulk} className="w-16" onChange={(e) => setBulk(Math.max(1, Math.min(50, Number(e.target.value) || 1)))} />
-            <CtButton size="sm" className="flex-1 justify-center" onClick={() => saveBulk("random")} disabled={busy !== null}>
-              Lưu N random
-            </CtButton>
-            <CtButton size="sm" className="flex-1 justify-center" onClick={() => saveBulk("all")} disabled={busy !== null}>
-              Lưu N tổ hợp
-            </CtButton>
-          </div>
+          <CtButton variant="primary" className="w-full justify-center" onClick={() => void saveScene()} disabled={busy !== null || !scene.layers.length || missing.length > 0}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Lưu tổ hợp
+          </CtButton>
           {busy && <p className="text-[11px] text-muted-foreground">{busy}</p>}
+          {error && <p className="text-[11px] text-destructive">{error}</p>}
         </div>
       </div>
+
+      <EnhanceDialog
+        open={enhanceOpen}
+        onOpenChange={setEnhanceOpen}
+        productId={props.productId}
+        items={numbered}
+        initial={picked.length ? picked : savedScenes.map((m) => m.id)}
+        onAdded={props.onAdded}
+        flash={props.flash}
+      />
     </div>
   );
 }
 
-interface PickerOption {
-  id: string;
-  label: string;
-  image?: string;
-  swatch?: string;
+// ---------------------------------------------------------------------------
+// Settings column
+// ---------------------------------------------------------------------------
+
+function SceneSettings({ scene, onRename, onResize }: { scene: CtPackSlide; onRename: (name: string) => void; onResize: (w: number, h: number) => void }) {
+  return (
+    <>
+      <p className="text-xs font-semibold">Khung edit</p>
+      <CtField label="Tên tổ hợp">
+        <CtInput key={scene.id} defaultValue={scene.name} onBlur={(e) => e.target.value.trim() && e.target.value !== scene.name && onRename(e.target.value.trim())} />
+      </CtField>
+      <div className="grid grid-cols-2 gap-2">
+        <CtField label="Rộng (px)">
+          <CtNumber value={scene.width} min={64} max={8192} onChange={(w) => w >= 64 && onResize(w, scene.height)} />
+        </CtField>
+        <CtField label="Cao (px)">
+          <CtNumber value={scene.height} min={64} max={8192} onChange={(h) => h >= 64 && onResize(scene.width, h)} />
+        </CtField>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {SIZE_PRESETS.map((p) => (
+          <CtButton key={p.label} size="sm" variant={scene.width === p.w && scene.height === p.h ? "primary" : "outline"} onClick={() => onResize(p.w, p.h)}>
+            {p.label}
+          </CtButton>
+        ))}
+      </div>
+      <p className="text-[11px] text-muted-foreground">Chọn 1 frame (trong vùng edit hoặc danh sách Layers) để chỉnh kích thước, vị trí và thông số của nó.</p>
+    </>
+  );
 }
 
-const NONE = "__none__";
+interface LayerSettingsProps {
+  layer: CtPackLayer;
+  scene: CtPackSlide;
+  versions: CtAsset[];
+  assets: CtAsset[];
+  busy: boolean;
+  onPatch: (patch: Partial<CtPackLayer>, how?: "commit" | "live") => void;
+  /** End of a live gesture (slider, colour picker). */
+  onCommit: () => void;
+  onReplaceImage: (l: CtPackImageLayer) => void;
+  onFrameToImage: (l: CtPackImageLayer) => void;
+  onAiMaterial: (f: CtPackFrameLayer) => void;
+}
 
-/** One option group the way the storefront shows it (tiles, swatches, chips or a dropdown). */
-function OptionPicker({
-  display,
-  options,
-  value,
-  onChange,
-  allowNone,
-}: {
-  display: CtOptionDisplay;
-  options: PickerOption[];
-  value: string | null;
-  onChange: (id: string | null) => void;
-  allowNone?: boolean;
-}) {
-  if (display === "dropdown") {
-    return (
-      <CtSelect<string>
-        value={value ?? (allowNone ? NONE : "")}
-        onChange={(v) => onChange(v === NONE ? null : v)}
-        options={[...(allowNone ? [{ value: NONE, label: "None" }] : []), ...options.map((o) => ({ value: o.id, label: o.label || "(không tên)" }))]}
-      />
-    );
-  }
-  const ring = (on: boolean) => (on ? "ring-2 ring-orange-500 border-orange-500" : "");
+function LayerSettings(p: LayerSettingsProps) {
+  const { layer, scene } = p;
+  const b = layer.box;
+  const setBox = (patch: Partial<CtPackBox>) => p.onPatch({ box: { ...b, ...patch } });
   return (
-    <div className={cx("flex flex-wrap gap-1.5", display === "image" && "grid grid-cols-4")}>
-      {allowNone && (
-        <button
-          className={cx("flex items-center justify-center rounded border text-xs font-bold", display === "image" ? "aspect-square" : "h-8 px-3", ring(value === null))}
-          onClick={() => onChange(null)}
+    <>
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold">{LAYER_LABEL[layer.type]}</p>
+        <CtTooltip label="Phủ kín khung edit">
+          <CtButton size="sm" variant="ghost" onClick={() => setBox({ x: 0, y: 0, w: scene.width, h: scene.height, rotation: 0 })}>
+            <Maximize className="h-3.5 w-3.5" /> Vừa khung
+          </CtButton>
+        </CtTooltip>
+      </div>
+      <CtField label="Tên">
+        <CtInput key={layer.id} defaultValue={layer.name} onBlur={(e) => e.target.value !== layer.name && p.onPatch({ name: e.target.value })} />
+      </CtField>
+      <div className="grid grid-cols-2 gap-2">
+        <CtField label="Rộng">
+          <CtNumber value={Math.round(b.w)} min={1} onChange={(w) => w >= 1 && setBox({ w })} />
+        </CtField>
+        <CtField label="Cao">
+          <CtNumber value={Math.round(b.h)} min={1} onChange={(h) => h >= 1 && setBox({ h })} />
+        </CtField>
+        <CtField label="X">
+          <CtNumber value={Math.round(b.x)} onChange={(x) => setBox({ x })} />
+        </CtField>
+        <CtField label="Y">
+          <CtNumber value={Math.round(b.y)} onChange={(y) => setBox({ y })} />
+        </CtField>
+        <CtField label="Xoay (°)">
+          <CtNumber value={b.rotation} min={-360} max={360} onChange={(rotation) => setBox({ rotation })} />
+        </CtField>
+        <CtField label="Độ mờ (%)">
+          <CtNumber value={Math.round(layer.opacity * 100)} min={0} max={100} onChange={(v) => p.onPatch({ opacity: Math.min(1, Math.max(0, v / 100)) })} />
+        </CtField>
+      </div>
+
+      {layer.type === "fill" && <FillSettings layer={layer} onPatch={p.onPatch} onCommit={p.onCommit} />}
+      {layer.type === "image" && (
+        <>
+          <div className="flex gap-1.5">
+            <CtButton size="sm" className="flex-1 justify-center" onClick={() => p.onReplaceImage(layer)} disabled={p.busy}>
+              <ImagePlus className="h-3.5 w-3.5" /> Đổi ảnh
+            </CtButton>
+            <CtTooltip label="Khung edit theo tỉ lệ ảnh này, ảnh phủ kín khung">
+              <CtButton size="sm" className="flex-1 justify-center" onClick={() => p.onFrameToImage(layer)}>
+                Khung theo ảnh
+              </CtButton>
+            </CtTooltip>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <CtField label="Ảnh trong frame">
+              <CtSelect
+                value={layer.fit}
+                onChange={(fit) => p.onPatch({ fit })}
+                options={[
+                  { value: "cover", label: "Phủ kín (cắt)" },
+                  { value: "contain", label: "Vừa (không cắt)" },
+                  { value: "stretch", label: "Kéo giãn" },
+                ]}
+              />
+            </CtField>
+            <CtField label="Hoà trộn">
+              <CtSelect value={layer.blend} onChange={(blend) => p.onPatch({ blend })} options={BLENDS.map((x) => ({ value: x, label: x }))} />
+            </CtField>
+          </div>
+        </>
+      )}
+      {layer.type === "text" && <TextSettings layer={layer} onPatch={p.onPatch} onCommit={p.onCommit} />}
+      {layer.type === "frame" && (
+        <>
+          {p.versions.length > 1 && (
+            <CtField label="Version">
+              <CtSelect
+                value={String(Math.min(layer.mainIndex, p.versions.length - 1))}
+                onChange={(v) => p.onPatch({ mainIndex: Number(v), artworkId: null, name: p.versions[Number(v)]?.name || layer.name } as Partial<CtPackFrameLayer>)}
+                options={p.versions.map((v, i) => ({ value: String(i), label: v.name || `Version ${i + 1}` }))}
+              />
+            </CtField>
+          )}
+          <CtCheckbox checked={layer.shadow.enabled} onChange={(enabled) => p.onPatch({ shadow: { ...layer.shadow, enabled } })} label="Đổ bóng" />
+          {layer.shadow.enabled && (
+            <div className="grid grid-cols-3 gap-2">
+              <CtField label="Mờ bóng">
+                <CtNumber value={layer.shadow.blur} min={0} max={400} onChange={(blur) => p.onPatch({ shadow: { ...layer.shadow, blur } })} />
+              </CtField>
+              <CtField label="Lệch Y">
+                <CtNumber value={layer.shadow.dy} min={-400} max={400} onChange={(dy) => p.onPatch({ shadow: { ...layer.shadow, dy } })} />
+              </CtField>
+              <CtField label="Đậm (%)">
+                <CtNumber
+                  value={Math.round(layer.shadow.opacity * 100)}
+                  min={0}
+                  max={100}
+                  onChange={(v) => p.onPatch({ shadow: { ...layer.shadow, opacity: Math.min(1, Math.max(0, v / 100)) } })}
+                />
+              </CtField>
+            </div>
+          )}
+          <CtField label="Dây treo">
+            <CtSelect
+              value={layer.hanger}
+              onChange={(hanger) => p.onPatch({ hanger })}
+              options={[
+                { value: "auto", label: "Theo vật liệu" },
+                { value: "on", label: "Luôn có" },
+                { value: "off", label: "Không" },
+              ]}
+            />
+          </CtField>
+          {layer.hanger !== "off" && (
+            <div className="grid grid-cols-2 gap-2">
+              <CtField label="Dài dây">
+                <CtNumber value={Math.round(layer.cordLength)} min={0} onChange={(cordLength) => p.onPatch({ cordLength })} />
+              </CtField>
+              <CtField label="Nghiêng (°)">
+                <CtNumber value={layer.cordAngle} min={-80} max={80} onChange={(cordAngle) => p.onPatch({ cordAngle })} />
+              </CtField>
+            </div>
+          )}
+          {layer.artworkId && renditionOf(p.assets, layer.artworkId) ? (
+            <CtButton size="sm" variant="ghost" className="w-full justify-center" onClick={() => p.onPatch({ artworkId: null } as Partial<CtPackFrameLayer>)}>
+              Đang dùng vật liệu AI · bỏ
+            </CtButton>
+          ) : (
+            <CtTooltip label="Khi phần custom vượt ra ngoài main: AI làm vật liệu cho cả artwork để viền / độ dày ôm đúng hình">
+              <span className="block">
+                <CtButton size="sm" className="w-full justify-center" onClick={() => p.onAiMaterial(layer)} disabled={p.busy}>
+                  <Sparkles className="h-3.5 w-3.5" /> Vật liệu AI cho artwork
+                </CtButton>
+              </span>
+            </CtTooltip>
+          )}
+          <p className="text-[11px] text-muted-foreground">Nội dung (chữ, ảnh, option) lấy từ tab Thiết kế — sửa ở đó, frame tự đổi theo.</p>
+        </>
+      )}
+    </>
+  );
+}
+
+function FillSettings({ layer, onPatch, onCommit }: { layer: CtPackFillLayer; onPatch: LayerSettingsProps["onPatch"]; onCommit: () => void }) {
+  const [q, setQ] = useState("");
+  const list = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    return s ? CT_GRADIENTS.filter((g) => g.name.toLowerCase().includes(s)) : CT_GRADIENTS;
+  }, [q]);
+  const g = layer.gradient;
+  return (
+    <>
+      <div className="flex gap-1">
+        <CtButton size="sm" className="flex-1 justify-center" variant={g ? "outline" : "primary"} onClick={() => g && onPatch({ gradient: null })}>
+          Màu thường
+        </CtButton>
+        <CtButton
+          size="sm"
+          className="flex-1 justify-center"
+          variant={g ? "primary" : "outline"}
+          onClick={() => !g && onPatch({ gradient: { name: CT_GRADIENTS[0].name, colors: CT_GRADIENTS[0].colors, angle: 90 } })}
         >
-          NO
-        </button>
+          Gradient
+        </CtButton>
+      </div>
+      {!g ? (
+        <CtField label="Màu">
+          <input
+            type="color"
+            className="h-9 w-full cursor-pointer rounded border"
+            value={/^#[0-9a-f]{6}$/i.test(layer.color) ? layer.color : "#ffffff"}
+            onChange={(e) => onPatch({ color: e.target.value }, "live")}
+            onBlur={onCommit}
+          />
+        </CtField>
+      ) : (
+        <>
+          <div className="h-10 w-full rounded border" style={{ background: gradientCss(g) }} title={g.name} />
+          <div className="grid grid-cols-[1fr_auto] items-end gap-2">
+            <CtField label={`Gradient · ${g.name || "tuỳ chỉnh"}`}>
+              <CtInput placeholder={`Tìm trong ${CT_GRADIENTS.length} gradient…`} value={q} onChange={(e) => setQ(e.target.value)} />
+            </CtField>
+            <CtField label="Góc (°)">
+              <CtNumber className="w-20" value={g.angle} min={-360} max={360} onChange={(angle) => onPatch({ gradient: { ...g, angle } })} />
+            </CtField>
+          </div>
+          <div className="grid max-h-56 grid-cols-6 gap-1 overflow-y-auto pr-1">
+            {list.map((x) => (
+              <button
+                key={x.name}
+                title={x.name}
+                className={cx("aspect-square rounded border", x.name === g.name && "ring-2 ring-sky-500")}
+                style={{ background: gradientCss({ colors: x.colors, angle: g.angle }) }}
+                onClick={() => onPatch({ gradient: { name: x.name, colors: x.colors, angle: g.angle } })}
+              />
+            ))}
+            {list.length === 0 && <p className="col-span-6 text-[11px] text-muted-foreground">Không có gradient nào khớp.</p>}
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            {g.colors.map((c, i) => (
+              <input
+                key={i}
+                type="color"
+                className="h-7 w-8 cursor-pointer rounded border"
+                value={/^#[0-9a-f]{6}$/i.test(c) ? c : "#ffffff"}
+                onChange={(e) => onPatch({ gradient: { ...g, name: "", colors: g.colors.map((x, j) => (j === i ? e.target.value : x)) } }, "live")}
+                onBlur={onCommit}
+              />
+            ))}
+          </div>
+        </>
       )}
-      {options.map((o) =>
-        display === "button" ? (
-          <button key={o.id} className={cx("h-8 rounded border px-3 text-xs font-medium", ring(value === o.id))} onClick={() => onChange(o.id)}>
-            {o.label || "(không tên)"}
-          </button>
-        ) : display === "swatch" ? (
-          <button
-            key={o.id}
-            className={cx("h-9 w-9 overflow-hidden rounded-full border", ring(value === o.id))}
-            style={o.swatch ? { background: o.swatch } : CHECKER_STYLE}
-            onClick={() => onChange(o.id)}
-            aria-label={o.label}
-          >
-            {!o.swatch && o.image && <img src={o.image} alt="" className="h-full w-full object-cover" />}
-          </button>
-        ) : (
-          <button
-            key={o.id}
-            className={cx("aspect-square overflow-hidden rounded border", ring(value === o.id))}
-            style={CHECKER_STYLE}
-            onClick={() => onChange(o.id)}
-            aria-label={o.label}
-          >
-            {o.image && <img src={o.image} alt="" className="h-full w-full object-contain" />}
-          </button>
-        ),
-      )}
-    </div>
+    </>
+  );
+}
+
+function TextSettings({ layer, onPatch, onCommit }: { layer: CtPackTextLayer; onPatch: LayerSettingsProps["onPatch"]; onCommit: () => void }) {
+  const font = CT_FONTS.find((f) => f.family === layer.fontFamily);
+  const weights = font?.weights ?? [400, 600, 700];
+  return (
+    <>
+      <CtField label="Nội dung">
+        <CtTextarea rows={2} value={layer.text} onChange={(e) => onPatch({ text: e.target.value }, "live")} onBlur={onCommit} />
+      </CtField>
+      <div className="grid grid-cols-2 gap-2">
+        <CtField label="Font">
+          <CtSelect
+            value={layer.fontFamily}
+            onChange={(fontFamily) => {
+              const w = CT_FONTS.find((f) => f.family === fontFamily)?.weights ?? [];
+              onPatch({ fontFamily, fontWeight: w.includes(layer.fontWeight) ? layer.fontWeight : (w[w.length - 1] ?? 400) });
+            }}
+            options={CT_FONTS.map((f) => ({ value: f.family, label: f.label }))}
+          />
+        </CtField>
+        <CtField label="Độ đậm">
+          <CtSelect value={String(layer.fontWeight)} onChange={(v) => onPatch({ fontWeight: Number(v) })} options={weights.map((w) => ({ value: String(w), label: String(w) }))} />
+        </CtField>
+        <CtField label="Cỡ chữ">
+          <CtNumber value={Math.round(layer.fontSize)} min={6} max={1000} onChange={(fontSize) => fontSize >= 6 && onPatch({ fontSize })} />
+        </CtField>
+        <CtField label="Màu">
+          <input
+            type="color"
+            className="h-8 w-full cursor-pointer rounded border"
+            value={/^#[0-9a-f]{6}$/i.test(layer.color) ? layer.color : "#ffffff"}
+            onChange={(e) => onPatch({ color: e.target.value }, "live")}
+            onBlur={onCommit}
+          />
+        </CtField>
+      </div>
+      <div className="flex items-center gap-1">
+        {(
+          [
+            ["left", AlignLeft],
+            ["center", AlignCenter],
+            ["right", AlignRight],
+          ] as const
+        ).map(([align, Icon]) => (
+          <CtButton key={align} size="icon" variant={layer.align === align ? "primary" : "ghost"} onClick={() => onPatch({ align })}>
+            <Icon className="h-3.5 w-3.5" />
+          </CtButton>
+        ))}
+        <span className="ml-2">
+          <CtCheckbox checked={layer.shadow} onChange={(shadow) => onPatch({ shadow })} label="Bóng chữ" />
+        </span>
+      </div>
+    </>
   );
 }

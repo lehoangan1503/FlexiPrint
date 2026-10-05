@@ -21,11 +21,24 @@
  *   POST   public/uploads/:productId     multipart: file, kind=photo|preview
  *   POST   public/photo/:productId       multipart: file, region, style, cutout=0|1 → processed image bytes
  *
+ * MCP (session cookie, or Bearer CT_COMFY_TOKEN for agents / the studio):
+ *   POST   mcp                           flexiprint-mcp, JSON-RPC 2.0 (server/mcp): Bearer CT_AGENT_TOKEN (agent) | CT_COMFY_TOKEN (studio) | cookie
+ *
  * Cron (Bearer CT_CRON_SECRET, no session):
  *   POST   cron/cleanup                  delete cached photo results older than 24 h
  *
  * Editor photo tools:
  *   GET    ai/photo                      → { ai, cutout, aiStyles } capabilities
+ *   POST   ai/refine-suggest             multipart: keep, fix, image_url×n, file×≤4, category, style, update_spec, update_style → CtRefineSuggestion
+ *   POST   ai/prompt-suggest             multipart: name?, spec?, note?, file×≤4 → CtPromptSuggestion (category dialog; reuses library presets)
+ *   POST   ai/category-revise            multipart: category (JSON {id?, name, spec, rules}), note, image_file/image_label/image_url×≤12 (numbered results), ref_url×≤4 → CtCategoryRevision (recorded in ct_category_history)
+ *   POST   ai/category-review            multipart: category (JSON {id?, name, spec, rules}) → CtCategoryRevision: the prompts checked as assembled, fixes as a plan (server/ai/prompt-review.ts)
+ *   GET    ai/agent-status               → CtAgentStatus (the @flexiprint agent on agent_ide: configured / online)
+ *   POST   ai/agent-tasks                {kind: create|revise, input: CtAgentTaskInput} → CtAgentTask, sent to agent_ide (server/agent/tasks.ts)
+ *   GET    ai/agent-tasks/:id            → CtAgentTask (progress, then result in the built-in LLM's shape)
+ *   POST   ai/agent-tasks/:id/cancel
+ *   POST   ai/details-suggest            multipart: name, spec, note, ref_url×≤6, file×≤4 → CtDetailsSuggestion (category's chi tiết thành phẩm)
+ *   POST   ai/preset-prompt              multipart: kind, preset_id?, name?, note, prompt?, ref_url×≤6, file×≤4 → CtPresetPromptSuggestion (recorded in the preset's history)
  *   POST   products/:id/photo            multipart: file, style, cutout=0|1 → processed image bytes
  *   POST   products/:id/print-pack       multipart: file (flat design), main?, material, dpi? → zip (services/material-render)
  *
@@ -40,21 +53,36 @@
  *   POST   library/categories            CtCategoryBody
  *   PATCH  library/categories/:id        CtCategoryBody
  *   DELETE library/categories/:id        409 while it holds cliparts / sub-categories
+ *   GET    library/categories/:id/history → { history: CtCategoryHistoryEntry[] } (AI revisions + saves, migration 010)
  *   GET    library/cliparts?category=<id|none>&q=   → { cliparts } (origins + members + renditions)
  *   POST   library/cliparts              multipart: file, category_id?, parent_id?, rendition=1?, name?, spec?, tags?, source?, meta?
  *   PATCH  library/cliparts/:id          CtUpdateClipartBody
- *   DELETE library/cliparts/:id          409 while a product uses it
+ *   DELETE library/cliparts/:id[?force=1] 409 while a product uses it; force = take it out of those products, then delete
+ *   POST   library/cliparts/:id/replace  { with, keep_renditions? } — products using it switch to clipart `with`, then it is deleted
+ *                                       (keep_renditions: its vật liệu versions move to `with` too, to be made again)
  *   GET    library/cliparts/:id/usage    → { usage: CtClipartUsage[] }
  *   POST   assets/:id/promote            { category_id } — move a product clipart into the library
  *   POST   products/:id/mains            { asset_id } — use a library main as a version
  *   DELETE products/:id/mains/:assetId
+ *   GET    library/packs                 → { packs, admin }  mockup packs (server/mockup-packs.ts)
+ *   POST   library/packs                 CtMockupPackBody
+ *   PATCH  library/packs/:id             CtMockupPackBody
+ *   DELETE library/packs/:id
+ *   POST   library/packs/images          multipart file → { url, width, height }
  *   GET    presets?kind=                 → { presets, admin }  (style_pack | material | scene)
  *   POST   presets                       CtPresetBody
  *   PATCH  presets/:id                   CtPresetBody
  *   DELETE presets/:id
+ *   POST   presets/refs                  multipart file → { url }  (a preset's reference photo)
+ *   GET    presets/:id/history           → { history: CtPresetHistoryEntry[] }  (analyses + saves, newest first)
  *
  * ComfyUI studio (server/studio.ts):
  *   POST   studio/session                sets the fp_studio cookie → { url }
+ *   GET    studio/models                 → { models }  (AI dialog)
+ *   POST   studio/runs                   CtStudioRunBody → { run_id }  — one of the 4 recipes, run by ComfyUI
+ *   GET    studio/runs/:id               → CtStudioRunStatus
+ *   POST   studio/drafts                 CtStudioRunBody → { draft_id }  — same graph, opened in the studio
+ *   POST   studio/refs                   multipart file → { name }  — reference photo for the origin recipe
  *   GET    studio/auth                   nginx auth_request (cookie, no session) → 204 | 401
  *   *      internal/*                    node pack API, Bearer CT_COMFY_TOKEN (docker network only)
  */
@@ -65,17 +93,23 @@ import type {
   CtAiStyleBody,
   CtCategoryBody,
   CtCreateProductBody,
+  CtMockupPackBody,
   CtPresetBody,
   CtSaveDesignBody,
+  CtStudioRunBody,
   CtUpdateAssetBody,
   CtUpdateClipartBody,
   CtUpdateProductBody,
 } from "../types";
-import { ctSession, type CtSession } from "./supabase";
+import { ctServiceClient, ctSession, type CtSession } from "./supabase";
 import * as h from "./handlers";
 import * as st from "./ai-styles";
 import * as lib from "./library";
 import * as studio from "./studio";
+import * as packs from "./mockup-packs";
+import { reviewCategoryPrompts, suggestCategoryPrompts, suggestCategoryRevision, suggestDetails, suggestPresetPrompt, suggestRefine } from "./ai/prompt-writer";
+import { mcpEndpoint } from "./mcp/server";
+import { agentStatus, cancelAgentTask, createAgentTask, getAgentTask } from "./agent/tasks";
 
 export interface CtRouteContext {
   params: Promise<{ path?: string[] }>;
@@ -121,6 +155,7 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
   // ComfyUI studio: nginx auth_request (own cookie) and the node pack's internal API (bearer token).
   if (path[0] === "studio" && path[1] === "auth" && req.method === "GET") return studio.studioAuth(req);
   if (path[0] === "internal") return studio.dispatchInternal(req, path);
+  if (path[0] === "mcp" && path.length === 1) return mcpEndpoint(req);
 
   const session = await ctSession();
   if (!session) return h.jsonError("Chưa đăng nhập", 401);
@@ -130,12 +165,32 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
   if (head === "ai") {
     if (id === "providers" && method === "GET") return h.aiProviders();
     if (id === "photo" && method === "GET") return h.photoCapabilitiesResponse();
+    if (id === "prompt-suggest" && method === "POST") return suggestCategoryPrompts(session, await req.formData());
+    if (id === "preset-prompt" && method === "POST") return suggestPresetPrompt(session, await req.formData());
+    if (id === "category-revise" && method === "POST") return suggestCategoryRevision(session, await req.formData());
+    if (id === "category-review" && method === "POST") return reviewCategoryPrompts(session, await req.formData());
+    if (id === "agent-status" && method === "GET") return agentStatus();
+    if (id === "agent-tasks" && !sub && method === "POST") return createAgentTask(session, await readJson<unknown>(req));
+    if (id === "agent-tasks" && sub && !path[3] && method === "GET") return getAgentTask(session, sub);
+    if (id === "agent-tasks" && sub && path[3] === "cancel" && method === "POST") return cancelAgentTask(session, sub);
+    if (id === "details-suggest" && method === "POST") return suggestDetails(await req.formData());
+    if (id === "refine-suggest" && method === "POST") return suggestRefine(await req.formData());
     return h.jsonError("Not found", 404);
   }
   if (head === "library") return dispatchLibrary(req, session, path);
-  if (head === "studio" && id === "session" && method === "POST") return studio.studioSession(session);
+  if (head === "studio") {
+    if (id === "session" && method === "POST") return studio.studioSession(session);
+    if (id === "models" && method === "GET") return studio.studioModels();
+    if (id === "runs" && !sub && method === "POST") return studio.studioRun(await readJson<CtStudioRunBody>(req));
+    if (id === "runs" && sub && method === "GET") return studio.studioRunStatus(session.supabase, sub);
+    if (id === "drafts" && method === "POST") return studio.studioDraft(await readJson<CtStudioRunBody>(req));
+    if (id === "refs" && method === "POST") return studio.studioUploadRef(await req.formData());
+    return h.jsonError("Not found", 404);
+  }
+  if (head === "presets" && id === "refs" && !sub && method === "POST") return lib.uploadPresetRef(session, await req.formData());
   if (id && !UUID.test(id)) return h.jsonError("id không hợp lệ", 400);
 
+  if (head === "presets" && id && sub === "history" && method === "GET") return lib.listPresetHistory(session, id);
   if (head === "presets" && !sub) {
     if (!id && method === "GET") return lib.listPresets(session, req.nextUrl.searchParams.get("kind"));
     const body = method === "POST" || method === "PATCH" ? await readJson<CtPresetBody>(req) : null;
@@ -209,7 +264,16 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
 async function dispatchLibrary(req: NextRequest, session: CtSession, path: string[]): Promise<NextResponse> {
   const [, resource, id, sub] = path;
   const method = req.method;
+  if (resource === "packs" && id === "images" && !sub && method === "POST") return packs.uploadPackImage(session, await req.formData());
   if (id && !UUID.test(id)) return h.jsonError("id không hợp lệ", 400);
+  if (resource === "packs" && !sub) {
+    if (!id && method === "GET") return packs.listPacks(session);
+    const body = method === "POST" || method === "PATCH" ? await readJson<CtMockupPackBody>(req) : null;
+    if (!id && method === "POST") return body ? packs.createPack(session, body) : h.jsonError("Body không hợp lệ", 400);
+    if (id && method === "PATCH") return body ? packs.updatePack(session, id, body) : h.jsonError("Body không hợp lệ", 400);
+    if (id && method === "DELETE") return packs.deletePack(session, id);
+  }
+  if (resource === "categories" && id && sub === "history" && method === "GET") return lib.listCategoryHistory(session, id);
   if (resource === "categories" && !sub) {
     if (!id && method === "GET") return lib.listCategories(session);
     const body = method === "POST" || method === "PATCH" ? await readJson<CtCategoryBody>(req) : null;
@@ -230,7 +294,11 @@ async function dispatchLibrary(req: NextRequest, session: CtSession, path: strin
       const body = await readJson<CtUpdateClipartBody>(req);
       return body ? lib.updateClipart(session, id, body) : h.jsonError("Body không hợp lệ", 400);
     }
-    if (id && !sub && method === "DELETE") return lib.deleteClipart(session, id);
+    if (id && !sub && method === "DELETE") return lib.deleteClipart(session, id, req.nextUrl.searchParams.get("force") === "1");
+    if (id && sub === "replace" && method === "POST") {
+      const body = await readJson<{ with?: string; keep_renditions?: boolean }>(req);
+      return body?.with && UUID.test(body.with) ? lib.replaceClipart(session, id, body.with, body.keep_renditions === true) : h.jsonError("Thiếu id bản mới", 400);
+    }
   }
   return h.jsonError("Not found", 404);
 }

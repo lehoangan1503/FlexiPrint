@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Loader2, Smile } from "lucide-react";
+import { ctAlert } from "../../customize-tool/components/dialogs";
 
 interface FirstLoginDialogProps {
   open: boolean;
@@ -30,7 +31,7 @@ export function FirstLoginDialog({ open, onComplete }: FirstLoginDialogProps) {
       if (!res.ok) throw new Error("Failed");
       onComplete(trimmed);
     } catch {
-      alert("Không thể lưu biệt danh, vui lòng thử lại");
+      void ctAlert({ title: "Không thể lưu biệt danh, vui lòng thử lại", tone: "danger" });
     } finally {
       setSaving(false);
     }

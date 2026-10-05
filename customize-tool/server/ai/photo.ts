@@ -25,7 +25,7 @@
  * (photo hash, style id, style updated_at) in server/photo-cache.ts — memory +
  * Storage for 24 h — so re-asking never re-bills.
  *
- * Env: CT_PHOTO_STYLE_URL, CT_PHOTO_STYLE_TOKEN, CT_BG_REMOVER_URL, CT_BG_REMOVER_TOKEN, FAL_KEY, CT_CUTOUT_MODEL (BiRefNet variant, default "General Use (Heavy)"),
+ * Env: CT_PHOTO_STYLE_URL, CT_PHOTO_STYLE_TOKEN, CT_BG_REMOVER_URL, CT_BG_REMOVER_TOKEN, CT_FACE_DETECT_URL, CT_FACE_DETECT_TOKEN, FAL_KEY, CT_CUTOUT_MODEL (BiRefNet variant, default "General Use (Heavy)"),
  *      CT_PHOTO_AI_PROVIDER (gemini|openai), CT_PHOTO_AI_MODEL — plus the
  *      provider keys from providers.ts.
  */
@@ -58,6 +58,16 @@ export class PhotoConfigError extends Error {}
 /** A microservice (services/*) could not be reached at all. */
 class ServiceDownError extends Error {}
 
+/** A microservice answered with an error status. */
+class ServiceHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Prompts
 // ---------------------------------------------------------------------------
@@ -65,7 +75,7 @@ class ServiceDownError extends Error {}
 const KEEP_IDENTITY =
   "The reference is a customer's photo. Keep the subject unmistakably recognisable: same species/breed, face shape, eye colour, markings, fur or hair pattern, expression and pose. Do not add accessories, text, logos or extra subjects.";
 
-const STYLE_PROMPTS: Record<Exclude<CtPhotoStyleId, "original" | "pixel">, string> = {
+const STYLE_PROMPTS: Partial<Record<CtPhotoStyleId, string>> = {
   oil: "Repaint it as a classical oil painting portrait: rich visible brush strokes, painterly texture, warm natural lighting, museum-quality fine art.",
 };
 
@@ -86,7 +96,7 @@ function stylePrompt(style: CtPhotoStyleId, cutout: boolean, transparent: boolea
       framing,
     ].join("\n");
   }
-  return [KEEP_IDENTITY, STYLE_PROMPTS[style], framing, "High resolution, crisp edges, no watermark, no signature, no border."].join("\n");
+  return [KEEP_IDENTITY, STYLE_PROMPTS[style] ?? "", framing, "High resolution, crisp edges, no watermark, no signature, no border."].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +163,7 @@ async function callService(
     } catch {
       // plain-text error body
     }
-    throw new Error(`${name} ${res.status}: ${message}`);
+    throw new ServiceHttpError(`${name} ${res.status}: ${message}`, res.status);
   }
   return { data: Buffer.from(await res.arrayBuffer()), mime: res.headers.get("content-type")?.split(";")[0] ?? "image/png" };
 }
@@ -165,6 +175,129 @@ function styleService(): ((image: ProviderImage, style: CtPhotoStyleId) => Promi
   const url = process.env.CT_PHOTO_STYLE_URL;
   if (!url) return null;
   return (image, style) => callService("photo-style", serviceUrl(url, "/stylize"), process.env.CT_PHOTO_STYLE_TOKEN, image, { style });
+}
+
+/**
+ * Face styles: services/face-detect cuts the head out of `image` (the cut-out,
+ * so the outline follows the subject's own edge — ears and fur whole), turned
+ * upright, down to the chin — no neck, no body, no background. Gemini on
+ * fal.ai names the species and locates the eyes and chin in `photo` (the
+ * opaque original; fractions, so a resized cut-out still matches): OpenCV's
+ * cat cascade misses most pets, and YuNet (people) fires on pets too. A person
+ * keeps YuNet's own landmarks and is cut by face parsing (hair kept, neck and
+ * clothes dropped). The cascade's head is the last resort (no FAL_KEY / no
+ * answer). The original photo goes along: the head is cut from ITS pixels at
+ * full resolution, under the cut-out's alpha (matting may return a smaller
+ * image). Cached by input hash like the cut-out.
+ */
+function faceCrop(): ((image: ProviderImage, photo: ProviderImage) => Promise<ProviderImage>) | null {
+  const base = process.env.CT_FACE_DETECT_URL;
+  if (!base) return null;
+  const url = serviceUrl(base, "/crop");
+  const token = process.env.CT_FACE_DETECT_TOKEN;
+  const post = async (image: ProviderImage, photo: ProviderImage, fields: Record<string, string>) => {
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(image.data)], { type: image.mime }), "photo");
+    form.append("photo", new Blob([new Uint8Array(photo.data)], { type: photo.mime }), "original");
+    for (const [k, v] of Object.entries(fields)) form.append(k, v);
+    let res: Response;
+    try {
+      res = await fetch(url, { method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : {}, body: form, signal: AbortSignal.timeout(60_000) });
+    } catch (e) {
+      throw new ServiceDownError(`face-detect không phản hồi (${url}) — service chưa chạy? (${e instanceof Error ? e.message : String(e)})`);
+    }
+    if (res.status === 422) return null;
+    if (!res.ok) throw new ServiceHttpError(`face-detect ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`, res.status);
+    return { image: { data: Buffer.from(await res.arrayBuffer()), mime: "image/png" }, kind: res.headers.get("x-face-kind") };
+  };
+  return (image, photo) =>
+    // Bump with services/face-detect HEAD changes: a result cut by an older service must not come back.
+    cachedPhoto(photoCacheKey(image.data, "face", 11), async () => {
+      const found = await post(image, photo, {});
+      const located = await llmLocateFace(photo);
+      // YuNet's landmarks beat the LLM's on a person — but it also fires on cats and dogs, and a pet cut with
+      // human proportions comes back with its chest. The LLM names the species.
+      if (found?.kind === "face" && (!located || located.kind === "face")) return found.image;
+      if (located) {
+        const again = await post(image, photo, located);
+        if (again) return again.image;
+      }
+      if (found) return found.image;
+      throw new PhotoConfigError("No face found in the photo — try a clear, front-facing photo.");
+    });
+}
+
+/**
+ * Face box, eyes and chin from Gemini (fal any-llm), as the face-detect /crop
+ * fields (0–1 fractions), or null (no FAL_KEY / no face).
+ */
+async function llmLocateFace(image: ProviderImage): Promise<CtLocatedFace | null> {
+  // One retry: the model now and then answers {"box": null} for a face it finds on the next call.
+  return (await llmLocateOnce(image)) ?? llmLocateOnce(image);
+}
+
+/** The face-detect /crop form fields for a face the LLM located. */
+interface CtLocatedFace extends Record<string, string> {
+  box: string;
+  eyes: string;
+  chin: string;
+  /** cat | dog | face (a person) | given (anything else): picks the head proportions. */
+  kind: string;
+}
+
+async function llmLocateOnce(image: ProviderImage): Promise<CtLocatedFace | null> {
+  const key = process.env.FAL_KEY;
+  if (!key) return null;
+  const res = await fetch("https://fal.run/fal-ai/any-llm/vision", {
+    method: "POST",
+    headers: { Authorization: `Key ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: process.env.CT_PROMPT_MODEL || "google/gemini-2.5-flash",
+      system_prompt:
+        "You locate the main subject's face (person or animal) in a photo. Coordinates are [y, x] on a 0–1000 scale. " +
+        'Reply with JSON only: {"species": "cat" | "dog" | "person" | "other", "box": [ymin, xmin, ymax, xmax], "left_eye": [y, x], "right_eye": [y, x], "chin": [y, x]} — ' +
+        "box = eyes, nose, mouth, cheeks (not ears or hair); chin = the lowest point of the chin / lower jaw. " +
+        "Use exactly these keys, numbers only. " +
+        'Or {"box": null} if there is no face.',
+      prompt: "Locate the main subject's face, both eye centres and the chin.",
+      image_urls: [`data:${image.mime};base64,${image.data.toString("base64")}`],
+    }),
+    signal: AbortSignal.timeout(60_000),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  const json: { output?: string } = await res.json().catch(() => ({}));
+  const text = json.output ?? "";
+  // Read each field on its own: Gemini now and then answers malformed JSON
+  // ({"box": [...], "label": "face"}, "left_eye": ...) or its native "box_2d" key.
+  const field = (key: string): number[] | null => {
+    const m = new RegExp(`"${key}(?:_2d)?"\\s*:\\s*\\[([^\\]]*)\\]`).exec(text);
+    if (!m) return null;
+    const v = m[1].split(",").map((x) => Number(x.trim()));
+    return v.every(Number.isFinite) ? v : null;
+  };
+  const species = /"species"\s*:\s*"(\w+)"/.exec(text)?.[1]?.toLowerCase();
+  const raw = { box: field("box"), left_eye: field("left_eye"), right_eye: field("right_eye"), chin: field("chin") };
+  const nums = (v: number[] | null, n: number): number[] | null =>
+    v && v.length === n ? v.map((x) => Math.min(1000, Math.max(0, x)) / 1000) : null;
+  const box = nums(raw.box, 4);
+  if (!box) return null;
+  const [ymin, xmin, ymax, xmax] = box;
+  if (xmax - xmin < 0.02 || ymax - ymin < 0.02) return null;
+  // A point [y, x] — or a box [ymin, xmin, ymax, xmax], which the model sometimes gives for an eye: its centre.
+  const point = (v: number[] | null): number[] | null => {
+    const b = nums(v, 4);
+    return b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : nums(v, 2);
+  };
+  const le = point(raw.left_eye);
+  const re = point(raw.right_eye);
+  const chin = point(raw.chin);
+  const f = (v: number) => v.toFixed(4);
+  return {
+    box: [xmin, ymin, xmax - xmin, ymax - ymin].map(f).join(","),
+    eyes: le && re ? [le[1], le[0], re[1], re[0]].map(f).join(",") : "",
+    chin: chin && le && re ? [chin[1], chin[0]].map(f).join(",") : "",
+    kind: species === "cat" || species === "dog" ? species : species === "person" ? "face" : "given",
+  };
 }
 
 async function falCutout(image: ProviderImage, key: string): Promise<ProviderImage> {
@@ -218,7 +351,7 @@ function matting(): ((image: ProviderImage) => Promise<ProviderImage>) | null {
 
 export function photoCapabilities(): CtPhotoCapabilities {
   const ai = aiProvider() !== null;
-  return { ai, styleService: styleService() !== null, cutout: matting() !== null || ai, aiStyles: falConfigured() };
+  return { ai, styleService: styleService() !== null, cutout: matting() !== null || ai, aiStyles: falConfigured(), faceDetect: faceCrop() !== null };
 }
 
 /** AI results by (photo, style version, cut-out) — see server/photo-cache.ts. */
@@ -272,6 +405,15 @@ export async function processPhoto(job: PhotoJob): Promise<PhotoResult> {
   }
   const def = photoStyle(job.style);
   const matte = matting();
+  if (def.family === "face") {
+    // Cut out the whole photo first (shared cache with "Real photo"), then the service keeps only the head;
+    // the browser applies the colour filter.
+    const crop = faceCrop();
+    if (!crop) throw new PhotoConfigError("Chưa cấu hình CT_FACE_DETECT_URL (services/face-detect)");
+    // Always on the cut-out when there is a matting model: the head comes back on transparency, whatever `cutout` says.
+    const cut = matte ? await matte(job.image) : job.image;
+    return { image: await crop(cut, job.image), backdrop: null };
+  }
   const stylize = styleService();
   const ai = aiProvider();
   let image = job.image;

@@ -8,13 +8,15 @@
 export type CtStudioTemplate = "01-origin-set" | "02-variant-set" | "03-element-pack" | "04-clipart-material" | "05-artwork-mockup";
 
 export interface CtStudioTarget {
-  template: CtStudioTemplate;
+  template?: CtStudioTemplate;
   clipart?: string | null;
   artwork?: string | null;
   category?: string | null;
+  /** A graph the AI dialog parked in ComfyUI (POST studio/drafts). */
+  draft?: string | null;
 }
 
-const KEYS = ["template", "clipart", "artwork", "category"] as const;
+const KEYS = ["template", "clipart", "artwork", "category", "draft"] as const;
 
 /** App page: /studio?template=…&clipart=… */
 export function studioHref(t: CtStudioTarget): string {

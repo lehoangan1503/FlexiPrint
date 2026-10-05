@@ -147,6 +147,17 @@ cần **mở thư mục đó như một project** (UI: Mở project; API admin: 
 Bản khai: Claude, `acceptEdits`, không bash, chỉ trong thư mục này, không giới hạn lượt (sửa trong `docs/agent.md` qua
 repo FlexiPrint nếu cần).
 
+### 5.3b Cho @flexiprint đọc toàn bộ source FlexiPrint (chỉ đọc)
+Project của agent chỉ là thư mục con `integrations/agent-ide/flexiprint` (để `git pull` cập nhật bản khai + skill),
+và hàng rào agent_ide chỉ cho làm việc trong thư mục project — nên mặc định agent **không đọc được** phần code còn lại
+(`customize-tool/`, `services/`…) dù đã clone về máy. Mở thêm:
+
+UI: **Sửa agent @flexiprint → Thư mục ngoài được phép → thêm `REPO` (vd `~/code/FlexiPrint`) → chỉ đọc.**
+
+Agent đọc được toàn bộ source FlexiPrint (tra logic, giải thích lỗi), không ghi được vào repo (`git pull` không bao giờ
+kẹt), và vẫn không đụng tới source của agent_ide hay project khác. Kiểm: hỏi @flexiprint
+"đọc `REPO/customize-tool/server/mcp/tools.ts` và liệt kê các tool" → nó đọc được file.
+
 ### 5.4 Gắn MCP flexiprint (capability)
 Thêm vào `~/.http-agent-ide/claude-tool-catalog.json`, trong `capabilities` (tạo file bằng bản copy của
 `server/config/claude-tool-catalog.json` nếu chưa có), khối trong `flexiprint-capability.json` cạnh file này,

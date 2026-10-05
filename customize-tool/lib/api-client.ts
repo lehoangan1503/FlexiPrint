@@ -242,6 +242,8 @@ export const ctApi = {
   createAgentTask: (body: { kind: CtAgentTaskKind; input: CtAgentTaskInput }) => call<CtAgentTask>("ai/agent-tasks", json("POST", body)),
   agentTask: (id: string) => call<CtAgentTask>(`ai/agent-tasks/${id}`),
   cancelAgentTask: (id: string) => call<CtAgentTask>(`ai/agent-tasks/${id}/cancel`, { method: "POST" }),
+  /** Answer the agent's question (ask_user): it continues the task with it. */
+  answerAgentTask: (id: string, body: { question_id: string; choices: string[]; text: string }) => call<CtAgentTask>(`ai/agent-tasks/${id}/answer`, json("POST", body)),
   /** A category's AI revisions and saves, newest first (migration 010). */
   categoryHistory: (id: string) => call<{ history: CtCategoryHistoryEntry[] }>(`library/categories/${id}/history`).then((r) => r.history),
   /** Category dialog "Chi tiết thành phẩm": the product's details from a description + photos (uploaded first). */

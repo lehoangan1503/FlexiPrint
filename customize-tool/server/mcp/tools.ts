@@ -10,7 +10,7 @@
 
 import { CT_TABLES } from "../../config";
 import { normalizeCategoryRules } from "../../lib/library";
-import type { CtAgentTask, CtAgentTaskProgress, CtAgentTaskRun, CtAsset, CtCategoryRevision, CtCategoryHistoryEntry, CtCategorySnapshot, CtClipartCategory, CtMaterialSpec, CtStudioRunBody, CtStudioRunStatus } from "../../types";
+import type { CtAgentQuestion, CtAgentTask, CtAgentTaskProgress, CtAgentTaskRun, CtAsset, CtCategoryRevision, CtCategoryHistoryEntry, CtCategorySnapshot, CtClipartCategory, CtMaterialSpec, CtStudioRunBody, CtStudioRunStatus } from "../../types";
 import { normalizeMaterialSpecs } from "../../lib/materials";
 import { isOwnUploadUrl } from "../library";
 import * as studio from "../studio";
@@ -385,9 +385,9 @@ const studioTools: CtMcpTool[] = [
         const label = runLabel(recipe, params);
         const run: CtAgentTaskRun = { run_id: runId, recipe, label, status: "queued", started_at: new Date().toISOString(), finished_at: null, asset_ids: [], error: "" };
         await patchTask(db, task.id, {
-          status: "running",
+          status: liveStatus(task),
           runs: [...(task.runs ?? []), run],
-          progress: [...(task.progress ?? []), { at: run.started_at, text: `Đang tạo ảnh — ${label}` }].slice(-50),
+          progress: [...(task.progress ?? []), { at: run.started_at, text: `Đang tạo ảnh — ${label}`, kind: "run" as const }].slice(-50),
         });
       }
       return json({ ...out, next: "Call wait_run with this run_id — it waits until the images are done." });
@@ -434,11 +434,11 @@ async function finishTaskRun(ctx: CtMcpContext, runId: string, st: CtStudioRunSt
   const done: CtAgentTaskRun = { ...run, status: st.status, finished_at: new Date().toISOString(), asset_ids: st.assets.map((a) => a.id), error: st.error ?? "" };
   const line: CtAgentTaskProgress =
     st.status === "done"
-      ? { at: done.finished_at ?? "", text: `Ảnh đã xong — ${run.label}`, images: st.assets.map((a) => a.url).slice(0, 12) }
-      : { at: done.finished_at ?? "", text: `Tạo ảnh lỗi — ${run.label}: ${clip(st.error ?? "", 200)}` };
+      ? { at: done.finished_at ?? "", text: `Ảnh đã xong — ${run.label}`, images: st.assets.map((a) => a.url).slice(0, 12), kind: "run" }
+      : { at: done.finished_at ?? "", text: `Tạo ảnh lỗi — ${run.label}: ${clip(st.error ?? "", 200)}`, kind: "run" };
   const patch: Partial<CtAgentTask> = { runs: task.runs.map((r) => (r.run_id === runId ? done : r)) };
   // A closed task keeps its record, but its progress is not touched any more.
-  if (task.status === "pending" || task.status === "running") patch.progress = [...(task.progress ?? []), line].slice(-50);
+  if (task.status === "pending" || task.status === "running" || task.status === "waiting") patch.progress = [...(task.progress ?? []), line].slice(-50);
   await patchTask(db, task.id, patch);
 }
 
@@ -475,7 +475,17 @@ async function loadTask(ctx: CtMcpContext, id: unknown): Promise<{ db: CtService
 }
 
 function openTask(task: CtAgentTask): void {
-  if (task.status !== "pending" && task.status !== "running") throw new Error(`Task is ${task.status} — nothing more to do`);
+  if (task.status !== "pending" && task.status !== "running" && task.status !== "waiting") throw new Error(`Task is ${task.status} — nothing more to do`);
+}
+
+/** The task's open question (asked, not answered yet), if any. */
+function openQuestion(task: CtAgentTask): CtAgentQuestion | null {
+  return (task.questions ?? []).find((q) => !q.answer) ?? null;
+}
+
+/** "running", or "waiting" while a question of the agent's is unanswered. */
+function liveStatus(task: CtAgentTask): "running" | "waiting" {
+  return openQuestion(task) ? "waiting" : "running";
 }
 
 async function patchTask(db: CtServiceClient, id: string, patch: Partial<CtAgentTask>): Promise<void> {
@@ -549,6 +559,8 @@ const taskTools: CtMcpTool[] = [
         note: input.note,
         images: input.images.map((im, i) => ({ number: i + 1, url: im.url, label: im.label })),
         refUrls: input.refUrls,
+        // What you asked the editor so far (ask_user) and what they answered.
+        questions: (task.questions ?? []).map((q) => ({ id: q.id, question: q.question, options: q.options.map((o) => o.label), answer: q.answer })),
         resultFormat: "flexiprint://guide/task-results",
       });
     },
@@ -561,9 +573,49 @@ const taskTools: CtMcpTool[] = [
     run: async (ctx, args) => {
       const { db, task } = await loadTask(ctx, args.task_id);
       openTask(task);
-      const line: CtAgentTaskProgress = { at: new Date().toISOString(), text: clip(str(args.text), 300) };
-      await patchTask(db, task.id, { status: "running", progress: [...(task.progress ?? []), line].slice(-50) });
+      const line: CtAgentTaskProgress = { at: new Date().toISOString(), text: clip(str(args.text), 300), kind: "note" };
+      await patchTask(db, task.id, { status: liveStatus(task), progress: [...(task.progress ?? []), line].slice(-50) });
       return json({ ok: true });
+    },
+  },
+  {
+    name: "ask_user",
+    description: [
+      "Ask the editor a question in the web app when a choice is genuinely theirs (two good directions, a taste call, missing information) — options to pick from, and/or a typed answer.",
+      "After calling it, END YOUR TURN (no more tool calls, a one-line reply). The answer comes back as a new message in this session (\"[FlexiPrint task <id>] Người dùng trả lời …\"); then continue the task. One open question at a time; submit_result is refused while it is unanswered.",
+    ].join(" "),
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        question: { type: "string", description: "The question, Vietnamese, short — say what you found and what the choice changes." },
+        options: { type: "array", items: { type: "object" }, description: "2–6 options [{label: \"VI, short\", description?: \"VI: what it means\"}]. May be empty when only a typed answer makes sense." },
+        multi: { type: "boolean", description: "Several options may be picked (default false)." },
+        allow_text: { type: "boolean", description: "Accept a typed answer too (default true)." },
+      },
+      required: ["task_id", "question"],
+    },
+    callers: AGENT,
+    run: async (ctx, args) => {
+      const { db, task } = await loadTask(ctx, args.task_id);
+      openTask(task);
+      const open = openQuestion(task);
+      if (open) throw new Error(`Question "${clip(open.question, 80)}" is still waiting for the editor — end your turn and wait for the answer.`);
+      const question = clip(str(args.question), 1000);
+      if (!question) throw new Error("question is required");
+      const options = (Array.isArray(args.options) ? args.options : [])
+        .map((o) => (typeof o === "string" ? { label: o } : record(o)))
+        .map((o) => ({ label: clip(str(o.label), 120), description: clip(str(o.description), 300) }))
+        .filter((o) => o.label)
+        .slice(0, 6);
+      const allowText = args.allow_text !== false || options.length === 0;
+      const q: CtAgentQuestion = { id: crypto.randomUUID(), question, options, multi: args.multi === true && options.length > 1, allow_text: allowText, asked_at: new Date().toISOString(), answer: null };
+      await patchTask(db, task.id, {
+        status: "waiting",
+        questions: [...(task.questions ?? []), q],
+        progress: [...(task.progress ?? []), { at: q.asked_at, text: `Hỏi: ${clip(question, 200)}`, kind: "question" as const }].slice(-50),
+      });
+      return json({ ok: true, question_id: q.id, next: "End your turn now. The editor's answer arrives as a new message in this session; then continue the task." });
     },
   },
   {
@@ -574,6 +626,8 @@ const taskTools: CtMcpTool[] = [
     run: async (ctx, args) => {
       const { db, task } = await loadTask(ctx, args.task_id);
       openTask(task);
+      const asked = openQuestion(task);
+      if (asked) throw new Error(`Not submitted — your question "${clip(asked.question, 80)}" is not answered yet. End your turn and wait for the answer.`);
       // Only the final answer: every test image of the task must be done (and looked at) first.
       const open = await unfinishedRuns(ctx, task);
       if (open.length) {
@@ -582,6 +636,8 @@ const taskTools: CtMcpTool[] = [
         );
       }
       const raw = record(typeof args.result === "string" ? JSON.parse(args.result) : args.result);
+      const summary = clip(str(raw.summary), 3000);
+      if (!summary) throw new Error('Result needs "summary" (Vietnamese): what you did, which test images you made and what they showed, what is still uncertain — see flexiprint://guide/task-results');
       const snapshot: CtCategorySnapshot = { name: task.input.category.name, spec: task.input.category.spec, rules: normalizeCategoryRules(task.input.category.rules) };
       let result: CtAgentTask["result"];
       if (task.kind === "create") {
@@ -595,6 +651,7 @@ const taskTools: CtMcpTool[] = [
         // Never drop a change silently: what the agent sent but the plan does not carry → it resubmits.
         const lost = lostChanges(plan, snapshot, result);
         if (lost.length) throw new Error(`Not understood, nothing saved — fix and submit again: ${lost.join("; ")}. Format: flexiprint://guide/task-results`);
+        result = { ...result, summary };
       }
       await patchTask(db, task.id, { status: "done", result, finished_at: new Date().toISOString() });
       return json({ ok: true, message: "Đã gửi kết quả — người dùng sẽ duyệt trên app." });

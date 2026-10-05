@@ -7,6 +7,8 @@
  *                                   answers with submit_result / fail_task (server/mcp/tools.ts).
  *   GET  ai/agent-tasks/:id         → CtAgentTask (the dialog polls it). While it runs, the agent_ide job is checked
  *                                   too: a turn that ended without submitting fails the task with its last words.
+ *   POST ai/agent-tasks/:id/answer  {question_id, choices, text} — the editor answers the agent's ask_user question;
+ *                                   sent to the agent as a new turn in the task's agent_ide session.
  *   POST ai/agent-tasks/:id/cancel  stops the agent's turn.
  *   GET  ai/agent-status            → CtAgentStatus (is the dialog's "Agent @flexiprint" choice usable).
  *
@@ -20,7 +22,7 @@
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
 import { normalizeCategoryRules } from "../../lib/library";
-import type { CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind } from "../../types";
+import type { CtAgentQuestion, CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress } from "../../types";
 import { isOwnUploadUrl } from "../library";
 import type { CtSession } from "../supabase";
 import { clip, jsonError, record, str } from "../ai/llm";
@@ -28,6 +30,10 @@ import { clip, jsonError, record, str } from "../ai/llm";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Only a hung task is given up: agent_ide itself stops a turn after 2 h. */
 const TASK_TIMEOUT_MS = 3 * 60 * 60 * 1000;
+/** A question left unanswered this long ends the task. */
+const ANSWER_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
+const isOpen = (t: CtAgentTask) => t.status === "pending" || t.status === "running" || t.status === "waiting";
 
 interface KernelConfig {
   url: string;
@@ -181,7 +187,15 @@ export async function getAgentTask(s: CtSession, id: string): Promise<NextRespon
   const { data: task, error } = await s.supabase.from(CT_TABLES.agentTasks).select("*").eq("id", id).maybeSingle<CtAgentTask>();
   if (error) return jsonError(error.message, 500);
   if (!task) return jsonError("Không tìm thấy task", 404);
-  if (task.status !== "pending" && task.status !== "running") {
+  if (task.status === "waiting") {
+    // The agent asked the editor and ended its turn on purpose: nothing to check until they answer.
+    const asked = (task.questions ?? []).find((q) => !q.answer);
+    if (!asked || Date.now() - Date.parse(asked.asked_at) <= ANSWER_TIMEOUT_MS) return NextResponse.json(task);
+    const patch = { status: "failed" as const, error: "Câu hỏi của agent không được trả lời sau 24 giờ", finished_at: new Date().toISOString() };
+    await s.supabase.from(CT_TABLES.agentTasks).update(patch).eq("id", id);
+    return NextResponse.json({ ...task, ...patch });
+  }
+  if (!isOpen(task)) {
     // Finished before the session was known (submit_result came before the first poll): fill it in once.
     const cfg = kernelConfig();
     if (cfg && task.agent_job_id && !task.agent_session_id) {
@@ -197,7 +211,9 @@ export async function getAgentTask(s: CtSession, id: string): Promise<NextRespon
   // Still open: did the agent's turn end without an answer?
   let fail = "";
   const cfg = kernelConfig();
-  if (Date.now() - Date.parse(task.created_at) > TASK_TIMEOUT_MS) fail = "Agent không trả lời sau 3 giờ";
+  // Counted from the last answer when the agent asked something (its new turn starts then).
+  const lastAnswer = Math.max(0, ...(task.questions ?? []).map((q) => (q.answer ? Date.parse(q.answer.at) : 0)));
+  if (Date.now() - Math.max(Date.parse(task.created_at), lastAnswer) > TASK_TIMEOUT_MS) fail = "Agent không trả lời sau 3 giờ";
   else if (cfg && task.agent_job_id) {
     try {
       const job = await kernel<KernelJob>(cfg, `/jobs/${encodeURIComponent(task.agent_job_id)}`, { timeoutMs: 5_000 });
@@ -211,7 +227,7 @@ export async function getAgentTask(s: CtSession, id: string): Promise<NextRespon
       else if (job.status === "done") {
         // submit_result may land a moment after the turn ends: read the row once more before failing it.
         const { data: again } = await s.supabase.from(CT_TABLES.agentTasks).select("*").eq("id", id).maybeSingle<CtAgentTask>();
-        if (again && again.status !== "pending" && again.status !== "running") return NextResponse.json(again);
+        if (again && (again.status === "waiting" || !isOpen(again))) return NextResponse.json(again);
         if (Date.now() - Date.parse(task.updated_at) > 20_000) fail = `Agent đã xong lượt nhưng không nộp kết quả${str(job.text) ? `: ${clip(str(job.text), 600)}` : ""}`;
       }
     } catch {
@@ -231,9 +247,75 @@ export async function cancelAgentTask(s: CtSession, id: string): Promise<NextRes
   if (!task) return jsonError("Không tìm thấy task", 404);
   const cfg = kernelConfig();
   if (cfg && task.agent_session_id && (task.status === "pending" || task.status === "running")) {
+    // (waiting: the agent's turn is already over.)
     await kernel(cfg, `/sessions/${encodeURIComponent(task.agent_session_id)}/stop`, { method: "POST", body: {} }).catch(() => undefined);
   }
   const patch = { status: "cancelled" as const, finished_at: new Date().toISOString() };
+  await s.supabase.from(CT_TABLES.agentTasks).update(patch).eq("id", id);
+  return NextResponse.json({ ...task, ...patch });
+}
+
+/** The answer, as the agent reads it in its next turn. */
+function answerPrompt(task: CtAgentTask, q: CtAgentQuestion): string {
+  const a = q.answer;
+  const picked = a?.choices.length ? `chọn: ${a.choices.map((c) => `"${c}"`).join(", ")}` : "";
+  const typed = a?.text ? `viết: ${clip(a.text, 1500)}` : "";
+  return [
+    `[FlexiPrint task ${task.id}] Người dùng trả lời câu hỏi "${clip(q.question, 300)}" — ${[picked, typed].filter(Boolean).join("; ")}.`,
+    "Làm tiếp task này theo câu trả lời (get_task nếu cần xem lại), rồi kết thúc bằng mcp__flexiprint__submit_result hoặc fail_task — chỉ khi mọi việc đã xong.",
+  ].join("\n");
+}
+
+/** POST ai/agent-tasks/:id/answer */
+export async function answerAgentTask(s: CtSession, id: string, body: unknown): Promise<NextResponse> {
+  if (!UUID.test(id)) return jsonError("id không hợp lệ", 400);
+  const cfg = kernelConfig();
+  if (!cfg) return jsonError("Chưa cấu hình agent (AGENT_IDE_URL, AGENT_IDE_TOKEN)", 501);
+  const { data: task } = await s.supabase.from(CT_TABLES.agentTasks).select("*").eq("id", id).maybeSingle<CtAgentTask>();
+  if (!task) return jsonError("Không tìm thấy task", 404);
+  if (task.status !== "waiting") return jsonError("Agent không chờ câu trả lời nào", 409);
+  const b = record(body);
+  const q = (task.questions ?? []).find((x) => x.id === str(b.question_id) && !x.answer);
+  if (!q) return jsonError("Câu hỏi đã được trả lời hoặc không còn", 409);
+  const labels = new Set(q.options.map((o) => o.label));
+  const choices = (Array.isArray(b.choices) ? b.choices : []).map(str).filter((c) => labels.has(c)).slice(0, q.multi ? 6 : 1);
+  const text = q.allow_text ? clip(str(b.text), 2000) : "";
+  if (!choices.length && !text) return jsonError(q.options.length ? "Chọn một phương án hoặc viết câu trả lời" : "Viết câu trả lời", 400);
+
+  const at = new Date().toISOString();
+  const answered: CtAgentQuestion = { ...q, answer: { choices, text, at } };
+  const questions = task.questions.map((x) => (x.id === q.id ? answered : x));
+  const line: CtAgentTaskProgress = { at, text: `Bạn trả lời: ${clip([...choices, text].filter(Boolean).join(" · "), 200)}`, kind: "answer" };
+
+  // The session the agent asked from — learnt from its job when not known yet.
+  let sessionId = task.agent_session_id;
+  if (!sessionId && task.agent_job_id) {
+    const job = await kernel<KernelJob>(cfg, `/jobs/${encodeURIComponent(task.agent_job_id)}`, { timeoutMs: 5_000 }).catch(() => null);
+    sessionId = str(job?.sessionId);
+  }
+  if (!sessionId) return jsonError("Không tìm thấy phiên của agent để gửi câu trả lời", 409);
+
+  // The agent's turn may still be closing after ask_user (409 busy): try for a little while.
+  let turn: KernelTurn | null = null;
+  let lastError = "";
+  for (let i = 0; i < 8 && !turn; i++) {
+    try {
+      turn = await kernel<KernelTurn>(cfg, "/turns", { method: "POST", body: { prompt: answerPrompt(task, answered), sessionId } });
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+      if (!(e instanceof KernelError && e.status === 409)) break;
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+  }
+  if (!turn) return jsonError(`Chưa gửi được câu trả lời cho agent: ${lastError}`, 502);
+
+  const patch = {
+    status: "running" as const,
+    questions,
+    progress: [...(task.progress ?? []), line].slice(-50),
+    agent_job_id: str(turn.jobId),
+    agent_session_id: str(turn.sessionId) || sessionId,
+  };
   await s.supabase.from(CT_TABLES.agentTasks).update(patch).eq("id", id);
   return NextResponse.json({ ...task, ...patch });
 }

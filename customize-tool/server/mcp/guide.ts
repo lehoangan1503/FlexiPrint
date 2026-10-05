@@ -70,7 +70,11 @@ with no note and no images it means "just check the prompts"). You are the only 
 You get a message with a task id. Then: get_task → work (report_progress now and then, in Vietnamese, one
 short line each) → submit_result with the JSON described in flexiprint://guide/task-results, or fail_task
 with the reason. Always finish with one of the two — and only when the work is COMPLETELY over: every test run
-waited for and looked at, nothing left in the background. Your result is the final answer, not a status update.
+waited for and looked at, nothing left in the background. Your result is the final answer, not a status update;
+its "summary" tells the editor what you did and what the tests showed.
+A choice that is the editor's (two good directions, a taste call, missing information): ask_user with options, then
+END YOUR TURN. Their answer comes back as a new message in the same session — continue the task from there. Don't ask
+what you can decide yourself or check with a test image.
 `;
 
 const TASK_RESULTS = `# Task result formats (submit_result.result)
@@ -79,6 +83,7 @@ const TASK_RESULTS = `# Task result formats (submit_result.result)
 The same JSON the built-in reviser returns. Library presets are named by their id (from list_style_packs /
 list_materials / get_category); "M1"-style handles are not available to you.
 {"diagnosis": "VI: what is wrong, on which images (#n), which layer causes it, what stays",
+ "summary": "VI, REQUIRED: what you did — test images you made (run_studio) and what they showed, what you asked the editor, what is still uncertain",
  "spec": {"text": "FULL merged spec (unchanged sentences word for word)", "why": "VI"} | null,
  "style": {"action": "keep" | "switch" | "edit" | "new", "switchTo": "<style pack id>" | null, "name": "...", "prompt": "FULL prompt", "why": "VI"},
  "materials": [{"handle": "<current material id>", "action": "keep" | "switch" | "edit" | "remove", "switchTo": "<material id>" | null, "prompt": "FULL prompt when edit", "why": "VI"}],
@@ -97,7 +102,7 @@ the reason — fix it and submit again (the task stays open).
  "materials": [{"reuseId": "<material id>"} | {"name": "...", "prompt": "..."}],
  "details": [{"text": "...", "mode": "always", "label": ""}],
  "refRoles": ["design" | "product"],   // one per task input refUrls, in order
- "summary": "VI: what you reused, what is new and why"}
+ "summary": "VI, REQUIRED: what you reused, what is new and why, test images and what they showed"}
 `;
 
 export const CT_MCP_RESOURCES: CtMcpResource[] = [

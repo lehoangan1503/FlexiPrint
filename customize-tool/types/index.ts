@@ -1452,6 +1452,8 @@ export type CtReviseRefRole = "design" | "product" | "none";
 export interface CtCategoryRevision {
   /** Vietnamese: what is wrong, on which images, and which layer causes it. */
   diagnosis: string;
+  /** @flexiprint only — Vietnamese: what it did (tests run, what they showed, what is left uncertain). */
+  summary?: string;
   /** Full merged spec, or null to keep it. */
   spec: { text: string; why: string } | null;
   style: CtRevisePreset;
@@ -1524,13 +1526,35 @@ export interface CtCategoryHistoryEntry {
 /** "create" → CtPromptSuggestion; "revise" → CtCategoryRevision (an empty note = review only). */
 export type CtAgentTaskKind = "create" | "revise";
 
-export type CtAgentTaskStatus = "pending" | "running" | "done" | "failed" | "cancelled";
+/** waiting = the agent asked the editor something (ask_user) and ended its turn until they answer. */
+export type CtAgentTaskStatus = "pending" | "running" | "waiting" | "done" | "failed" | "cancelled";
 
 export interface CtAgentTaskProgress {
   at: string;
   text: string;
   /** Images to show with the line (a studio run's results). */
   images?: string[];
+  /** note = the agent's own line (report_progress); run = a studio run started / finished; question / answer = ask_user. */
+  kind?: "note" | "run" | "question" | "answer";
+}
+
+/** An option the agent offers in a question. */
+export interface CtAgentQuestionOption {
+  label: string;
+  description: string;
+}
+
+/** A question the agent asked the editor mid-task (migration 014). */
+export interface CtAgentQuestion {
+  id: string;
+  question: string;
+  options: CtAgentQuestionOption[];
+  /** Several options may be picked. */
+  multi: boolean;
+  /** A typed answer is accepted (besides or instead of the options). */
+  allow_text: boolean;
+  asked_at: string;
+  answer: { choices: string[]; text: string; at: string } | null;
 }
 
 /** A studio run the agent started for a task (migration 013). */
@@ -1566,6 +1590,7 @@ export interface CtAgentTask {
   input: CtAgentTaskInput;
   progress: CtAgentTaskProgress[];
   runs: CtAgentTaskRun[];
+  questions: CtAgentQuestion[];
   result: CtPromptSuggestion | CtCategoryRevision | null;
   error: string;
   agent_job_id: string;

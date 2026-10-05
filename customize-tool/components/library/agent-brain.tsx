@@ -7,10 +7,10 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, Square } from "lucide-react";
-import type { CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress } from "../../types";
+import { Bot, Loader2, MessageCircleQuestionMark, Send, Square } from "lucide-react";
+import type { CtAgentQuestion, CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress } from "../../types";
 import { ctApi } from "../../lib/api-client";
-import { CHECKER_STYLE, cx } from "../ui";
+import { CHECKER_STYLE, CtButton, CtTextarea, cx } from "../ui";
 
 /** Whether @flexiprint is set up and answering. null while loading. */
 export function useAgentStatus() {
@@ -42,61 +42,185 @@ export function AgentBadge({ status }: { status: CtAgentStatus | null }) {
 /** A task sent to the agent, followed until it ends. Resolves with the result; rejects with the agent's reason. */
 export function useAgentTask() {
   const [task, setTask] = useState<CtAgentTask | null>(null);
+  /** The last task that ended with a result — its test images go with the result. */
+  const [finished, setFinished] = useState<CtAgentTask | null>(null);
   const stop = useRef(false);
+  /** Set by answer(): the answered task replaces the polled one at once. */
+  const latest = useRef<CtAgentTask | null>(null);
 
   const run = async <T,>(kind: CtAgentTaskKind, input: CtAgentTaskInput): Promise<T> => {
     stop.current = false;
+    setFinished(null);
     let t = await ctApi.createAgentTask({ kind, input });
+    latest.current = t;
     setTask(t);
-    while (t.status === "pending" || t.status === "running") {
+    while (t.status === "pending" || t.status === "running" || t.status === "waiting") {
       await new Promise((r) => setTimeout(r, 2500));
       if (stop.current) {
         t = await ctApi.cancelAgentTask(t.id);
         break;
       }
       t = await ctApi.agentTask(t.id);
+      latest.current = t;
       setTask(t);
     }
+    latest.current = null;
     setTask(null);
-    if (t.status === "done" && t.result) return t.result as T;
+    if (t.status === "done" && t.result) {
+      setFinished(t);
+      return t.result as T;
+    }
     throw new Error(t.status === "cancelled" ? "Đã dừng agent" : t.error || "Agent không trả kết quả");
   };
 
-  return { task, run, cancel: () => (stop.current = true) };
+  /** The editor's answer to the agent's open question. */
+  const answer = async (questionId: string, choices: string[], text: string) => {
+    const cur = latest.current;
+    if (!cur) return;
+    const t = await ctApi.answerAgentTask(cur.id, { question_id: questionId, choices, text });
+    latest.current = t;
+    setTask(t);
+  };
+
+  return { task, finished, run, answer, cancel: () => (stop.current = true) };
 }
 
-/** What the agent says it is doing, live. */
-export function AgentProgress({ task, onCancel }: { task: CtAgentTask; onCancel: () => void }) {
+/** Every image the agent's test runs made during a task, newest last. */
+export function taskImages(task: CtAgentTask | null): string[] {
+  return [...new Set((task?.progress ?? []).flatMap((l) => l.images ?? []))];
+}
+
+function Thumbs({ urls, size = "h-16 w-16" }: { urls: string[]; size?: string }) {
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {urls.map((u) => (
+        <a key={u} href={u} target="_blank" rel="noreferrer" className={cx("block overflow-hidden rounded border", size)} style={CHECKER_STYLE}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={u} alt="" className="h-full w-full object-contain" />
+        </a>
+      ))}
+    </div>
+  );
+}
+
+const KIND_STYLE: Record<NonNullable<CtAgentTaskProgress["kind"]>, string> = {
+  note: "",
+  run: "text-sky-700 dark:text-sky-400",
+  question: "font-medium text-amber-700 dark:text-amber-400",
+  answer: "text-emerald-700 dark:text-emerald-400",
+};
+
+/** What the agent is doing, live — every line of the task, its test images, and its question when it asks one. */
+export function AgentProgress({ task, onCancel, onAnswer }: { task: CtAgentTask; onCancel: () => void; onAnswer: (questionId: string, choices: string[], text: string) => Promise<void> }) {
   const lines: CtAgentTaskProgress[] = task.progress ?? [];
   const runningRuns = (task.runs ?? []).filter((r) => !r.finished_at).length;
+  const asked = task.status === "waiting" ? (task.questions ?? []).find((q) => !q.answer) ?? null : null;
+  const end = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "nearest" });
+  }, [lines.length]);
   return (
     <div className="space-y-1 rounded-md border border-violet-500/30 bg-violet-500/5 p-2 text-[11px]">
       <div className="flex items-center gap-1.5 font-medium">
-        <Loader2 className="h-3 w-3 animate-spin" /> Agent đang làm{task.status === "pending" ? " (đang gửi)" : ""}…
+        {asked ? <MessageCircleQuestionMark className="h-3 w-3 text-amber-600" /> : <Loader2 className="h-3 w-3 animate-spin" />}
+        {asked ? "Agent đang chờ bạn trả lời" : `Agent đang làm${task.status === "pending" ? " (đang gửi)" : ""}…`}
         <button className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-accent" onClick={onCancel}>
           <Square className="h-3 w-3" /> Dừng
         </button>
       </div>
-      {lines.length === 0 ? (
-        <p className="text-muted-foreground">Agent đang đọc task và hệ thống…</p>
-      ) : (
-        lines.slice(-6).map((l, i) => (
-          <div key={`${l.at}-${i}`} className={i === Math.min(lines.length, 6) - 1 ? "" : "text-muted-foreground"}>
-            <p>• {l.text}</p>
-            {l.images && l.images.length > 0 && (
-              <div className="mt-1 flex flex-wrap gap-1 pl-3">
-                {l.images.map((u) => (
-                  <a key={u} href={u} target="_blank" rel="noreferrer" className="block h-16 w-16 overflow-hidden rounded border" style={CHECKER_STYLE}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={u} alt="" className="h-full w-full object-contain" />
-                  </a>
-                ))}
-              </div>
-            )}
-          </div>
-        ))
-      )}
+      <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
+        {lines.length === 0 ? (
+          <p className="text-muted-foreground">Agent đang đọc task và hệ thống…</p>
+        ) : (
+          lines.map((l, i) => (
+            <div key={`${l.at}-${i}`} className={cx(KIND_STYLE[l.kind ?? "note"], i < lines.length - 1 && !l.kind && "text-muted-foreground")}>
+              <p>
+                <span className="mr-1 text-muted-foreground">{TIME.format(new Date(l.at))}</span>
+                {l.text}
+              </p>
+              {l.images && l.images.length > 0 && (
+                <div className="pl-3">
+                  <Thumbs urls={l.images} />
+                </div>
+              )}
+            </div>
+          ))
+        )}
+        <div ref={end} />
+      </div>
       {runningRuns > 0 && <p className="text-muted-foreground">Đang chờ {runningRuns} lượt tạo ảnh — agent chỉ nộp kết quả khi ảnh xong.</p>}
+      {asked && <QuestionBox key={asked.id} question={asked} onAnswer={(c, t) => onAnswer(asked.id, c, t)} />}
+    </div>
+  );
+}
+
+const TIME = new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+/** The agent's question: its options (one or several) and / or a typed answer. */
+function QuestionBox({ question, onAnswer }: { question: CtAgentQuestion; onAnswer: (choices: string[], text: string) => Promise<void> }) {
+  const [picked, setPicked] = useState<string[]>([]);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const toggle = (label: string) =>
+    setPicked((cur) => (question.multi ? (cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label]) : cur[0] === label ? [] : [label]));
+  const send = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onAnswer(picked, text.trim());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Lỗi");
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-1.5 rounded-md border border-amber-500/40 bg-background p-2">
+      <p className="whitespace-pre-line text-xs font-medium">{question.question}</p>
+      {question.options.length > 0 && (
+        <div className="space-y-1">
+          {question.options.map((o) => (
+            <button
+              key={o.label}
+              type="button"
+              onClick={() => toggle(o.label)}
+              className={cx("block w-full rounded border px-2 py-1 text-left", picked.includes(o.label) ? "border-amber-500 bg-amber-500/10" : "hover:bg-accent")}
+            >
+              <span className="font-medium">{o.label}</span>
+              {o.description && <span className="block text-muted-foreground">{o.description}</span>}
+            </button>
+          ))}
+          {question.multi && <p className="text-muted-foreground">Chọn được nhiều phương án.</p>}
+        </div>
+      )}
+      {question.allow_text && (
+        <CtTextarea rows={2} className="text-xs" placeholder={question.options.length ? "Hoặc / thêm ý của bạn…" : "Câu trả lời của bạn…"} value={text} onChange={(e) => setText(e.target.value)} />
+      )}
+      {error && <p className="text-destructive">{error}</p>}
+      <div className="flex justify-end">
+        <CtButton size="sm" variant="primary" onClick={() => void send()} disabled={busy || (!picked.length && !text.trim())}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Gửi trả lời
+        </CtButton>
+      </div>
+    </div>
+  );
+}
+
+/** The agent's closing summary and the test images it made, shown above its plan. */
+export function AgentSummary({ summary, images }: { summary: string; images: string[] }) {
+  if (!summary && !images.length) return null;
+  return (
+    <div className="rounded-md border border-violet-500/30 bg-violet-500/5 p-2 text-xs leading-relaxed">
+      <p className="mb-0.5 flex items-center gap-1 font-medium">
+        <Bot className="h-3.5 w-3.5" /> @flexiprint tổng kết
+      </p>
+      {summary && <p className="whitespace-pre-line">{summary}</p>}
+      {images.length > 0 && (
+        <>
+          <p className="mt-1 text-[11px] text-muted-foreground">Ảnh thử agent đã tạo (đã lưu trong thư viện, tên “· thử” khi chạy bằng prompt nháp):</p>
+          <Thumbs urls={images} size="h-20 w-20" />
+        </>
+      )}
     </div>
   );
 }

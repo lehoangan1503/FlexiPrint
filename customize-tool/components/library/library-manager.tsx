@@ -1370,7 +1370,7 @@ function PromptAssistant(props: { body: CtCategoryBody; onResult: (s: CtPromptSu
         </div>
       </RefNoteBox>
       {error && <p className="text-xs text-destructive">{error}</p>}
-      {agent.task && <AgentProgress task={agent.task} onCancel={agent.cancel} />}
+      {agent.task && <AgentProgress task={agent.task} onCancel={agent.cancel} onAnswer={agent.answer} />}
       <div className="flex items-center gap-2">
         <span className="text-[11px] text-muted-foreground">
           Điền tất cả các tab (chưa lưu danh mục). Style pack / vật liệu có sẵn trong thư viện mà phù hợp thì được chọn lại; chỉ cái chưa có mới được tạo.

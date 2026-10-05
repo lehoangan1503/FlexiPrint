@@ -36,6 +36,7 @@
  *   GET    ai/agent-status               → CtAgentStatus (the @flexiprint agent on agent_ide: configured / online)
  *   POST   ai/agent-tasks                {kind: create|revise, input: CtAgentTaskInput} → CtAgentTask, sent to agent_ide (server/agent/tasks.ts)
  *   GET    ai/agent-tasks/:id            → CtAgentTask (progress, then result in the built-in LLM's shape)
+ *   POST   ai/agent-tasks/:id/answer     {question_id, choices, text} — answer the agent's question (ask_user)
  *   POST   ai/agent-tasks/:id/cancel
  *   POST   ai/details-suggest            multipart: name, spec, note, ref_url×≤6, file×≤4 → CtDetailsSuggestion (category's chi tiết thành phẩm)
  *   POST   ai/preset-prompt              multipart: kind, preset_id?, name?, note, prompt?, ref_url×≤6, file×≤4 → CtPresetPromptSuggestion (recorded in the preset's history)
@@ -109,7 +110,7 @@ import * as studio from "./studio";
 import * as packs from "./mockup-packs";
 import { reviewCategoryPrompts, suggestCategoryPrompts, suggestCategoryRevision, suggestDetails, suggestPresetPrompt, suggestRefine } from "./ai/prompt-writer";
 import { mcpEndpoint } from "./mcp/server";
-import { agentStatus, cancelAgentTask, createAgentTask, getAgentTask } from "./agent/tasks";
+import { agentStatus, answerAgentTask, cancelAgentTask, createAgentTask, getAgentTask } from "./agent/tasks";
 
 export interface CtRouteContext {
   params: Promise<{ path?: string[] }>;
@@ -173,6 +174,7 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
     if (id === "agent-tasks" && !sub && method === "POST") return createAgentTask(session, await readJson<unknown>(req));
     if (id === "agent-tasks" && sub && !path[3] && method === "GET") return getAgentTask(session, sub);
     if (id === "agent-tasks" && sub && path[3] === "cancel" && method === "POST") return cancelAgentTask(session, sub);
+    if (id === "agent-tasks" && sub && path[3] === "answer" && method === "POST") return answerAgentTask(session, sub, await readJson<unknown>(req));
     if (id === "details-suggest" && method === "POST") return suggestDetails(await req.formData());
     if (id === "refine-suggest" && method === "POST") return suggestRefine(await req.formData());
     return h.jsonError("Not found", 404);

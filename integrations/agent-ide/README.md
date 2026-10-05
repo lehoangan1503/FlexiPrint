@@ -68,6 +68,8 @@ Bản vẽ tldraw: `docs/architecture/flexiprint-chieu-nguoc.tldr` (app → agen
    không có webhook báo xong — `submit_result` chính là "cuộc gọi báo lại".
 6. **⑥** App hỏi trạng thái task, hiện tiến độ từng dòng, rồi hiện **đề xuất** dạng ô tick (như Flash vẫn làm).
    Nếu lượt của agent kết thúc mà không nộp (hoặc treo quá 3 giờ) → task báo lỗi.
+   Agent cần người dùng chọn → `ask_user`: task chuyển "waiting", lượt agent kết thúc, dialog hiện câu hỏi + phương án;
+   người dùng trả lời → `POST ai/agent-tasks/:id/answer` gửi câu trả lời thành lượt mới **cùng phiên** agent_ide → agent làm tiếp.
 7. **⑦** Người dùng tick và áp dụng → app lưu bằng **tài khoản của chính người dùng**. Agent không tự lưu trong việc
    đến từ app.
 
@@ -210,7 +212,7 @@ UI Cài đặt → Dịch vụ → thêm; hoặc API admin
 | Thư viện | `list_categories`, `get_category`, `list_cliparts`, `get_history`, `view_image`, `list_style_packs`, `list_materials`, `list_product_details` |
 | Prompt | `assemble_prompts` (prompt y như model ảnh nhận, kể cả bản nháp), `review_category` |
 | Studio | `list_models`, `run_studio` (origin / refine / variant / material — **tốn tiền**; `task_id` gắn vào task, `draft` chạy thử prompt chưa lưu), `wait_run` (server chờ hộ tới khi xong), `get_run` |
-| Task từ app | `get_task`, `report_progress`, `submit_result`, `fail_task` |
+| Task từ app | `get_task`, `report_progress`, `ask_user` (hỏi người dùng, task chờ; câu trả lời về thành lượt mới cùng phiên), `submit_result` (bắt buộc `summary`; từ chối khi còn ảnh đang chạy / câu hỏi chưa trả lời), `fail_task` |
 | Lưu (khi được nhờ trực tiếp) | `save_category`, `save_preset`, `restore_category` |
 
 Resources: `flexiprint://guide/overview` (đọc đầu tiên), `…/task-results`, `…/category-rules`, `…/details-rules`,

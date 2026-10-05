@@ -19,7 +19,7 @@ import { isMaterialClipart, isMulticolorClipart } from "../../lib/library";
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtTextarea, cx } from "../ui";
 import { SentenceDiff } from "../studio/sentence-diff";
 import { RefNoteBox, type RefImage } from "./ref-note-box";
-import { AgentBadge, AgentProgress, useAgentStatus, useAgentTask } from "./agent-brain";
+import { AgentBadge, AgentProgress, AgentSummary, taskImages, useAgentStatus, useAgentTask } from "./agent-brain";
 
 /** What the editor ticked in a revision. */
 export interface CtReviseChoice {
@@ -176,10 +176,11 @@ export function CategoryRevisePanel(props: {
       />
 
       {error && <p className="text-xs text-destructive">{error}</p>}
-      {agent.task && <AgentProgress task={agent.task} onCancel={agent.cancel} />}
+      {agent.task && <AgentProgress task={agent.task} onCancel={agent.cancel} onAnswer={agent.answer} />}
 
       {plan && choice && (
         <div className="space-y-2">
+          <AgentSummary summary={plan.summary ?? ""} images={taskImages(agent.finished)} />
           <div className="rounded-md border bg-background/60 p-2 text-xs leading-relaxed">
             <p className="mb-0.5 font-medium">Chẩn đoán</p>
             <p className="whitespace-pre-line">{plan.diagnosis}</p>
@@ -419,6 +420,7 @@ export function CategoryHistory(props: { categoryId: string; onClose: () => void
                     </div>
                   )}
                   <p className="whitespace-pre-line">{r.diagnosis}</p>
+                  {r.summary && <p className="whitespace-pre-line text-muted-foreground">@flexiprint: {r.summary}</p>}
                   {r.spec && <SentenceDiff before={h.input.spec ?? ""} after={r.spec.text} />}
                   {r.style && r.style.action !== "keep" && <p>Style pack: {ACTION_LABEL[r.style.action]} “{r.style.name}” — {r.style.why}</p>}
                   {r.materials?.filter((m) => m.action !== "keep").map((m, k) => (

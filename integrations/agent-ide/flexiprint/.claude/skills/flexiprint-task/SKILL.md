@@ -28,6 +28,13 @@ Người dùng đang chờ trên trình duyệt. Họ thấy từng dòng `repor
 - Thư viện chỉ có ở bản dùng chung: sửa style pack / vật liệu đang được danh mục khác dùng thì ghi rõ trong "why".
 - Báo `report_progress` ở mỗi bước lớn (một dòng tiếng Việt).
 
+## 3b. Hỏi người dùng (khi thật cần)
+- Lựa chọn thuộc về người dùng (hai hướng đều hợp lý, chuyện gu, thiếu thông tin): `ask_user(task_id, question,
+  options: [{label, description}], multi?, allow_text?)`. Câu hỏi ngắn, nói rõ bạn thấy gì và mỗi lựa chọn đổi gì.
+- Gọi xong thì **kết thúc lượt ngay** (không gọi thêm tool, trả lời một dòng). Câu trả lời đến thành tin nhắn mới
+  trong cùng phiên: "[FlexiPrint task <id>] Người dùng trả lời …" → làm tiếp task từ đó (`get_task` có cả các câu đã hỏi).
+- Đừng hỏi điều tự quyết được hoặc kiểm chứng được bằng ảnh thử. Mỗi lúc chỉ một câu hỏi mở.
+
 ## 4. Tự kiểm tra
 - `assemble_prompts` với bản nháp (spec / style_prompt / details / materials) → đọc như model ảnh đọc.
   Không còn: hai mốc cho một vị trí, kích thước không đo được, câu "NOT in this picture" xoá mất chi tiết bắt buộc,
@@ -44,8 +51,9 @@ Người dùng đang chờ trên trình duyệt. Họ thấy từng dòng `repor
 ## 5. Nộp
 - Chỉ nộp khi **mọi việc đã xong hẳn**: mọi lượt tạo ảnh đã `wait_run` xong và đã xem. Kết quả là câu trả lời
   cuối cùng, không phải báo cáo giữa chừng ("đang chờ ảnh…" thì không được nộp). Còn lượt chạy dở → server từ chối.
-- `submit_result(task_id, result)` đúng định dạng — chẩn đoán / lý do bằng tiếng Việt, ngắn, nói rõ ảnh số mấy,
-  và ảnh thử (tên "… · thử") cho thấy gì.
+- `submit_result(task_id, result)` đúng định dạng — chẩn đoán / lý do bằng tiếng Việt, ngắn, nói rõ ảnh số mấy.
+- **Bắt buộc `summary`** (tiếng Việt): đã làm gì, ảnh thử nào đã tạo và cho thấy gì, đã hỏi gì, còn điều gì chưa chắc.
+  Người dùng đọc nó đầu tiên, kèm ảnh thử.
 - Lỗi định dạng → đọc thông báo, sửa, nộp lại.
 - Không làm được (thiếu thông tin, studio lỗi…) → `fail_task(task_id, lý do tiếng Việt)`.
 - Ghi vài dòng vào `notes/<tên danh mục>.md`: đã đổi gì, vì sao, còn nghi ngờ gì.

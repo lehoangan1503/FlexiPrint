@@ -169,6 +169,7 @@ export async function createAgentTask(s: CtSession, body: unknown): Promise<Next
 }
 
 interface KernelJob {
+  sessionId?: string;
   status: "running" | "done" | "error" | "needs_input";
   text?: string;
   error?: string;
@@ -180,7 +181,18 @@ export async function getAgentTask(s: CtSession, id: string): Promise<NextRespon
   const { data: task, error } = await s.supabase.from(CT_TABLES.agentTasks).select("*").eq("id", id).maybeSingle<CtAgentTask>();
   if (error) return jsonError(error.message, 500);
   if (!task) return jsonError("Không tìm thấy task", 404);
-  if (task.status !== "pending" && task.status !== "running") return NextResponse.json(task);
+  if (task.status !== "pending" && task.status !== "running") {
+    // Finished before the session was known (submit_result came before the first poll): fill it in once.
+    const cfg = kernelConfig();
+    if (cfg && task.agent_job_id && !task.agent_session_id) {
+      const job = await kernel<KernelJob>(cfg, `/jobs/${encodeURIComponent(task.agent_job_id)}`, { timeoutMs: 5_000 }).catch(() => null);
+      if (job && str(job.sessionId)) {
+        task.agent_session_id = str(job.sessionId);
+        await s.supabase.from(CT_TABLES.agentTasks).update({ agent_session_id: task.agent_session_id }).eq("id", id);
+      }
+    }
+    return NextResponse.json(task);
+  }
 
   // Still open: did the agent's turn end without an answer?
   let fail = "";
@@ -189,6 +201,11 @@ export async function getAgentTask(s: CtSession, id: string): Promise<NextRespon
   else if (cfg && task.agent_job_id) {
     try {
       const job = await kernel<KernelJob>(cfg, `/jobs/${encodeURIComponent(task.agent_job_id)}`, { timeoutMs: 5_000 });
+      // The turn's 202 comes before agent_ide knows the session: keep it once known (the category's next task resumes it).
+      if (!task.agent_session_id && str(job.sessionId)) {
+        task.agent_session_id = str(job.sessionId);
+        await s.supabase.from(CT_TABLES.agentTasks).update({ agent_session_id: task.agent_session_id }).eq("id", id);
+      }
       if (job.status === "error") fail = `Agent lỗi: ${clip(str(job.error) || str(job.text), 600)}`;
       else if (job.status === "needs_input") fail = `Agent cần thêm thông tin: ${clip(str(job.text), 600)}`;
       else if (job.status === "done") {

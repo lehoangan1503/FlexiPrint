@@ -10,14 +10,14 @@
 
 import { CT_TABLES } from "../../config";
 import { normalizeCategoryRules } from "../../lib/library";
-import type { CtAgentTask, CtAgentTaskProgress, CtAsset, CtCategoryHistoryEntry, CtCategorySnapshot, CtClipartCategory, CtMaterialSpec, CtStudioRunBody } from "../../types";
+import type { CtAgentTask, CtAgentTaskProgress, CtAsset, CtCategoryRevision, CtCategoryHistoryEntry, CtCategorySnapshot, CtClipartCategory, CtMaterialSpec, CtStudioRunBody } from "../../types";
 import { normalizeMaterialSpecs } from "../../lib/materials";
 import { isOwnUploadUrl } from "../library";
 import * as studio from "../studio";
 import type { CtServiceClient } from "../supabase";
 import { CT_LIBRARY_TOOLS, loadLibraryCatalog, type CtLibraryCatalog, type LibraryDb } from "../ai/library-tools";
 import { flatPrompt, lintCategory, materialPrompts, type ReviewInput } from "../ai/prompt-review";
-import { buildRevision, revisionContext, suggestionFromAgent } from "../ai/prompt-writer";
+import { buildRevision, revisionContext, suggestionFromAgent, type RevisionContext } from "../ai/prompt-writer";
 import { clip, record, str } from "../ai/llm";
 import { CT_MCP_WRITE_TOOLS } from "./write-tools";
 
@@ -375,6 +375,49 @@ async function patchTask(db: CtServiceClient, id: string, patch: Partial<CtAgent
 
 const TASK_ARG = { task_id: { type: "string", description: "The task id from the message." } };
 
+/**
+ * The revise result as agents tend to write it — the assemble_prompts draft shapes ("spec": "…", "details": […],
+ * "materials": [{id, prompt}]) — turned into the reviser's plan shape that buildRevision reads.
+ */
+function normalizeRevisePlan(raw: Record<string, unknown>, cat: CtCategorySnapshot, ctx: RevisionContext): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...raw };
+  if (typeof raw.spec === "string") out.spec = str(raw.spec) && str(raw.spec) !== cat.spec ? { text: str(raw.spec), why: "" } : null;
+  if (Array.isArray(raw.details)) out.details = { list: raw.details, why: "" };
+  if (typeof raw.style === "string") out.style = { action: "edit", prompt: raw.style, why: "" };
+  else if (raw.style && typeof raw.style === "object") {
+    const st = record(raw.style);
+    const target = str(st.switchTo) || (str(st.id) && str(st.id) !== ctx.style?.id ? str(st.id) : "");
+    if (!str(st.action)) out.style = { ...st, action: target ? "switch" : str(st.prompt) && str(st.prompt) !== ctx.style?.prompt ? "edit" : "keep", ...(target ? { switchTo: target } : {}) };
+  }
+  if (Array.isArray(raw.materials)) {
+    out.materials = raw.materials.map(record).map((m) => {
+      const handle = str(m.handle) || str(m.id) || str(m.currentId);
+      const cur = ctx.current.find((x) => x.id === handle);
+      if (str(m.action)) return { ...m, handle };
+      return { ...m, handle, action: str(m.switchTo) ? "switch" : cur && str(m.prompt) && str(m.prompt) !== cur.prompt ? "edit" : "keep" };
+    });
+  }
+  return out;
+}
+
+/** Changes in the plan that buildRevision did not carry over (wrong handle, unknown id, bad shape). */
+function lostChanges(plan: Record<string, unknown>, cat: CtCategorySnapshot, rev: CtCategoryRevision): string[] {
+  const lost: string[] = [];
+  const spec = record(plan.spec);
+  if (str(spec.text) && str(spec.text) !== cat.spec && !rev.spec) lost.push('"spec" (send the full text)');
+  const det = record(plan.details);
+  if (Array.isArray(det.list) && det.list.length && !rev.details) lost.push('"details" (send {"list": [{text, mode, label}], "why"})');
+  for (const m of (Array.isArray(plan.materials) ? plan.materials : []).map(record)) {
+    const action = str(m.action);
+    if (action === "keep" || !action) continue;
+    const hit = rev.materials.find((x) => x.currentId === str(m.handle) || x.targetId === str(m.switchTo));
+    if (!hit || hit.action === "keep") lost.push(`material ${str(m.handle) || "?"} (${action}: use a current material id from get_category${action === "switch" ? " and a library id in switchTo" : ""})`);
+  }
+  const st = record(plan.style);
+  if (["edit", "switch", "new"].includes(str(st.action)) && rev.style.action === "keep") lost.push(`style (${str(st.action)}: needs "prompt"${str(st.action) === "switch" ? " / a library style pack id in switchTo" : ""})`);
+  return lost;
+}
+
 const taskTools: CtMcpTool[] = [
   {
     name: "get_task",
@@ -429,7 +472,12 @@ const taskTools: CtMcpTool[] = [
         if (!result) throw new Error('Result needs "spec" and a "style" ({reuseId} or {name, prompt}) — see flexiprint://guide/task-results');
       } else {
         if (!str(raw.diagnosis)) throw new Error('Result needs "diagnosis" — see flexiprint://guide/task-results');
-        result = buildRevision(raw, snapshot, await revisionContext(db, snapshot), task.input.refUrls);
+        const rctx = await revisionContext(db, snapshot);
+        const plan = normalizeRevisePlan(raw, snapshot, rctx);
+        result = buildRevision(plan, snapshot, rctx, task.input.refUrls);
+        // Never drop a change silently: what the agent sent but the plan does not carry → it resubmits.
+        const lost = lostChanges(plan, snapshot, result);
+        if (lost.length) throw new Error(`Not understood, nothing saved — fix and submit again: ${lost.join("; ")}. Format: flexiprint://guide/task-results`);
       }
       await patchTask(db, task.id, { status: "done", result, finished_at: new Date().toISOString() });
       return json({ ok: true, message: "Đã gửi kết quả — người dùng sẽ duyệt trên app." });

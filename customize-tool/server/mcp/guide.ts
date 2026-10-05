@@ -81,6 +81,9 @@ list_materials / get_category); "M1"-style handles are not available to you.
  "refRoles": ["design" | "product" | "none"]   // one per task input refUrls, in order
 }
 One entry in "materials" per CURRENT material of the category (keep the rest as "keep").
+Short forms are accepted too: "spec": "<full text>", "details": [{text, mode, label}], "materials": [{"id": "<current
+material id>", "prompt": "<full new prompt>"}] (a changed prompt = edit). A change that cannot be read is refused with
+the reason — fix it and submit again (the task stays open).
 
 ## kind "create" — a new category from the editor's note and photos
 {"name": "Title Case", "spec": "English, 30–70 words",

@@ -1,28 +1,42 @@
 ---
 name: flexiprint
-title: FlexiPrint — trợ lý thư viện clipart
-desc: Viết, sửa và kiểm tra prompt danh mục clipart của FlexiPrint; nhận việc từ app FlexiPrint trên trình duyệt; tạo ảnh thử bằng studio.
+title: "FlexiPrint — trợ lý thư viện clipart"
+desc: "Viết, sửa và kiểm tra prompt danh mục clipart của FlexiPrint; nhận việc từ app FlexiPrint trên trình duyệt; tạo ảnh thử bằng studio."
 does:
-  - Tạo danh mục clipart mới (spec, style pack, vật liệu, chi tiết thành phẩm) từ mô tả + ảnh mẫu
-  - Sửa danh mục theo phản hồi của người dùng trên ảnh kết quả
-  - Kiểm tra prompt đã ghép (xung đột giữa các lớp, vị trí / kích thước không lặp lại được)
-  - Xem toàn bộ thư viện, lịch sử, ảnh kết quả; tạo ảnh thử bằng studio (ComfyUI)
-  - Lưu danh mục / style pack / vật liệu khi người trong công ty nhờ trực tiếp (có lịch sử, khôi phục được)
+  - "Tạo danh mục clipart mới (spec, style pack, vật liệu, chi tiết thành phẩm) từ mô tả + ảnh mẫu"
+  - "Sửa danh mục theo phản hồi của người dùng trên ảnh kết quả"
+  - "Kiểm tra prompt đã ghép (xung đột giữa các lớp, vị trí / kích thước không lặp lại được)"
+  - "Xem toàn bộ thư viện, lịch sử, ảnh kết quả; tạo ảnh thử bằng studio (ComfyUI)"
+  - "Lưu danh mục / style pack / vật liệu khi người trong công ty nhờ trực tiếp (có lịch sử, khôi phục được)"
 does_not:
-  - Không lưu thẳng khi việc đến từ app FlexiPrint — khi đó nộp đề xuất, người dùng duyệt trên app
-  - Không xoá danh mục / preset / clipart, không đụng sản phẩm / đơn hàng / Shopify
-  - Không chạy lệnh shell / PowerShell nào (bị hàng rào chặn), không đọc / sửa file ngoài thư mục này
+  - "Không lưu thẳng khi việc đến từ app FlexiPrint — khi đó nộp đề xuất, người dùng duyệt trên app"
+  - "Không xoá danh mục / preset / clipart, không đụng sản phẩm / đơn hàng / Shopify"
+  - "Không chạy lệnh shell / PowerShell nào (bị hàng rào chặn), không đọc / sửa file ngoài thư mục này"
 provider: claude
+model: "claude-sonnet-5-5"
 mode: acceptEdits
-tools: [Read, Glob, Grep, Write, Edit, TodoWrite, Skill]
+tools:
+  - "Read"
+  - "Glob"
+  - "Grep"
+  - "Write"
+  - "Edit"
+  - "TodoWrite"
+  - "Skill"
+capabilities: []
 bash: false
-# Không chạy lệnh nào: `bash: false` chỉ cắt tool Bash có sẵn, còn MCP chạy lệnh của máy (powershell_lite…) vẫn
-# vào được và đã đọc được cả C:\Users\b. Allowlist này không khớp lệnh nào → hàng rào chặn MỌI lệnh, mọi tool.
-commands: ["flexiprint-agent-runs-no-shell-commands"]
+commands:
+  - "flexiprint-agent-runs-no-shell-commands"
+scope: "."
 daily_turn_limit: 0
-rev: 4
-rev_by: FlexiPrint
-rev_note: Chặn mọi lệnh shell (kể cả powershell_lite) — agent chỉ làm việc qua MCP flexiprint và trong thư mục của nó
+memory:
+  trade: "docs/"
+  ops: "agent/flexiprint/ops"
+  guest: "agent/flexiprint/guests"
+rev: 5
+rev_by: "main"
+rev_at: 2026-10-05
+rev_note: ""
 ---
 
 # @flexiprint

@@ -660,8 +660,8 @@ export class Customizer {
     }
 
     const mains = tpl.config.main.enabled ? mainVersions(tpl.assets, tpl.mainAssetId) : [];
+    const current = selectedMainId(this.selection, tpl.assets, tpl.mainAssetId);
     if (mains.length > 1) {
-      const current = selectedMainId(this.selection, tpl.assets, tpl.mainAssetId);
       wrap.append(
         this.field(
           tpl.config.main.label,
@@ -676,27 +676,28 @@ export class Customizer {
           mains.find((m) => m.id === current)?.name,
         ),
       );
-      // The chosen version's sub-options ("Thêm option"): the version itself first, then its other pictures.
-      const version = mains.find((m) => m.id === current);
-      const subs = version ? mainSubOptions(tpl.assets, tpl.config.main, version.id) : [];
-      if (version && subs.length) {
-        const shown = selectedMainImageId(this.selection, tpl.assets, tpl.mainAssetId);
-        const list = [version, ...subs];
-        wrap.append(
-          this.field(
-            version.name,
-            this.picker(
-              tpl.config.main.display,
-              list.map((m) => ({ id: m.id, label: m.name, image: m.meta.thumb ?? m.url, swatch: m.meta.swatch })),
-              shown,
-              false,
-              (id) => id && this.change(CT_MAIN_KEY, { kind: "main", assetId: version.id, optionId: id === version.id ? null : id }),
-            ),
-            true,
-            list.find((m) => m.id === shown)?.name,
+    }
+    // The chosen version's sub-options ("Thêm option"): the version itself first, then its other pictures. With one
+    // version they are the only choice, under the main label ("Choose color").
+    const version = mains.find((m) => m.id === current);
+    const subs = version ? mainSubOptions(tpl.assets, tpl.config.main, version.id) : [];
+    if (version && subs.length) {
+      const shown = selectedMainImageId(this.selection, tpl.assets, tpl.mainAssetId);
+      const list = [version, ...subs];
+      wrap.append(
+        this.field(
+          mains.length > 1 ? version.name : tpl.config.main.label,
+          this.picker(
+            tpl.config.main.display,
+            list.map((m) => ({ id: m.id, label: m.name, image: m.meta.thumb ?? m.url, swatch: m.meta.swatch })),
+            shown,
+            false,
+            (id) => id && this.change(CT_MAIN_KEY, { kind: "main", assetId: version.id, optionId: id === version.id ? null : id }),
           ),
-        );
-      }
+          true,
+          list.find((m) => m.id === shown)?.name,
+        ),
+      );
     }
 
     // Zones as a tree: a child zone's fields come right under the option that opened it.

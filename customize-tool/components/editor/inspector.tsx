@@ -33,6 +33,7 @@ import {
 import { CT_FONTS } from "../../config";
 import type {
   CtAsset,
+  CtTextFormat,
   CtMainFrame,
   CtOptionDisplay,
   CtPhotoCapabilities,
@@ -507,6 +508,18 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
           )}
           {textMode(region) === "input" && (
             <>
+              <CtField label="Kiểu nhập">
+                <CtSelect<CtTextFormat>
+                  value={cfg.text.format ?? "text"}
+                  onChange={(format) =>
+                    setText(format === "date" ? { format, maxChars: 10, placeholder: "dd/mm/yyyy", defaultText: /^\d{2}\/\d{2}\/\d{4}$/.test(cfg.text.defaultText) ? cfg.text.defaultText : "25/12/2026" } : { format })
+                  }
+                  options={[
+                    { value: "text", label: "Chữ tự do" },
+                    { value: "date", label: "Ngày (dd/mm/yyyy)" },
+                  ]}
+                />
+              </CtField>
               <div className="grid grid-cols-2 gap-2">
                 <CtField label="Chữ mặc định">
                   <CtInput value={cfg.text.defaultText} onChange={(e) => setText({ defaultText: e.target.value })} />

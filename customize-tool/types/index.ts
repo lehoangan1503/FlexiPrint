@@ -141,9 +141,12 @@ export interface CtTextConfig {
    * Absent (older zones) = "list" when there are choices, else "input".
    */
   mode?: CtTextMode;
+  /** Mode "input": what the customer types — free text, or a date the field formats as dd/mm/yyyy. Absent = "text". */
+  format?: CtTextFormat;
 }
 
 export type CtTextMode = "input" | "fixed" | "list" | "options";
+export type CtTextFormat = "text" | "date";
 
 /**
  * Free (no-AI) photo styles. "original" keeps the photo; "pixel" is a local

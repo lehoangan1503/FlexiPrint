@@ -57,6 +57,8 @@ import { drawOnScene } from "../lib/scene";
 import { renderSlide, type CtSlotArt } from "../lib/mockup";
 import {
   defaultRegionSelection,
+  formatDateInput,
+  isValidDate,
   defaultSelection,
   fontsUsed,
   isSelectionValid,
@@ -877,13 +879,17 @@ export class Customizer {
         true,
       );
     }
-    const counter = el("span", { class: "ct-counter", text: `${text.length}/${cfg.maxChars}` });
-    const input = el("input", { class: "ct-input", type: "text", value: text, maxlength: String(cfg.maxChars), placeholder: cfg.placeholder });
+    const date = cfg.format === "date";
+    const max = date ? 10 : cfg.maxChars;
+    const counter = el("span", { class: "ct-counter", text: date ? "dd/mm/yyyy" : `${text.length}/${max}` });
+    const input = el("input", { class: "ct-input", type: "text", value: text, maxlength: String(max), placeholder: date ? cfg.placeholder || "dd/mm/yyyy" : cfg.placeholder });
+    if (date) input.setAttribute("inputmode", "numeric");
     input.addEventListener("input", () => {
+      if (date) input.value = formatDateInput(input.value);
       // Not via change(): re-rendering the form would steal focus mid-typing.
       const prev = this.selection[r.id];
       this.selection = { ...this.selection, [r.id]: { kind: "text", text: input.value, optionId: prev?.kind === "text" ? prev.optionId : null } };
-      counter.textContent = `${input.value.length}/${cfg.maxChars}`;
+      if (!date) counter.textContent = `${input.value.length}/${max}`;
       this.errorBox.hidden = true;
       this.showStage();
     });
@@ -1442,6 +1448,9 @@ export class Customizer {
       const mode = r.kind === "text" ? textMode(r) : null;
       if ((mode === "input" || mode === "list") && !(sel?.kind === "text" && sel.text.trim())) {
         return `${this.t("required", "Please complete")}: ${r.config.text.label}`;
+      }
+      if (mode === "input" && r.config.text.format === "date" && sel?.kind === "text" && !isValidDate(sel.text)) {
+        return `${this.t("invalidDate", "Please enter a valid date (dd/mm/yyyy)")}: ${r.config.text.label}`;
       }
       if (r.kind === "image" && !this.isFixedLayer(r) && !r.config.image.allowNone && regionGroups(r, this.tpl.items, this.tpl.assets).length > 0) {
         if (!(sel?.kind === "image" && sel.assetId)) return `${this.t("required", "Please complete")}: ${r.config.image.label}`;

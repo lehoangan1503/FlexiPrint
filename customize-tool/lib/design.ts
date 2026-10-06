@@ -341,6 +341,21 @@ export function variantsOf<A extends CtRenderAsset>(assets: A[], subId: string):
   return assets.filter((a) => a.role === "variant" && a.parent_id === subId).sort(byOrder);
 }
 
+/** A date typed digit by digit, shown as dd/mm/yyyy ("2512" → "25/12"). */
+export function formatDateInput(raw: string): string {
+  const d = raw.replace(/\D/g, "").slice(0, 8);
+  return [d.slice(0, 2), d.slice(2, 4), d.slice(4)].filter(Boolean).join("/");
+}
+
+/** A complete, real dd/mm/yyyy date. */
+export function isValidDate(text: string): boolean {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(text.trim());
+  if (!m) return false;
+  const [d, mo, y] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(y, mo - 1, d);
+  return date.getFullYear() === y && date.getMonth() === mo - 1 && date.getDate() === d;
+}
+
 /** Regions in customer-form order: the Layers panel order (topmost first). */
 export function formOrder(regions: CtRegion[]): CtRegion[] {
   return [...regions].sort((a, b) => b.sort_order - a.sort_order);

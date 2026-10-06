@@ -1547,6 +1547,12 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               onPreviewOption={(regionId, assetId) => setSelection((sel) => ({ ...sel, [regionId]: { kind: "image", assetId } }))}
               onPickLayerImage={(regionId) => setLayerLibrary({ regionId })}
               onAddChild={addChildZone}
+              onSampleText={(regionId, text) =>
+                setSelection((sel) => {
+                  const cur = sel[regionId];
+                  return cur?.kind === "text" ? { ...sel, [regionId]: { ...cur, text } } : sel;
+                })
+              }
               onZoneOption={(regionId, optionId) =>
                 setSelection((sel) => {
                   const cur = sel[regionId];

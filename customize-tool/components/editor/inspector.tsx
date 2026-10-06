@@ -58,7 +58,7 @@ import type {
 import { CT_BASE_OPTION } from "../../types";
 import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, orientedBox, resolvePhotoFrame, shapeBounds } from "../../lib/geometry";
 import { useImageSize } from "./use-image-size";
-import { defaultRegionSelection, formOrder, hasTestPhoto, normalizeRegion, textMode, variantsOf, ZONE_TEXT_STYLE_KEYS, zoneSubtree } from "../../lib/design";
+import { defaultRegionSelection, formOrder, hasTestPhoto, isValidDate, normalizeRegion, textMode, variantsOf, ZONE_TEXT_STYLE_KEYS, zoneSubtree } from "../../lib/design";
 import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
 import { PhotoGuideDialog } from "./photo-guide-dialog";
 import { aiStyleModel } from "../../lib/ai-style-models";
@@ -97,6 +97,8 @@ export interface InspectorProps {
   onToggleOverlay: () => void;
   /** Show an option on the canvas. */
   onPreviewOption: (regionId: string, assetId: string) => void;
+  /** The text a text zone shows on the canvas (and in the Tổ hợp samples). */
+  onSampleText: (regionId: string, text: string) => void;
   onSetSwatch: (asset: CtAsset, color: string) => void;
   /** Customer-photo zones: try a local photo on the canvas (not saved). */
   onPhotoSelection: (regionId: string, sel: CtPhotoSelection) => void;
@@ -421,7 +423,15 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
   const set = (fn: (r: CtRegion) => CtRegion) => design.commit((s) => updateRegion(s, region.id, (r) => fn(normalizeRegion(r))));
   const setBounds = (patch: Partial<typeof b>) => set((r) => ({ ...r, shape: fitShapeToBounds(r.shape, { ...b, ...patch }) }));
   const cfg = region.config;
-  const setText = (patch: Partial<typeof cfg.text>) => set((r) => ({ ...r, config: { ...r.config, text: { ...r.config.text, ...patch } } }));
+  const setText = (patch: Partial<typeof cfg.text>) => {
+    set((r) => ({ ...r, config: { ...r.config, text: { ...r.config.text, ...patch } } }));
+    // A sample still showing the old default text follows the new one (e.g. "SOPHIA" → "25/12/2026" on a date zone).
+    const sample = props.selection[region.id];
+    const isDate = (patch.format ?? cfg.text.format) === "date";
+    if (patch.defaultText !== undefined && sample?.kind === "text" && (sample.text === cfg.text.defaultText || !sample.text || (isDate && !isValidDate(sample.text)))) {
+      props.onSampleText(region.id, patch.defaultText);
+    }
+  };
 
   return (
     <div className="space-y-4 p-3">

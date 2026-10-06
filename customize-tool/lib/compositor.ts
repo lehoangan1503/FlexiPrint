@@ -5,8 +5,8 @@
  * scaled once at the end, so preview and full-res export are the same picture.
  */
 
-import type { CtMainLayout, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtTextConfig, CtTransform } from "../types";
-import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds } from "./geometry";
+import type { CtMainLayout, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtShape, CtTextConfig, CtTransform } from "../types";
+import { itemPlacement, orientedBox, photoFrameBox, resolvePhotoFrame, shapeBounds } from "./geometry";
 import { activeRegions, normalizeRegion, regionForSelection, selectedMainId, selectedMainImageId, textMode, zoneText } from "./design";
 import { mainFrameFor, resolveLayout } from "./layout";
 
@@ -187,9 +187,33 @@ async function drawRegion(
     const m = f.margin;
     drawPlaced(ctx, img, { x: -f.w / 2 + m, y: -f.h / 2 + m, w: Math.max(1, f.w - 2 * m), h: Math.max(1, f.h - 2 * m) }, sel.transform, region.config.photo.fit);
   } else if (region.kind === "text" && sel.kind === "text") {
-    drawText(ctx, zoneText(region, sel), region.config.text, bounds);
+    // A polygon zone drawn along a slanted band (a tilted lid, a sign) writes along it: its outline's tilt.
+    const band = textBand(region.shape);
+    if (band.rotation) {
+      ctx.translate(band.cx, band.cy);
+      ctx.rotate((band.rotation * Math.PI) / 180);
+      drawText(ctx, zoneText(region, sel), region.config.text, { x: -band.w / 2, y: -band.h / 2, w: band.w, h: band.h });
+    } else {
+      drawText(ctx, zoneText(region, sel), region.config.text, bounds);
+    }
   }
   ctx.restore();
+}
+
+/**
+ * The line a text zone writes along: its outline's oriented box, turned so the text runs along the long side and
+ * reads left → right (never upside down). Rect / ellipse zones: upright.
+ */
+export function textBand(shape: CtShape): { cx: number; cy: number; w: number; h: number; rotation: number } {
+  const b = orientedBox(shape);
+  let { w, h, rotation } = b;
+  if (h > w) {
+    [w, h] = [h, w];
+    rotation -= 90;
+  }
+  if (rotation <= -90) rotation += 180;
+  if (rotation > 90) rotation -= 180;
+  return { cx: b.cx, cy: b.cy, w, h, rotation: Math.abs(rotation) < 1 ? 0 : rotation };
 }
 
 /** `pad`: the image is a rendition on a larger canvas — placed by its art's box, the padding drawn around it. */

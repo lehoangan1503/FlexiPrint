@@ -187,14 +187,16 @@ async function drawRegion(
     const m = f.margin;
     drawPlaced(ctx, img, { x: -f.w / 2 + m, y: -f.h / 2 + m, w: Math.max(1, f.w - 2 * m), h: Math.max(1, f.h - 2 * m) }, sel.transform, region.config.photo.fit);
   } else if (region.kind === "text" && sel.kind === "text") {
+    // maxChars limits what the customer types; a text the designer set (fixed, list, option) is drawn whole.
+    const cfg = textMode(region) === "input" ? region.config.text : { ...region.config.text, maxChars: Number.MAX_SAFE_INTEGER };
     // A polygon zone drawn along a slanted band (a tilted lid, a sign) writes along it: its outline's tilt.
     const band = textBand(region.shape);
     if (band.rotation) {
       ctx.translate(band.cx, band.cy);
       ctx.rotate((band.rotation * Math.PI) / 180);
-      drawText(ctx, zoneText(region, sel), region.config.text, { x: -band.w / 2, y: -band.h / 2, w: band.w, h: band.h });
+      drawText(ctx, zoneText(region, sel), cfg, { x: -band.w / 2, y: -band.h / 2, w: band.w, h: band.h });
     } else {
-      drawText(ctx, zoneText(region, sel), region.config.text, bounds);
+      drawText(ctx, zoneText(region, sel), cfg, bounds);
     }
   }
   ctx.restore();

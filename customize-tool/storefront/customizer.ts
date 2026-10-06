@@ -579,8 +579,9 @@ export class Customizer {
   private liveArts = new Map<string, Promise<string>>();
 
   /**
-   * Mockup edit: the tổ hợp's scene with the LIVE design in its product frames (frame k shows design k of a pack;
-   * one design fills every frame), drawn by the same code as the editor's tổ hợp (lib/mockup.ts).
+   * Mockup edit: the tổ hợp's scene with the LIVE design in its product frames, drawn by the same code as the
+   * editor's tổ hợp (lib/mockup.ts). A pack with a frame per design shows design k in frame k; with fewer frames
+   * than designs the frames start at the design being edited (one frame = always the open design).
    */
   private async mockupStage(me: CtMockupEdit, side: number): Promise<HTMLCanvasElement> {
     const frames = me.slide.layers.filter((l): l is CtPackFrameLayer => l.type === "frame" && !l.hidden);
@@ -588,7 +589,8 @@ export class Customizer {
     const wanted = new Set<string>();
     await Promise.all(
       frames.map(async (f, k) => {
-        const sel = this.count > 1 ? (this.designs[k % this.count] ?? this.selection) : this.selection;
+        const first = frames.length >= this.count ? 0 : this.active;
+        const sel = this.count > 1 ? (this.designs[(first + k) % this.count] ?? this.selection) : this.selection;
         const key = JSON.stringify(sel);
         wanted.add(key);
         let job = this.liveArts.get(key);

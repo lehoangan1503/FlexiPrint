@@ -715,10 +715,15 @@ async function loadSubOptions(db: Db, product: CtProduct, have: Set<string>): Pr
   if (!want.length) return [];
   const { data } = await db.from(CT_TABLES.assets).select("*").in("id", want.map((x) => x.id)).returns<CtAsset[]>();
   const byId = new Map((data ?? []).filter((a) => a.product_id === null || a.product_id === product.id).map((a) => [a.id, a]));
-  return want.flatMap((x) => {
+  const options = want.flatMap((x) => {
     const a = byId.get(x.id);
     return a ? [asMainOption(a, x.mainId)] : [];
   });
+  // Their vật liệu versions too: the "rendition" display draws a sub-option in its material, like its version.
+  const { data: renditions } = options.length
+    ? await db.from(CT_TABLES.assets).select("*").eq("role", "rendition").in("parent_id", options.map((a) => a.id)).returns<CtAsset[]>()
+    : { data: [] as CtAsset[] };
+  return [...options, ...(renditions ?? []).filter((r) => !r.meta?.variant && !have.has(r.id))];
 }
 
 /**

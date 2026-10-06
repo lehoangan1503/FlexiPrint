@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { ctApi } from "../lib/api-client";
 import { CT_DEFAULT_IMAGE_MODEL, CT_IMAGE_MODELS, type CtImageModel } from "../lib/image-models";
-import { CtSelect, CtTooltip } from "./ui";
+import { CtSelect } from "./ui";
 
 export function ImageModelPicker() {
   const [model, setModel] = useState<string>(CT_DEFAULT_IMAGE_MODEL);
@@ -44,17 +44,16 @@ export function ImageModelPicker() {
 
   const note = models.find((m) => m.id === model)?.note ?? "";
   return (
-    <CtTooltip label={error ?? `Model tạo ảnh AI cho cả team — ${note}`}>
-      <div className="flex items-center gap-1.5">
-        {saving ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : <Sparkles className="h-4 w-4 text-muted-foreground" />}
-        <CtSelect<string>
-          className="h-9 w-48"
-          value={model}
-          onChange={pick}
-          disabled={saving}
-          options={models.map((m) => ({ value: m.id, label: m.label }))}
-        />
-      </div>
-    </CtTooltip>
+    // A plain title: the home page has no TooltipProvider.
+    <div className="flex items-center gap-1.5" title={error ?? `Model tạo ảnh AI cho cả team — ${note}`}>
+      {saving ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : <Sparkles className="h-4 w-4 text-muted-foreground" />}
+      <CtSelect<string>
+        className="h-9 w-48"
+        value={model}
+        onChange={pick}
+        disabled={saving}
+        options={models.map((m) => ({ value: m.id, label: m.label }))}
+      />
+    </div>
   );
 }

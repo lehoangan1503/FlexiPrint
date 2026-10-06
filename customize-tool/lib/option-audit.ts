@@ -75,6 +75,10 @@ export function auditOptions(tpl: CtTemplate): CtOptionAudit {
   if (tpl.config.main.enabled && mains.length > 1) {
     const subs = mains.reduce((n, m) => n + mainSubOptions(tpl.assets, tpl.config.main, m.id).length, 0);
     lines.push({ level: "ok", text: `Khách chọn version “${tpl.config.main.label}”: ${mains.length} version${subs ? `, ${subs} option con` : ""}.` });
+  } else if (tpl.config.main.enabled && mains.length === 1) {
+    // One version with sub-options: the storefront offers them under the main label.
+    const subs = mainSubOptions(tpl.assets, tpl.config.main, mains[0].id).length;
+    if (subs) lines.push({ level: "ok", text: `Khách chọn “${tpl.config.main.label}”: ${subs + 1} ảnh (${mains[0].name} + ${subs} option).` });
   }
 
   let picks = 0;

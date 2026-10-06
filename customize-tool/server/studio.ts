@@ -53,6 +53,7 @@ import type { LibraryDb } from "./ai/library-tools";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctRemove, ctStoragePath, ctUpload } from "./storage";
 import { insertClipart } from "./library";
+import { currentImageModel } from "./settings";
 
 const COOKIE = "fp_studio";
 const TTL_S = 12 * 60 * 60;
@@ -445,16 +446,24 @@ export function studioModels(): Promise<NextResponse> {
   return studioCall(async () => NextResponse.json(await comfy<{ models: string[] }>("/flexi/models")));
 }
 
+/** Every AI run uses the team's image model (home page, server/settings.ts) — whatever the caller asked for. */
+async function withImageModel(body: CtStudioRunBody): Promise<CtStudioRunBody> {
+  if (body.recipe === "adjust") return body;
+  return { ...body, params: { ...body.params, model: await currentImageModel() } } as CtStudioRunBody;
+}
+
 /** POST studio/runs */
 export function studioRun(body: CtStudioRunBody | null): Promise<NextResponse> {
   if (!validRunBody(body)) return Promise.resolve(jsonError("Body không hợp lệ", 400));
-  return studioCall(async () => NextResponse.json(await comfy<{ run_id: string }>("/flexi/run", { method: "POST", body: JSON.stringify(body) }), { status: 202 }));
+  return studioCall(async () =>
+    NextResponse.json(await comfy<{ run_id: string }>("/flexi/run", { method: "POST", body: JSON.stringify(await withImageModel(body)) }), { status: 202 }),
+  );
 }
 
 /** POST studio/drafts */
 export function studioDraft(body: CtStudioRunBody | null): Promise<NextResponse> {
   if (!validRunBody(body)) return Promise.resolve(jsonError("Body không hợp lệ", 400));
-  return studioCall(async () => NextResponse.json(await comfy<{ draft_id: string }>("/flexi/draft", { method: "POST", body: JSON.stringify(body) })));
+  return studioCall(async () => NextResponse.json(await comfy<{ draft_id: string }>("/flexi/draft", { method: "POST", body: JSON.stringify(await withImageModel(body)) })));
 }
 
 /** GET studio/runs/:id — the run's state plus the assets it saved (the user's own client, or the MCP's). */

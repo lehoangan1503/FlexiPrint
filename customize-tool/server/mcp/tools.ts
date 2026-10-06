@@ -387,7 +387,7 @@ function materialDraft(raw: unknown): Record<string, unknown> | null {
 const studioTools: CtMcpTool[] = [
   {
     name: "list_models",
-    description: "Image models the studio can run (for run_studio params.model).",
+    description: "Image models the studio knows. Every run uses the team's pick from the home page (params.model is overridden server-side).",
     inputSchema: { type: "object", properties: {} },
     callers: AGENT,
     run: async () => json(await bodyOf(await studio.studioModels())),
@@ -395,7 +395,7 @@ const studioTools: CtMcpTool[] = [
   {
     name: "run_studio",
     description: [
-      "Make images with the studio (ComfyUI, models on fal.ai — billed; a material run takes ~5 min). Returns run_id, then call wait_run (it waits for you). Results are saved into the library like the web app's.",
+      "Make images with the studio (ComfyUI; the team's image model from the home page — billed; a material run takes ~5 min). Returns run_id, then call wait_run (it waits for you). Results are saved into the library like the web app's.",
       "Working on a web-app task: pass task_id — the editor sees the run live, and submit_result is refused until every run of the task has finished.",
       "Recipes and their params:",
       '- origin: new origins of a category. {category_id, style_pack_id: null (category default), material_id: null | "none" | id, material_extra: "", material_ids?: [ids → also make those material versions], note: "", subjects: [{name, text}], model: "", chain_reference: true, cutout: "category", rules: {}, tags: []}',

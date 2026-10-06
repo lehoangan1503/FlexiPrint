@@ -657,7 +657,7 @@ class FPVariantSet(io.ComfyNode):
                     "onto the clipart — never their shape, subject, background or scene."
                 )
             prompt = fpc.compose(ctx, instruction, role="element", include_rules=False) + "\nPure white (#FFFFFF) background."
-            # A locked edit must keep the clipart where it is: nano-banana does, the others reframe / redraw.
+            # A locked edit must keep the clipart where it is: align_to + lock_silhouette pull any model's result back.
             use = fpmat.nano_model(model) if how == "ai_edit_locked" else model
             data, used = await providers.edit(use, prompt, src_png, pics[i])
             aligned = imaging.align_to(src, imaging.bytes_to_rgba(data))
@@ -818,7 +818,8 @@ class FPMaterial(io.ComfyNode):
         if "details" in draft or "product_refs" in draft:
             cat_rules = {**cat_rules, **({"details": draft["details"]} if "details" in draft else {}), **({"productRefs": draft["product_refs"]} if "product_refs" in draft else {})}
         specs = fpmat.parse_specs(cat_rules.get("details"))
-        use = fpmat.nano_model(str(params.get("model") or model))
+        # The team's model (sent with every run) wins over one saved on the preset.
+        use = fpmat.nano_model(str(model or params.get("model") or ""))
         refs: list[bytes] = []
         # Product photos first (they show the details), then the material's own; the model takes 6 at most.
         ref_urls = list(dict.fromkeys([*(cat_rules.get("productRefs") or []), *(params.get("refs") or [])]))[:6]
@@ -833,8 +834,8 @@ class FPMaterial(io.ComfyNode):
         used: set[str] = set()
 
         async def call(prompt: str, imgs: list[bytes]) -> np.ndarray:
-            # nano-banana only (fp material.py): the other one of the pair when the first is down.
-            chain = list(dict.fromkeys([use, "fal:fal-ai/nano-banana-2/edit", "fal:fal-ai/nano-banana/edit"]))
+            # The team's model, then the fallbacks (providers.fallbacks) when it is down / out of credit.
+            chain = providers.fallbacks(use)
             last: Exception | None = None
             for m in chain:
                 try:
@@ -843,7 +844,7 @@ class FPMaterial(io.ComfyNode):
                     return imaging.bytes_to_rgba(data)[..., :3].copy()
                 except providers.ProviderError as e:
                     last = e
-            raise last or providers.ProviderError("nano-banana không chạy được")
+            raise last or providers.ProviderError("Không model nào vẽ được vật liệu")
 
         async def one(src: np.ndarray):
             return await fpmat.render(call, src, material_text, specs, params["art"], refs, extra, _rgb_png)
@@ -938,7 +939,7 @@ class FPMockupScene(io.ComfyNode):
             raise ValueError("Chọn preset scene")
         src = imaging.tensors_to_rgba(image[:1], mask[:1] if mask is not None else None)[0]
         prompt = preset["prompt"].strip() + (f"\n{extra.strip()}" if extra.strip() else "")
-        data, used = await providers.edit(preset.get("params", {}).get("model") or model, prompt, imaging.rgba_on_white_png(src))
+        data, used = await providers.edit(model or preset.get("params", {}).get("model") or fpmat.DEFAULT_MODEL, prompt, imaging.rgba_on_white_png(src))
         out = imaging.bytes_to_rgba(data)
         img, _ = imaging.rgba_to_tensors([out])
         return io.NodeOutput(img, ui=_ui(cls, [out], f"[{used}]\n{prompt}"))

@@ -75,6 +75,12 @@ Tab dashboard: `src/app/dashboard/dashboard-client.tsx` → `view === "customize
    # CT_PHOTO_AI_PROVIDER=gemini # provider cho style AI (mặc định: gemini, rồi openai)
    # CT_PHOTO_AI_MODEL=...
    ```
+   **Model tạo ảnh AI (trang Home)**: ô chọn cạnh "Tạo sản phẩm custom" — áp cho cả team (`ct_settings`, chạy
+   `migrations/020_settings.sql`): mọi lượt studio (clipart gốc / đa sắc / vật liệu / sửa — cả của @flexiprint) và
+   ảnh tổ hợp dùng model này; hỏng / hết credit thì tự thử model kế (`FP_FALLBACK_MODELS`). Mặc định
+   `cpa:gpt-image-2.5` (API ảnh công ty, `CPA_API_KEY`); Nano Banana 2 / Nano Banana chạy trên fal (`FAL_KEY`).
+   Danh sách: `lib/image-models.ts`. Style ảnh khách (AI tạo ảnh bên dưới) vẫn dùng model riêng của từng style.
+
    Style ảnh khách có 2 tab trong inspector:
    - **Free**: Real photo · Oil painting (service photo-style) · Pixel art (lọc trên trình duyệt).
    - **AI tạo ảnh**: thư viện style chung `ct_ai_styles` (chạy `migrations/003_ai_photo_styles.sql`), mỗi style = prompt + model fal.ai + params, chạy bằng `FAL_KEY`.

@@ -3,6 +3,7 @@
  */
 
 import { CT_CONFIG } from "../config";
+import type { CtImageModel } from "./image-models";
 import type {
   CtCategoryHistoryEntry,
   CtPackCollection,
@@ -106,6 +107,9 @@ export const ctApi = {
 
   listCollections: () => call<{ collections: CtShopifyCollection[] }>("shopify/collections").then((r) => r.collections),
   createCollection: (title: string) => call<{ collection: CtShopifyCollection }>("shopify/collections", json("POST", { title })).then((r) => r.collection),
+
+  imageModel: () => call<{ model: string; models: CtImageModel[] }>("settings/image-model"),
+  setImageModel: (model: string) => call<{ model: string; models: CtImageModel[] }>("settings/image-model", json("PUT", { model })),
 
   listPriceTables: () => call<{ tables: CtPriceTable[] }>("price-tables").then((r) => r.tables),
   createPriceTable: (body: CtPriceTableBody) => call<{ table: CtPriceTable }>("price-tables", json("POST", body)).then((r) => r.table),

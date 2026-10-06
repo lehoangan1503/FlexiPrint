@@ -18,13 +18,13 @@ import aiohttp
 
 UA = "FlexiPrint-Studio/1.0"
 
-# Shown in every model dropdown, first = default. Nano Banana first: it follows the instructions and keeps the
-# artwork where it is far better than gpt-image (which reframes, redraws, and fakes transparency with a checkerboard).
+# Shown in every model dropdown, first = default. The app sends the team's pick (home page, ct_settings
+# image_model — customize-tool/lib/image-models.ts): gpt-image-2.5 on the company API by default, Nano Banana on fal.
 MODELS = [
+    "cpa:gpt-image-2.5",
     "fal:fal-ai/nano-banana-2/edit",
     "fal:fal-ai/nano-banana/edit",
     "cpa:gpt-image-2",
-    "cpa:gpt-image-2.5",
     "cpa:gpt-image-1.5",
     "cpa:grok-imagine-image-quality",
     "fal:fal-ai/bytedance/seedream/v4.5/edit",
@@ -95,15 +95,16 @@ async def _fal_once(model: str, body: dict) -> bytes:
 
 
 def fallbacks(model: str) -> list[str]:
-    """The model first, then FP_FALLBACK_MODELS (comma list) — cpa pools hit usage limits."""
-    raw = os.environ.get("FP_FALLBACK_MODELS", "fal:fal-ai/nano-banana-2/edit,fal:fal-ai/nano-banana/edit")
+    """The model first, then FP_FALLBACK_MODELS (comma list) — cpa pools hit usage limits, fal runs out of credit."""
+    raw = os.environ.get("FP_FALLBACK_MODELS", "cpa:gpt-image-2.5,fal:fal-ai/nano-banana-2/edit,fal:fal-ai/nano-banana/edit")
     chain = [model] + [m.strip() for m in raw.split(",") if m.strip()]
     return list(dict.fromkeys(chain))
 
 
 def _retryable(e: ProviderError) -> bool:
     msg = str(e)
-    return any(f" {c}:" in msg for c in ("429", "500", "502", "503", "504")) or "chưa cấu hình" in msg or "không trả ảnh" in msg
+    # 401/402/403: that provider's key / credit (fal "User is locked … TOP_UP") — the next provider may still work.
+    return any(f" {c}:" in msg for c in ("401", "402", "403", "429", "500", "502", "503", "504")) or "chưa cấu hình" in msg or "không trả ảnh" in msg
 
 
 def supports_transparency(model: str) -> bool:

@@ -33,7 +33,7 @@ PAD = 0.22
 MAX_GHOST = 0.01
 MAX_EXCESS = 0.03
 MAX_ALIGN_ERR = 26.0
-DEFAULT_MODEL = "fal:fal-ai/nano-banana-2/edit"
+DEFAULT_MODEL = "cpa:gpt-image-2.5"
 # lib/materials.ts MAX_MATERIAL_SPECS
 MAX_SPECS = 12
 
@@ -90,11 +90,14 @@ Call = Callable[[str, list[bytes]], Awaitable[np.ndarray]]
 
 
 def nano_model(model: str) -> str:
-    """Materials are drawn with nano-banana only (it keeps the artwork in place; the others reframe / restyle)."""
+    """The model a material / locked edit is drawn with: the team's pick (the app always sends it). Nano Banana keeps
+    the artwork in place best; with gpt-image the passes are aligned back (align) and the art is locked (lock_art)."""
     m = (model or "").strip()
-    if "nano-banana" not in m:
+    if not m:
         return DEFAULT_MODEL
-    return m if m.startswith("fal:") else f"fal:{m}"
+    if m.startswith(("fal:", "cpa:")):
+        return m
+    return f"fal:{m}" if "nano-banana" in m else DEFAULT_MODEL
 
 
 def parse_specs(raw: object) -> list[Spec]:

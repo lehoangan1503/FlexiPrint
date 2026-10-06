@@ -14,6 +14,7 @@
  *   GET    products/:id/shopify          → CtShopifyInfo (shop + the linked Shopify product now)
  *   GET    shopify/products?q=           → { products } Shopify products to deploy onto
  *   GET    shopify/collections · POST {title}  → collections (deploy page badges; the starred one = breadcrumb)
+ *   GET    settings/image-model · PUT { model }           model ảnh AI cho cả team (server/settings.ts)
  *   GET    price-tables · POST CtPriceTableBody · PATCH :id · DELETE :id   bảng giá (server/price-tables.ts)
  *   POST   products/:id/assets           multipart: file, role, parent_id?, name?, meta?
  *   (AI generation runs in the ComfyUI studio — server/studio.ts, services/comfy)
@@ -123,6 +124,7 @@ import * as studio from "./studio";
 import * as packs from "./mockup-packs";
 import * as packImages from "./pack-images";
 import * as prices from "./price-tables";
+import * as settings from "./settings";
 import { reviewCategoryPrompts, suggestCategoryPrompts, suggestCategoryRevision, suggestDetails, suggestPresetPrompt, suggestRefine } from "./ai/prompt-writer";
 import { mcpEndpoint } from "./mcp/server";
 import { agentStatus, answerAgentTask, cancelAgentTask, createAgentTask, getAgentTask, listAgentTasks } from "./agent/tasks";
@@ -209,6 +211,10 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
   if (head === "shopify" && id === "products" && !sub && method === "GET") return h.shopifySearch(req.nextUrl.searchParams.get("q")?.trim() ?? "");
   if (head === "shopify" && id === "collections" && !sub && method === "GET") return h.shopifyCollections();
   if (head === "shopify" && id === "collections" && !sub && method === "POST") return h.shopifyCreateCollection(await readJson<unknown>(req));
+  if (head === "settings" && id === "image-model" && !sub) {
+    if (method === "GET") return settings.getImageModel();
+    if (method === "PUT") return settings.setImageModel(session, await readJson<{ model?: unknown }>(req));
+  }
   if (id && !UUID.test(id)) return h.jsonError("id không hợp lệ", 400);
 
   if (head === "presets" && id && sub === "history" && method === "GET") return lib.listPresetHistory(session, id);

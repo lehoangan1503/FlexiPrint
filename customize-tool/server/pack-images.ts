@@ -19,7 +19,7 @@
  * drawPackImage draws one photo (Nano Banana 2, references; a layer is drawn on chroma green and keyed out) — the
  * agent's MCP tool generate_pack_image and the direct path share it.
  *
- * Env: FAL_KEY (prompt LLM + image model).
+ * Env: FAL_KEY (prompt LLM + fal image models), CPA_API_KEY / CPA_BASE_URL (company image API).
  */
 
 import { NextResponse } from "next/server";
@@ -32,12 +32,12 @@ import { readImageInfo } from "./image-size";
 import { isOwnUploadUrl } from "./library";
 import { ctServiceClient, type CtSession } from "./supabase";
 import { ctRemove, ctUpload } from "./storage";
+import { currentImageModel } from "./settings";
+import { CT_IMAGE_MODELS } from "../lib/image-models";
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const MAX_REFS = 6;
 const ASPECTS: CtPackImageAspect[] = ["1:1", "4:5", "3:4", "2:3", "4:3", "3:2", "16:9", "9:16"];
-/** Nano Banana 2 first (2K), the first Nano Banana if it fails. */
-const MODELS = ["fal-ai/nano-banana-2", "fal-ai/nano-banana"];
 
 function jsonError(message: string, status: number): NextResponse {
   return NextResponse.json({ error: message }, { status });
@@ -142,7 +142,63 @@ interface FalImageResponse {
   detail?: string | Array<{ msg?: string }>;
 }
 
+interface CpaImageResponse {
+  data?: Array<{ b64_json?: string; url?: string }>;
+  error?: { message?: string } | string;
+}
+
+/** gpt-image sizes: square, landscape, portrait — the photo is then cropped to the asked aspect. */
+function cpaSize(aspect: string): { size: string; ratio: number } {
+  const [w, h] = aspect.split(":").map(Number);
+  const ratio = w > 0 && h > 0 ? w / h : 1;
+  return { size: ratio === 1 ? "1024x1024" : ratio > 1 ? "1536x1024" : "1024x1536", ratio };
+}
+
+/** The company image API (OpenAI-compatible, like services/comfy providers._cpa): references go as data URIs. */
+async function drawCpa(model: string, prompt: string, refs: string[], aspect: string): Promise<{ data: Buffer; mime: string }> {
+  const key = process.env.CPA_API_KEY;
+  if (!key) throw new Error("Chưa cấu hình CPA_API_KEY");
+  const base = (process.env.CPA_BASE_URL || "https://cpa.next.lc/v1").replace(/\/+$/, "");
+  const { size, ratio } = cpaSize(aspect);
+  const images = await Promise.all(
+    refs.slice(0, 8).map(async (u) => {
+      const r = await fetch(u, { signal: AbortSignal.timeout(60_000) });
+      if (!r.ok) throw new Error(`Ảnh tham khảo ${r.status}`);
+      const mime = r.headers.get("content-type")?.split(";")[0] ?? "image/png";
+      return { image_url: `data:${mime};base64,${Buffer.from(await r.arrayBuffer()).toString("base64")}` };
+    }),
+  );
+  const res = await fetch(`${base}/images/${images.length ? "edits" : "generations"}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model, prompt, size, ...(images.length ? { images } : {}) }),
+    signal: AbortSignal.timeout(300_000),
+  });
+  const json = (await res.json().catch(() => ({}))) as CpaImageResponse;
+  if (!res.ok) {
+    const msg = typeof json.error === "string" ? json.error : (json.error?.message ?? "lỗi");
+    throw new Error(`cpa ${res.status}: ${msg.slice(0, 300)}`);
+  }
+  const b64 = json.data?.[0]?.b64_json;
+  if (!b64) throw new Error("cpa không trả ảnh");
+  // Cropped (centre) to the exact aspect the frame wants.
+  const img = sharp(Buffer.from(b64, "base64"));
+  const meta = await img.metadata();
+  const W = meta.width ?? 1024;
+  const H = meta.height ?? 1024;
+  const w = Math.min(W, Math.round(H * ratio));
+  const h = Math.min(H, Math.round(W / ratio));
+  const data = await img.extract({ left: Math.floor((W - w) / 2), top: Math.floor((H - h) / 2), width: w, height: h }).png().toBuffer();
+  return { data, mime: "image/png" };
+}
+
+/** One photo with `model` (a lib/image-models id: "cpa:<model>" or "fal:<endpoint>/edit"). */
 async function drawImage(model: string, prompt: string, refs: string[], aspect: string): Promise<{ data: Buffer; mime: string }> {
+  if (model.startsWith("cpa:")) return drawCpa(model.slice(4), prompt, refs, aspect);
+  return drawFal(model.replace(/^fal:/, "").replace(/\/edit$/, ""), prompt, refs, aspect);
+}
+
+async function drawFal(model: string, prompt: string, refs: string[], aspect: string): Promise<{ data: Buffer; mime: string }> {
   const key = process.env.FAL_KEY;
   if (!key) throw new Error("Chưa cấu hình FAL_KEY");
   const endpoint = refs.length ? `${model}/edit` : model;
@@ -228,11 +284,15 @@ export interface PackImageDraw {
   transparent: boolean;
 }
 
-/** Draw one photo → its file, uploaded (Nano Banana 2, else Nano Banana; cut out when `transparent`). */
+/**
+ * Draw one photo → its file, uploaded (cut out when `transparent`): the team's image model (home page), then the
+ * others in list order if it fails.
+ */
 export async function drawPackImage(userId: string, d: PackImageDraw): Promise<Pick<CtPackImage, "url" | "storage_path" | "mime" | "width" | "height" | "model">> {
   const prompt = d.transparent ? d.prompt + LAYER_BACKDROP : d.prompt;
   let lastError: unknown = null;
-  for (const model of MODELS) {
+  const picked = await currentImageModel();
+  for (const model of [picked, ...CT_IMAGE_MODELS.map((m) => m.id).filter((m) => m !== picked)]) {
     try {
       let out = await drawImage(model, prompt, d.refs, d.aspect);
       if (d.transparent) out = await chromaKey(out.data);

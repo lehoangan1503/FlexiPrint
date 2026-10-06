@@ -14,6 +14,7 @@ import type { CtProductListRow, CtProductStatus } from "../types";
 import { ctApi } from "../lib/api-client";
 import { CHECKER_STYLE, CtButton, CtInput, cx } from "./ui";
 import { ctConfirm, ctPrompt } from "./dialogs";
+import { ImageModelPicker } from "./image-model-picker";
 
 const STATUS_LABEL: Record<CtProductStatus, string> = { draft: "Nháp", ready: "Sẵn sàng", archived: "Lưu trữ" };
 const STATUS_CLASS: Record<CtProductStatus, string> = {
@@ -75,7 +76,8 @@ export function CustomizeProductList({ tabs, currentUserId }: { tabs?: React.Rea
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h2 className="shrink-0 text-2xl font-bold">Customize 2D</h2>
         {tabs}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <ImageModelPicker />
           <div className="relative">
             <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <CtInput className="h-9 w-56 pl-8" placeholder="Tìm sản phẩm…" value={search} onChange={(e) => setSearch(e.target.value)} />

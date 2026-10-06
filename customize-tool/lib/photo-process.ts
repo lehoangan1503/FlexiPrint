@@ -109,6 +109,12 @@ export async function processPhoto(req: PhotoProcessRequest): Promise<Blob> {
   return hasAlpha(canvas) ? canvasToBlob(canvas, "image/png") : canvasToBlob(canvas, "image/jpeg", 0.92);
 }
 
+/** A colour filter on a processed photo (alpha kept): the Face filters all start from one "Real face" cut. */
+export async function filterBlob(blob: Blob, filter: CtPhotoFilter): Promise<Blob> {
+  const canvas = colorFilter(toCanvas(await blobToImage(blob)), filter);
+  return hasAlpha(canvas) ? canvasToBlob(canvas, "image/png") : canvasToBlob(canvas, "image/jpeg", 0.92);
+}
+
 // ---------------------------------------------------------------------------
 // Colour filters (Face styles)
 // ---------------------------------------------------------------------------

@@ -9,3 +9,10 @@ export function fileStem(name: string): string {
 }
 
 export const IMAGE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+
+/** The photos a pack_image request sends back (its bases, or the one legacy base). */
+export function packBases(p: { bases?: Array<{ id: string; url: string; name: string; note: string }>; baseId: string | null; baseUrl: string } | undefined) {
+  if (!p) return [];
+  if (p.bases?.length) return p.bases;
+  return p.baseId && p.baseUrl ? [{ id: p.baseId, url: p.baseUrl, name: "", note: "" }] : [];
+}

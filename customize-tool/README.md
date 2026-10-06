@@ -140,7 +140,15 @@ ct_products ─┬─ main_asset_id ──► ct_assets(main)
    vùng chỉ đổi cho version đó; tên, nội dung, style… vẫn dùng chung. Vùng không sửa thì theo main mặc định.
    Main mặc định luôn là bố cục gốc.
 2. **Vùng custom**: vẽ bằng R (rect), O (ellipse), P (polygon, chấm điểm). Loại vùng:
-   - Object: mình định nghĩa option. Vùng có 1+ **nhóm**; nhóm = 1 sub object + các version của nó,
+   - **Custom layer** (tool L): thiết kế cố định của mình, **không phải option của khách** — store vẽ đúng ảnh đang chọn
+     trong editor (`template.picks`), không hiện picker, không vào giỏ. Giống image frame: L (hoặc bấm vào 1 custom
+     layer trống) mở **thư viện ảnh tổ hợp** (tải ảnh mới / AI / chọn ảnh) → ảnh thành layer; kéo clipart từ tab
+     Thư viện vẫn như cũ. Inspector → "Đổi ảnh…".
+   - Text / Ảnh khách = **option của khách**. Mỗi vùng có thể có **option con** (như "Thêm option" của version):
+     khách chọn thêm 1 hàng (Choose color: Gold / Silver…). Option con của text đổi chữ (font, cỡ, màu, viền, uốn
+     cong); của ảnh khách đổi hình khung. Bấm 1 option con trong inspector để xem — lúc đó sửa chữ / kéo khung trên
+     canvas là sửa option đó (`zoneOptionView`, `CtRegionConfig.options`).
+   - (Cũ) Object: mình định nghĩa option. Vùng có 1+ **nhóm**; nhóm = 1 sub object + các version của nó,
      mỗi ảnh là 1 option, cả nhóm dùng chung vị trí/scale. Trong inspector bấm **Thêm nhóm —
      upload nhiều ảnh** (ảnh đầu = sub, còn lại = version) hoặc ô "+" để thêm option vào nhóm.
      Có 2+ nhóm thì khách chọn nhóm trước (Choose Style: Glitter / No Glitter), đổi nhóm giữ
@@ -162,7 +170,8 @@ ct_products ─┬─ main_asset_id ──► ct_assets(main)
    không reset lựa chọn đang thử. Không sửa gì ở đây. Add to cart hiện danh sách line-item properties sẽ vào giỏ (không upload).
    Tab **Tổ hợp & Mockup**: **Lưu tổ hợp** (1 / N random / N tổ hợp). Chọn nhiều tổ hợp rồi bấm **Tạo mockup AI**. Ảnh tổ hợp đi thẳng vào AI, không cần tải về.
 
-7. **Publish** (header) → Shopify. Xem mục bên dưới.
+7. **Deploy sản phẩm** (header) → trang `/products/:id/deploy`: chọn / tạo **bảng giá**, tên + mô tả + ảnh, rồi 1 nút
+   deploy thẳng lên Shopify (template + sản phẩm + variants có giá). Xem mục Shopify bên dưới.
 
 Phím tắt (hover nút để thấy): V · H/Space · R · O · P · Enter · Esc · ⌘Z/⇧⌘Z · ⌘S · ⌘D · Delete · mũi tên (Shift = 10px).
 Với polygon: double-click cạnh để thêm điểm, Alt+click đỉnh để xoá điểm.
@@ -211,29 +220,51 @@ customize-tool/shopify/
   templates/product.customize.json
 ```
 
-1. Upload 3 file section/assets lên theme (**không** full-push theme live). `main-product.liquid`
-   sẽ THAY section cùng tên của theme; muốn giữ bản cũ thì đổi tên file thành `ct-main-product.liquid`
-   và sửa `"type"` trong `product.customize.json` rồi gán template đó cho các sản phẩm custom.
-2. Section setting **Customize Tool URL** = origin của app (vd. `https://tool.example.com`).
-3. Mỗi sản phẩm: metafield `customize_tool.product_id` (Single line text) = id trong dialog Publish.
-   Sản phẩm không có metafield hiển thị như trang sản phẩm thường.
-4. Mỗi lần **Publish** tạo version mới; storefront lấy bản mới nhất (cache ~30s) — không phải sửa gì trên Shopify.
+Theme: `scripts/push-theme.sh` (Shopify CLI, staff login) đẩy section thành `sections/flexiprint-product.liquid`
++ 2 asset + `templates/product.json` / `product.flexiprint.json` (api_base = APP_URL) lên theme FlexiPrint.
 
-Trên storefront: bên trái là mockup (media sản phẩm); khách đổi option đầu tiên thì chuyển sang canvas
-custom (nút "View product photos" để quay lại). Ảnh khách mở dialog: upload → kéo / zoom / xoay → Apply
-(upload chạy ngay khi Apply). Add to cart: kiểm tra trường bắt buộc, render + upload preview, thêm
-line item properties rồi submit lại form để theme xử lý giỏ như bình thường:
+### Deploy sản phẩm (`components/deploy/`, `server/shopify.ts`)
+
+Env: `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` (app Dev Dashboard, client credentials →
+token 24h), `SHOPIFY_API_VERSION`. Scope dùng: `write_products`. Muốn tự bật kênh Online Store cần thêm
+`read_publications` + `write_publications` (thiếu thì deploy báo cảnh báo).
+
+1. **Bảng giá** (`ct_price_tables`, migration 018, `lib/pricing.ts`): đặt tên, mọi người dùng chung, chọn từ list.
+   Size (giá 1 cái, giá gạch) × Pack (số cái, nhãn "2 PCS", % giảm); mỗi ô = 1 variant Shopify, giá = **tổng của
+   pack**, gõ tay được từng ô. Chỉ 1 size không tên / chỉ 1 pack 1 cái = bỏ option đó.
+2. Nút Deploy: lưu thiết kế → publish template mới (`ct_templates`) → 1 `productSet` (synchronous): title, mô tả,
+   status, vendor, type, tags, template suffix `flexiprint`, options + variants (inventory không track, CONTINUE),
+   ảnh = tổ hợp / mockup đã chọn (ảnh cũ dùng lại theo id), metafield:
+   - `customize_tool.product_id` = id sản phẩm FlexiPrint
+   - `customize_tool.pricing` (json `CtShopifyPricing`): option nào là pack + mỗi giá trị bao nhiêu thiết kế
+   Deploy lại = cập nhật đúng sản phẩm đó (`ct_products.shopify`), variant khớp theo option values nên id giữ nguyên.
+   "Chọn sản phẩm có sẵn" để deploy lên 1 sản phẩm Shopify đã có (thay options/variants theo bảng giá).
+3. Trang deploy liệt kê option khách sẽ thấy theo từng version (`lib/option-audit.ts`) và cảnh báo trước:
+   trường chưa có nhãn, 2 trường trùng nhãn, custom layer trống…
+
+### main-product.liquid — dynamic
+
+- Mọi option Shopify của sản phẩm đều render (bao nhiêu option, tên gì cũng được). Option trùng
+  `pricing.packOption` hiện thành thẻ "N PCS · $x/pc" (giá 1 cái theo size đang chọn, tính từ giá variant).
+- Pack N cái (Different Designs) = **N thiết kế độc lập**: form có tab "<item> 1…N" (tên từ bảng giá, vd. Ornament),
+  canvas có "Ornament k/N ‹ ›". Thiếu trường ở thiết kế nào thì mở đúng thiết kế đó.
+- Sản phẩm không có metafield pricing = như cũ (1 thiết kế). Không có `customize_tool.product_id` = trang sản phẩm thường.
+
+Add to cart: kiểm tra trường bắt buộc (mọi thiết kế), render + upload preview từng thiết kế, thêm line item
+properties rồi submit lại form để theme xử lý giỏ như bình thường. 1 thiết kế:
 
 ```
 properties[Choose Color]      = Red                    (tên option — khách thấy)
-properties[Choose Style]      = NO GLITTER
-properties[Choose Dumpling]   = Blue
 properties[Enter name]        = Mochi
+properties[Choose style]      = Gold                   (option con của vùng)
 properties[Upload your photo] = https://…/customize-tool-orders/…/photo-….jpg
 properties[_ct_preview]       = https://…/preview-….png   (ẩn: bắt đầu bằng _)
 properties[_ct_template]      = <product id>@v<version>
 properties[_ct_selection]     = JSON selection đầy đủ (dựng lại đúng bản khách thấy)
 ```
+
+Pack N thiết kế: mỗi trường có tiền tố `Ornament k · ` (`properties[Ornament 2 · Enter name]`), preview
+`_ct_preview`, `_ct_preview_2` … `_ct_preview_N`, `_ct_designs` = N, `_ct_selections` = JSON mảng N selection.
 
 Endpoint public (không cần đăng nhập, CORS `*`):
 `GET /api/customize-tool/public/templates/:id[?version=N]` · `POST /api/customize-tool/public/uploads/:id`.
@@ -241,7 +272,6 @@ Upload chỉ nhận sản phẩm đã publish, ảnh PNG/JPEG/WebP ≤ 15MB; ch�
 
 ## Chưa làm (bước sau)
 
-- Tự set metafield `customize_tool.product_id` khi deploy sản phẩm qua pipeline Shopify của host.
 - Version main bằng ComfyUI (hiện: upload hoặc AI).
 - Rate limit / dọn rác cho upload public (ảnh khách của giỏ bị bỏ dở; cache ảnh đã có TTL 24h).
 - Tự xuất file in khi có đơn (webhook Shopify → `_ct_selection` → render → material-render). Hiện: nút trong editor.

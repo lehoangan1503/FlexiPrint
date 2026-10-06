@@ -12,6 +12,8 @@ import type {
   CtAssetMeta,
   CtAssetRole,
   CtCreateProductBody,
+  CtDeployBody,
+  CtDeployResponse,
   CtGeneration,
   CtProduct,
   CtProductConfig,
@@ -22,6 +24,8 @@ import type {
   CtRegion,
   CtRegionItem,
   CtSaveDesignBody,
+  CtShopifyInfo,
+  CtShopifyStatus,
   CtTemplate,
   CtUpdateAssetBody,
   CtUpdateProductBody,
@@ -39,6 +43,9 @@ import { isAdmin, loadAiStyle, originAllowed, publicAiStyles, takeAiQuota } from
 import { falConfigured } from "./ai/fal-style";
 import { printPack, readPrintPackForm } from "./material";
 import { deleteClipart, loadProductAssets } from "./library";
+import { loadPriceTable } from "./price-tables";
+import { createCollection, deployToShopify, listCollections, searchShopifyProducts, shopifyConfigured, shopifyInfo } from "./shopify";
+import { priceTableProblems } from "../lib/pricing";
 
 const ROLES: CtAssetRole[] = ["main", "sub", "variant", "rendition", "composite", "mockup", "reference"];
 
@@ -172,7 +179,18 @@ function missingMigration(message: string): string | null {
 export async function publish(s: CtSession, productId: string, origin: string): Promise<NextResponse> {
   const product = await ownedProduct(s, productId);
   if (!product) return jsonError("Không có quyền publish sản phẩm này", 403);
+  const r = await publishTemplate(s, product, origin);
+  if ("error" in r) return jsonError(r.error, r.status);
+  return NextResponse.json(r);
+}
 
+/** Snapshot the saved design into the next ct_templates version (what the storefront loads). */
+async function publishTemplate(
+  s: CtSession,
+  product: CtProduct,
+  origin: string,
+): Promise<{ product: CtProduct; publish: CtPublishResponse } | { error: string; status: number }> {
+  const productId = product.id;
   const [regions, last] = await Promise.all([
     s.supabase.from(CT_TABLES.regions).select("*").eq("product_id", productId).returns<CtRegion[]>(),
     s.supabase
@@ -183,7 +201,7 @@ export async function publish(s: CtSession, productId: string, origin: string): 
       .limit(1)
       .maybeSingle<{ version: number }>(),
   ]);
-  if (last.error) return jsonError(missingMigration(last.error.message) ?? last.error.message, 500);
+  if (last.error) return { error: missingMigration(last.error.message) ?? last.error.message, status: 500 };
   const regionIds = (regions.data ?? []).map((r) => r.id);
   const items = regionIds.length
     ? await s.supabase.from(CT_TABLES.items).select("*").in("region_id", regionIds).returns<CtRegionItem[]>()
@@ -210,13 +228,13 @@ export async function publish(s: CtSession, productId: string, origin: string): 
       aiStyles,
     });
   } catch (e) {
-    return jsonError(e instanceof Error ? e.message : "Không dựng được template", 400);
+    return { error: e instanceof Error ? e.message : "Không dựng được template", status: 400 };
   }
 
   const { error } = await s.supabase
     .from(CT_TABLES.templates)
     .insert({ product_id: productId, version, template, published_by: s.user.id, published_at: publishedAt });
-  if (error) return jsonError(missingMigration(error.message) ?? error.message, 500);
+  if (error) return { error: missingMigration(error.message) ?? error.message, status: 500 };
 
   const { data: updated, error: upErr } = await s.supabase
     .from(CT_TABLES.products)
@@ -224,14 +242,143 @@ export async function publish(s: CtSession, productId: string, origin: string): 
     .eq("id", productId)
     .select("*")
     .single<CtProduct>();
-  if (upErr) return jsonError(upErr.message, 500);
+  if (upErr) return { error: upErr.message, status: 500 };
 
-  const result: CtPublishResponse = {
-    version,
-    publishedAt,
-    templateUrl: `${origin}${CT_CONFIG.apiBase}/public/templates/${productId}`,
+  return {
+    product: updated,
+    publish: { version, publishedAt, templateUrl: `${origin}${CT_CONFIG.apiBase}/public/templates/${productId}` },
   };
-  return NextResponse.json({ product: updated, publish: result });
+}
+
+// ---------------------------------------------------------------------------
+// Deploy sản phẩm: template + Shopify product with the price table's variants (server/shopify.ts)
+// ---------------------------------------------------------------------------
+
+const SHOPIFY_STATUSES: CtShopifyStatus[] = ["ACTIVE", "DRAFT", "ARCHIVED"];
+
+function readDeployBody(raw: unknown): CtDeployBody | null {
+  if (!raw || typeof raw !== "object") return null;
+  const b = raw as Partial<CtDeployBody>;
+  const title = typeof b.title === "string" ? b.title.trim().slice(0, 255) : "";
+  if (!title || typeof b.priceTableId !== "string" || !b.priceTableId) return null;
+  const strings = (v: unknown, max: number) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim()).slice(0, max) : []);
+  return {
+    priceTableId: b.priceTableId,
+    title,
+    descriptionHtml: typeof b.descriptionHtml === "string" ? b.descriptionHtml.slice(0, 60000) : "",
+    status: SHOPIFY_STATUSES.includes(b.status as CtShopifyStatus) ? (b.status as CtShopifyStatus) : "ACTIVE",
+    vendor: typeof b.vendor === "string" ? b.vendor.trim().slice(0, 255) : "",
+    productType: typeof b.productType === "string" ? b.productType.trim().slice(0, 255) : "",
+    tags: strings(b.tags, 60),
+    mediaAssetIds: strings(b.mediaAssetIds, 30),
+    collectionIds: strings(b.collectionIds, 50).filter((id) => /^gid:\/\/shopify\/Collection\/\d+$/.test(id)),
+    primaryCollectionId: typeof b.primaryCollectionId === "string" && /^gid:\/\/shopify\/Collection\/\d+$/.test(b.primaryCollectionId) ? b.primaryCollectionId : null,
+    shopifyProductId: typeof b.shopifyProductId === "string" && /^gid:\/\/shopify\/Product\/\d+$/.test(b.shopifyProductId) ? b.shopifyProductId : null,
+  };
+}
+
+/** Absolute URL Shopify can download (asset urls may be site-relative /files/…). */
+function absoluteUrl(url: string, origin: string): string {
+  if (/^https?:\/\//.test(url)) return url;
+  const base = (process.env.APP_URL || origin).replace(/\/$/, "");
+  return `${base}${url.startsWith("/") ? "" : "/"}${url}`;
+}
+
+export async function deploy(s: CtSession, productId: string, raw: unknown, origin: string): Promise<NextResponse> {
+  const product = await ownedProduct(s, productId);
+  if (!product) return jsonError("Không có quyền deploy sản phẩm này", 403);
+  const body = readDeployBody(raw);
+  if (!body) return jsonError("Thiếu tên sản phẩm hoặc bảng giá", 400);
+  if (!shopifyConfigured()) return jsonError("Chưa cấu hình Shopify (SHOPIFY_STORE_DOMAIN / SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET)", 501);
+  const table = await loadPriceTable(s, body.priceTableId);
+  if (!table) return jsonError("Không tìm thấy bảng giá", 404);
+  const problems = priceTableProblems(table.config);
+  if (problems.length) return jsonError(`Bảng giá “${table.name}”: ${problems.join(" ")}`, 400);
+
+  let media: Array<{ asset: CtAsset; url: string }> = [];
+  if (body.mediaAssetIds.length) {
+    const { data } = await s.supabase.from(CT_TABLES.assets).select("*").eq("product_id", productId).in("id", body.mediaAssetIds).returns<CtAsset[]>();
+    const byId = new Map((data ?? []).map((a) => [a.id, a]));
+    media = body.mediaAssetIds.map((id) => byId.get(id)).filter((a): a is CtAsset => Boolean(a)).map((asset) => ({ asset, url: absoluteUrl(asset.url, origin) }));
+  }
+
+  // 1. The storefront template (what the customizer draws).
+  const pub = await publishTemplate(s, product, origin);
+  if ("error" in pub) return jsonError(pub.error, pub.status);
+
+  // 2. The Shopify product: options + priced variants + metafields + images.
+  let result: Awaited<ReturnType<typeof deployToShopify>>;
+  try {
+    result = await deployToShopify({
+      ctProductId: productId,
+      link: product.shopify ?? null,
+      targetId: body.shopifyProductId ?? null,
+      title: body.title,
+      descriptionHtml: body.descriptionHtml,
+      status: body.status,
+      vendor: body.vendor,
+      productType: body.productType,
+      tags: body.tags,
+      collectionIds: body.collectionIds,
+      primaryCollectionId: body.primaryCollectionId && body.collectionIds.includes(body.primaryCollectionId) ? body.primaryCollectionId : null,
+      priceTableId: table.id,
+      pricing: table.config,
+      media,
+      templateVersion: pub.publish.version,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Deploy Shopify thất bại";
+    return jsonError(`Đã publish template v${pub.publish.version}, nhưng Shopify lỗi: ${msg}`, 502);
+  }
+
+  const { data: updated, error } = await s.supabase.from(CT_TABLES.products).update({ shopify: result.link }).eq("id", productId).select("*").single<CtProduct>();
+  if (error) return jsonError(missingShopifyColumn(error.message), 500);
+  const response: CtDeployResponse = { product: updated, publish: pub.publish, shopify: result.link, previewUrl: result.previewUrl, warnings: result.warnings };
+  return NextResponse.json(response);
+}
+
+function missingShopifyColumn(message: string): string {
+  return /shopify/.test(message) && /does not exist|schema cache|Could not find/i.test(message)
+    ? `Thiếu migration: chạy supabase/migrations/018_price_tables_deploy.sql (${message})`
+    : message;
+}
+
+/** Shop + the linked Shopify product as it is now. */
+export async function shopifyStatus(s: CtSession, productId: string): Promise<NextResponse> {
+  const product = await ownedProduct(s, productId);
+  if (!product) return jsonError("Không có quyền xem sản phẩm này", 403);
+  try {
+    return NextResponse.json(await shopifyInfo(product.shopify?.productId ?? null));
+  } catch (e) {
+    const info: CtShopifyInfo = { configured: shopifyConfigured(), shop: null, product: null, error: e instanceof Error ? e.message : String(e) };
+    return NextResponse.json(info);
+  }
+}
+
+export async function shopifyCollections(): Promise<NextResponse> {
+  try {
+    return NextResponse.json({ collections: await listCollections() });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : String(e), 502);
+  }
+}
+
+export async function shopifyCreateCollection(raw: unknown): Promise<NextResponse> {
+  const title = raw && typeof raw === "object" && typeof (raw as { title?: unknown }).title === "string" ? (raw as { title: string }).title.trim().slice(0, 255) : "";
+  if (!title) return jsonError("Thiếu tên collection", 400);
+  try {
+    return NextResponse.json({ collection: await createCollection(title) }, { status: 201 });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : String(e), 502);
+  }
+}
+
+export async function shopifySearch(q: string): Promise<NextResponse> {
+  try {
+    return NextResponse.json({ products: await searchShopifyProducts(q) });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : String(e), 502);
+  }
 }
 
 // ---------------------------------------------------------------------------

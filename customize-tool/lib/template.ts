@@ -4,12 +4,12 @@
  * JSON stays small and never leaks references / composites / mockups, nor
  * the design's own samples (config.samples).
  *
- * Pure: the server runs it on Publish, the editor's "Xem trước" tab runs it
- * on the unsaved draft so the preview is exactly what Publish would ship.
+ * Pure: the server runs it on Deploy (Publish), the editor's "Xem trước" tab runs it
+ * on the unsaved draft so the preview is exactly what a deploy would ship.
  */
 
 import type { CtAsset, CtProduct, CtProductConfig, CtPublicAiStyle, CtRegion, CtRegionItem, CtRenderAsset, CtTemplate } from "../types";
-import { mainSubOptions, mainVersions, normalizeProductConfig, normalizeRegion, variantsOf } from "./design";
+import { defaultRegionSelection, mainSubOptions, mainVersions, normalizeProductConfig, normalizeRegion, variantsOf } from "./design";
 import { onVersion, pruneLayout } from "./layout";
 import { displayAssets } from "./library";
 
@@ -45,8 +45,10 @@ export function buildTemplate(args: {
 }): CtTemplate {
   const { product, version, publishedAt } = args;
   const config = normalizeProductConfig(product.config);
-  // "Rendition" display: the AI material versions replace the flat art everywhere (storefront, cart, print).
-  const assets = displayAssets(args.assets, config.material.display, config.material.flatIds, config.material.version);
+  // The customer always sees the material version (vật liệu) of every clipart that has one — the canvas, the photo
+  // dialog, the cart preview; option swatches keep the flat clipart (meta.thumb). Cliparts switched to flat for
+  // this product (flatIds) stay flat. Print files use the flat art (lib/materials, not this template).
+  const assets = displayAssets(args.assets, "rendition", config.material.flatIds, config.material.version);
   const flatUrl = new Map(args.assets.map((a) => [a.id, a.url]));
   const main = assets.find((a) => a.id === product.main_asset_id && a.role === "main");
   if (!main) throw new Error("Chưa có main object — không publish được");
@@ -67,11 +69,20 @@ export function buildTemplate(args: {
     // Its sub-options ("Thêm option"): only offered while the customer picks versions.
     if (config.main.enabled) for (const o of mainSubOptions(assets, config.main, m.id)) used.set(o.id, o);
   }
+  // Custom layers: the customer picks one of the layer's pictures (no editing); the default is the one picked in
+  // the editor (the design's own choice), else the first.
+  const picks: Record<string, string | null> = {};
   for (const it of items) {
     const sub = byId.get(it.asset_id);
     if (!sub) continue;
     used.set(sub.id, sub);
     for (const v of variantsOf(assets, sub.id)) used.set(v.id, v);
+  }
+  for (const r of regions.filter((x) => x.kind === "image")) {
+    const offered = new Set(items.filter((i) => i.region_id === r.id).flatMap((i) => [i.asset_id, ...variantsOf(assets, i.asset_id).map((v) => v.id)]));
+    const sample = config.samples[r.id];
+    const fallback = defaultRegionSelection(r, items, assets);
+    picks[r.id] = sample?.kind === "image" && sample.assetId && offered.has(sample.assetId) ? sample.assetId : fallback.kind === "image" ? fallback.assetId : null;
   }
 
   // Only layouts of versions the customer can pick, pointing at zones / items that still exist.
@@ -96,11 +107,13 @@ export function buildTemplate(args: {
       scene: config.scene,
       layouts,
       material: config.material,
+      mockupEdit: config.mockupEdit,
     },
-    // Main version swatches show the flat clipart even when the design is drawn with its material.
-    assets: Array.from(used.values()).map((a) => renderAsset(a, a.role === "main" || (a.role === "variant" && mains.some((m) => m.id === a.parent_id)) ? flatUrl.get(a.id) : undefined)),
+    // Swatches (main versions, layer options) show the flat clipart; the design is drawn with its material.
+    assets: Array.from(used.values()).map((a) => renderAsset(a, flatUrl.get(a.id))),
     regions,
     items,
     aiStyles: args.aiStyles ?? [],
+    picks,
   };
 }

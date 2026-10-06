@@ -7,7 +7,7 @@
 
 import type { CtMainLayout, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtTextConfig, CtTransform } from "../types";
 import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds } from "./geometry";
-import { normalizeRegion, selectedMainId, selectedMainImageId } from "./design";
+import { activeRegions, normalizeRegion, regionForSelection, selectedMainId, selectedMainImageId, textMode, zoneText } from "./design";
 import { mainFrameFor, resolveLayout } from "./layout";
 
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
@@ -84,7 +84,11 @@ export async function drawComposite(ctx: CanvasRenderingContext2D, input: Compos
   const mainId = selectedMainId(selection, assets, main.id);
   const resolved = resolveLayout(input.regions, input.items, input.layouts, mainId);
   const items = resolved.items;
-  const regions = resolved.regions.map(normalizeRegion).sort((a, b) => a.sort_order - b.sort_order);
+  // A zone's chosen sub-option (its shape / lettering) is drawn in place of its own look.
+  // Child zones only while their parent shows the option they belong to.
+  const regions = activeRegions(resolved.regions.map(normalizeRegion), selection)
+    .map((r) => regionForSelection(normalizeRegion(r), selection[r.id]))
+    .sort((a, b) => a.sort_order - b.sort_order);
   const byId = new Map(assets.map((a) => [a.id, a]));
 
   // Fonts used by text regions must be loaded before measureText, or the
@@ -155,7 +159,8 @@ async function drawRegion(
   byId: Map<string, CtRenderAsset>,
   selection: CtSelection,
 ): Promise<void> {
-  const sel = selection[region.id];
+  const fixedText = region.kind === "text" && textMode(region) === "fixed";
+  const sel = selection[region.id] ?? (fixedText ? { kind: "text" as const, text: "" } : undefined);
   if (!sel) return;
   const bounds = shapeBounds(region.shape);
 
@@ -182,7 +187,7 @@ async function drawRegion(
     const m = f.margin;
     drawPlaced(ctx, img, { x: -f.w / 2 + m, y: -f.h / 2 + m, w: Math.max(1, f.w - 2 * m), h: Math.max(1, f.h - 2 * m) }, sel.transform, region.config.photo.fit);
   } else if (region.kind === "text" && sel.kind === "text") {
-    drawText(ctx, sel.text, region.config.text, bounds);
+    drawText(ctx, zoneText(region, sel), region.config.text, bounds);
   }
   ctx.restore();
 }

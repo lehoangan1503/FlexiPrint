@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   ChevronDown,
@@ -39,8 +40,8 @@ import {
   X,
 } from "lucide-react";
 import { CT_CONFIG, ctGoogleFontsHref } from "../../config";
-import { CT_MAIN_KEY } from "../../types";
-import type { CtAsset, CtMainFrame, CtMainOptionConfig, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection, CtStudioRecipe } from "../../types";
+import { CT_BASE_OPTION, CT_MAIN_KEY } from "../../types";
+import type { CtAsset, CtMainFrame, CtMainOptionConfig, CtPackImage, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection, CtStudioRecipe, CtZoneParent, CtRegionKind } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import {
   defaultProductConfig,
@@ -54,6 +55,7 @@ import {
   normalizeRegion,
   selectedMainId,
   selectedMainImageId,
+  zoneSubtree,
 } from "../../lib/design";
 import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, pointInShape, shapeBounds, translateShape } from "../../lib/geometry";
 import { CHECKER_STYLE, CtAutoWidthInput, CtButton, CtTooltip, CtTooltipProvider, cx } from "../ui";
@@ -63,8 +65,8 @@ import { AssetPanel } from "./asset-panel";
 import { PreviewPanel } from "./preview-panel";
 import { SceneDialog } from "./scene-dialog";
 import { StorefrontPreview } from "./storefront-preview";
-import { PublishDialog } from "./publish-dialog";
-import { updateItem, updateRegion, useDesign, versionView } from "./use-design";
+import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zoneOptionView } from "./use-design";
+import { nearestAspect, PackImageLibrary } from "./pack-image-library";
 import { PrintDialog } from "./print-dialog";
 import { CLIPART_DRAG, type CtClipartDrag } from "./library-panel";
 import { ClipartPickerDialog } from "./clipart-picker";
@@ -133,7 +135,13 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const design = useDesign({ regions: [], items: [], config: defaultProductConfig() });
   const [nameDraft, setNameDraft] = useState("");
-  const [publishOpen, setPublishOpen] = useState(false);
+  const router = useRouter();
+  /**
+   * The thư viện ảnh tổ hợp is open for a custom layer: `regionId` null = a new layer (tool L), else that layer's
+   * picture (an empty layer clicked, or "Đổi ảnh").
+   */
+  const [layerLibrary, setLayerLibrary] = useState<{ regionId: string | null } | null>(null);
+  const [deploying, setDeploying] = useState(false);
   const [selection, setSelection] = useState<CtSelection>({});
   /** Photo zones whose test photo is being processed (spinner on the canvas). */
   const [photoBusy, setPhotoBusy] = useState<Record<string, string>>({});
@@ -217,7 +225,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const shownMainId = main ? selectedMainId(selection, assets, main.id) : null;
   const shownMainImageId = main ? selectedMainImageId(selection, assets, main.id) : null;
   // Every main version has its own layers: canvas + inspector see and edit the shown version's (lib/layout.ts).
-  const ed = versionView(design, shownMainId);
+  // A text / photo zone showing one of its sub-options is edited as that option (use-design zoneOptionView).
+  const versionApi = versionView(design, shownMainId);
+  const ed = zoneOptionView(versionApi, activeZoneOptions(versionApi.state.regions, selection));
   const { regions, items } = ed.state;
   /** Main version id -> its layer count. */
   const layerCounts = useMemo(() => {
@@ -362,17 +372,101 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     setEditTarget("region");
   };
 
-  /** A custom layer is added straight away, centred on the main; uploading / generating its image sizes the frame. */
+  /**
+   * Custom layer (tool L) — like an image frame: pick its picture in the thư viện ảnh tổ hợp (upload a new one
+   * there, or AI); the layer is made around it, centred. A library clipart can be dragged onto the canvas instead.
+   */
   const addCustomLayer = () => {
     if (!main) return;
-    const size = Math.round(Math.min(main.width, main.height) * 0.4);
-    const shape = { type: "rect" as const, x: Math.round((main.width - size) / 2), y: Math.round((main.height - size) / 2), w: size, h: size, radius: 0 };
-    const region = makeRegion(product?.id ?? "", "image", shape, regions.length);
+    setLayerLibrary({ regionId: null });
+    setTool("select");
+  };
+
+  /**
+   * "+ con" on an option: a child zone shown only while its parent shows that option — a text, an empty custom
+   * layer (click it to pick its picture) or a photo upload — inside the parent's box, selected for editing.
+   */
+  const addChildZone = (parent: CtZoneParent, kind: CtRegionKind) => {
+    const p = regions.find((r) => r.id === parent.regionId);
+    if (!p || !product) return;
+    const b = shapeBounds(p.shape);
+    const w = Math.round(b.w * 0.6);
+    const h = Math.round(kind === "text" ? Math.max(40, b.h * 0.3) : b.h * 0.6);
+    const shape = { type: "rect" as const, x: Math.round(b.x + (b.w - w) / 2), y: Math.round(b.y + (b.h - h) / 2), w, h, radius: 0 };
+    const made = makeRegion(product.id, kind, shape, regions.length);
+    const region: CtRegion = { ...made, name: `${made.name} ↳ ${p.name}`, config: { ...made.config, parent } };
     ed.commit((s) => ({ ...s, regions: [...s.regions, region] }));
+    revealZone(region.id, [...regions, region]);
     setSelectedRegionId(region.id);
     setActiveItemId(null);
     setEditTarget("region");
-    setTool("select");
+    flash("Đã thêm option con — chỉ hiện khi khách chọn option đó");
+  };
+
+  /** Show a (child) zone on the canvas: every parent above it switched to the option it belongs to. */
+  const revealZone = (id: string, list: CtRegion[] = regions) => {
+    const byId = new Map(list.map((r) => [r.id, r]));
+    setSelection((cur) => {
+      let next = cur;
+      for (let r = byId.get(id), d = 0; r?.config.parent && d < 12; r = byId.get(r.config.parent.regionId), d++) {
+        const { regionId, optionId } = r.config.parent;
+        const parent = byId.get(regionId);
+        if (!parent) break;
+        const sel = next[regionId];
+        if (parent.kind === "image") next = { ...next, [regionId]: { kind: "image", assetId: optionId } };
+        else if (parent.kind === "text") next = { ...next, [regionId]: { ...(sel?.kind === "text" ? sel : { kind: "text" as const, text: normalizeRegion(parent).config.text.defaultText }), optionId: optionId === CT_BASE_OPTION ? null : optionId } };
+        else if (sel?.kind === "photo") next = { ...next, [regionId]: { ...sel, optionId: optionId === CT_BASE_OPTION ? null : optionId } };
+      }
+      return next;
+    });
+  };
+
+  /** Deploy sản phẩm (its own page): the design is saved first, so the deploy ships what is on screen. */
+  const openDeploy = async () => {
+    if (!product) return;
+    setDeploying(true);
+    if (design.dirty && !(await save())) {
+      setDeploying(false);
+      return;
+    }
+    router.push(`${CT_CONFIG.basePath}/${product.id}/deploy`);
+  };
+
+  /** A photo of the thư viện ảnh tổ hợp becomes this product's picture (a sub asset) in a custom layer. */
+  const applyLayerImage = async (img: CtPackImage) => {
+    const target = layerLibrary;
+    setLayerLibrary(null);
+    if (!product || !main || !img.url || !target) return;
+    try {
+      flash("Đang thêm ảnh vào layer…");
+      const blob = await fetch(img.url).then((r) => {
+        if (!r.ok) throw new Error(`Không tải được ảnh (HTTP ${r.status})`);
+        return r.blob();
+      });
+      const sub = await ctApi.uploadAsset(product.id, blob, { role: "sub", name: img.name || "Ảnh" });
+      setAssets((list) => [...list, sub]);
+      const layer = target.regionId ? regions.find((r) => r.id === target.regionId) : undefined;
+      if (layer) {
+        // "Đổi ảnh" / an empty layer: it now holds only this picture (its frame refits to it, centred where it was).
+        const item = makeItem(layer.id, sub.id, 0);
+        ed.commit((s) => {
+          const rest = { ...s, items: s.items.filter((i) => i.region_id !== layer.id) };
+          return { ...rest, regions: fitLayerToFirstItem(rest, layer.id, sub), items: [...rest.items, item] };
+        });
+        setSelectedRegionId(layer.id);
+        setActiveItemId(item.id);
+        setSelection((sel) => ({ ...sel, [layer.id]: { kind: "image", assetId: sub.id } }));
+      } else {
+        const size = Math.round(Math.min(main.width, main.height) * 0.4);
+        const box = fitAspect({ x: (main.width - size) / 2, y: (main.height - size) / 2, w: size, h: size }, sub.width, sub.height);
+        const region = makeRegion(product.id, "image", { type: "rect", x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h), radius: 0 }, regions.length);
+        placeInto({ ...region, name: img.name || region.name }, sub, true);
+      }
+      setEditTarget("region");
+      flash("Đã thêm ảnh — nhớ Lưu thiết kế");
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Không thêm được ảnh");
+    }
   };
 
   /**
@@ -492,10 +586,12 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           removePhotoFrame(r.id);
           return;
         }
+        // Its child zones go with it.
+        const gone = zoneSubtree(regions, selectedRegionId);
         ed.commit((s) => ({
           ...s,
-          regions: s.regions.filter((r) => r.id !== selectedRegionId),
-          items: s.items.filter((i) => i.region_id !== selectedRegionId),
+          regions: s.regions.filter((r) => !gone.has(r.id)),
+          items: s.items.filter((i) => !gone.has(i.region_id)),
         }));
         setSelectedRegionId(null);
       } else if (e.key.startsWith("Arrow") && selectedRegionId) {
@@ -784,6 +880,10 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       void addLibraryMain(drag);
       return;
     }
+    if (drag.set && drag.set.length > 1) {
+      dropSet(drag.set, at);
+      return;
+    }
     const head = asLayerClipart(drag.asset);
     // A gốc brings its đa sắc as the group's options, hidden: the customer sees exactly the dragged picture
     // until they are switched on in the inspector. Its vật liệu versions come along for the "rendition" display.
@@ -807,6 +907,57 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     placeInto({ ...layer, name: head.name || layer.name }, head, true, members.map((m) => m.id));
     setEditTarget("region");
     setTool("select");
+  };
+
+  /**
+   * A set of pictures dragged together: ONE custom layer whose options are the pictures (each a group of the
+   * layer, its đa sắc hidden), the first shown by default. Dropped on a custom layer, they join it.
+   */
+  const dropSet = (set: NonNullable<CtClipartDrag["set"]>, at: CtPoint | null) => {
+    if (!main || !product) return;
+    const heads = set.map((d) => asLayerClipart(d.asset));
+    const extra = set.flatMap((d) => {
+      const members = d.asset.parent_id === null ? d.family.filter((a) => a.role === "variant" && a.parent_id === d.asset.id) : [];
+      return d.family.filter((a) => a.id !== d.asset.id && (a.role === "rendition" || members.includes(a)));
+    });
+    const hidden = set.flatMap((d) => (d.asset.parent_id === null ? d.family.filter((a) => a.role === "variant" && a.parent_id === d.asset.id).map((a) => a.id) : []));
+    setAssets((list) => {
+      const have = new Set(list.map((a) => a.id));
+      return [...list, ...[...heads, ...extra].filter((a) => !have.has(a.id) && have.add(a.id))];
+    });
+    keepAsDragged(heads.map((h) => h.id));
+    const p = at ?? { x: main.width / 2, y: main.height / 2 };
+    const hit = [...regions].reverse().find((r) => r.kind === "image" && pointInShape(p, r.shape));
+    const size = Math.round(Math.min(main.width, main.height) * 0.3);
+    const first = heads[0];
+    const box = fitAspect(
+      { x: Math.min(Math.max(p.x - size / 2, 0), main.width - size), y: Math.min(Math.max(p.y - size / 2, 0), main.height - size), w: size, h: size },
+      first.width,
+      first.height,
+    );
+    const layer = hit ?? { ...makeRegion(product.id, "image", { type: "rect", x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h), radius: 0 }, regions.length), name: `Bộ ${heads.length} ảnh` };
+    const have = new Set(items.filter((i) => i.region_id === layer.id).map((i) => i.asset_id));
+    const start = items.filter((i) => i.region_id === layer.id).length;
+    const fresh = heads.filter((h) => !have.has(h.id));
+    const newItems = fresh.map((h, i) => makeItem(layer.id, h.id, start + i));
+    ed.commit((s) => {
+      const regionsNow = hit ? s.regions : [...s.regions, layer];
+      return {
+        ...s,
+        regions: regionsNow.map((x) => {
+          if (x.id !== layer.id) return x;
+          const n = normalizeRegion(x);
+          return { ...n, config: { ...n.config, image: { ...n.config.image, label: hit ? n.config.image.label : "Choose style", hiddenAssetIds: [...new Set([...n.config.image.hiddenAssetIds, ...hidden])] } } };
+        }),
+        items: [...s.items, ...newItems],
+      };
+    });
+    setSelectedRegionId(layer.id);
+    setActiveItemId(newItems[0]?.id ?? null);
+    if (!hit) setSelection((sel) => ({ ...sel, [layer.id]: { kind: "image", assetId: first.id } }));
+    setEditTarget("region");
+    setTool("select");
+    flash(`${hit ? "Thêm" : "Tạo custom layer với"} ${fresh.length} ảnh — khách chọn 1 trong bộ (không sửa). Nhớ Lưu thiết kế`);
   };
 
   /**
@@ -1089,9 +1240,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               <Printer className="h-3.5 w-3.5" /> File in
             </CtButton>
           </CtTooltip>
-          <CtTooltip label="Publish lên Shopify (main-product.liquid)">
-            <CtButton size="sm" variant="outline" onClick={() => setPublishOpen(true)} disabled={!main}>
-              <Rocket className="h-3.5 w-3.5" /> Publish
+          <CtTooltip label="Deploy sản phẩm lên Shopify: bảng giá (Size / Pack), variants, ảnh + template custom">
+            <CtButton size="sm" variant="outline" onClick={() => void openDeploy()} disabled={!main || deploying}>
+              {deploying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />} Deploy sản phẩm
             </CtButton>
           </CtTooltip>
         </div>
@@ -1261,6 +1412,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                       setMainSelected(on);
                       if (on) setEditTarget("region");
                     }}
+                    onEmptyLayerClick={(regionId) => setLayerLibrary({ regionId })}
                   />
                 ) : (
                   <div
@@ -1301,6 +1453,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               onCreateMaterial={createMaterialFor}
               onDelete={deleteMockup}
               flash={flash}
+              mockupEdit={config.mockupEdit}
+              onMockupEdit={(mockupEdit) => design.commit((s) => ({ ...s, config: { ...s.config, mockupEdit } }))}
             />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
@@ -1349,6 +1503,14 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               }}
               onMainFrame={setMainFrame}
               onPreviewOption={(regionId, assetId) => setSelection((sel) => ({ ...sel, [regionId]: { kind: "image", assetId } }))}
+              onPickLayerImage={(regionId) => setLayerLibrary({ regionId })}
+              onAddChild={addChildZone}
+              onZoneOption={(regionId, optionId) =>
+                setSelection((sel) => {
+                  const cur = sel[regionId];
+                  return cur?.kind === "text" || cur?.kind === "photo" ? { ...sel, [regionId]: { ...cur, optionId } } : sel;
+                })
+              }
               onSetSwatch={setSwatch}
               onPhotoSelection={(regionId, sel: CtPhotoSelection) =>
                 setSelection((cur) => {
@@ -1372,6 +1534,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               onSelectRegion={(id) => {
                 setSelectedRegionId(id);
                 setEditTarget("region");
+                // A child zone picked in Layers: show its parents on the option it belongs to.
+                if (id) revealZone(id);
               }}
               frameSelected={editTarget === "object" && regions.find((r) => r.id === selectedRegionId)?.kind === "photo"}
               onSelectFrame={(id) => {
@@ -1418,14 +1582,14 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           <PrintDialog open={materialOpen} onOpenChange={setMaterialOpen} design={design} product={product} main={main} assets={assets} selection={selection} />
         </>
       )}
-      <PublishDialog
-        open={publishOpen}
-        onOpenChange={setPublishOpen}
-        product={product}
-        dirty={design.dirty}
-        onSave={save}
-        onPublished={(p) => setProduct(p)}
-      />
+      {layerLibrary && main && (
+        <PackImageLibrary
+          open
+          onOpenChange={(o) => !o && setLayerLibrary(null)}
+          onPick={(img) => void applyLayerImage(img)}
+          aspect={nearestAspect(main.width, main.height)}
+        />
+      )}
     </div>
     </CtTooltipProvider>
   );

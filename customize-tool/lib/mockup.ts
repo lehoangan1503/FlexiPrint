@@ -670,6 +670,8 @@ export interface RenderSlideInput {
   scale: number;
   /** Draw a dashed box for frames still rendering (editors). */
   placeholders?: boolean;
+  /** Text in a frame's placeholder (default "…"). */
+  placeholderLabel?: string;
 }
 
 export async function renderSlide(input: RenderSlideInput): Promise<HTMLCanvasElement> {
@@ -778,7 +780,7 @@ export async function drawSlide(ctx: CanvasRenderingContext2D, input: RenderSlid
         const a = input.arts[layer.id];
         const art = a ? loaded.get(a.url) : undefined;
         if (a && art) drawFrameLayer(c, layer, a, art, scale);
-        else if (input.placeholders) drawPlaceholder(c, layer.box, "…");
+        else if (input.placeholders) drawPlaceholder(c, layer.box, input.placeholderLabel ?? "…");
         break;
       }
       case "text":

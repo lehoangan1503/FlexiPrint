@@ -129,9 +129,21 @@ export interface CtTextConfig {
   /** -100..100 — bends the baseline into an arc; 0 = straight. */
   curve: number;
   uppercase: boolean;
-  /** Preset texts. Non-empty = the customer picks one from a dropdown instead of typing. */
+  /** Preset texts (mode "list"): the customer picks one from a dropdown. */
   choices: string[];
+  /**
+   * What the customer does with the zone:
+   *   input    types the text (defaultText as a start)            — the usual
+   *   fixed    nothing: defaultText is drawn as designed (no field)
+   *   list     picks one of `choices`
+   *   options  picks one of the zone's options (CtRegionConfig.options, swatches / buttons); each option draws its
+   *            own text (`value`) and lettering and may open child zones (text / custom layer / photo upload)
+   * Absent (older zones) = "list" when there are choices, else "input".
+   */
+  mode?: CtTextMode;
 }
+
+export type CtTextMode = "input" | "fixed" | "list" | "options";
 
 /**
  * Free (no-AI) photo styles. "original" keeps the photo; "pixel" is a local
@@ -318,6 +330,59 @@ export interface CtRegionConfig {
   image: CtImageConfig;
   text: CtTextConfig;
   photo: CtPhotoConfig;
+  /** Text / photo zones: sub-options the customer picks in a second row ("Thêm option con", like a main version's). */
+  options: CtZoneOptions;
+  /** A child zone: only there while its parent shows one option (CtZoneParent). */
+  parent?: CtZoneParent;
+}
+
+/**
+ * Sub-options of a customer zone (text or photo), the way a main version has its own ("Thêm option"): the zone
+ * itself is the first choice (`baseName`), then `list`. A choice changes how the zone looks, not what the customer
+ * types / uploads: a text option its lettering (font, colours…), a photo option its frame's shape (circle / heart).
+ * Empty `list` = no second row.
+ */
+export interface CtZoneOptions {
+  /** Label above the row ("Choose color"). */
+  label: string;
+  display: CtOptionDisplay;
+  /** The zone's own look, offered first ("Gold"). */
+  baseName: string;
+  /** Swatch of the zone's own look (display "swatch"). */
+  baseSwatch?: string;
+  /** Text mode "options": what the zone's own option draws (default: baseName). */
+  baseValue?: string;
+  list: CtZoneOption[];
+}
+
+/** Option id of a zone's own look (its first choice) in CtZoneParent.optionId. */
+export const CT_BASE_OPTION = "base";
+
+/**
+ * A child zone ("option con" of an option): drawn and asked only while its parent zone shows that option — a text
+ * zone's option (or its own look, CT_BASE_OPTION), or a custom layer's picture (asset id). Children nest: a child
+ * can have children of its own.
+ */
+export interface CtZoneParent {
+  regionId: string;
+  optionId: string;
+}
+
+/** Lettering a text sub-option overrides (the rest — label, choices, max chars — stays the zone's). */
+export type CtZoneTextStyle = Partial<
+  Pick<CtTextConfig, "fontFamily" | "fontWeight" | "fontSize" | "color" | "strokeColor" | "strokeWidth" | "letterSpacing" | "curve" | "uppercase" | "align">
+>;
+
+export interface CtZoneOption {
+  id: string;
+  name: string;
+  swatch?: string;
+  /** Text zones: lettering of this option. */
+  text?: CtZoneTextStyle;
+  /** Photo (or text) zones: the zone's outline for this option, main px. */
+  shape?: CtShape;
+  /** Text mode "options": the text this option draws (default: its name; "" = nothing). */
+  value?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -551,6 +616,22 @@ export interface CtProductConfig {
    * storefront template leaves it out (customers bring their own).
    */
   samples: CtSelection;
+  /** "Mockup edit" (Tổ hợp tab): the storefront canvas shows this scene with the live design in its product frames. */
+  mockupEdit: CtMockupEdit | null;
+}
+
+/**
+ * A tổ hợp used as the customer's editing canvas: its scene (background, hands, props…) with every product frame
+ * showing the LIVE design instead of the rendered product — the competitor's "ornament on the tree" preview.
+ * Frame k shows design k of a pack (wrapping); with one design every frame shows it.
+ */
+export interface CtMockupEdit {
+  /** The tổ hợp (mockup asset) it was made from. */
+  assetId: string;
+  /** Its scene; frames keep their box / shadow / cord, their own picture is dropped. */
+  slide: CtPackSlide;
+  /** Product frame id → its material's hanger (hole + cord). */
+  frames: Record<string, { hole: boolean; cord: CtCordStyle }>;
 }
 
 /** What a published template carries (no design samples). */
@@ -569,6 +650,8 @@ export interface CtProduct {
   /** Latest published template version (migration 002); null = never published. */
   published_version?: number | null;
   published_at?: string | null;
+  /** Its Shopify product, once deployed (migration 018). */
+  shopify?: CtShopifyLink | null;
   created_at: string;
   updated_at: string;
 }
@@ -1159,6 +1242,8 @@ export interface CtImageSelection {
 export interface CtTextSelection {
   kind: "text";
   text: string;
+  /** Chosen sub-option (CtRegionConfig.options); absent / null = the zone's own look. */
+  optionId?: string | null;
 }
 
 export interface CtPhotoSelection {
@@ -1170,6 +1255,8 @@ export interface CtPhotoSelection {
   style?: CtPhotoStyleRef;
   /** The customer's untouched upload, kept for fulfilment when url is a processed version. */
   sourceUrl?: string | null;
+  /** Chosen sub-option (CtRegionConfig.options); absent / null = the zone's own shape. */
+  optionId?: string | null;
 }
 
 export type CtRegionSelection = CtImageSelection | CtTextSelection | CtPhotoSelection;
@@ -1211,6 +1298,11 @@ export interface CtTemplate {
   items: CtRegionItem[];
   /** Names of the AI styles the zones offer (no prompt / model). */
   aiStyles?: CtPublicAiStyle[];
+  /**
+   * Each custom layer's default picture (layer id → asset id), as picked in the editor. A layer with 2+ pictures is
+   * a pick-only option for the customer (a set of hairstyles); with one it is simply drawn.
+   */
+  picks?: Record<string, string | null>;
 }
 
 export interface CtPublishResponse {
@@ -1577,7 +1669,8 @@ export interface CtCategoryHistoryEntry {
 
 /** "create" → CtPromptSuggestion; "revise" → CtCategoryRevision (an empty note = review only). */
 /** pack_image = "Tạo ảnh với AI" of the thư viện ảnh tổ hợp (input.pack, result CtPackImageResult). */
-export type CtAgentTaskKind = "create" | "revise" | "pack_image";
+/** content = "Tạo content với FlexiPrint" of the Deploy page (input.content, result CtContentResult). */
+export type CtAgentTaskKind = "create" | "revise" | "pack_image" | "content";
 
 /** waiting = the agent asked the editor something (ask_user) and ended its turn until they answer. */
 export type CtAgentTaskStatus = "pending" | "running" | "waiting" | "done" | "failed" | "cancelled";
@@ -1634,13 +1727,57 @@ export interface CtAgentTaskInput {
   refUrls: string[];
   /** pack_image: what to make (the category fields are then empty). */
   pack?: CtPackImageTaskInput;
+  /** content: the product to write the Shopify title + description for. */
+  content?: CtContentTaskInput;
+}
+
+/**
+ * A content task: title + description for the product's Shopify page. Every content task of a product is one
+ * conversation with the agent (its earlier requests and results come with get_task), so "ngắn hơn", "giữ title cũ"
+ * continue the last version.
+ */
+export interface CtContentTaskInput {
+  productId: string;
+  productName: string;
+  /** What the editor wants (tone, keywords, length…); may be empty. */
+  request: string;
+  /** Title / description as the Deploy page has them now (the base of an edit). */
+  title: string;
+  descriptionHtml: string;
+  /** What the customer personalizes (lib/option-audit.ts lines), the price table, product type. */
+  facts: string[];
+  /** Product photos (mockups) the agent can look at. */
+  imageUrls: string[];
+}
+
+export interface CtContentResult {
+  summary: string;
+  title: string;
+  descriptionHtml: string;
+}
+
+/**
+ * A photo sent back to keep editing ("Chỉnh tiếp"), with the editor's request for THAT photo. The note outranks the
+ * general description for its photo and applies to nothing else; the agent must answer every one (submit_result
+ * refuses a result without an edit of each photo that has a note).
+ */
+export interface CtPackImageBase {
+  id: string;
+  url: string;
+  name: string;
+  note: string;
 }
 
 /** A pack_image task's request. */
 export interface CtPackImageTaskInput {
+  /** The general request (may be empty when every photo sent back has its own note). */
   description: string;
   aspect: CtPackImageAspect;
-  /** A library photo to keep editing ("Chỉnh tiếp"), else null. */
+  /** Photos to keep editing, each with its own note. */
+  bases?: CtPackImageBase[];
+  /** The bộ ảnh it belongs to (migration 017): its requests are one conversation with the agent. */
+  collectionId?: string | null;
+  /** LEGACY (tasks before several photos): the one photo to keep editing — read through packBases(). */
   baseId: string | null;
   baseUrl: string;
 }
@@ -1661,7 +1798,7 @@ export interface CtAgentTask {
   progress: CtAgentTaskProgress[];
   runs: CtAgentTaskRun[];
   questions: CtAgentQuestion[];
-  result: CtPromptSuggestion | CtCategoryRevision | CtPackImageResult | null;
+  result: CtPromptSuggestion | CtCategoryRevision | CtPackImageResult | CtContentResult | null;
   error: string;
   agent_job_id: string;
   agent_session_id: string;
@@ -1715,6 +1852,184 @@ export interface CtPackImage {
   transparent: boolean;
   /** In the library — an agent's draft is not until it submits it. */
   listed: boolean;
+  /** The bộ ảnh it was made in. */
+  collection_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** A bộ ảnh of the thư viện ảnh tổ hợp (ct_pack_collections, migration 017): a named AI conversation. */
+export interface CtPackCollection {
+  id: string;
+  user_id: string | null;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Bảng giá + Deploy sản phẩm lên Shopify (migration 018; lib/pricing.ts, server/shopify.ts)
+// ---------------------------------------------------------------------------
+
+/** One size of a price table ("3.5 inches"): the price of ONE piece. */
+export interface CtPriceSize {
+  id: string;
+  label: string;
+  price: number;
+  /** Struck-through price of one piece; null = none (a pack discount still shows the undiscounted total). */
+  compareAt: number | null;
+}
+
+/** One pack ("Buy More Save More"): `qty` pieces, each a different design, `discountPct` off the size price. */
+export interface CtPricePack {
+  id: string;
+  qty: number;
+  /** Shown on the storefront card ("2 PCS"). */
+  label: string;
+  discountPct: number;
+}
+
+/** A hand-set cell of the Size × Pack grid (total for the pack), over the computed one. */
+export interface CtPriceCellOverride {
+  price?: number;
+  compareAt?: number | null;
+}
+
+/**
+ * A named price table. Deploy turns it into the Shopify product's options (Size, Pack) and one variant per cell,
+ * priced at the cell's TOTAL (a 6-pack variant costs the 6 pieces). A dimension with a single entry is left out
+ * (no 1-value option on the product page).
+ */
+export interface CtPriceTableConfig {
+  /** Shopify option name of the sizes ("Size"). */
+  sizeLabel: string;
+  /** Shopify option name of the packs ("Buy More Save More (Different Designs)"). */
+  packLabel: string;
+  /** What one design of a pack is called on the storefront ("Ornament" → tabs "Ornament 1…6"). */
+  itemLabel: string;
+  sizes: CtPriceSize[];
+  packs: CtPricePack[];
+  /** "<sizeId>:<packId>" → hand-set cell. */
+  overrides: Record<string, CtPriceCellOverride>;
+}
+
+export interface CtPriceTable {
+  id: string;
+  user_id: string | null;
+  name: string;
+  config: CtPriceTableConfig;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CtPriceTableBody {
+  name: string;
+  config: CtPriceTableConfig;
+}
+
+/** One computed cell = one Shopify variant. */
+export interface CtPriceCell {
+  size: CtPriceSize | null;
+  pack: CtPricePack | null;
+  qty: number;
+  /** Total of the pack. */
+  price: number;
+  compareAt: number | null;
+  /** price / qty. */
+  unit: number;
+  overridden: boolean;
+}
+
+/**
+ * Metafield customize_tool.pricing (json) of a deployed product — how main-product.liquid tells the pack option
+ * from the others and how many designs each of its values holds.
+ */
+export interface CtShopifyPricing {
+  schema: 1;
+  sizeOption: string | null;
+  packOption: string | null;
+  itemLabel: string;
+  /** Pack option value → number of designs. */
+  packs: Record<string, number>;
+}
+
+export type CtShopifyStatus = "ACTIVE" | "DRAFT" | "ARCHIVED";
+
+/** ct_products.shopify: the product's Shopify product (migration 018). */
+export interface CtShopifyLink {
+  /** gid://shopify/Product/… */
+  productId: string;
+  handle: string;
+  title: string;
+  status: CtShopifyStatus;
+  priceTableId: string | null;
+  /** Our asset id → Shopify media id (product images made from mockups). */
+  media: Record<string, string>;
+  deployedAt: string;
+  templateVersion: number;
+  url: string;
+  adminUrl: string;
+}
+
+export interface CtDeployBody {
+  priceTableId: string;
+  title: string;
+  descriptionHtml: string;
+  status: CtShopifyStatus;
+  vendor: string;
+  productType: string;
+  tags: string[];
+  /** Product images, in order: mockup / tổ hợp asset ids of this product. */
+  mediaAssetIds: string[];
+  /** Deploy onto this existing Shopify product (gid) instead of the linked one / a new one. */
+  shopifyProductId?: string | null;
+  /** Custom collections (gids) the product joins. */
+  collectionIds: string[];
+  /** The breadcrumb's collection (one of collectionIds); null = the theme's default. */
+  primaryCollectionId: string | null;
+}
+
+export interface CtShopifyCollection {
+  id: string;
+  title: string;
+  handle: string;
+  /** Rule-based: products can't be added by hand. */
+  smart: boolean;
+}
+
+export interface CtDeployResponse {
+  product: CtProduct;
+  publish: CtPublishResponse;
+  shopify: CtShopifyLink;
+  /** Staff preview of the product page (works while the store has a password; expires after a while). */
+  previewUrl: string | null;
+  warnings: string[];
+}
+
+/** A Shopify product as the Deploy page shows it (prefill, "link an existing product"). */
+export interface CtShopifyProductSummary {
+  id: string;
+  title: string;
+  handle: string;
+  status: CtShopifyStatus;
+  descriptionHtml: string;
+  vendor: string;
+  productType: string;
+  tags: string[];
+  options: Array<{ name: string; values: string[] }>;
+  variantsCount: number;
+  imageUrl: string | null;
+  /** customize_tool.product_id on it (another FlexiPrint product may own it). */
+  ctProductId: string | null;
+  collectionIds: string[];
+  /** customize_tool.breadcrumb_collection. */
+  primaryCollectionId: string | null;
+}
+
+export interface CtShopifyInfo {
+  configured: boolean;
+  shop: { name: string; domain: string; currency: string; moneyFormat: string } | null;
+  /** The linked product as it is on Shopify now (null: none / deleted there). */
+  product: CtShopifyProductSummary | null;
+  error?: string;
 }

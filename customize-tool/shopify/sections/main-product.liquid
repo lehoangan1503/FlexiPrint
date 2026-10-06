@@ -14,6 +14,13 @@
     - Add to cart uploads a flattened preview and adds line-item properties
       (visible choices + hidden _ct_preview, _ct_template, _ct_selection).
 
+  Every Shopify option of the product is rendered, whatever it is called and however many there are.
+  A product deployed from the tool (Deploy sản phẩm → bảng giá) also has the metafield
+  customize_tool.pricing (json): which option holds the packs ("Buy More Save More (Different
+  Designs)") and how many designs each pack value holds. That option is shown as cards with the
+  price of one piece for the chosen size, and a pack of N gets N independent designs (tabs
+  "<item> 1…N" in the form, "<item> k/N" arrows on the preview).
+
   Assets: ct-customizer.js (built from customize-tool/storefront) + ct-customizer.css.
   Every option (zones, groups, preset texts, photo styles, main versions) is
   rendered from the template JSON, so anything created in the tool works here
@@ -34,6 +41,8 @@
   if ct_id != blank and api_base != blank
     assign is_custom = true
   endif
+  assign ct_pricing = product.metafields.customize_tool.pricing.value
+  assign pack_option = ct_pricing.packOption | default: ''
 -%}
 
 {{ 'ct-customizer.css' | asset_url | stylesheet_tag }}
@@ -51,6 +60,7 @@
   data-ct-t-heading="{{ section.settings.heading | escape }}"
   data-ct-t-upload="{{ section.settings.upload_label | escape }}"
   data-ct-t-required="{{ section.settings.required_label | escape }}"
+  data-ct-money-format="{{ shop.money_format | escape }}"
   style="--ct-accent: {{ section.settings.accent }};"
 >
   <div class="ct-product__media">
@@ -97,6 +107,11 @@
     {%- if is_custom -%}
       <div class="ct-stage" data-ct-stage hidden>
         <canvas aria-label="{{ section.settings.preview_label | escape }}"></canvas>
+        <div class="ct-stage__nav" data-ct-design-nav hidden>
+          <button type="button" class="ct-stage__arrow" data-ct-design-prev aria-label="Previous">&lsaquo;</button>
+          <span data-ct-design-label></span>
+          <button type="button" class="ct-stage__arrow" data-ct-design-next aria-label="Next">&rsaquo;</button>
+        </div>
         <button type="button" class="ct-stage__toggle" data-ct-show-photos>{{ section.settings.photos_label }}</button>
       </div>
       <button type="button" class="ct-show-design" data-ct-show-design>{{ section.settings.design_label }}</button>
@@ -104,6 +119,19 @@
   </div>
 
   <div class="ct-product__info">
+    {%- if section.settings.show_breadcrumb -%}
+      {%- comment -%} The deploy page's starred collection (customize_tool.breadcrumb_collection), else the one browsed from, else the first. {%- endcomment -%}
+      {%- assign crumb = product.metafields.customize_tool.breadcrumb_collection.value -%}
+      {%- if crumb == blank -%}{%- assign crumb = collection -%}{%- endif -%}
+      {%- if crumb == blank -%}{%- assign crumb = product.collections.first -%}{%- endif -%}
+      <nav class="ct-breadcrumb" aria-label="Breadcrumb">
+        <a href="{{ routes.root_url }}">Home</a>
+        {%- if crumb != blank -%}
+          <span aria-hidden="true">›</span><a href="{{ crumb.url }}">{{ crumb.title }}</a>
+        {%- endif -%}
+        <span aria-hidden="true">›</span><span aria-current="page">{{ product.title }}</span>
+      </nav>
+    {%- endif -%}
     {%- if section.settings.show_vendor -%}
       <p class="ct-product__vendor">{{ product.vendor }}</p>
     {%- endif -%}
@@ -120,11 +148,15 @@
       <div class="ct-variants">
         {%- for option in product.options_with_values -%}
           {%- assign option_index = forloop.index0 -%}
-          <fieldset class="ct-variant">
+          {%- assign is_pack = false -%}
+          {%- if pack_option != blank and option.name == pack_option -%}
+            {%- assign is_pack = true -%}
+          {%- endif -%}
+          <fieldset class="ct-variant{% if is_pack %} ct-variant--pack{% endif %}" data-ct-option-name="{{ option.name | escape }}" data-ct-option-position="{{ option_index }}">
             <legend class="ct-field__label">{{ option.name }}</legend>
-            <div class="ct-pills">
+            <div class="{% if is_pack %}ct-packs{% else %}ct-pills{% endif %}">
               {%- for value in option.values -%}
-                <label class="ct-pill">
+                <label class="{% if is_pack %}ct-pack{% else %}ct-pill{% endif %}{% if option.selected_value == value %} is-selected{% endif %}">
                   <input
                     type="radio"
                     name="ct-{{ section.id }}-option-{{ option_index }}"
@@ -132,7 +164,12 @@
                     data-ct-option-index="{{ option_index }}"
                     {% if option.selected_value == value %}checked{% endif %}
                   >
-                  <span>{{ value }}</span>
+                  {%- if is_pack -%}
+                    <span class="ct-pack__label">{{ value }}</span>
+                    <span class="ct-pack__unit" data-ct-pack-unit="{{ value | escape }}"></span>
+                  {%- else -%}
+                    <span>{{ value }}</span>
+                  {%- endif -%}
                 </label>
               {%- endfor -%}
             </div>
@@ -180,11 +217,15 @@
           "price": {{ v.price | money | json }},
           "compare": {% if v.compare_at_price > v.price %}{{ v.compare_at_price | money | json }}{% else %}null{% endif %},
           "available": {{ v.available | json }},
+          "cents": {{ v.price | json }},
           "media": {% if v.featured_media %}"{{ v.featured_media.id }}"{% else %}null{% endif %}
         }{% unless forloop.last %},{% endunless %}
       {%- endfor -%}
     }
   </script>
+  {%- if ct_pricing != blank -%}
+    <script type="application/json" data-ct-pricing>{{ ct_pricing | json }}</script>
+  {%- endif -%}
   <script type="application/json" data-ct-variant-options>
     [{%- for v in product.variants -%}{"id": {{ v.id }}, "options": {{ v.options | json }}}{% unless forloop.last %},{% endunless %}{%- endfor -%}]
   </script>
@@ -211,6 +252,7 @@
     { "type": "text", "id": "preview_label", "label": "Preview canvas label", "default": "Live preview of your design" },
     { "type": "text", "id": "add_label", "label": "Add to cart label", "default": "Add to cart" },
     { "type": "text", "id": "soldout_label", "label": "Sold out label", "default": "Sold out" },
+    { "type": "checkbox", "id": "show_breadcrumb", "label": "Show breadcrumb", "default": true },
     { "type": "checkbox", "id": "show_vendor", "label": "Show vendor", "default": false },
     { "type": "checkbox", "id": "show_description", "label": "Show description", "default": true }
   ]

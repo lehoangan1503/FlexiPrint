@@ -67,6 +67,7 @@ import {
 } from "lucide-react";
 import { CT_FONTS } from "../../config";
 import type {
+  CtMockupEdit,
   CtAsset,
   CtMainLayout,
   CtMockupPack,
@@ -94,6 +95,7 @@ import {
   fillCss,
   frameArt,
   frameMain,
+  frameRules,
   frameMissing,
   frameSelection,
   gradientCss,
@@ -151,6 +153,15 @@ const SIZE_PRESETS: Array<{ label: string; w: number; h: number }> = [
 /** The scene being edited, per product — survives switching tabs. */
 const drafts = new Map<string, { scene: CtPackSlide; openedId: string | null }>();
 
+/** Undo / redo of the edit frame: `past` oldest first, `future` next first. */
+interface SceneHistory {
+  past: CtPackSlide[];
+  scene: CtPackSlide;
+  future: CtPackSlide[];
+}
+
+const sameScene = (a: CtPackSlide, b: CtPackSlide) => a === b || JSON.stringify(a) === JSON.stringify(b);
+
 export interface PreviewPanelProps {
   productId: string;
   main: CtAsset;
@@ -171,6 +182,9 @@ export interface PreviewPanelProps {
   onCreateMaterial: (cliparts: CtAsset[]) => void;
   /** Delete without asking (the panel asks first). */
   onDelete: (a: CtAsset) => Promise<void>;
+  /** The tổ hợp the storefront edits on (config.mockupEdit), and setting it (null = none). */
+  mockupEdit: CtMockupEdit | null;
+  onMockupEdit: (m: CtMockupEdit | null) => void;
   flash: (msg: string) => void;
 }
 
@@ -289,39 +303,69 @@ export function PreviewPanel(props: PreviewPanelProps) {
 
   // ---------------------------------------------------------------- scene + history
   const draft = drafts.get(props.productId);
-  const [scene, setSceneState] = useState<CtPackSlide>(() => draft?.scene ?? newSlide("Tổ hợp 1"));
+  const [hist, setHist] = useState<SceneHistory>(() => ({ past: [], scene: draft?.scene ?? newSlide("Tổ hợp 1"), future: [] }));
+  const { scene, past, future } = hist;
+  /** The history as of the last change, for handlers that run after an await or several in one tick. */
+  const histRef = useRef(hist);
+  const setHistory = (next: SceneHistory) => {
+    histRef.current = next;
+    setHist(next);
+  };
   const [openedId, setOpenedId] = useState<string | null>(() => draft?.openedId ?? null);
-  const [past, setPast] = useState<CtPackSlide[]>([]);
-  const [future, setFuture] = useState<CtPackSlide[]>([]);
   const [layerId, setLayerId] = useState<string | null>(null);
+  /** The scene before the live changes not committed yet (a drag, a slider). */
   const dragBase = useRef<CtPackSlide | null>(null);
+  /** The last commit that may fold into the next (typing a number = one step). */
+  const lastMerge = useRef<{ key: string; at: number } | null>(null);
   useEffect(() => {
     drafts.set(props.productId, { scene, openedId });
   }, [props.productId, scene, openedId]);
 
-  const commit = (next: CtPackSlide) => {
-    setPast((p) => [...p.slice(-60), dragBase.current ?? scene]);
-    setFuture([]);
+  /**
+   * One undo step: every change goes through here. A commit that changes nothing (a click, a blur) leaves the
+   * history alone, so it never wipes the redo steps; `merge` folds quick repeats of the same edit into one step.
+   */
+  const commit = (next: CtPackSlide, merge?: string) => {
+    const h = histRef.current;
+    const base = dragBase.current ?? h.scene;
     dragBase.current = null;
-    setSceneState(next);
+    if (sameScene(base, next)) {
+      if (next !== h.scene) setHistory({ ...h, scene: next });
+      return;
+    }
+    const now = Date.now();
+    const folds = !!merge && lastMerge.current?.key === merge && now - lastMerge.current.at < 800 && h.past.length > 0;
+    lastMerge.current = merge ? { key: merge, at: now } : null;
+    // Folded back to where the step started (a toggle clicked twice): the step is gone.
+    if (folds && sameScene(h.past[h.past.length - 1], next)) return setHistory({ past: h.past.slice(0, -1), scene: next, future: [] });
+    setHistory({ past: folds ? h.past : [...h.past.slice(-100), base], scene: next, future: [] });
   };
+  /** A change still in progress: shows now, becomes one step on the commit that ends it. */
   const live = (next: CtPackSlide) => {
-    if (!dragBase.current) dragBase.current = scene;
-    setSceneState(next);
+    const h = histRef.current;
+    if (!dragBase.current) dragBase.current = h.scene;
+    setHistory({ ...h, scene: next });
   };
+  /** Swaps the scene without a step (the name it was saved under). */
+  const replaceScene = (next: CtPackSlide) => setHistory({ ...histRef.current, scene: next });
   const undo = () => {
-    const prev = past[past.length - 1];
+    const h = histRef.current;
+    lastMerge.current = null;
+    // A change still in progress counts as the newest step: undo goes back to before it, redo brings it back.
+    const pending = dragBase.current;
+    dragBase.current = null;
+    if (pending && !sameScene(pending, h.scene)) return setHistory({ past: h.past, scene: pending, future: [h.scene, ...h.future] });
+    const prev = h.past[h.past.length - 1];
     if (!prev) return;
-    setPast(past.slice(0, -1));
-    setFuture([scene, ...future]);
-    setSceneState(prev);
+    setHistory({ past: h.past.slice(0, -1), scene: prev, future: [h.scene, ...h.future] });
   };
   const redo = () => {
-    const next = future[0];
+    const h = histRef.current;
+    lastMerge.current = null;
+    dragBase.current = null;
+    const next = h.future[0];
     if (!next) return;
-    setPast([...past, scene]);
-    setFuture(future.slice(1));
-    setSceneState(next);
+    setHistory({ past: [...h.past, h.scene], scene: next, future: h.future.slice(1) });
   };
   // Vertical toolbar state (EditTools).
   const [tool, setTool] = useState<CtPackTool>("select");
@@ -361,12 +405,14 @@ export function PreviewPanel(props: PreviewPanelProps) {
 
   const layer = scene.layers.find((l) => l.id === layerId) ?? null;
   const patchLayer = (id: string, patch: Partial<CtPackLayer>, how: "commit" | "live" = "commit") => {
+    const cur = histRef.current.scene;
     const next = {
-      ...scene,
-      layers: scene.layers.map((l) => (l.id === id ? ({ ...l, ...patch } as CtPackLayer) : l)),
+      ...cur,
+      layers: cur.layers.map((l) => (l.id === id ? ({ ...l, ...patch } as CtPackLayer) : l)),
     };
     if (how === "live") live(next);
-    else commit(next);
+    // Repeats of the same field on the same frame (typing a number) are one step; a drag already is.
+    else commit(next, dragBase.current ? undefined : `${id}:${Object.keys(patch).sort().join(",")}`);
   };
   const removeLayer = (id: string) => {
     commit({ ...scene, layers: scene.layers.filter((l) => l.id !== id) });
@@ -411,6 +457,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
     return sel ?? (top?.type === "blur" ? top : null);
   };
   const onStroke = (stroke: CtPackBrushStroke, done: boolean) => {
+    const scene = histRef.current.scene;
     let layers = scene.layers;
     let at = painting.current;
     if (!at) {
@@ -438,8 +485,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
     if (target) patchLayer(target.id, { strength } as Partial<CtPackBlurLayer>, how);
   };
 
-  /** Lasso: cut the circled area away, or keep only it. */
-  const [cutKeep, setCutKeep] = useState(false);
+  /** Lasso: cut the circled area away, keep only it, or lift it onto a new frame above. */
+  const [cutMode, setCutMode] = useState<CutMode>("remove");
   const onCut = (id: string, points: number[]) => {
     const l = scene.layers.find((x) => x.id === id);
     if (!l || l.type === "blur") return;
@@ -448,9 +495,14 @@ export function PreviewPanel(props: PreviewPanelProps) {
       const q = sceneToContent(l, points[i], points[i + 1]);
       uv.push(Math.round(q.u * 10000) / 10000, Math.round(q.v * 10000) / 10000);
     }
-    patchLayer(id, {
-      cuts: [...(l.cuts ?? []), { points: uv, keep: cutKeep }],
-    });
+    if (cutMode !== "layer") {
+      patchLayer(id, { cuts: [...(l.cuts ?? []), { points: uv, keep: cutMode === "keep" }] });
+      return;
+    }
+    const part = { ...l, id: newId(), name: `${l.name} (vùng cắt)`, cuts: [...(l.cuts ?? []), { points: uv, keep: true }] };
+    const i = scene.layers.findIndex((x) => x.id === id);
+    commit({ ...scene, layers: [...scene.layers.slice(0, i + 1), part, ...scene.layers.slice(i + 1)] });
+    setLayerId(part.id);
   };
 
   /** A copy just above it, nudged so it shows. */
@@ -630,9 +682,10 @@ export function PreviewPanel(props: PreviewPanelProps) {
   const frameToImage = async (l: CtPackImageLayer) => {
     const { w, h } = await imageSize(l.url);
     if (w < 2 || h < 2) return;
-    const area = scene.width * scene.height;
+    const cur = histRef.current.scene;
+    const area = cur.width * cur.height;
     const width = Math.sqrt((area * w) / h);
-    const resized = resizeSlide(scene, width, (width * h) / w);
+    const resized = resizeSlide(cur, width, (width * h) / w);
     commit({
       ...resized,
       layers: resized.layers.map((x) =>
@@ -654,6 +707,47 @@ export function PreviewPanel(props: PreviewPanelProps) {
 
   // ---------------------------------------------------------------- save / templates
   const saved = useMemo(() => assets.filter((a) => a.role === "mockup").sort((a, b) => a.created_at.localeCompare(b.created_at)), [assets]);
+
+  // ---------------------------------------------------------------- mockup edit
+  /**
+   * One saved tổ hợp becomes the customer's editing canvas on the storefront: its scene, every product frame
+   * showing the live design. Its frames keep box / shadow / cord; the material rules give the hanger.
+   */
+  const chooseMockupEdit = (id: string) => {
+    const m = saved.find((a) => a.id === id);
+    if (!m?.meta.scene) {
+      props.onMockupEdit(null);
+      setEye(false);
+      return;
+    }
+    const slide = sceneForProduct(normalizeSlide(m.meta.scene));
+    const frames: CtMockupEdit["frames"] = {};
+    for (const l of slide.layers) {
+      if (l.type !== "frame") continue;
+      const rules = frameRules(l, ctx);
+      frames[l.id] = { hole: rules.hole, cord: rules.cord };
+    }
+    props.onMockupEdit({ assetId: m.id, slide, frames });
+    props.flash("Mockup edit: khách sẽ chỉnh thiết kế trên tổ hợp này — nhớ Lưu thiết kế");
+  };
+  /** 👁: the chosen tổ hợp with its rendered product taken out — only the custom area (dashed) is left. */
+  const [eye, setEye] = useState(false);
+  const [eyeUrl, setEyeUrl] = useState<string | null>(null);
+  const mockupEdit = props.mockupEdit;
+  useEffect(() => {
+    if (!eye || !mockupEdit) {
+      setEyeUrl(null);
+      return;
+    }
+    let cancelled = false;
+    const s = mockupEdit.slide;
+    void renderSlide({ slide: s, arts: {}, scale: Math.min(1, 900 / Math.max(s.width, s.height)), placeholders: true, placeholderLabel: "Custom" })
+      .then((c) => !cancelled && setEyeUrl(c.toDataURL("image/png")))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [eye, mockupEdit]);
   const savedScenes = saved.filter((m) => m.meta.scene);
   /** "#n" of a saved tổ hợp: its place in the list. */
   const numbered: EnhanceItem[] = saved.map((asset, i) => ({
@@ -683,7 +777,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
       if (replace && old) await props.onDelete(old);
       props.onAdded([asset]);
       setOpenedId(asset.id);
-      setSceneState({ ...scene, name });
+      replaceScene({ ...histRef.current.scene, name });
       props.flash(`Đã lưu “${name}”`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lưu thất bại");
@@ -990,14 +1084,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
             onFlip={(axis) => layer && layer.type !== "blur" && patchLayer(layer.id, axis === "x" ? { flipX: !layer.flipX } : { flipY: !layer.flipY })}
             onDuplicate={() => layer && duplicate(layer)}
             onUncrop={() => layer && patchLayer(layer.id, { box: cropFull(layer), crop: null })}
-            cutKeep={cutKeep}
-            onCutKeep={setCutKeep}
-            onUncut={(all) =>
-              layer &&
-              patchLayer(layer.id, {
-                cuts: all ? [] : (layer.cuts ?? []).slice(0, -1),
-              })
-            }
+            cutMode={cutMode}
+            onCutMode={setCutMode}
             canUndo={past.length > 0}
             canRedo={future.length > 0}
             onUndo={undo}
@@ -1045,16 +1133,23 @@ export function PreviewPanel(props: PreviewPanelProps) {
             <span className="text-xs font-semibold">Tổ hợp đã lưu ({saved.length})</span>
             <span className="text-[11px] text-muted-foreground">Click để mở lại · tick để chọn</span>
             <span className="ml-auto flex items-center gap-1.5">
-              <CtTooltip label={picked.length ? "Lưu các tổ hợp đã tick làm template" : "Lưu tất cả tổ hợp làm template (tick để chọn bớt)"}>
+              {/* Templates ("Lưu làm template" / "Dùng template") are hidden for now. */}
+              <CtTooltip label="Mockup edit: khách chỉnh thiết kế ngay trên tổ hợp này (ảnh sản phẩm thay bằng thiết kế live)">
+                <span className="text-xs font-medium">Mockup edit</span>
+              </CtTooltip>
+              <CtSelect
+                className="h-8 w-48"
+                value={mockupEdit && saved.some((m) => m.id === mockupEdit.assetId) ? mockupEdit.assetId : "__none"}
+                onChange={chooseMockupEdit}
+                options={[{ value: "__none", label: "Không dùng" }, ...numbered.filter((n) => n.asset.meta.scene).map((n) => ({ value: n.asset.id, label: `#${n.number} ${n.asset.name}` }))]}
+              />
+              <CtTooltip label={eye ? "Tắt xem trước" : "Xem trước mockup edit: ảnh sản phẩm bị xoá, chỉ còn vùng custom"}>
                 <span>
-                  <CtButton size="sm" disabled={!savedScenes.length} onClick={() => void saveTemplate()}>
-                    <Layers className="h-3.5 w-3.5" /> Lưu làm template ({picked.length || savedScenes.length})
+                  <CtButton size="icon" variant={eye ? "primary" : "ghost"} disabled={!mockupEdit} onClick={() => setEye((v) => !v)}>
+                    {eye ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                   </CtButton>
                 </span>
               </CtTooltip>
-              {packs.length > 0 && (
-                <CtSelect className="h-8 w-52" value="" placeholder="Dùng template…" onChange={(id) => void applyTemplate(id)} options={packs.map((p) => ({ value: p.id, label: `${p.name} (${p.slides.length})` }))} />
-              )}
             </span>
           </div>
           {/* p-1: room for the opened one's ring, which the scroller would clip. */}
@@ -1069,8 +1164,9 @@ export function PreviewPanel(props: PreviewPanelProps) {
                     onClick={() => (m.meta.scene ? openSaved(m) : window.open(m.url, "_blank", "noopener"))}
                     title={m.meta.scene ? `${m.name} — click để mở lại` : `${m.name} (ảnh AI)`}
                   >
-                    <img src={m.url} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    <img src={eye && eyeUrl && mockupEdit?.assetId === m.id ? eyeUrl : m.url} alt="" className="h-full w-full object-cover" loading="lazy" />
                   </button>
+                  {mockupEdit?.assetId === m.id && <span className="absolute right-1 bottom-5 rounded bg-orange-500 px-1 text-[9px] font-semibold text-white">EDIT</span>}
                   <span className="absolute bottom-5 left-1 rounded bg-black/70 px-1 text-[10px] font-semibold text-white">#{number}</span>
                   <button
                     className={cx("absolute right-1 top-1 rounded-full border bg-background/90 p-0.5", on ? "border-sky-500 bg-sky-500 text-white" : "text-transparent hover:text-muted-foreground")}
@@ -1100,6 +1196,14 @@ export function PreviewPanel(props: PreviewPanelProps) {
             })}
             {saved.length === 0 && <p className="py-6 text-xs text-muted-foreground">Chưa có — làm xong vùng edit thì bấm “Lưu tổ hợp”.</p>}
           </div>
+          {eye && eyeUrl && (
+            <div className="mt-2 flex items-start gap-3 rounded-md border p-2">
+              <img src={eyeUrl} alt="" className="max-h-64 rounded border" style={CHECKER_STYLE} />
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Mockup edit trên store: ảnh sản phẩm trong tổ hợp được xoá, vùng “Custom” là chỗ thiết kế live của khách (đổi option, nhập chữ, upload ảnh là thấy ngay). Pack nhiều thiết kế: mỗi khung hiện 1 thiết kế.
+              </p>
+            </div>
+          )}
           {saved.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-dashed px-3 py-2">
               <span className="text-xs text-muted-foreground">Chưa hài lòng về chất lượng?</span>
@@ -1211,7 +1315,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
               assets={assets}
               busy={!!busy}
               onPatch={(patch, how) => patchLayer(layer.id, patch, how)}
-              onCommit={() => commit(scene)}
+              onCommit={() => commit(histRef.current.scene)}
               onReplaceImage={replaceImage}
               onFrameToImage={(l) => void frameToImage(l)}
               onFit={(l, fit) => void setFit(l, fit)}
@@ -1659,6 +1763,14 @@ function BlurSettings({ layer, onPatch, onCommit }: { layer: CtPackBlurLayer; on
   );
 }
 
+/** What a lasso does on release. */
+type CutMode = "remove" | "keep" | "layer";
+const CUT_MODES: [CutMode, string][] = [
+  ["remove", "Bỏ vùng khoanh"],
+  ["keep", "Giữ vùng khoanh"],
+  ["layer", "Tạo thành layer mới"],
+];
+
 interface EditToolsProps {
   tool: CtPackTool;
   onTool: (t: CtPackTool) => void;
@@ -1671,10 +1783,8 @@ interface EditToolsProps {
   onFlip: (axis: "x" | "y") => void;
   onDuplicate: () => void;
   onUncrop: () => void;
-  cutKeep: boolean;
-  onCutKeep: (keep: boolean) => void;
-  /** Take the last cut off, or all of them. */
-  onUncut: (all: boolean) => void;
+  cutMode: CutMode;
+  onCutMode: (mode: CutMode) => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -1786,25 +1896,14 @@ function EditTools(p: EditToolsProps) {
       )}
       {p.tool === "cut" && (
         <div className="pointer-events-auto w-48 space-y-2 rounded-lg border bg-background/95 p-2 text-[11px] shadow-md">
-          <p>{l ? <>Khoanh vùng trên “{l.name}”, thả tay là cắt.</> : "Chọn một frame rồi khoanh vùng cần cắt."}</p>
-          <div className="grid grid-cols-2 gap-1">
-            <CtButton size="sm" variant={p.cutKeep ? "outline" : "primary"} className="justify-center" onClick={() => p.onCutKeep(false)}>
-              Bỏ vùng khoanh
-            </CtButton>
-            <CtButton size="sm" variant={p.cutKeep ? "primary" : "outline"} className="justify-center" onClick={() => p.onCutKeep(true)}>
-              Giữ vùng khoanh
-            </CtButton>
+          <p>{l ? <>Chấm từng điểm quanh vùng trên “{l.name}”; bấm lại điểm đầu, double-click hoặc Enter để cắt. ⌫ bỏ điểm cuối, Esc bỏ vùng.</> : "Chọn một frame rồi chấm điểm quanh vùng cần cắt."}</p>
+          <div className="grid gap-1">
+            {CUT_MODES.map(([mode, label]) => (
+              <CtButton key={mode} size="sm" variant={p.cutMode === mode ? "primary" : "outline"} className="justify-center" onClick={() => p.onCutMode(mode)}>
+                {label}
+              </CtButton>
+            ))}
           </div>
-          {l && !!l.cuts?.length && (
-            <div className="grid grid-cols-2 gap-1">
-              <CtButton size="sm" className="justify-center" onClick={() => p.onUncut(false)}>
-                Bỏ vết cuối
-              </CtButton>
-              <CtButton size="sm" className="justify-center" onClick={() => p.onUncut(true)}>
-                Bỏ hết ({l.cuts.length})
-              </CtButton>
-            </div>
-          )}
           <CtButton size="sm" variant="primary" className="w-full justify-center" onClick={() => p.onTool("select")}>
             <Check className="h-3.5 w-3.5" /> Xong (Enter)
           </CtButton>

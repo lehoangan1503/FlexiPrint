@@ -374,6 +374,7 @@ export function CtModal({
   title,
   children,
   wide,
+  full,
   keepOpenOnOutside = true,
 }: {
   open: boolean;
@@ -381,6 +382,8 @@ export function CtModal({
   title: string;
   children: React.ReactNode;
   wide?: boolean;
+  /** Fills the window (a workspace, e.g. the AI photo studio). */
+  full?: boolean;
   /**
    * Default true: only the close button / X / Esc close it (through onOpenChange) — a click, a focus move
    * or the end of a drag outside the panel never does, so work in a dialog is not lost by a stray click.
@@ -396,8 +399,10 @@ export function CtModal({
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60" />
         <DialogPrimitive.Content
           className={cx(
-            "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 max-h-[90vh] overflow-y-auto rounded-xl border bg-background p-5 shadow-2xl",
-            wide ? "w-[min(1100px,95vw)]" : "w-[min(560px,95vw)]",
+            "fixed z-50 rounded-xl border bg-background p-5 shadow-2xl",
+            full
+              ? "inset-3 flex flex-col overflow-hidden"
+              : cx("left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 max-h-[90vh] overflow-y-auto", wide ? "w-[min(1100px,95vw)]" : "w-[min(560px,95vw)]"),
           )}
           onPointerDownOutside={stay}
           onInteractOutside={stay}

@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, GripVertical, Layers, Library, Loader2, Palette } from "lucide-react";
+import { CheckSquare, ExternalLink, GripVertical, Layers, Library, Loader2, Palette, Square, X } from "lucide-react";
 import type { CtAsset, CtClipartCategory } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { clipartBadges, clipartFamily, flattenCategories, isMaterialClipart, isMulticolorClipart, libraryOrigins, renditionsOf, setMembers } from "../../lib/library";
@@ -34,6 +34,11 @@ export interface CtClipartDrag {
    * (options of the layer's group, hidden until switched on in the inspector).
    */
   family: CtAsset[];
+  /**
+   * Several pictures picked together (click / Shift+click / "Chọn hết") and dragged as one: they become ONE
+   * custom layer whose options are these pictures, the first shown by default. Absent = just `asset`.
+   */
+  set?: Array<{ asset: CtAsset; family: CtAsset[] }>;
 }
 
 /** What a dragged picture brings along (see CtClipartDrag.family). */
@@ -59,6 +64,9 @@ export function LibraryPanel(props: LibraryPanelProps) {
   const [cliparts, setCliparts] = useState<CtAsset[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Pictures picked to drag as one set (ids, any order — the set follows the list order). */
+  const [selected, setSelected] = useState<string[]>([]);
+  const [anchor, setAnchor] = useState<string | null>(null);
 
   useEffect(() => {
     ctApi
@@ -99,6 +107,44 @@ export function LibraryPanel(props: LibraryPanelProps) {
     [categories, uncategorized],
   );
   const origins = libraryOrigins(cliparts);
+  /** Every picture in list order: each gốc, then its đa sắc and vật liệu. */
+  const order = useMemo(() => {
+    const out: CtAsset[] = [];
+    for (const o of libraryOrigins(cliparts)) out.push(o, ...clipartFamily(cliparts, o).filter((a) => a.id !== o.id && (isMulticolorClipart(a) || isMaterialClipart(a))));
+    return out;
+  }, [cliparts]);
+  // A new category / list: the picked set starts over.
+  useEffect(() => {
+    setSelected([]);
+    setAnchor(null);
+  }, [category]);
+
+  const sel: Selecting = {
+    selected,
+    /** Click = pick / unpick; Shift+click = everything between the last click and this one (origins in view). */
+    toggle: (a, shift) => {
+      if (shift && anchor) {
+        const ids = origins.map((o) => o.id);
+        const i = ids.indexOf(anchor);
+        const j = ids.indexOf(a.id);
+        if (i >= 0 && j >= 0) {
+          const range = ids.slice(Math.min(i, j), Math.max(i, j) + 1);
+          setSelected((cur) => [...new Set([...cur, ...range])]);
+          setAnchor(a.id);
+          return;
+        }
+      }
+      setSelected((cur) => (cur.includes(a.id) ? cur.filter((x) => x !== a.id) : [...cur, a.id]));
+      setAnchor(a.id);
+    },
+    /** The drag payload: the set when the dragged picture is part of a set of 2+, else just it. */
+    payload: (a) => {
+      const base: CtClipartDrag = { asset: a, family: dragFamily(cliparts, a) };
+      if (selected.length < 2 || !selected.includes(a.id)) return base;
+      const set = order.filter((x) => selected.includes(x.id)).map((x) => ({ asset: x, family: dragFamily(cliparts, x) }));
+      return { asset: set[0].asset, family: set[0].family, set };
+    },
+  };
 
   return (
     <div className="flex h-full flex-col text-sm">
@@ -113,6 +159,27 @@ export function LibraryPanel(props: LibraryPanelProps) {
         </CtTooltip>
       </div>
       {error && <p className="border-b px-2 py-1.5 text-[11px] text-destructive">{error}</p>}
+      <div className="flex items-center gap-1.5 border-b px-2 py-1 text-[11px]">
+        {selected.length ? (
+          <>
+            <span className="font-medium text-sky-600">Đã chọn {selected.length}</span>
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">— kéo 1 ảnh đã chọn lên canvas = 1 custom layer, các ảnh là option</span>
+            <button className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-accent" onClick={() => setSelected([])}>
+              <X className="h-3 w-3" /> Bỏ chọn
+            </button>
+          </>
+        ) : (
+          <span className="flex-1 text-muted-foreground">Click để chọn nhiều · Shift+click chọn dải</span>
+        )}
+        <button
+          className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-accent"
+          onClick={() => setSelected(origins.map((o) => o.id))}
+          disabled={!origins.length}
+          title="Chọn hết clipart gốc đang hiện"
+        >
+          <CheckSquare className="h-3 w-3" /> Chọn hết
+        </button>
+      </div>
 
       <div className="flex-1 space-y-2 overflow-y-auto p-2">
         {loading && origins.length === 0 ? (
@@ -122,7 +189,7 @@ export function LibraryPanel(props: LibraryPanelProps) {
         ) : origins.length === 0 ? (
           <p className="px-1 py-6 text-center text-xs text-muted-foreground">Chưa có clipart. Tạo hoặc upload ở trang Thư viện (nút Quản lý).</p>
         ) : (
-          origins.map((o) => <OriginCard key={o.id} origin={o} family={clipartFamily(cliparts, o)} list={cliparts} usedIds={props.usedIds} />)
+          origins.map((o) => <OriginCard key={o.id} origin={o} family={clipartFamily(cliparts, o)} usedIds={props.usedIds} sel={sel} />)
         )}
       </div>
     </div>
@@ -131,7 +198,14 @@ export function LibraryPanel(props: LibraryPanelProps) {
 
 type Shelf = "multicolor" | "material";
 
-function OriginCard({ origin, family, list, usedIds }: { origin: CtAsset; family: CtAsset[]; list: CtAsset[]; usedIds: Set<string> }) {
+/** Picking several pictures to drag as one custom layer. */
+interface Selecting {
+  selected: string[];
+  toggle: (a: CtAsset, shift: boolean) => void;
+  payload: (a: CtAsset) => CtClipartDrag;
+}
+
+function OriginCard({ origin, family, usedIds, sel }: { origin: CtAsset; family: CtAsset[]; usedIds: Set<string>; sel: Selecting }) {
   const [open, setOpen] = useState<Shelf | null>(null);
   const multicolor = family.filter(isMulticolorClipart);
   const material = family.filter(isMaterialClipart);
@@ -140,7 +214,7 @@ function OriginCard({ origin, family, list, usedIds }: { origin: CtAsset; family
   return (
     <div className={cx("rounded-lg border transition-colors", used && "border-emerald-500/60")}>
       <div className="flex items-center gap-2 p-2">
-        <DragThumb asset={origin} list={list} used={usedIds.has(origin.id)} className="w-20" />
+        <DragThumb asset={origin} sel={sel} used={usedIds.has(origin.id)} className="w-20" />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-xs font-medium" title={origin.spec || origin.name}>
             {origin.name || "(không tên)"}
@@ -177,7 +251,7 @@ function OriginCard({ origin, family, list, usedIds }: { origin: CtAsset; family
       {shown.length > 0 && (
         <div className="grid grid-cols-3 gap-1.5 border-t p-2">
           {shown.map((a) => (
-            <DragThumb key={a.id} asset={a} list={list} used={usedIds.has(a.id)} withName />
+            <DragThumb key={a.id} asset={a} sel={sel} used={usedIds.has(a.id)} withName />
           ))}
         </div>
       )}
@@ -185,22 +259,29 @@ function OriginCard({ origin, family, list, usedIds }: { origin: CtAsset; family
   );
 }
 
-/** One picture of the library, draggable on its own. */
-function DragThumb({ asset, list, used, withName, className }: { asset: CtAsset; list: CtAsset[]; used: boolean; withName?: boolean; className?: string }) {
+/** One picture of the library: click picks it (Shift = a range), drag takes it — or the whole picked set. */
+function DragThumb({ asset, sel, used, withName, className }: { asset: CtAsset; sel: Selecting; used: boolean; withName?: boolean; className?: string }) {
+  const picked = sel.selected.includes(asset.id);
   return (
     <div
       draggable
       onDragStart={(e) => {
-        const payload: CtClipartDrag = { asset, family: dragFamily(list, asset) };
+        const payload = sel.payload(asset);
         e.dataTransfer.setData(CLIPART_DRAG, JSON.stringify(payload));
         e.dataTransfer.effectAllowed = "copy";
       }}
-      title={`${asset.name || "(không tên)"} — kéo vào cột Version hoặc lên canvas`}
-      className={cx("shrink-0 cursor-grab active:cursor-grabbing", className)}
+      onClick={(e) => sel.toggle(asset, e.shiftKey)}
+      title={`${asset.name || "(không tên)"} — click để chọn (Shift: chọn dải), kéo vào cột Version hoặc lên canvas`}
+      className={cx("shrink-0 cursor-grab select-none active:cursor-grabbing", className)}
     >
-      <div className={cx("relative aspect-square overflow-hidden rounded border hover:border-sky-500", used && "border-emerald-500")} style={CHECKER_STYLE}>
+      <div className={cx("relative aspect-square overflow-hidden rounded border hover:border-sky-500", used && "border-emerald-500", picked && "border-sky-500 ring-2 ring-sky-500")} style={CHECKER_STYLE}>
         <img src={asset.url} alt={asset.name} className="pointer-events-none h-full w-full object-contain" loading="lazy" draggable={false} />
         <ClipartBadges asset={asset} className="absolute inset-x-0.5 bottom-0.5" />
+        {picked ? (
+          <span className="pointer-events-none absolute left-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-sky-500 px-1 text-[9px] font-bold text-white">✓</span>
+        ) : (
+          <Square className="pointer-events-none absolute left-0.5 top-0.5 h-3 w-3 text-white/80 drop-shadow" />
+        )}
         <GripVertical className="pointer-events-none absolute right-0.5 top-0.5 h-3 w-3 text-white drop-shadow" />
       </div>
       {withName && <div className="mt-0.5 truncate text-[10px]">{asset.name}</div>}

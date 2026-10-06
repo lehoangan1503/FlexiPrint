@@ -5,6 +5,7 @@
 import { CT_CONFIG } from "../config";
 import type {
   CtCategoryHistoryEntry,
+  CtPackCollection,
   CtPackImage,
   CtPackImageAspect,
   CtAgentStatus,
@@ -37,6 +38,13 @@ import type {
   CtPromptSuggestion,
   CtRefineSuggestBody,
   CtRefineSuggestion,
+  CtDeployBody,
+  CtDeployResponse,
+  CtPriceTable,
+  CtPriceTableBody,
+  CtShopifyCollection,
+  CtShopifyInfo,
+  CtShopifyProductSummary,
   CtProduct,
   CtProductBundle,
   CtProductListRow,
@@ -91,6 +99,18 @@ export const ctApi = {
   deleteProduct: (id: string) => call<void>(`products/${id}`, { method: "DELETE" }),
   saveDesign: (id: string, body: CtSaveDesignBody) => call<{ ok: true }>(`products/${id}/design`, json("PUT", body)),
   publish: (id: string) => call<{ product: CtProduct; publish: CtPublishResponse }>(`products/${id}/publish`, { method: "POST" }),
+  deploy: (id: string, body: CtDeployBody) => call<CtDeployResponse>(`products/${id}/deploy`, json("POST", body)),
+  shopifyInfo: (id: string) => call<CtShopifyInfo>(`products/${id}/shopify`),
+  searchShopifyProducts: (q: string) =>
+    call<{ products: CtShopifyProductSummary[] }>(`shopify/products?q=${encodeURIComponent(q)}`).then((r) => r.products),
+
+  listCollections: () => call<{ collections: CtShopifyCollection[] }>("shopify/collections").then((r) => r.collections),
+  createCollection: (title: string) => call<{ collection: CtShopifyCollection }>("shopify/collections", json("POST", { title })).then((r) => r.collection),
+
+  listPriceTables: () => call<{ tables: CtPriceTable[] }>("price-tables").then((r) => r.tables),
+  createPriceTable: (body: CtPriceTableBody) => call<{ table: CtPriceTable }>("price-tables", json("POST", body)).then((r) => r.table),
+  updatePriceTable: (id: string, body: CtPriceTableBody) => call<{ table: CtPriceTable }>(`price-tables/${id}`, json("PATCH", body)).then((r) => r.table),
+  deletePriceTable: (id: string) => call<void>(`price-tables/${id}`, { method: "DELETE" }),
 
   uploadAsset: (
     productId: string,
@@ -185,9 +205,10 @@ export const ctApi = {
   updatePack: (id: string, body: CtMockupPackBody) => call<{ pack: CtMockupPack }>(`library/packs/${id}`, json("PATCH", body)).then((r) => r.pack),
   deletePack: (id: string) => call<void>(`library/packs/${id}`, { method: "DELETE" }),
   /** Thư viện ảnh tổ hợp: newest first; scope "mine" = my uploads, "ai" = AI-made (with history). */
-  listPackImages: (scope: "all" | "mine" | "ai" = "all", q = "") => {
+  listPackImages: (scope: "all" | "mine" | "ai" = "all", q = "", collection: string | null = null) => {
     const params = new URLSearchParams({ scope });
     if (q) params.set("q", q);
+    if (collection) params.set("collection", collection);
     return call<{ images: CtPackImage[] }>(`library/pack-images?${params}`).then((r) => r.images);
   },
   getPackImage: (id: string) => call<{ image: CtPackImage }>(`library/pack-images/${id}`).then((r) => r.image),
@@ -210,6 +231,7 @@ export const ctApi = {
     prompt?: string;
     parentId?: string | null;
     transparent?: boolean;
+    collectionId?: string | null;
   }) => {
     const form = new FormData();
     form.append("description", body.description);
@@ -218,10 +240,14 @@ export const ctApi = {
     if (body.prompt) form.append("prompt", body.prompt);
     if (body.parentId) form.append("parent_id", body.parentId);
     if (body.transparent) form.append("transparent", "1");
+    if (body.collectionId) form.append("collection_id", body.collectionId);
     for (const f of body.files) form.append("ref", f);
     return call<{ image: CtPackImage }>("library/pack-images/generate", { method: "POST", body: form }).then((r) => r.image);
   },
   deletePackImage: (id: string) => call<void>(`library/pack-images/${id}`, { method: "DELETE" }),
+  listPackCollections: () => call<{ collections: CtPackCollection[] }>("library/pack-collections").then((r) => r.collections),
+  createPackCollection: (name: string) => call<{ collection: CtPackCollection }>("library/pack-collections", json("POST", { name })).then((r) => r.collection),
+  renamePackCollection: (id: string, name: string) => call<{ collection: CtPackCollection }>(`library/pack-collections/${id}`, json("PATCH", { name })).then((r) => r.collection),
   /** A background / overlay / slot sample picture for a pack. */
   uploadPackImage: (file: Blob) => {
     const form = new FormData();
@@ -284,7 +310,8 @@ export const ctApi = {
   createAgentTask: (body: { kind: CtAgentTaskKind; input: CtAgentTaskInput }) => call<CtAgentTask>("ai/agent-tasks", json("POST", body)),
   agentTask: (id: string) => call<CtAgentTask>(`ai/agent-tasks/${id}`),
   /** The editor's latest agent tasks of a kind, newest first. */
-  listAgentTasks: (kind: CtAgentTaskKind) => call<{ tasks: CtAgentTask[] }>(`ai/agent-tasks?kind=${kind}`).then((r) => r.tasks),
+  listAgentTasks: (kind: CtAgentTaskKind, collection: string | null = null) =>
+    call<{ tasks: CtAgentTask[] }>(`ai/agent-tasks?kind=${kind}${collection ? `&collection=${collection}` : ""}`).then((r) => r.tasks),
   cancelAgentTask: (id: string) => call<CtAgentTask>(`ai/agent-tasks/${id}/cancel`, { method: "POST" }),
   /** Answer the agent's question (ask_user): it continues the task with it. */
   answerAgentTask: (id: string, body: { question_id: string; choices: string[]; text: string }) => call<CtAgentTask>(`ai/agent-tasks/${id}/answer`, json("POST", body)),

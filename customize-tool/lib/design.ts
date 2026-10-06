@@ -4,10 +4,11 @@
  */
 
 import { CT_FONTS } from "../config";
-import { CT_MAIN_KEY } from "../types";
+import { CT_BASE_OPTION, CT_MAIN_KEY } from "../types";
 import type {
   CtMainOptionConfig,
   CtMainSubOptions,
+  CtMockupEdit,
   CtPhotoConfig,
   CtPhotoFrame,
   CtPhotoMode,
@@ -21,7 +22,12 @@ import type {
   CtRenderAsset,
   CtSelection,
   CtShape,
+  CtTextMode,
   CtTransform,
+  CtZoneParent,
+  CtZoneOption,
+  CtZoneOptions,
+  CtZoneTextStyle,
 } from "../types";
 import { IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId } from "./geometry";
 import { CT_FACE_STYLES, isAiStyleRef, isPhotoStyleRef, styleFamily } from "./photo-styles";
@@ -70,6 +76,7 @@ export function defaultRegionConfig(kind: CtRegionKind): CtRegionConfig {
       fadeCrop: true,
       frame: { ...IDENTITY_PHOTO_FRAME },
     },
+    options: { label: kind === "photo" ? "Choose shape" : "Choose style", display: "button", baseName: "Default", list: [] },
   };
 }
 
@@ -83,11 +90,116 @@ export function normalizeRegion(region: CtRegion): CtRegion {
       clip: cfg.clip ?? base.clip,
       aboveMain: cfg.aboveMain ?? base.aboveMain,
       ...(cfg.mainId ? { mainId: cfg.mainId } : {}),
+      ...(cfg.parent && typeof cfg.parent.regionId === "string" && typeof cfg.parent.optionId === "string" ? { parent: { regionId: cfg.parent.regionId, optionId: cfg.parent.optionId } } : {}),
       image: { ...base.image, ...cfg.image },
       text: { ...base.text, ...cfg.text },
       photo: normalizePhotoConfig({ ...base.photo, ...cfg.photo }),
+      options: normalizeZoneOptions(cfg.options, base.options),
     },
   };
+}
+
+const TEXT_STYLE_KEYS = ["fontFamily", "fontWeight", "fontSize", "color", "strokeColor", "strokeWidth", "letterSpacing", "curve", "uppercase", "align"] as const;
+
+/** The lettering keys a text sub-option may override. */
+export const ZONE_TEXT_STYLE_KEYS: ReadonlyArray<keyof CtZoneTextStyle> = TEXT_STYLE_KEYS;
+
+function normalizeZoneOptions(raw: Partial<CtZoneOptions> | undefined, base: CtZoneOptions): CtZoneOptions {
+  const list: CtZoneOption[] = [];
+  const seen = new Set<string>();
+  for (const o of Array.isArray(raw?.list) ? raw.list : []) {
+    if (!o || typeof o.id !== "string" || !o.id || seen.has(o.id)) continue;
+    seen.add(o.id);
+    const text: CtZoneTextStyle = {};
+    if (o.text && typeof o.text === "object") {
+      for (const k of TEXT_STYLE_KEYS) if (o.text[k] !== undefined) (text as Record<string, unknown>)[k] = o.text[k];
+    }
+    list.push({
+      id: o.id,
+      name: typeof o.name === "string" ? o.name : "",
+      ...(typeof o.swatch === "string" && o.swatch ? { swatch: o.swatch } : {}),
+      ...(Object.keys(text).length ? { text } : {}),
+      ...(o.shape && typeof o.shape === "object" && "type" in o.shape ? { shape: o.shape } : {}),
+      ...(typeof o.value === "string" ? { value: o.value } : {}),
+    });
+    if (list.length >= 24) break;
+  }
+  return {
+    label: typeof raw?.label === "string" ? raw.label : base.label,
+    display: raw?.display === "image" || raw?.display === "swatch" || raw?.display === "button" || raw?.display === "dropdown" ? raw.display : base.display,
+    baseName: typeof raw?.baseName === "string" ? raw.baseName : base.baseName,
+    ...(typeof raw?.baseSwatch === "string" && raw.baseSwatch ? { baseSwatch: raw.baseSwatch } : {}),
+    ...(typeof raw?.baseValue === "string" ? { baseValue: raw.baseValue } : {}),
+    list,
+  };
+}
+
+/** What the customer does with a text zone (CtTextConfig.mode; older zones: list when they have choices). */
+export function textMode(region: CtRegion): CtTextMode {
+  const t = region.config?.text;
+  const m = t?.mode;
+  if (m === "input" || m === "fixed" || m === "list" || m === "options") return m;
+  return (t?.choices ?? []).filter(Boolean).length ? "list" : "input";
+}
+
+/** The option id a selection shows for its zone, as CtZoneParent names it (null = no choice / none). */
+export function shownOptionId(region: CtRegion, sel: CtSelection[string] | undefined): string | null {
+  if (!sel) return null;
+  if (region.kind === "image") return sel.kind === "image" ? sel.assetId : null;
+  if (sel.kind !== "text" && sel.kind !== "photo") return null;
+  return sel.optionId && region.config?.options?.list.some((o) => o.id === sel.optionId) ? sel.optionId : CT_BASE_OPTION;
+}
+
+/**
+ * Is a (child) zone drawn / asked with this selection? Roots always; a child while its parent is and shows the
+ * option it belongs to (CtZoneParent) — all the way up.
+ */
+export function zoneActive(region: CtRegion, byId: Map<string, CtRegion>, selection: CtSelection, depth = 0): boolean {
+  const p: CtZoneParent | undefined = region.config?.parent;
+  if (!p) return true;
+  const parent = byId.get(p.regionId);
+  if (!parent || depth > 12) return false;
+  return shownOptionId(parent, selection[parent.id]) === p.optionId && zoneActive(parent, byId, selection, depth + 1);
+}
+
+/** The zones a selection draws / asks: roots + the children of the options it shows. */
+export function activeRegions<R extends CtRegion>(regions: R[], selection: CtSelection): R[] {
+  const byId = new Map<string, CtRegion>(regions.map((r) => [r.id, r]));
+  return regions.filter((r) => zoneActive(r, byId, selection));
+}
+
+/** The text a text zone draws: typed / picked, the designer's (fixed), or the chosen option's value (options). */
+export function zoneText(region: CtRegion, sel: CtSelection[string] | undefined): string {
+  const mode = textMode(region);
+  if (mode === "fixed") return region.config.text.defaultText;
+  if (mode === "options") {
+    const o = region.config.options;
+    const opt = sel?.kind === "text" && sel.optionId ? o.list.find((x) => x.id === sel.optionId) : undefined;
+    return opt ? (opt.value ?? opt.name) : (o.baseValue ?? o.baseName);
+  }
+  return sel?.kind === "text" ? sel.text : "";
+}
+
+/** The sub-option a selection picks for its zone (null = the zone's own look). */
+export function zoneOptionOf(region: CtRegion, sel: CtSelection[string] | undefined): CtZoneOption | null {
+  if (!sel || (sel.kind !== "text" && sel.kind !== "photo") || !sel.optionId) return null;
+  return region.config?.options?.list.find((o) => o.id === sel.optionId) ?? null;
+}
+
+/** `region` as sub-option `option` draws it: its shape and (text) lettering swapped in. */
+export function withZoneOption(region: CtRegion, option: CtZoneOption | null): CtRegion {
+  if (!option || (!option.shape && !option.text)) return region;
+  const n = normalizeRegion(region);
+  return {
+    ...n,
+    ...(option.shape ? { shape: option.shape } : {}),
+    config: option.text ? { ...n.config, text: { ...n.config.text, ...option.text } } : n.config,
+  };
+}
+
+/** The zone as the selection shows it. */
+export function regionForSelection(region: CtRegion, sel: CtSelection[string] | undefined): CtRegion {
+  return withZoneOption(region, zoneOptionOf(region, sel));
 }
 
 /**
@@ -121,11 +233,13 @@ function normalizePhotoConfig(p: CtPhotoConfig): CtPhotoConfig {
   // Face zones saved before `auto` existed fit the head automatically unless their frame was moved by hand.
   const untouched = frame.offsetX === 0 && frame.offsetY === 0 && frame.scaleX === 1 && frame.scaleY === 1 && frame.rotation === 0 && frame.padding === 0;
   frame.auto = typeof f.auto === "boolean" ? f.auto : family === "face" && untouched;
-  return { ...p, mode, frame, cutout: true, fadeCrop: true, styles: list, defaultStyle: list.includes(p.defaultStyle) ? p.defaultStyle : list[0] };
+  // Face filters are a "Filter" row of round swatches (default Real face); zones saved with the generic label get it.
+  const styleLabel = family === "face" && (!p.styleLabel?.trim() || p.styleLabel === "Choose style") ? "Filter" : p.styleLabel;
+  return { ...p, mode, frame, cutout: true, fadeCrop: true, styles: list, styleLabel, defaultStyle: list.includes(p.defaultStyle) ? p.defaultStyle : list[0] };
 }
 
 export function defaultProductConfig(): CtProductConfig {
-  return { main: { enabled: false, label: "Choose color", display: "image", subOptions: [] }, scene: defaultScene(), layouts: {}, material: defaultMaterialConfig(), samples: {} };
+  return { main: { enabled: false, label: "Choose color", display: "image", subOptions: [] }, scene: defaultScene(), layouts: {}, material: defaultMaterialConfig(), samples: {}, mockupEdit: null };
 }
 
 /** Keep well-formed choices only; photos must be stored URLs (a blob: URL dies with its tab). */
@@ -137,7 +251,8 @@ export function normalizeSamples(raw: unknown): CtSelection {
     if (!v || typeof v !== "object" || key.length > 64) continue;
     if (v.kind === "main") out[key] = { kind: "main", assetId: typeof v.assetId === "string" ? v.assetId : null, ...(typeof v.optionId === "string" ? { optionId: v.optionId } : {}) };
     else if (v.kind === "image") out[key] = { kind: "image", assetId: typeof v.assetId === "string" ? v.assetId : null };
-    else if (v.kind === "text") out[key] = { kind: "text", text: typeof v.text === "string" ? v.text.slice(0, 500) : "" };
+    else if (v.kind === "text")
+      out[key] = { kind: "text", text: typeof v.text === "string" ? v.text.slice(0, 500) : "", ...(typeof v.optionId === "string" ? { optionId: v.optionId } : {}) };
     else if (v.kind === "photo") {
       const t: Partial<CtTransform> = v.transform ?? {};
       const n = (x: unknown, fallback: number) => (typeof x === "number" && Number.isFinite(x) ? x : fallback);
@@ -146,6 +261,7 @@ export function normalizeSamples(raw: unknown): CtSelection {
         url: stored(v.url),
         sourceUrl: stored(v.sourceUrl),
         ...(typeof v.style === "string" && isPhotoStyleRef(v.style) ? { style: v.style } : {}),
+        ...(typeof v.optionId === "string" ? { optionId: v.optionId } : {}),
         transform: { offsetX: n(t.offsetX, 0), offsetY: n(t.offsetY, 0), scale: n(t.scale, 1), rotation: n(t.rotation, 0) },
       };
     }
@@ -162,7 +278,17 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     layouts: normalizeLayouts(raw?.layouts),
     material: normalizeMaterialConfig(raw?.material),
     samples: normalizeSamples(raw?.samples),
+    mockupEdit: normalizeMockupEdit(raw?.mockupEdit),
   };
+}
+
+function normalizeMockupEdit(raw: unknown): CtMockupEdit | null {
+  if (!raw || typeof raw !== "object") return null;
+  const m = raw as Partial<CtMockupEdit>;
+  if (typeof m.assetId !== "string" || !m.slide || typeof m.slide !== "object" || !Array.isArray(m.slide.layers)) return null;
+  const frames: CtMockupEdit["frames"] = {};
+  for (const [id, f] of Object.entries(m.frames ?? {})) if (f && typeof f === "object") frames[id] = { hole: f.hole === true, cord: f.cord ?? "none" };
+  return { assetId: m.assetId, slide: m.slide, frames };
 }
 
 /** One entry per version, ids unique across versions (an asset is the sub-option of one version only). */
@@ -433,5 +559,23 @@ export function randomSelection(
 
 /** Google Fonts families a set of regions needs. */
 export function fontsUsed(regions: CtRegion[]): string[] {
-  return Array.from(new Set(regions.filter((r) => r.kind === "text").map((r) => normalizeRegion(r).config.text.fontFamily)));
+  const fonts = regions
+    .filter((r) => r.kind === "text")
+    .map(normalizeRegion)
+    .flatMap((r) => [r.config.text.fontFamily, ...r.config.options.list.map((o) => o.text?.fontFamily ?? "")]);
+  return Array.from(new Set(fonts.filter(Boolean)));
+}
+
+/** A zone and every zone under it (its child zones, theirs…) — deleted together. */
+export function zoneSubtree(regions: CtRegion[], id: string): Set<string> {
+  const out = new Set([id]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const r of regions) if (r.config?.parent && out.has(r.config.parent.regionId) && !out.has(r.id)) {
+      out.add(r.id);
+      grew = true;
+    }
+  }
+  return out;
 }

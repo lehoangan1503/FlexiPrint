@@ -2,7 +2,7 @@
  * The editor's own agent: the category dialog's AI work handed to the @flexiprint agent on agent_ide
  * (migration 011) instead of the built-in LLM.
  *
- *   GET  ai/agent-tasks?kind=        → { tasks } the editor's latest tasks of that kind (the photo library's history)
+ *   GET  ai/agent-tasks?kind=&collection= → { tasks } the editor's latest tasks of that kind (a bộ ảnh's thread)
  *   POST ai/agent-tasks             {kind, input} → CtAgentTask: saved, then sent to agent_ide as a turn
  *                                   (POST /kernel/v1/turns). The agent reads it over flexiprint-mcp (get_task) and
  *                                   answers with submit_result / fail_task (server/mcp/tools.ts).
@@ -24,7 +24,8 @@
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
 import { defaultCategoryRules, normalizeCategoryRules } from "../../lib/library";
-import type { CtAgentQuestion, CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress, CtPackImage, CtPackImageAspect } from "../../types";
+import type { CtAgentQuestion, CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress, CtPackImage, CtPackImageAspect, CtPackImageBase } from "../../types";
+import { packBases } from "../../lib/file-name";
 import { isOwnUploadUrl } from "../library";
 import type { CtSession } from "../supabase";
 import { clip, jsonError, record, str } from "../ai/llm";
@@ -98,13 +99,46 @@ function parsePackInput(raw: unknown): CtAgentTaskInput {
   const o = record(raw);
   const p = record(o.pack);
   const aspect = PACK_ASPECTS.includes(str(p.aspect) as CtPackImageAspect) ? (str(p.aspect) as CtPackImageAspect) : "1:1";
-  const baseUrl = isOwnUploadUrl(str(p.baseUrl)) ? str(p.baseUrl) : "";
+  const bases: CtPackImageBase[] = (Array.isArray(p.bases) ? p.bases : [])
+    .map(record)
+    .filter((b) => UUID.test(str(b.id)) && isOwnUploadUrl(str(b.url)))
+    .slice(0, 8)
+    .map((b) => ({ id: str(b.id), url: str(b.url), name: clip(str(b.name), 200), note: clip(str(b.note), 2000) }));
   return {
     category: { id: null, name: "", spec: "", rules: defaultCategoryRules() },
     note: "",
     images: [],
     refUrls: (Array.isArray(o.refUrls) ? o.refUrls : []).map(str).filter(isOwnUploadUrl).slice(0, 6),
-    pack: { description: clip(str(p.description), 4000), aspect, baseId: baseUrl && UUID.test(str(p.baseId)) ? str(p.baseId) : null, baseUrl },
+    pack: {
+      description: clip(str(p.description), 4000),
+      aspect,
+      bases,
+      baseId: bases[0]?.id ?? null,
+      baseUrl: bases[0]?.url ?? "",
+      collectionId: UUID.test(str(p.collectionId)) ? str(p.collectionId) : null,
+    },
+  };
+}
+
+/** A content request: the product, what the editor wants, the title / description to start from. */
+function parseContentInput(raw: unknown): CtAgentTaskInput | null {
+  const o = record(raw);
+  const c = record(o.content);
+  if (!UUID.test(str(c.productId))) return null;
+  return {
+    category: { id: null, name: "", spec: "", rules: defaultCategoryRules() },
+    note: "",
+    images: [],
+    refUrls: [],
+    content: {
+      productId: str(c.productId),
+      productName: clip(str(c.productName), 200),
+      request: clip(str(c.request), 4000),
+      title: clip(str(c.title), 255),
+      descriptionHtml: clip(str(c.descriptionHtml), 20000),
+      facts: (Array.isArray(c.facts) ? c.facts : []).map((f) => clip(str(f), 400)).filter(Boolean).slice(0, 40),
+      imageUrls: (Array.isArray(c.imageUrls) ? c.imageUrls : []).map(str).filter(isOwnUploadUrl).slice(0, 6),
+    },
   };
 }
 
@@ -127,12 +161,24 @@ function parseInput(raw: unknown): CtAgentTaskInput | null {
 
 /** The turn's message: short — the agent reads the task itself over the MCP. */
 function turnPrompt(task: CtAgentTask): string {
+  if (task.kind === "content") {
+    const c = task.input.content;
+    return [
+      `[FlexiPrint task ${task.id}] Viết content Shopify (title + description) cho sản phẩm "${clip(c?.productName ?? "", 120)}".`,
+      c?.request ? `Người dùng muốn: ${clip(c.request, 800)}` : "",
+      `Gọi mcp__flexiprint__get_task với task_id "${task.id}" (có sản phẩm, option khách, ảnh, các lần viết trước và "instructions"), viết, rồi kết thúc bằng mcp__flexiprint__submit_result {summary, title, description_html} hoặc fail_task.`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
   if (task.kind === "pack_image") {
     const p = task.input.pack;
+    const bases = packBases(p);
     return [
-      `[FlexiPrint task ${task.id}] Tạo ảnh cho thư viện ảnh tổ hợp${p?.baseId ? " (chỉnh tiếp từ một ảnh đã tạo)" : ""}.`,
-      p?.description ? `Người dùng viết: ${clip(p.description, 800)}` : "",
-      `Làm theo skill flexiprint-pack-image (nếu chưa có thì theo "instructions" trong get_task): gọi mcp__flexiprint__get_task với task_id "${task.id}", tạo ảnh bằng mcp__flexiprint__generate_pack_image, xem lại từng ảnh, rồi kết thúc bằng mcp__flexiprint__submit_result hoặc fail_task.`,
+      `[FlexiPrint task ${task.id}] Tạo ảnh cho thư viện ảnh tổ hợp${p?.collectionId ? " (tiếp trong bộ ảnh — get_task có các yêu cầu trước của bộ)" : ""}${bases.length ? ` — chỉnh tiếp ${bases.length} ảnh, mỗi ảnh có yêu cầu riêng` : ""}.`,
+      p?.description ? `Yêu cầu chung: ${clip(p.description, 800)}` : "",
+      ...bases.map((b, i) => `Ảnh ${i + 1} (${b.id}${b.name ? `, "${clip(b.name, 80)}"` : ""}) — yêu cầu RIÊNG, ưu tiên hơn yêu cầu chung, chỉ áp cho ảnh này: ${b.note ? clip(b.note, 600) : "(không có — theo yêu cầu chung)"}`),
+      `Làm theo skill flexiprint-pack-image (nếu chưa có thì theo "instructions" trong get_task): gọi mcp__flexiprint__get_task với task_id "${task.id}", tạo ảnh bằng mcp__flexiprint__generate_pack_image (ảnh chỉnh tiếp: parent_id = id ảnh gốc), xem lại từng ảnh, rồi kết thúc bằng mcp__flexiprint__submit_result hoặc fail_task.`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -158,11 +204,11 @@ export async function createAgentTask(s: CtSession, body: unknown): Promise<Next
   const cfg = kernelConfig();
   if (!cfg) return jsonError("Chưa cấu hình agent (AGENT_IDE_URL, AGENT_IDE_TOKEN)", 501);
   const b = record(body);
-  const kind: CtAgentTaskKind | null = b.kind === "create" || b.kind === "revise" || b.kind === "pack_image" ? b.kind : null;
-  const input = kind === "pack_image" ? parsePackInput(b.input) : parseInput(b.input);
+  const kind: CtAgentTaskKind | null = b.kind === "create" || b.kind === "revise" || b.kind === "pack_image" || b.kind === "content" ? b.kind : null;
+  const input = kind === "pack_image" ? parsePackInput(b.input) : kind === "content" ? parseContentInput(b.input) : parseInput(b.input);
   if (!kind || !input) return jsonError("Task không hợp lệ", 400);
   if (kind === "create" && !input.note && !input.refUrls.length && !input.category.name) return jsonError("Nhập tên, ghi chú hoặc thả ảnh tham khảo", 400);
-  if (kind === "pack_image" && !input.pack?.description) return jsonError("Mô tả ảnh cần tạo", 400);
+  if (kind === "pack_image" && !input.pack?.description && !input.pack?.bases?.some((b) => b.note)) return jsonError("Mô tả ảnh cần tạo, hoặc viết yêu cầu cho ảnh cần chỉnh", 400);
 
   const { data: task, error } = await s.supabase
     .from(CT_TABLES.agentTasks)
@@ -173,10 +219,41 @@ export async function createAgentTask(s: CtSession, body: unknown): Promise<Next
 
   // The category's agent session, when it has one — for a photo being edited further, the session that made it.
   let sessionId = "";
-  if (kind === "pack_image" && input.pack?.baseId) {
-    const { data: base } = await s.supabase.from(CT_TABLES.packImages).select("task_id").eq("id", input.pack.baseId).maybeSingle<Pick<CtPackImage, "task_id">>();
-    if (base?.task_id) {
-      const { data: made } = await s.supabase.from(CT_TABLES.agentTasks).select("agent_session_id").eq("id", base.task_id).maybeSingle<Pick<CtAgentTask, "agent_session_id">>();
+  const bases = packBases(input.pack);
+  const collectionId = kind === "pack_image" ? (input.pack?.collectionId ?? null) : null;
+  const contentOf = kind === "content" ? (input.content?.productId ?? null) : null;
+  if (contentOf) {
+    // A product's content requests are one conversation: its latest session goes on.
+    const { data: last } = await s.supabase
+      .from(CT_TABLES.agentTasks)
+      .select("agent_session_id")
+      .eq("kind", "content")
+      .eq("input->content->>productId", contentOf)
+      .neq("agent_session_id", "")
+      .neq("id", task.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<Pick<CtAgentTask, "agent_session_id">>();
+    sessionId = last?.agent_session_id ?? "";
+  } else if (collectionId) {
+    // A bộ ảnh is one conversation: its latest session goes on.
+    const { data: last } = await s.supabase
+      .from(CT_TABLES.agentTasks)
+      .select("agent_session_id")
+      .eq("kind", "pack_image")
+      .eq("input->pack->>collectionId", collectionId)
+      .neq("agent_session_id", "")
+      .neq("id", task.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<Pick<CtAgentTask, "agent_session_id">>();
+    sessionId = last?.agent_session_id ?? "";
+    await s.supabase.from(CT_TABLES.packCollections).update({ updated_at: new Date().toISOString() }).eq("id", collectionId);
+  } else if (kind === "pack_image" && bases.length) {
+    const { data: rows } = await s.supabase.from(CT_TABLES.packImages).select("task_id").in("id", bases.map((b) => b.id)).returns<Array<Pick<CtPackImage, "task_id">>>();
+    const madeBy = rows?.find((r) => r.task_id)?.task_id;
+    if (madeBy) {
+      const { data: made } = await s.supabase.from(CT_TABLES.agentTasks).select("agent_session_id").eq("id", madeBy).maybeSingle<Pick<CtAgentTask, "agent_session_id">>();
       sessionId = made?.agent_session_id ?? "";
     }
   } else if (input.category.id) {
@@ -218,9 +295,15 @@ interface KernelJob {
 }
 
 /** GET ai/agent-tasks?kind= — the editor's own latest tasks of a kind. */
-export async function listAgentTasks(s: CtSession, kind: string | null): Promise<NextResponse> {
-  let q = s.supabase.from(CT_TABLES.agentTasks).select("*").eq("user_id", s.user.id).order("created_at", { ascending: false }).limit(30);
-  if (kind === "create" || kind === "revise" || kind === "pack_image") q = q.eq("kind", kind);
+export async function listAgentTasks(s: CtSession, kind: string | null, collection: string | null = null): Promise<NextResponse> {
+  let q = s.supabase.from(CT_TABLES.agentTasks).select("*").order("created_at", { ascending: false }).limit(collection ? 200 : 30);
+  if (kind === "create" || kind === "revise" || kind === "pack_image" || kind === "content") q = q.eq("kind", kind);
+  // A product's content history (anyone working on the product); everything else: the editor's own.
+  if (kind === "content" && collection && UUID.test(collection)) q = q.eq("input->content->>productId", collection);
+  else {
+    q = q.eq("user_id", s.user.id);
+    if (collection && UUID.test(collection)) q = q.eq("input->pack->>collectionId", collection);
+  }
   const { data, error } = await q.returns<CtAgentTask[]>();
   if (error) return jsonError(error.message, 500);
   return NextResponse.json({ tasks: data ?? [] });

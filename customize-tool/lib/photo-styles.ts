@@ -38,11 +38,11 @@ export const CT_PHOTO_STYLES: CtPhotoStyleDef[] = [
   { id: "original", label: "Real photo", hint: "Giữ nguyên ảnh khách", engine: "none", family: "free" },
   { id: "oil", label: "Oil painting", hint: "Sơn dầu nét nhỏ, giữ màu gốc (service photo-style, OpenCV)", engine: "server", family: "free" },
   { id: "pixel", label: "Pixel art", hint: "Pixel art giữ màu gốc — lọc ngay trên trình duyệt", engine: "local", family: "free" },
-  { id: "face", label: "Face", hint: "Cắt khuôn mặt, giữ màu gốc", engine: "server", family: "face" },
-  { id: "face_bw", label: "Face · Black & white", hint: "Cắt khuôn mặt + đen trắng", engine: "server", family: "face", filter: "bw" },
-  { id: "face_sepia", label: "Face · Sepia", hint: "Cắt khuôn mặt + tông nâu cổ điển", engine: "server", family: "face", filter: "sepia" },
-  { id: "face_vivid", label: "Face · Vivid", hint: "Cắt khuôn mặt + màu tươi, tương phản hơn", engine: "server", family: "face", filter: "vivid" },
-  { id: "face_warm", label: "Face · Warm", hint: "Cắt khuôn mặt + tông ấm vàng nắng", engine: "server", family: "face", filter: "warm" },
+  { id: "face", label: "Real face", hint: "Cắt khuôn mặt, giữ màu gốc", engine: "server", family: "face" },
+  { id: "face_bw", label: "Black & white", hint: "Cắt khuôn mặt + đen trắng", engine: "server", family: "face", filter: "bw" },
+  { id: "face_sepia", label: "Sepia", hint: "Cắt khuôn mặt + tông nâu cổ điển", engine: "server", family: "face", filter: "sepia" },
+  { id: "face_vivid", label: "Vivid", hint: "Cắt khuôn mặt + màu tươi, tương phản hơn", engine: "server", family: "face", filter: "vivid" },
+  { id: "face_warm", label: "Warm", hint: "Cắt khuôn mặt + tông ấm vàng nắng", engine: "server", family: "face", filter: "warm" },
 ];
 
 export const CT_FREE_STYLES = CT_PHOTO_STYLES.filter((s) => s.family === "free");

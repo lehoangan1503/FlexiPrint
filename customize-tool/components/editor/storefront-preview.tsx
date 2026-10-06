@@ -17,12 +17,13 @@
 import "../../shopify/assets/ct-customizer.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Eye, ShoppingCart, X } from "lucide-react";
-import type { CtAsset, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtTemplate } from "../../types";
+import type { CtAsset, CtPriceTable, CtPriceTableConfig, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtTemplate } from "../../types";
 import { buildTemplate } from "../../lib/template";
 import { isAiStyleRef } from "../../lib/photo-styles";
 import { normalizeRegion } from "../../lib/design";
 import { ctApi } from "../../lib/api-client";
-import { Customizer, initGallery, type CtCartPreview } from "../../storefront/customizer";
+import { Customizer, initGallery, initVariants, type CtCartPreview } from "../../storefront/customizer";
+import { formatUsd, priceCells, shopifyPricing, usesPacks, usesSizes } from "../../lib/pricing";
 import { useAiStyles } from "./ai-styles-store";
 import { CtButton } from "../ui";
 
@@ -47,6 +48,21 @@ const SECTION_TEXT = {
 export function StorefrontPreview({ product, assets, regions, items, config }: StorefrontPreviewProps) {
   const { names } = useAiStyles();
   const [cart, setCart] = useState<CtCartPreview | null>(null);
+  // The price table the product is deployed with: Size / Pack pickers and a pack's designs, as on Shopify.
+  const [table, setTable] = useState<CtPriceTable | null>(null);
+  const tableId = product.shopify?.priceTableId ?? null;
+  useEffect(() => {
+    if (!tableId) return;
+    let cancelled = false;
+    ctApi
+      .listPriceTables()
+      .then((list) => !cancelled && setTable(list.find((t) => t.id === tableId) ?? null))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [tableId]);
+  const pricing = tableId && table?.id === tableId ? table.config : null;
 
   const draft = useMemo((): { template: CtTemplate | null; error: string | null } => {
     const refs = new Set(regions.map(normalizeRegion).flatMap((r) => (r.kind === "photo" ? r.config.photo.styles.filter(isAiStyleRef) : [])));
@@ -70,7 +86,7 @@ export function StorefrontPreview({ product, assets, regions, items, config }: S
   // Product media on the left = the mockups (what a Shopify product would list). A new product
   // without mockups starts on the live design, like a Shopify product without media.
   const mockups = useMemo(() => assets.filter((a) => a.role === "mockup"), [assets]);
-  const mountKey = `${product.id}|${mockups.map((m) => m.id).join(",")}`;
+  const mountKey = `${product.id}|${mockups.map((m) => m.id).join(",")}|${pricing ? JSON.stringify(pricing) : ""}`;
 
   return (
     <div className="flex h-full flex-col">
@@ -78,12 +94,20 @@ export function StorefrontPreview({ product, assets, regions, items, config }: S
         <Eye className="h-3.5 w-3.5" />
         <span>
           Trang sản phẩm như khách thấy trên Shopify (<code>main-product.liquid</code>) — chạy trên bản thiết kế hiện tại, kể cả chưa lưu. Sửa ở tab
-          <b className="text-foreground"> Thiết kế</b>; lên store sau khi <b className="text-foreground">Publish</b>.
+          <b className="text-foreground"> Thiết kế</b>; lên store sau khi <b className="text-foreground">Deploy sản phẩm</b>.
         </span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto" style={{ background: "#faf8f5", color: "#1c1b1a", colorScheme: "light" }}>
         {draft.template ? (
-          <LiveStorefront key={mountKey} title={product.name} mockups={mockups} template={draft.template} photoUrl={ctApi.photoEndpoint(product.id)} onCart={setCart} />
+          <LiveStorefront
+            key={mountKey}
+            title={product.shopify?.title ?? product.name}
+            mockups={mockups}
+            template={draft.template}
+            pricing={pricing}
+            photoUrl={ctApi.photoEndpoint(product.id)}
+            onCart={setCart}
+          />
         ) : (
           <p className="p-10 text-center text-sm" style={{ color: "#6b6b6b" }}>
             {draft.error}
@@ -105,12 +129,14 @@ function LiveStorefront({
   title,
   mockups,
   template,
+  pricing,
   photoUrl,
   onCart,
 }: {
   title: string;
   mockups: CtAsset[];
   template: CtTemplate;
+  pricing: CtPriceTableConfig | null;
   photoUrl: string;
   onCart: (cart: CtCartPreview) => void;
 }) {
@@ -134,8 +160,9 @@ function LiveStorefront({
       onPreviewCart: (cart) => latest.current.onCart(cart),
     });
     customizer.current = c;
-    // Same boot order as storefront/index.ts. The thumbnail listeners die with this DOM (remounted via key).
-    initGallery(root);
+    // Same boot order as storefront/index.ts. The thumbnail / picker listeners die with this DOM (remounted via key).
+    const { showMedia } = initGallery(root);
+    initVariants(root, form, showMedia);
     void c.start();
     return () => {
       c.destroy();
@@ -172,6 +199,15 @@ function LiveStorefront({
         </div>
         <div className="ct-stage" data-ct-stage hidden>
           <canvas aria-label="Live preview of your design" />
+          <div className="ct-stage__nav" data-ct-design-nav hidden>
+            <button type="button" className="ct-stage__arrow" data-ct-design-prev aria-label="Previous">
+              ‹
+            </button>
+            <span data-ct-design-label />
+            <button type="button" className="ct-stage__arrow" data-ct-design-next aria-label="Next">
+              ›
+            </button>
+          </div>
           {mockups.length > 0 && (
             <button type="button" className="ct-stage__toggle" data-ct-show-photos>
               {SECTION_TEXT.photos}
@@ -187,9 +223,7 @@ function LiveStorefront({
 
       <div className="ct-product__info">
         <h1 className="ct-product__title">{title}</h1>
-        <div className="ct-product__price">
-          <span style={{ color: "#6b6b6b", fontSize: 15 }}>Giá lấy từ variant Shopify</span>
-        </div>
+        <PricePreview pricing={pricing} />
         <form ref={formRef} className="ct-form" data-ct-form noValidate onSubmit={(e) => e.preventDefault()}>
           <div className="ct-options" data-ct-options />
           <div className="ct-buy">
@@ -206,6 +240,68 @@ function LiveStorefront({
   );
 }
 
+/**
+ * Price + Shopify option pickers as main-product.liquid renders them for a product deployed with `pricing`
+ * (variants numbered 1…n here), with the same data scripts the storefront reads.
+ */
+function PricePreview({ pricing }: { pricing: CtPriceTableConfig | null }) {
+  if (!pricing) {
+    return (
+      <div className="ct-product__price">
+        <span style={{ color: "#6b6b6b", fontSize: 15 }}>Giá + Size / Pack lấy từ bảng giá khi Deploy sản phẩm</span>
+      </div>
+    );
+  }
+  const cells = priceCells(pricing);
+  const options: Array<{ name: string; values: string[]; pack: boolean }> = [];
+  if (usesSizes(pricing)) options.push({ name: pricing.sizeLabel, values: pricing.sizes.map((s) => s.label), pack: false });
+  if (usesPacks(pricing)) options.push({ name: pricing.packLabel, values: pricing.packs.map((p) => p.label), pack: true });
+  const rows = cells.map((c, i) => ({
+    id: i + 1,
+    options: [...(usesSizes(pricing) && c.size ? [c.size.label] : []), ...(usesPacks(pricing) && c.pack ? [c.pack.label] : [])],
+  }));
+  const variants: Record<string, { price: string; compare: string | null; available: boolean; media: null; cents: number }> = {};
+  cells.forEach((c, i) => {
+    variants[String(i + 1)] = { price: formatUsd(c.price), compare: c.compareAt !== null ? formatUsd(c.compareAt) : null, available: true, media: null, cents: Math.round(c.price * 100) };
+  });
+  const first = cells[0];
+  return (
+    <>
+      <div className="ct-product__price">
+        <span data-ct-price>{first ? formatUsd(first.price) : ""}</span>{" "}
+        <s className="ct-product__compare" data-ct-compare hidden={!first?.compareAt}>
+          {first?.compareAt ? formatUsd(first.compareAt) : ""}
+        </s>
+      </div>
+      <div className="ct-variants">
+        {options.map((o, oi) => (
+          <fieldset key={o.name} className={`ct-variant${o.pack ? " ct-variant--pack" : ""}`} data-ct-option-name={o.name} data-ct-option-position={oi}>
+            <legend className="ct-field__label">{o.name}</legend>
+            <div className={o.pack ? "ct-packs" : "ct-pills"}>
+              {o.values.map((v, vi) => (
+                <label key={v} className={`${o.pack ? "ct-pack" : "ct-pill"}${vi === 0 ? " is-selected" : ""}`}>
+                  <input type="radio" name={`ct-preview-option-${oi}`} value={v} data-ct-option-index={oi} defaultChecked={vi === 0} />
+                  {o.pack ? (
+                    <>
+                      <span className="ct-pack__label">{v}</span>
+                      <span className="ct-pack__unit" data-ct-pack-unit={v} />
+                    </>
+                  ) : (
+                    <span>{v}</span>
+                  )}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        ))}
+      </div>
+      <script type="application/json" data-ct-variants dangerouslySetInnerHTML={{ __html: JSON.stringify(variants) }} />
+      <script type="application/json" data-ct-variant-options dangerouslySetInnerHTML={{ __html: JSON.stringify(rows) }} />
+      <script type="application/json" data-ct-pricing dangerouslySetInnerHTML={{ __html: JSON.stringify(shopifyPricing(pricing)) }} />
+    </>
+  );
+}
+
 /** What the real cart line would carry — the same properties the theme posts to /cart/add. */
 function CartSheet({ cart, onClose }: { cart: CtCartPreview; onClose: () => void }) {
   return (
@@ -218,7 +314,13 @@ function CartSheet({ cart, onClose }: { cart: CtCartPreview; onClose: () => void
         </CtButton>
       </div>
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
-        {cart.previewUrl && <img src={cart.previewUrl} alt="" className="w-full rounded border" />}
+        {cart.previews.length > 1 ? (
+          <div className="grid grid-cols-3 gap-2">
+            {cart.previews.map((url, i) => url && <img key={i} src={url} alt="" className="w-full rounded border" />)}
+          </div>
+        ) : (
+          cart.previewUrl && <img src={cart.previewUrl} alt="" className="w-full rounded border" />
+        )}
         <table className="w-full text-xs">
           <tbody>
             {cart.properties.map(([k, v]) => (

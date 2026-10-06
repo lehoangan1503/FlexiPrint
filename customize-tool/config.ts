@@ -60,6 +60,8 @@ export const CT_TABLES = {
   agentTasks: "ct_agent_tasks",
   mockupPacks: "ct_mockup_packs",
   packImages: "ct_pack_images",
+  packCollections: "ct_pack_collections",
+  priceTables: "ct_price_tables",
 } as const;
 
 /** Fonts offered for text regions (Google Fonts families). */

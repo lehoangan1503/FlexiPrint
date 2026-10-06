@@ -10,6 +10,11 @@
  *   DELETE products/:id
  *   PUT    products/:id/design           CtSaveDesignBody
  *   POST   products/:id/publish          → snapshot into ct_templates (Shopify)
+ *   POST   products/:id/deploy           CtDeployBody → publish + Shopify product with the price table's variants (server/shopify.ts)
+ *   GET    products/:id/shopify          → CtShopifyInfo (shop + the linked Shopify product now)
+ *   GET    shopify/products?q=           → { products } Shopify products to deploy onto
+ *   GET    shopify/collections · POST {title}  → collections (deploy page badges; the starred one = breadcrumb)
+ *   GET    price-tables · POST CtPriceTableBody · PATCH :id · DELETE :id   bảng giá (server/price-tables.ts)
  *   POST   products/:id/assets           multipart: file, role, parent_id?, name?, meta?
  *   (AI generation runs in the ComfyUI studio — server/studio.ts, services/comfy)
  *   PATCH  assets/:id                    CtUpdateAssetBody
@@ -77,6 +82,7 @@
  *   POST   library/pack-images/generate  multipart description, aspect, refs, ref files → { image } (running)
  *   GET    library/pack-images/:id       → { image }
  *   DELETE library/pack-images/:id
+ *   GET    library/pack-collections · POST {name} · PATCH :id {name}   bộ ảnh
  *   GET    presets?kind=                 → { presets, admin }  (style_pack | material | scene)
  *   POST   presets                       CtPresetBody
  *   PATCH  presets/:id                   CtPresetBody
@@ -116,6 +122,7 @@ import * as lib from "./library";
 import * as studio from "./studio";
 import * as packs from "./mockup-packs";
 import * as packImages from "./pack-images";
+import * as prices from "./price-tables";
 import { reviewCategoryPrompts, suggestCategoryPrompts, suggestCategoryRevision, suggestDetails, suggestPresetPrompt, suggestRefine } from "./ai/prompt-writer";
 import { mcpEndpoint } from "./mcp/server";
 import { agentStatus, answerAgentTask, cancelAgentTask, createAgentTask, getAgentTask, listAgentTasks } from "./agent/tasks";
@@ -179,7 +186,7 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
     if (id === "category-revise" && method === "POST") return suggestCategoryRevision(session, await req.formData());
     if (id === "category-review" && method === "POST") return reviewCategoryPrompts(session, await req.formData());
     if (id === "agent-status" && method === "GET") return agentStatus();
-    if (id === "agent-tasks" && !sub && method === "GET") return listAgentTasks(session, req.nextUrl.searchParams.get("kind"));
+    if (id === "agent-tasks" && !sub && method === "GET") return listAgentTasks(session, req.nextUrl.searchParams.get("kind"), req.nextUrl.searchParams.get("collection"));
     if (id === "agent-tasks" && !sub && method === "POST") return createAgentTask(session, await readJson<unknown>(req));
     if (id === "agent-tasks" && sub && !path[3] && method === "GET") return getAgentTask(session, sub);
     if (id === "agent-tasks" && sub && path[3] === "cancel" && method === "POST") return cancelAgentTask(session, sub);
@@ -199,6 +206,9 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
     return h.jsonError("Not found", 404);
   }
   if (head === "presets" && id === "refs" && !sub && method === "POST") return lib.uploadPresetRef(session, await req.formData());
+  if (head === "shopify" && id === "products" && !sub && method === "GET") return h.shopifySearch(req.nextUrl.searchParams.get("q")?.trim() ?? "");
+  if (head === "shopify" && id === "collections" && !sub && method === "GET") return h.shopifyCollections();
+  if (head === "shopify" && id === "collections" && !sub && method === "POST") return h.shopifyCreateCollection(await readJson<unknown>(req));
   if (id && !UUID.test(id)) return h.jsonError("id không hợp lệ", 400);
 
   if (head === "presets" && id && sub === "history" && method === "GET") return lib.listPresetHistory(session, id);
@@ -210,6 +220,12 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
     if (id && method === "DELETE") return lib.deletePreset(session, id);
   }
 
+  if (head === "price-tables" && !sub) {
+    if (!id && method === "GET") return prices.listPriceTables(session);
+    if (!id && method === "POST") return prices.createPriceTable(session, await readJson<unknown>(req));
+    if (id && method === "PATCH") return prices.updatePriceTable(session, id, await readJson<unknown>(req));
+    if (id && method === "DELETE") return prices.deletePriceTable(session, id);
+  }
   if (head === "ai-styles" && !sub) {
     if (!id && method === "GET") return st.listAiStyles(session);
     const body = method === "POST" || method === "PATCH" ? await readJson<CtAiStyleBody>(req) : null;
@@ -237,6 +253,10 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
       return body ? h.saveDesign(session, id, body) : h.jsonError("Body không hợp lệ", 400);
     } else if (sub === "publish" && method === "POST") {
       return h.publish(session, id, publicOrigin(req));
+    } else if (sub === "deploy" && method === "POST") {
+      return h.deploy(session, id, await readJson<unknown>(req), publicOrigin(req));
+    } else if (sub === "shopify" && method === "GET") {
+      return h.shopifyStatus(session, id);
     } else if (sub === "assets" && method === "POST") {
       return h.uploadAsset(session, id, await req.formData());
     } else if (sub === "photo" && method === "POST") {
@@ -276,6 +296,12 @@ async function dispatchLibrary(req: NextRequest, session: CtSession, path: strin
   const [, resource, id, sub] = path;
   const method = req.method;
   if (resource === "packs" && id === "images" && !sub && method === "POST") return packs.uploadPackImage(session, await req.formData());
+  if (resource === "pack-collections") {
+    if (!id && method === "GET") return packImages.listPackCollections(session);
+    if (!id && method === "POST") return packImages.createPackCollection(session, await readJson<unknown>(req));
+    if (id && UUID.test(id) && !sub && method === "PATCH") return packImages.renamePackCollection(session, id, await readJson<unknown>(req));
+    return h.jsonError("Not found", 404);
+  }
   if (resource === "pack-images") {
     if (!id && method === "GET") return packImages.listPackImages(session, req.nextUrl.searchParams);
     if (!id && method === "POST") return packImages.uploadPackLibraryImage(session, await req.formData());

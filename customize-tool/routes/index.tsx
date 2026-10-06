@@ -3,6 +3,7 @@
  *
  *   src/app/customize-tool/page.tsx        → export { CustomizeListPage as default }
  *   src/app/customize-tool/[id]/page.tsx   → export { CustomizeEditorPage as default }
+ *   src/app/products/[id]/deploy/page.tsx  → export { CustomizeDeployPage as default }
  *
  * Kept outside src/app so the whole module moves as one folder.
  */
@@ -14,6 +15,7 @@ import { CT_CONFIG } from "../config";
 import { ctSession } from "../server/supabase";
 import { CustomizeProductList } from "../components/product-list";
 import { CustomizeEditor } from "../components/editor/editor";
+import { DeployPage } from "../components/deploy/deploy-page";
 import { LibraryManager } from "../components/library/library-manager";
 import { StudioFrame } from "../components/studio/studio-frame";
 
@@ -42,6 +44,13 @@ export async function CustomizeEditorPage({ params }: { params: Promise<{ id: st
   if (!session) redirect(CT_CONFIG.loginPath);
   const { id } = await params;
   return <CustomizeEditor productId={id} />;
+}
+
+export async function CustomizeDeployPage({ params }: { params: Promise<{ id: string }> }) {
+  const session = await ctSession();
+  if (!session) redirect(CT_CONFIG.loginPath);
+  const { id } = await params;
+  return <DeployPage productId={id} />;
 }
 
 export async function CustomizeLibraryPage() {

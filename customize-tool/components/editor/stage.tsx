@@ -28,7 +28,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CtAsset, CtBounds, CtMainFrame, CtProductScene, CtPhotoFrame, CtPoint, CtRegion, CtRegionItem, CtRegionKind, CtSelection, CtShape, CtTransform } from "../../types";
 import { clamp, fitShapeToBounds, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, SNAP_FRACTIONS, snapAxis, translateShape } from "../../lib/geometry";
 import { drawComposite } from "../../lib/compositor";
-import { hasTestPhoto, makeRegion } from "../../lib/design";
+import { activeRegions, hasTestPhoto, makeRegion } from "../../lib/design";
 import { cx, CHECKER_STYLE } from "../ui";
 import type { DesignApi } from "./use-design";
 import { useImageSize } from "./use-image-size";
@@ -101,6 +101,8 @@ export interface StageProps {
   versionId: string;
   mainSelected: boolean;
   onSelectMain: (on: boolean) => void;
+  /** A click (not a drag) on a custom layer that has no picture yet: pick one (the thư viện ảnh tổ hợp). */
+  onEmptyLayerClick?: (regionId: string) => void;
 }
 
 const MIN_ZOOM = 0.02;
@@ -109,6 +111,11 @@ const MAX_ZOOM = 32;
 export function Stage(props: StageProps) {
   const { main, assets, design, selection, tool, drawKind, editTarget, selectedRegionId, activeItemId } = props;
   const { regions, items } = design.state;
+  // Child zones show while their parent shows their option (the selected one always).
+  const shownRegions = useMemo(() => {
+    const active = new Set(activeRegions(regions, selection).map((r) => r.id));
+    return regions.filter((r) => active.has(r.id) || r.id === selectedRegionId);
+  }, [regions, selection, selectedRegionId]);
   const layouts = design.state.config.layouts;
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -551,7 +558,13 @@ export function Stage(props: StageProps) {
     }
   };
 
-  const onPointerUp = () => {
+  /** Pointer-down on an empty custom layer: a click there (no drag) asks for its picture. */
+  const emptyPress = useRef<{ id: string; x: number; y: number } | null>(null);
+
+  const onPointerUp = (e: React.PointerEvent) => {
+    const press = emptyPress.current;
+    emptyPress.current = null;
+    if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) < 4) props.onEmptyLayerClick?.(press.id);
     const g = gestureRef.current;
     setGesture(null);
     setGuides(NO_GUIDES);
@@ -642,6 +655,7 @@ export function Stage(props: StageProps) {
     viewportRef.current?.setPointerCapture(e.pointerId);
     if (region.id !== selectedRegionId) moveHeldUntil.current = performance.now() + SELECT_HOLD_MS;
     props.onSelectRegion(region.id);
+    emptyPress.current = region.kind === "image" && !items.some((i) => i.region_id === region.id) ? { id: region.id, x: e.clientX, y: e.clientY } : null;
     // A photo zone's body (outside its child frame, which has its own handler) is the zone itself.
     if (region.kind === "photo" && editTarget === "object") props.onEditTargetChange("region");
     if (editTarget === "object" && region.id === selectedRegionId && itemGeom && activeItem) {
@@ -832,7 +846,7 @@ export function Stage(props: StageProps) {
           style={{ pointerEvents: "none" }}
         >
           {props.showOverlay &&
-            regions.map((r) => {
+            shownRegions.map((r) => {
               const isSel = r.id === selectedRegionId;
               return (
                 <path
@@ -852,6 +866,25 @@ export function Stage(props: StageProps) {
                 />
               );
             })}
+
+          {/* An empty custom layer: like an empty image frame — click it to pick a picture, or drop a clipart on it. */}
+          {props.showOverlay &&
+            shownRegions
+              .filter((r) => r.kind === "image" && !items.some((i) => i.region_id === r.id))
+              .map((r) => {
+                const b = shapeBounds(r.shape);
+                const size = Math.min(14 * px, b.h / 4, b.w / 10);
+                return (
+                  <g key={`empty-${r.id}`} pointerEvents="none">
+                    <text x={b.x + b.w / 2} y={b.y + b.h / 2 - size * 0.4} textAnchor="middle" fontSize={size * 2.2} fill={kindColor.image} fillOpacity={0.85}>
+                      +
+                    </text>
+                    <text x={b.x + b.w / 2} y={b.y + b.h / 2 + size * 1.4} textAnchor="middle" fontSize={size} fill={kindColor.image} fillOpacity={0.85}>
+                      Bấm để chọn ảnh · kéo clipart vào
+                    </text>
+                  </g>
+                );
+              })}
 
           {/* A photo zone's child frame: always there while the zone is selected, dragged on its own; the zone clips it. */}
           {props.showOverlay && effectiveTool === "select" && frameGeom && (

@@ -4,9 +4,9 @@
  * One tổ hợp scene, rendered live by lib/mockup.ts, with a move / resize /
  * rotate frame on the selected layer (editor "Tổ hợp", Thiết kế → Nền).
  *
- *   drag inside a layer   select the topmost one + move (Shift = one axis;
- *                         Alt-drag inside the selection = move it even
- *                         under the layers on top)
+ *   drag inside a layer   inside the selection = move it, even under the
+ *                         layers on top; elsewhere select the topmost one
+ *                         + move (Shift = one axis)
  *   corner / edge handle  resize along the layer's OWN axes, so a rotated
  *                         layer keeps its opposite edge (Shift on a corner =
  *                         keep the aspect)
@@ -22,8 +22,10 @@
  *   crop    the selected image / product frame: edge + corner handles crop
  *           it, drag inside = move the crop window; the content stays put and
  *           its cropped-away part shows faintly
- *   cut     lasso on the selected layer (or the one under the pointer):
- *           draw round an area → onCut with the outline
+ *   cut     polygon lasso on the selected layer (or the one under the pointer):
+ *           click point by point; click the first point, double-click or
+ *           Enter closes it → onCut with the outline. Backspace / ⌘Z takes
+ *           the last point off, Esc drops it
  *   brush   paint a stroke (onStroke) — the editor turns it into blur
  *   erase   the same, as an eraser stroke
  *
@@ -86,7 +88,6 @@ type Drag =
   | { kind: "crop"; id: string; hx: number; hy: number; start: { x: number; y: number }; full: CtPackBox; crop: CtPackCrop }
   | { kind: "pan"; id: string; start: { x: number; y: number }; full: CtPackBox; crop: CtPackCrop }
   | { kind: "paint"; points: number[]; erase: boolean }
-  | { kind: "lasso"; id: string; points: number[] }
   | { kind: "view"; startX: number; startY: number; pan: { x: number; y: number } };
 
 /** (x, y) turned by `deg`. */
@@ -258,8 +259,35 @@ export function PackCanvas(props: PackCanvasProps) {
   const brushSize = props.brushSize ?? 80;
   /** Pointer over the canvas, scene px (the brush outline). */
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
-  /** The lasso being drawn, scene px. */
-  const [lasso, setLasso] = useState<number[] | null>(null);
+  /** The polygon lasso being clicked out, scene px. */
+  const [lasso, setLasso] = useState<{ id: string; points: number[] } | null>(null);
+  /** Pointer over the canvas while cutting: the rubber band to the next point. */
+  const [aim, setAim] = useState<{ x: number; y: number } | null>(null);
+  // Leaving the cut tool drops it (Space for the hand doesn't).
+  if (lasso && props.tool !== "cut") setLasso(null);
+  const closeLasso = (l: { id: string; points: number[] }) => {
+    setLasso(null);
+    if (l.points.length >= 6) props.onCut?.(l.id, l.points);
+  };
+  // While a lasso is open its keys win over the editor's (Enter would leave the tool).
+  const lassoKeys = useRef<(e: KeyboardEvent) => void>(() => {});
+  useLayoutEffect(() => {
+    lassoKeys.current = (e) => {
+      if (!lasso || isTyping(e.target)) return;
+      const undo = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.shiftKey;
+      if (e.key === "Enter") closeLasso(lasso);
+      else if (e.key === "Escape") setLasso(null);
+      else if (e.key === "Backspace" || e.key === "Delete" || undo) setLasso(lasso.points.length > 2 ? { ...lasso, points: lasso.points.slice(0, -2) } : null);
+      else return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => lassoKeys.current(e);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 
   const toPack = (e: { clientX: number; clientY: number }) => {
     const r = canvasRef.current?.getBoundingClientRect();
@@ -286,12 +314,18 @@ export function PackCanvas(props: PackCanvasProps) {
       return;
     }
     if (tool === "cut") {
+      if (lasso) {
+        const near = Math.hypot(p.x - lasso.points[0], p.y - lasso.points[1]) * view <= 10;
+        // The second click of a double-click closes it (the first one already set its point).
+        if (e.detail >= 2 || (near && lasso.points.length >= 6)) closeLasso(lasso);
+        else setLasso({ ...lasso, points: [...lasso.points, p.x, p.y] });
+        return;
+      }
       // On the selected layer, else the one under the pointer.
       const target = selected ?? [...slide.layers].reverse().find((l) => canEdit(l) && inside(l.box, p.x, p.y));
       if (!target) return;
       if (target !== selected) props.onSelect(target.id);
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      setDrag({ kind: "lasso", id: target.id, points: [p.x, p.y] });
+      setLasso({ id: target.id, points: [p.x, p.y] });
       return;
     }
     if (cropping && inside(cropping.box, p.x, p.y)) {
@@ -300,8 +334,8 @@ export function PackCanvas(props: PackCanvasProps) {
       return;
     }
     const hit = [...slide.layers].reverse().find((l) => canEdit(l) && inside(l.box, p.x, p.y));
-    // The topmost layer under the pointer wins; Alt keeps the selection to move it from under the ones on top.
-    const target = e.altKey && selected && inside(selected.box, p.x, p.y) ? selected : hit;
+    // Inside the selected frame's box it stays the one worked on, even under others; elsewhere the topmost under the pointer.
+    const target = selected && inside(selected.box, p.x, p.y) ? selected : hit;
     props.onSelect(target?.id ?? null);
     // The crop tool only picks; moving is the select tool's.
     if (!target || tool === "crop") return;
@@ -420,19 +454,6 @@ export function PackCanvas(props: PackCanvasProps) {
       userView.current = true;
       return;
     }
-    if (d.kind === "lasso") {
-      const p = toPack(e);
-      const n = d.points.length;
-      if (Math.hypot(p.x - d.points[n - 2], p.y - d.points[n - 1]) > 3 / view) {
-        d.points.push(p.x, p.y);
-        setLasso([...d.points]);
-      }
-      if (done) {
-        setLasso(null);
-        if (d.points.length >= 6) props.onCut?.(d.id, d.points);
-      }
-      return;
-    }
     if (d.kind === "paint") {
       const p = toPack(e);
       const n = d.points.length;
@@ -450,6 +471,7 @@ export function PackCanvas(props: PackCanvasProps) {
   };
   const onMove = (e: React.PointerEvent) => {
     if (painting) setHover(toPack(e));
+    if (tool === "cut") setAim(toPack(e));
     if (drag) emit(e, drag, false);
   };
   const onUp = (e: React.PointerEvent) => {
@@ -468,7 +490,10 @@ export function PackCanvas(props: PackCanvasProps) {
       onPointerDown={onHostDown}
       onPointerMove={onMove}
       onPointerUp={onUp}
-      onPointerLeave={() => setHover(null)}
+      onPointerLeave={() => {
+        setHover(null);
+        setAim(null);
+      }}
       onDragOver={(e) => {
         if (!props.dropType || !e.dataTransfer.types.includes(props.dropType)) return;
         e.preventDefault();
@@ -507,13 +532,25 @@ export function PackCanvas(props: PackCanvasProps) {
         )}
         {lasso && (
           <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
-            <polygon
-              points={lasso.map((v) => v * view).join(" ")}
-              fill="rgba(244,63,94,0.15)"
+            <polygon points={[...lasso.points, ...(aim ? [aim.x, aim.y] : [])].map((v) => v * view).join(" ")} fill="rgba(244,63,94,0.15)" />
+            <polyline
+              points={[...lasso.points, ...(aim ? [aim.x, aim.y] : [])].map((v) => v * view).join(" ")}
+              fill="none"
               stroke="#f43f5e"
               strokeWidth={1.5}
               strokeDasharray="5 4"
             />
+            {Array.from({ length: lasso.points.length / 2 }, (_, i) => (
+              <circle
+                key={i}
+                cx={lasso.points[i * 2] * view}
+                cy={lasso.points[i * 2 + 1] * view}
+                r={i === 0 && lasso.points.length >= 6 ? 6 : 3.5}
+                fill={i === 0 ? "#f43f5e" : "white"}
+                stroke="#f43f5e"
+                strokeWidth={1.5}
+              />
+            ))}
           </svg>
         )}
         {full && (

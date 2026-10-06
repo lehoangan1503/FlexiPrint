@@ -10,7 +10,7 @@
 
 import { CT_TABLES } from "../../config";
 import { normalizeCategoryRules } from "../../lib/library";
-import type { CtAgentQuestion, CtAgentTask, CtAgentTaskProgress, CtAgentTaskRun, CtAsset, CtPackImage, CtPackImageResult, CtCategoryRevision, CtCategoryHistoryEntry, CtCategorySnapshot, CtClipartCategory, CtMaterialSpec, CtStudioRunBody, CtStudioRunStatus } from "../../types";
+import type { CtAgentQuestion, CtAgentTask, CtAgentTaskProgress, CtAgentTaskRun, CtAsset, CtPackImage, CtPackImageResult, CtContentResult, CtCategoryRevision, CtCategoryHistoryEntry, CtCategorySnapshot, CtClipartCategory, CtMaterialSpec, CtStudioRunBody, CtStudioRunStatus } from "../../types";
 import { normalizeMaterialSpecs } from "../../lib/materials";
 import { isOwnUploadUrl } from "../library";
 import * as studio from "../studio";
@@ -20,7 +20,9 @@ import { flatPrompt, lintCategory, materialPrompts, type ReviewInput } from "../
 import { buildRevision, revisionContext, suggestionFromAgent, type RevisionContext } from "../ai/prompt-writer";
 import { clip, record, str } from "../ai/llm";
 import { CT_MCP_WRITE_TOOLS } from "./write-tools";
-import { drawPackImage } from "../pack-images";
+import sharp from "sharp";
+import { drawPackImage, mirrorPackImage, touchCollection } from "../pack-images";
+import { packBases } from "../../lib/file-name";
 
 export type CtMcpCaller = "agent" | "studio" | "user";
 
@@ -249,7 +251,7 @@ const categoryTools: CtMcpTool[] = [
   },
   {
     name: "view_image",
-    description: "Look at images of the library (cliparts, renditions, reference / product photos): up to 4 urls from the other tools.",
+    description: "Look at images of the library (cliparts, renditions, reference / product photos, tổ hợp photos): up to 4 urls from the other tools. Shown at ≤ 1568 px; transparent areas appear mid grey.",
     inputSchema: { type: "object", properties: { urls: { type: "array", items: { type: "string" }, description: "Image urls (FlexiPrint storage only)." } }, required: ["urls"] },
     callers: ALL,
     run: async (_ctx, args) => {
@@ -261,8 +263,15 @@ const categoryTools: CtMcpTool[] = [
           const type = res.headers.get("content-type") ?? "";
           if (!res.ok || !type.startsWith("image/")) throw new Error(`${url}: ${res.status}`);
           const buf = Buffer.from(await res.arrayBuffer());
-          if (buf.length > 5 * 1024 * 1024) throw new Error(`${url}: larger than 5 MB`);
-          return { data: buf.toString("base64"), mimeType: type.split(";")[0], url };
+          // Sized for looking (≤ 1568 px — what the model sees anyway): a 2K PNG layer is 5–8 MB, which the agent's
+          // client refuses — so it never saw its own results. Transparent pixels show on mid grey, so a cut-out's
+          // edge is visible.
+          const view = await sharp(buf)
+            .resize({ width: 1568, height: 1568, fit: "inside", withoutEnlargement: true })
+            .flatten({ background: "#808080" })
+            .jpeg({ quality: 85 })
+            .toBuffer();
+          return { data: view.toString("base64"), mimeType: "image/jpeg", url };
         }),
       );
       return { images };
@@ -574,16 +583,28 @@ function lostChanges(plan: Record<string, unknown>, cat: CtCategorySnapshot, rev
   return lost;
 }
 
+/** How to do a content task (Shopify title + description) — handed out with get_task. */
+const CONTENT_INSTRUCTIONS = [
+  "You write the Shopify product page copy for a personalized print-on-demand gift (US English, US shoppers).",
+  "1. Read \"product\" (name, what the customer personalizes — facts —, price table, photos: look at them with view_image) and \"request\" (what the editor wants: tone, keywords, length, things to keep). \"current\" is the title / description on the page now; \"earlier\" is this product's earlier requests and your results, oldest first — \"shorter\", \"keep the title\", \"như lần trước\" refer to them. With a request that only asks a change, change only that and keep the rest of the latest version.",
+  "2. Title: under 90 characters, the gift + what is personalized + who it is for (\"New Driver Custom State Car Plate Ornament, First Teenager Car Gift - Personalized Ornament\"). No emojis, no ALL CAPS words, no claims you cannot see in the facts.",
+  "3. description_html: clean HTML for Shopify (p, ul/li, strong, h3 only — no inline styles, no scripts, no images): a short hook, then what makes it personal (each option the customer fills in, from the facts), sizes / pack savings if the price table has them, materials only when the facts or photos show them, a closing gift line. 120–250 words unless the request says otherwise.",
+  "4. report_progress (Vietnamese) once while writing, then submit_result(task_id, {summary: Vietnamese, one or two lines — what you wrote and what you changed from the last version; title; description_html}).",
+];
+
 /** How to do a pack_image task — in get_task too, so it works before the agent machine pulls the skill. */
 const PACK_INSTRUCTIONS = [
   "You make photos for the tổ hợp photo library: editors compose product mockups by hand from layers — a background, the product, hands / fingers holding it, props. They will put your photos in Image frames.",
   "1. Understand the request exactly. Count how many SEPARATE photos it asks for (\"2 tấm… tổng cộng 4 tấm\" = 4 photos) and, for each: the subject, which part only (e.g. index + middle finger only; the thumb alone), side (left / right hand), where it enters the frame (bottom-left corner, top edge…), style (nail art theme…). A LAYER — a part placed over or under the product (fingers, a hand, a prop) — must be transparent: generate it with transparent=true (drawn on a plain backdrop, then cut out). A background / scene is transparent=false. Look at every reference (view_image) and at base (the photo to keep editing, if any).",
+  "1b. Photos sent back to keep editing (bases): each comes with the editor's OWN note for that photo. A base's note is the highest-priority instruction FOR THAT PHOTO: it overrides the general description wherever they disagree, and it applies to that photo only — never carry it over to another photo, never merge the notes into one prompt. Before generating, write yourself one line per base: what its note asks, what the general description adds (only where the note does not say otherwise), what must stay exactly as it is. Every base gets its own edited result (generate_pack_image with parent_id = the base id, its url FIRST in refs, the same transparent setting unless the note says otherwise) — submit_result is refused if one is missing. A base without a note is edited by the general description.",
+  "1c. SPLITTING an existing photo into layers (\"tách ngón cái ra\", \"tách thành 2 lớp\") must keep the photo's own pixels — a redraw never lines up. You have no tool for it: do NOT redraw; tell the editor (summary, or ask_user if that is all they asked) to split it in the tổ hợp editor with the Cắt (lasso) tool — duplicate the layer, keep the part in one copy, cut it away in the other.",
+  "1d. A bộ ảnh (collection) is one conversation: \"earlier\" in get_task lists its previous requests and results — \"ảnh trước\", \"cặp đó\", \"như lần trước\" refer to them.",
   "2. Only if something is genuinely ambiguous (how many photos, which parts are separate) ask_user once with concrete options, then end your turn. Otherwise go on.",
   "3. list_pack_images first: a photo that already fits can be handed back as is (its id in image_ids).",
-  "4. For each photo write a precise English prompt for Nano Banana: exactly what is in frame and what is NOT (\"only the thumb and the base of the palm, no other fingers\"), pose, framing and the edge it comes from, skin / nails / materials, lighting that matches the references, photorealistic. Photos that belong together (the fingers and the thumb that will pinch the product) must match: make the first, then pass its url in refs for the next and say \"same hand, same skin tone, same nails, same lighting as Reference image 1\". References go to the model in order (Reference image 1 = the first url). Editing a base photo: pass it first in refs and say what to change and what to keep.",
+  "4. For each photo write a precise English prompt for Nano Banana: exactly what is in frame and what is NOT (\"only the thumb and the base of the palm, no other fingers\"), pose, framing and the edge it comes from, skin / nails / materials, lighting that matches the references, photorealistic. Photos that belong together (the fingers and the thumb that will pinch the product) must match: make the first, then pass its url in refs for the next and say \"same hand, same skin tone, same nails, same lighting as Reference image 1\". References go to the model in order (Reference image 1 = the first url). Editing a base photo: pass it first in refs and say what to change and what to keep. The same photo for the OTHER hand = mirror_pack_image on the finished one (a real flip) — never a \"mirror it\" prompt.",
   "   generate_pack_image(task_id, name, prompt, refs, aspect, transparent) — about 1 minute each; report_progress (Vietnamese) before each.",
   "5. view_image every result and check it against the request: the right fingers, the right hand, the theme, where it enters the frame, a clean cut-out. Wrong → fix the prompt and generate again (at most ~3 tries a photo).",
-  "6. submit_result(task_id, {summary: Vietnamese — what you made, which photo is which, what is still off; image_ids: the final photos in a useful order}). Photos you made but did not list stay out of the library.",
+  "6. submit_result(task_id, {summary: Vietnamese — what you made, which photo is which, and for EACH base: its note and how you applied it, what is still off; image_ids: the final photos in a useful order — an edit of every base included}). Photos you made but did not list stay out of the library.",
 ].join("\n");
 
 const packTools: CtMcpTool[] = [
@@ -600,7 +621,7 @@ const packTools: CtMcpTool[] = [
         refs: { type: "array", items: { type: "string" }, description: "Reference photo urls, in order (max 6)." },
         aspect: { type: "string", description: "1:1 | 4:5 | 3:4 | 2:3 | 4:3 | 3:2 | 16:9 | 9:16 (default: the task's)." },
         transparent: { type: "boolean", description: "A layer: cut the background out (default false)." },
-        parent_id: { type: "string", description: "Optional: the photo this one edits (a library / earlier result id)." },
+        parent_id: { type: "string", description: "The photo this one edits — REQUIRED for an edit of a base (its id); also a library / earlier result id." },
       },
       required: ["task_id", "name", "prompt"],
     },
@@ -617,41 +638,77 @@ const packTools: CtMcpTool[] = [
       const transparent = args.transparent === true;
       const parentId = UUID.test(str(args.parent_id)) ? str(args.parent_id) : null;
       const file = await drawPackImage(task.user_id, { name, prompt, refs, aspect, transparent });
-      const { data, error } = await db
-        .from(CT_TABLES.packImages)
-        .insert({
-          ...file,
-          user_id: task.user_id,
-          name,
-          source: "ai",
-          status: "done",
-          description: task.input.pack?.description ?? "",
-          prompt,
-          refs,
-          aspect,
-          transparent,
-          parent_id: parentId,
-          task_id: task.id,
-          listed: false,
-        })
-        .select("*")
-        .single<CtPackImage>();
-      if (error || !data) throw new Error(error?.message ?? "Could not save the photo");
-      const fresh = (await loadTask(ctx, task.id)).task;
-      await patchTask(db, task.id, {
-        status: liveStatus(fresh),
-        progress: [...(fresh.progress ?? []), { at: new Date().toISOString(), text: `Đã tạo: ${name}${transparent ? " (nền trong suốt)" : ""}`, images: [data.url ?? ""], kind: "run" as const }].slice(-50),
-      });
+      const data = await saveTaskPhoto(ctx, db, task, { ...file, name, prompt, refs, aspect, transparent, parent_id: parentId }, `Đã tạo: ${name}${transparent ? " (nền trong suốt)" : ""}`);
       return json({ id: data.id, name, url: data.url, width: data.width, height: data.height, transparent, next: "Look at it with view_image and check it against the request." });
     },
   },
+  {
+    name: "mirror_pack_image",
+    description:
+      "The same photo for the OTHER hand: flips a photo left ↔ right, pixel for pixel (free, instant) — a left hand becomes the right one, entering from the opposite side. Use this whenever the request is \"the same, for the other hand\" — NEVER ask the image model to mirror (it hands the reference back unflipped). Saved as a draft of the task like generate_pack_image.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        image_id: { type: "string", description: "The photo to flip: a result of this task, a base or a library photo (its id)." },
+        name: { type: "string", description: "Short name, in the editor's language (\"Tay phải – cái + trỏ + giữa\")." },
+      },
+      required: ["task_id", "image_id", "name"],
+    },
+    callers: AGENT,
+    run: async (ctx, args) => {
+      const { db, task } = await loadTask(ctx, args.task_id);
+      openTask(task);
+      if (task.kind !== "pack_image" || !task.user_id) throw new Error("mirror_pack_image is for pack_image tasks");
+      const id = str(args.image_id);
+      if (!UUID.test(id)) throw new Error("image_id is required");
+      const { data: src } = await db.from(CT_TABLES.packImages).select("*").eq("id", id).maybeSingle<CtPackImage>();
+      if (!src?.url) throw new Error("No such photo");
+      const name = clip(str(args.name), 200) || `${src.name} (lật)`;
+      const file = await mirrorPackImage(task.user_id, name, src.url);
+      const prompt = `Mirrored left ↔ right from “${src.name}”.${src.prompt ? `\n\nOriginal prompt: ${src.prompt}` : ""}`;
+      const data = await saveTaskPhoto(ctx, db, task, { ...file, name, prompt, refs: [src.url], aspect: src.aspect, transparent: src.transparent, parent_id: src.id }, `Đã lật: ${name}`);
+      return json({ id: data.id, name, url: data.url, width: data.width, height: data.height, transparent: data.transparent, next: "Look at it with view_image." });
+    },
+  },
 ];
+
+/** A photo the agent made for a pack_image task: a draft of the task (listed on submit), shown live in its progress. */
+async function saveTaskPhoto(
+  ctx: Parameters<CtMcpTool["run"]>[0],
+  db: Awaited<ReturnType<typeof loadTask>>["db"],
+  task: CtAgentTask,
+  photo: Pick<CtPackImage, "url" | "storage_path" | "mime" | "width" | "height" | "model" | "name" | "prompt" | "refs" | "aspect" | "transparent" | "parent_id">,
+  progress: string,
+): Promise<CtPackImage> {
+  const { data, error } = await db
+    .from(CT_TABLES.packImages)
+    .insert({
+      ...photo,
+      user_id: task.user_id,
+      source: "ai",
+      status: "done",
+      description: task.input.pack?.description ?? "",
+      task_id: task.id,
+      listed: false,
+      collection_id: task.input.pack?.collectionId ?? null,
+    })
+    .select("*")
+    .single<CtPackImage>();
+  if (error || !data) throw new Error(error?.message ?? "Could not save the photo");
+  const fresh = (await loadTask(ctx, task.id)).task;
+  await patchTask(db, task.id, {
+    status: liveStatus(fresh),
+    progress: [...(fresh.progress ?? []), { at: new Date().toISOString(), text: progress, images: [data.url ?? ""], kind: "run" as const }].slice(-50),
+  });
+  return data;
+}
 
 const taskTools: CtMcpTool[] = [
   {
     name: "get_task",
     description:
-      "A task the editor sent from the web app. kind pack_image: photos for the tổ hợp photo library — description, references, base photo, and \"instructions\" to follow. kind create | revise: the category as their dialog has it (maybe unsaved), their note, the numbered result images (#1…) they looked at, new reference photos. Read flexiprint://guide/task-results for what to submit.",
+      "A task the editor sent from the web app. kind content: the Shopify title + description of a product (follow its \"instructions\"). kind pack_image: photos for the tổ hợp photo library — general description, references, bases (photos to keep editing, each with its own note that outranks the description for that photo), and \"instructions\" to follow. kind create | revise: the category as their dialog has it (maybe unsaved), their note, the numbered result images (#1…) they looked at, new reference photos. Read flexiprint://guide/task-results for what to submit.",
     inputSchema: { type: "object", properties: TASK_ARG, required: ["task_id"] },
     callers: AGENT,
     run: async (ctx, args) => {
@@ -659,18 +716,99 @@ const taskTools: CtMcpTool[] = [
       openTask(task);
       if (task.status === "pending") await patchTask(db, task.id, { status: "running" });
       const { input } = task;
-      if (task.kind === "pack_image") {
-        const p = input.pack;
-        const { data: base } = p?.baseId ? await db.from(CT_TABLES.packImages).select("id,name,url,prompt,transparent").eq("id", p.baseId).maybeSingle() : { data: null };
-        const { data: made } = await db.from(CT_TABLES.packImages).select("id,name,url,prompt,transparent").eq("task_id", task.id).order("created_at");
+      if (task.kind === "content") {
+        const c = input.content;
+        const { data: before } = c
+          ? await db
+              .from(CT_TABLES.agentTasks)
+              .select("id,created_at,status,input,result")
+              .eq("kind", "content")
+              .eq("input->content->>productId", c.productId)
+              .neq("id", task.id)
+              .order("created_at")
+              .limit(20)
+              .returns<Array<Pick<CtAgentTask, "id" | "created_at" | "status" | "input" | "result">>>()
+          : { data: [] };
         return json({
           id: task.id,
           kind: task.kind,
-          what: base ? "Keep editing the base photo as the editor asks." : "Make the photos the editor asks for.",
+          what: "Write the Shopify title + description of this product.",
+          request: c?.request ?? "",
+          product: { name: c?.productName ?? "", facts: c?.facts ?? [], photos: c?.imageUrls ?? [] },
+          current: { title: c?.title ?? "", description_html: c?.descriptionHtml ?? "" },
+          earlier: (before ?? []).map((t) => ({
+            at: t.created_at,
+            status: t.status,
+            request: t.input.content?.request ?? "",
+            title: t.result && "title" in t.result ? t.result.title : "",
+            description_html: t.result && "descriptionHtml" in t.result ? clip(t.result.descriptionHtml, 4000) : "",
+          })),
+          questions: (task.questions ?? []).map((q) => ({ id: q.id, question: q.question, options: q.options.map((o) => o.label), answer: q.answer })),
+          instructions: CONTENT_INSTRUCTIONS,
+        });
+      }
+      if (task.kind === "pack_image") {
+        const p = input.pack;
+        const asked = packBases(p);
+        const { data: rows } = asked.length
+          ? await db.from(CT_TABLES.packImages).select("id,name,url,prompt,transparent,aspect").in("id", asked.map((b) => b.id)).returns<Array<Pick<CtPackImage, "id" | "name" | "url" | "prompt" | "transparent" | "aspect">>>()
+          : { data: [] };
+        const bases = asked.map((b, i) => {
+          const r = rows?.find((x) => x.id === b.id);
+          return {
+            number: i + 1,
+            id: b.id,
+            url: r?.url ?? b.url,
+            name: r?.name ?? b.name,
+            note: b.note || "(no own note — edit it by the general description)",
+            priority: "This note outranks the general description for THIS photo only.",
+            transparent: r?.transparent ?? false,
+            aspect: r?.aspect ?? "",
+            prompt: r?.prompt ?? "",
+          };
+        });
+        const { data: made } = await db.from(CT_TABLES.packImages).select("id,name,url,prompt,transparent,parent_id").eq("task_id", task.id).order("created_at");
+        // The bộ ảnh this request belongs to: its earlier requests and what came of them.
+        let collection: Record<string, unknown> | null = null;
+        if (p?.collectionId) {
+          const { data: col } = await db.from(CT_TABLES.packCollections).select("id,name").eq("id", p.collectionId).maybeSingle();
+          const { data: before } = await db
+            .from(CT_TABLES.agentTasks)
+            .select("id,created_at,status,input,result")
+            .eq("kind", "pack_image")
+            .eq("input->pack->>collectionId", p.collectionId)
+            .neq("id", task.id)
+            .order("created_at")
+            .returns<Array<Pick<CtAgentTask, "id" | "created_at" | "status" | "input" | "result">>>();
+          const { data: photos } = await db
+            .from(CT_TABLES.packImages)
+            .select("id,name,url,transparent,parent_id,task_id,listed")
+            .eq("collection_id", p.collectionId)
+            .eq("listed", true)
+            .order("created_at");
+          collection = {
+            name: col?.name ?? "",
+            earlier: (before ?? []).map((t) => ({
+              at: t.created_at,
+              status: t.status,
+              request: t.input.pack?.description ?? "",
+              notes: packBases(t.input.pack).map((b) => ({ photo: b.id, note: b.note })),
+              summary: t.result && "summary" in t.result ? clip(str(t.result.summary), 800) : "",
+              photos: (photos ?? []).filter((ph) => ph.task_id === t.id),
+            })),
+            // Every photo of the bộ now in the library (incl. ones redrawn or split by the editor).
+            photos: photos ?? [],
+          };
+        }
+        return json({
+          id: task.id,
+          kind: task.kind,
+          what: bases.length ? `Keep editing ${bases.length} photo(s), each by its own note first (bases), then the general description.` : "Make the photos the editor asks for.",
           description: p?.description ?? "",
           aspect: p?.aspect ?? "1:1",
           refUrls: input.refUrls,
-          base,
+          bases,
+          collection,
           // Photos you already made for this task (after a question, say).
           made: made ?? [],
           questions: (task.questions ?? []).map((q) => ({ id: q.id, question: q.question, options: q.options.map((o) => o.label), answer: q.answer })),
@@ -765,6 +903,15 @@ const taskTools: CtMcpTool[] = [
       const raw = record(typeof args.result === "string" ? JSON.parse(args.result) : args.result);
       const summary = clip(str(raw.summary), 3000);
       if (!summary) throw new Error('Result needs "summary" (Vietnamese): what you did, which test images you made and what they showed, what is still uncertain — see flexiprint://guide/task-results');
+      if (task.kind === "content") {
+        const title = clip(str(raw.title), 255).trim();
+        const descriptionHtml = clip(str(raw.description_html) || str(raw.descriptionHtml), 20000).trim();
+        if (!title || !descriptionHtml) throw new Error('Result needs "title" and "description_html" (and "summary")');
+        if (/<script|\son\w+=|javascript:/i.test(descriptionHtml)) throw new Error("description_html must be plain HTML: no scripts, event handlers or javascript: links");
+        const result: CtContentResult = { summary, title, descriptionHtml };
+        await patchTask(db, task.id, { status: "done", result, finished_at: new Date().toISOString() });
+        return json({ ok: true, message: "Đã gửi title + description — người dùng thấy ngay trên trang Deploy." });
+      }
       if (task.kind === "pack_image") {
         const ids = [...new Set((Array.isArray(raw.image_ids) ? raw.image_ids : Array.isArray(raw.imageIds) ? raw.imageIds : []).map(str).filter((x) => UUID.test(x)))].slice(0, 12);
         if (!ids.length) throw new Error('Result needs "image_ids": the photos you made (generate_pack_image) or picked from list_pack_images');
@@ -772,9 +919,22 @@ const taskTools: CtMcpTool[] = [
         const ok = new Set((found ?? []).filter((r) => r.status === "done" && (r.task_id === task.id || r.listed)).map((r) => r.id));
         const bad = ids.filter((x) => !ok.has(x));
         if (bad.length) throw new Error(`Not submitted — unknown photo id(s): ${bad.join(", ")} (use ids from generate_pack_image or list_pack_images)`);
+        // Every photo sent back must come back edited: its own note would otherwise be lost.
+        const bases = packBases(task.input.pack);
+        if (bases.length) {
+          const { data: edits } = await db.from(CT_TABLES.packImages).select("parent_id").in("id", ids).returns<Array<Pick<CtPackImage, "parent_id">>>();
+          const answered = new Set((edits ?? []).map((e) => e.parent_id));
+          const missing = bases.filter((b) => !answered.has(b.id));
+          if (missing.length) {
+            throw new Error(
+              `Not submitted — no edited photo for ${missing.map((b) => `base ${b.id}${b.note ? ` (note: "${clip(b.note, 120)}")` : ""}`).join("; ")}. Make it with generate_pack_image(parent_id = that base id, its url first in refs), look at it, and include it in image_ids.`,
+            );
+          }
+        }
         const { error: listErr } = await db.from(CT_TABLES.packImages).update({ listed: true }).in("id", ids);
         if (listErr) throw new Error(listErr.message);
         const packResult: CtPackImageResult = { summary, imageIds: ids };
+        if (task.input.pack?.collectionId) await touchCollection(db, task.input.pack.collectionId);
         await patchTask(db, task.id, { status: "done", result: packResult, finished_at: new Date().toISOString() });
         return json({ ok: true, message: "Đã gửi ảnh — người dùng thấy ngay trong thư viện ảnh tổ hợp." });
       }

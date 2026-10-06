@@ -212,7 +212,7 @@ UI Cài đặt → Dịch vụ → thêm; hoặc API admin
 | Thư viện | `list_categories`, `get_category`, `list_cliparts`, `get_history`, `view_image`, `list_style_packs`, `list_materials`, `list_product_details` |
 | Prompt | `assemble_prompts` (prompt y như model ảnh nhận, kể cả bản nháp), `review_category` |
 | Studio | `list_models`, `run_studio` (origin / refine / variant / material — **tốn tiền**; `task_id` gắn vào task, `draft` chạy thử prompt chưa lưu), `wait_run` (server chờ hộ tới khi xong), `get_run` |
-| Thư viện ảnh tổ hợp | `list_pack_images`, `generate_pack_image` (task `pack_image` — skill `flexiprint-pack-image`; Nano Banana, `transparent` = tách nền cho layer) |
+| Thư viện ảnh tổ hợp | `list_pack_images`, `generate_pack_image`, `mirror_pack_image` (lật trái ↔ phải cho tay bên kia; task `pack_image` — skill `flexiprint-pack-image`; Nano Banana, `transparent` = tách nền cho layer) |
 | Task từ app | `get_task`, `report_progress`, `ask_user` (hỏi người dùng, task chờ; câu trả lời về thành lượt mới cùng phiên), `submit_result` (bắt buộc `summary`; từ chối khi còn ảnh đang chạy / câu hỏi chưa trả lời), `fail_task` |
 | Lưu (khi được nhờ trực tiếp) | `save_category`, `save_preset`, `restore_category` |
 

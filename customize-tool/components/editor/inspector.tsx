@@ -8,6 +8,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
+  CornerDownRight,
   ArrowDown,
   ArrowUp,
   Circle,
@@ -47,10 +48,16 @@ import type {
   CtShape,
   CtTextAlign,
   CtTransform,
+  CtTextMode,
+  CtZoneOption,
+  CtZoneOptions,
+  CtZoneParent,
+  CtZoneTextStyle,
 } from "../../types";
-import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, orientedBox, resolvePhotoFrame, shapeBounds } from "../../lib/geometry";
+import { CT_BASE_OPTION } from "../../types";
+import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, orientedBox, resolvePhotoFrame, shapeBounds } from "../../lib/geometry";
 import { useImageSize } from "./use-image-size";
-import { formOrder, hasTestPhoto, normalizeRegion, variantsOf } from "../../lib/design";
+import { formOrder, hasTestPhoto, normalizeRegion, textMode, variantsOf, ZONE_TEXT_STYLE_KEYS, zoneSubtree } from "../../lib/design";
 import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
 import { PhotoGuideDialog } from "./photo-guide-dialog";
 import { aiStyleModel } from "../../lib/ai-style-models";
@@ -99,6 +106,22 @@ export interface InspectorProps {
   mainSelected: boolean;
   onSelectMain: () => void;
   onMainFrame: (f: CtMainFrame) => void;
+  /** A custom layer's picture from the thư viện ảnh tổ hợp (upload / AI / pick), replacing what it holds. */
+  onPickLayerImage: (regionId: string) => void;
+  /** Show (and edit) a text / photo zone as one of its sub-options; null = its own look. */
+  onZoneOption: (regionId: string, optionId: string | null) => void;
+  /** A child zone for one option of a zone (text / custom layer / photo upload) — shown while that option is. */
+  onAddChild: (parent: CtZoneParent, kind: CtRegionKind) => void;
+}
+
+/** "Choose state: Texas" — the option a child zone belongs to. */
+function parentLabel(regions: CtRegion[], assets: CtAsset[], r: CtRegion): string {
+  const p = r.config.parent;
+  const parent = p ? regions.find((x) => x.id === p.regionId) : undefined;
+  if (!p || !parent) return "?";
+  if (parent.kind === "image") return `${parent.name}: ${assets.find((a) => a.id === p.optionId)?.name ?? "ảnh"}`;
+  const o = normalizeRegion(parent).config.options;
+  return `${parent.name}: ${p.optionId === CT_BASE_OPTION ? o.baseName || "Mặc định" : (o.list.find((x) => x.id === p.optionId)?.name ?? "?")}`;
 }
 
 export function Inspector(props: InspectorProps) {
@@ -144,7 +167,9 @@ export function Inspector(props: InspectorProps) {
     });
 
   const remove = (id: string) => {
-    design.commit((s) => ({ ...s, regions: s.regions.filter((r) => r.id !== id), items: s.items.filter((i) => i.region_id !== id) }));
+    // Its child zones go with it.
+    const gone = zoneSubtree(regions, id);
+    design.commit((s) => ({ ...s, regions: s.regions.filter((r) => !gone.has(r.id)), items: s.items.filter((i) => !gone.has(i.region_id)) }));
     props.onSelectRegion(null);
   };
 
@@ -209,6 +234,11 @@ export function Inspector(props: InspectorProps) {
                 <span className="pointer-events-none absolute inset-x-1 bottom-0 h-0.5 translate-y-1/2 rounded bg-sky-500" />
               )}
               <GripVertical className="-ml-2 h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/50 active:cursor-grabbing" />
+              {r.config.parent && (
+                <CtTooltip label={`Option con của “${parentLabel(regions, props.assets, r)}”`}>
+                  <CornerDownRight className="h-3 w-3 shrink-0 text-orange-500" />
+                </CtTooltip>
+              )}
               <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <ShapeIcon className="h-3 w-3 shrink-0 text-muted-foreground/70" />
               {renaming === r.id ? (
@@ -403,9 +433,9 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
           value={region.kind}
           onChange={(kind) => set((r) => ({ ...r, kind }))}
           options={[
-            { value: "image", label: "Custom layer — ảnh upload / AI tạo" },
-            { value: "text", label: "Text — khách nhập / chọn chữ" },
-            { value: "photo", label: "Ảnh khách — khách upload ảnh" },
+            { value: "image", label: "Custom layer — ảnh (≥2 ảnh: khách chọn, không sửa)" },
+            { value: "text", label: "Text — option: khách nhập / chọn chữ" },
+            { value: "photo", label: "Ảnh khách — option: khách upload ảnh" },
           ]}
         />
       </CtField>
@@ -442,19 +472,40 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
 
       {region.kind === "text" && (
         <div className="space-y-3 border-t pt-3">
-          <CtField label="Nhãn cho khách">
-            <CtInput value={cfg.text.label} onChange={(e) => setText({ label: e.target.value })} />
-          </CtField>
-          <CtField label="Lựa chọn có sẵn" hint="Mỗi dòng 1 lựa chọn → khách chọn từ dropdown (Choose Quote, Choose State). Để trống = khách tự nhập.">
-            <CtTextarea
-              rows={3}
-              value={cfg.text.choices.join("\n")}
-              placeholder={"New Driver\nBaby on Board"}
-              onChange={(e) => setText({ choices: e.target.value.split("\n").map((l) => l.trimStart()).filter((l, i, all) => l !== "" || i === all.length - 1) })}
-              onBlur={(e) => setText({ choices: e.target.value.split("\n").map((l) => l.trim()).filter(Boolean) })}
+          <CtField label="Khách làm gì với chữ này">
+            <CtSelect<CtTextMode>
+              value={textMode(region)}
+              onChange={(mode) => setText({ mode })}
+              options={[
+                { value: "input", label: "Khách nhập chữ" },
+                { value: "fixed", label: "Chữ cố định (khách không sửa)" },
+                { value: "list", label: "Khách chọn từ danh sách chữ" },
+                { value: "options", label: "Khách chọn option (swatch) — có option con" },
+              ]}
             />
           </CtField>
-          {cfg.text.choices.length === 0 && (
+          {textMode(region) !== "fixed" && (
+            <CtField label="Nhãn cho khách">
+              <CtInput value={cfg.text.label} onChange={(e) => setText({ label: e.target.value })} />
+            </CtField>
+          )}
+          {textMode(region) === "fixed" && (
+            <CtField label="Chữ (cố định)">
+              <CtInput value={cfg.text.defaultText} onChange={(e) => setText({ defaultText: e.target.value })} />
+            </CtField>
+          )}
+          {textMode(region) === "list" && (
+            <CtField label="Danh sách chữ" hint="Mỗi dòng 1 lựa chọn → khách chọn từ dropdown (Choose Quote, Choose State).">
+              <CtTextarea
+                rows={3}
+                value={cfg.text.choices.join("\n")}
+                placeholder={"New Driver\nBaby on Board"}
+                onChange={(e) => setText({ choices: e.target.value.split("\n").map((l) => l.trimStart()).filter((l, i, all) => l !== "" || i === all.length - 1) })}
+                onBlur={(e) => setText({ choices: e.target.value.split("\n").map((l) => l.trim()).filter(Boolean) })}
+              />
+            </CtField>
+          )}
+          {textMode(region) === "input" && (
             <>
               <div className="grid grid-cols-2 gap-2">
                 <CtField label="Chữ mặc định">
@@ -468,6 +519,11 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
                 <CtInput value={cfg.text.placeholder} onChange={(e) => setText({ placeholder: e.target.value })} />
               </CtField>
             </>
+          )}
+          {textMode(region) === "options" && (
+            <p className="rounded-md bg-orange-500/10 px-2 py-1.5 text-[11px] leading-snug text-orange-700 dark:text-orange-300">
+              Khách chọn 1 option bên dưới (swatch / nút / dropdown). Mỗi option có chữ hiện, kiểu chữ riêng và có thể có option con (Text / Custom layer / Upload ảnh) — option con cũng có thể có option con.
+            </p>
           )}
           <CtField label="Font">
             <CtSelect value={cfg.text.fontFamily} onChange={(fontFamily) => setText({ fontFamily })} options={CT_FONTS.map((f) => ({ value: f.family, label: f.label }))} />
@@ -528,6 +584,7 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
       )}
 
       {region.kind === "photo" && <PhotoProps key={region.id} {...props} />}
+      {(region.kind === "text" || region.kind === "photo") && <ZoneOptionsProps {...props} />}
       {region.kind === "image" && <ImageProps {...props} />}
     </div>
   );
@@ -960,99 +1017,334 @@ function RangeField({ label, min, max, value, onChange }: { label: string; min: 
 }
 
 // ---------------------------------------------------------------------------
+// Customer zones: sub-options ("Thêm option con", like a main version's)
+// ---------------------------------------------------------------------------
+
+function ZoneOptionsProps({ design, region, selection, onZoneOption, onAddChild }: InspectorProps & { region: CtRegion }) {
+  const o = region.config.options;
+  const sel = selection[region.id];
+  const activeId = (sel?.kind === "text" || sel?.kind === "photo") && sel.optionId && o.list.some((x) => x.id === sel.optionId) ? sel.optionId : null;
+  const isText = region.kind === "text";
+  /** Text mode "options": the options ARE the customer's field (each draws its own text). */
+  const primary = isText && textMode(region) === "options";
+  const set = (patch: Partial<CtZoneOptions>) =>
+    design.commit((s) =>
+      updateRegion(s, region.id, (r) => {
+        const n = normalizeRegion(r);
+        return { ...n, config: { ...n.config, options: { ...n.config.options, ...patch } } };
+      }),
+    );
+  const setOption = (id: string, patch: Partial<CtZoneOption>) => set({ list: o.list.map((x) => (x.id === id ? { ...x, ...patch } : x)) });
+  const children = design.state.regions.filter((r) => r.config.parent?.regionId === region.id);
+  const childCount = (optionId: string) => children.filter((c) => c.config.parent?.optionId === optionId).length;
+
+  /** A new option starts as the look on screen (its lettering / its outline) and is shown, so edits go into it. */
+  const add = () => {
+    const id = newId();
+    const look = normalizeRegion(region);
+    const text: CtZoneTextStyle = {};
+    for (const k of ZONE_TEXT_STYLE_KEYS) (text as Record<string, unknown>)[k] = look.config.text[k];
+    const name = `Option ${o.list.length + 2}`;
+    const option: CtZoneOption = { id, name, ...(isText ? { text } : { shape: look.shape }), ...(primary ? { value: name } : {}) };
+    set({ list: [...o.list, option] });
+    onZoneOption(region.id, id);
+  };
+  const remove = (id: string) => {
+    if (activeId === id) onZoneOption(region.id, null);
+    // Its child zones go with it.
+    const gone = new Set(children.filter((c) => c.config.parent?.optionId === id).flatMap((c) => [...zoneSubtree(design.state.regions, c.id)]));
+    design.commit((s) => {
+      const next = updateRegion(s, region.id, (r) => {
+        const n = normalizeRegion(r);
+        return { ...n, config: { ...n.config, options: { ...n.config.options, list: n.config.options.list.filter((x) => x.id !== id) } } };
+      });
+      return { ...next, regions: next.regions.filter((r) => !gone.has(r.id)), items: next.items.filter((i) => !gone.has(i.region_id)) };
+    });
+  };
+  const childMenu = (optionId: string) => (kind: CtRegionKind) => {
+    onZoneOption(region.id, optionId === CT_BASE_OPTION ? null : optionId);
+    onAddChild({ regionId: region.id, optionId }, kind);
+  };
+
+  return (
+    <div className="space-y-2 border-t pt-3">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          {primary ? "Option cho khách" : "Option con cho khách"} ({o.list.length || primary ? o.list.length + 1 : 0})
+        </span>
+        <CtButton size="sm" variant="subtle" onClick={add}>
+          <Plus className="h-3.5 w-3.5" /> {primary ? "Thêm option" : "Thêm option con"}
+        </CtButton>
+      </div>
+      {o.list.length === 0 && !primary ? (
+        <p className="text-[11px] leading-snug text-muted-foreground">
+          {isText
+            ? "Như option của version: khách chọn thêm 1 kiểu cho chữ này (vd. Gold / Silver / Black) — mỗi option con có font, màu, viền, uốn cong riêng."
+            : "Như option của version: khách chọn thêm khung cho ảnh (vd. Tròn / Vuông / Trái tim) — mỗi option con có hình khung riêng (vẽ lại trên canvas)."}
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-[1fr_120px] gap-2">
+            {!primary && (
+              <CtField label="Nhãn cho khách">
+                <CtInput value={o.label} placeholder={isText ? "Choose color" : "Choose shape"} onChange={(e) => set({ label: e.target.value })} />
+              </CtField>
+            )}
+            <div className={primary ? "col-span-2" : undefined}>
+              <CtField label="Hiển thị">
+                <CtSelect<CtOptionDisplay> value={o.display === "image" ? "button" : o.display} onChange={(display) => set({ display })} options={DISPLAY_OPTIONS.filter((d) => d.value !== "image")} />
+              </CtField>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <ZoneOptionRow
+              active={activeId === null}
+              name={o.baseName}
+              placeholder="Mặc định"
+              swatch={o.display === "swatch" ? (o.baseSwatch ?? "#cccccc") : undefined}
+              value={primary ? (o.baseValue ?? o.baseName) : undefined}
+              note="gốc"
+              kids={childCount(CT_BASE_OPTION)}
+              onShow={() => onZoneOption(region.id, null)}
+              onName={(baseName) => set(primary && (o.baseValue === undefined || o.baseValue === o.baseName) ? { baseName, baseValue: baseName } : { baseName })}
+              onSwatch={(baseSwatch) => set({ baseSwatch })}
+              onValue={(baseValue) => set({ baseValue })}
+              onAddChild={childMenu(CT_BASE_OPTION)}
+            />
+            {o.list.map((x) => (
+              <ZoneOptionRow
+                key={x.id}
+                active={activeId === x.id}
+                name={x.name}
+                placeholder="Tên option"
+                swatch={o.display === "swatch" ? (x.swatch ?? "#cccccc") : undefined}
+                value={primary ? (x.value ?? x.name) : undefined}
+                kids={childCount(x.id)}
+                onShow={() => onZoneOption(region.id, x.id)}
+                onName={(name) => setOption(x.id, primary && (x.value === undefined || x.value === x.name) ? { name, value: name } : { name })}
+                onSwatch={(swatch) => setOption(x.id, { swatch })}
+                onValue={(value) => setOption(x.id, { value })}
+                onAddChild={childMenu(x.id)}
+                onRemove={() => remove(x.id)}
+              />
+            ))}
+          </div>
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            Bấm 👁 để xem / sửa option đó: {isText ? "font, cỡ, màu, viền, uốn cong" : "hình / vị trí khung trên canvas"} lúc đó ghi vào option. “+ con” thêm Text / Custom layer / Upload ảnh chỉ hiện khi khách chọn option đó.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+const CHILD_KINDS: Array<{ kind: CtRegionKind; label: string }> = [
+  { kind: "text", label: "Text" },
+  { kind: "image", label: "Custom layer" },
+  { kind: "photo", label: "Upload ảnh" },
+];
+
+function ZoneOptionRow(props: {
+  active: boolean;
+  name: string;
+  placeholder: string;
+  swatch?: string;
+  /** Text mode "options": what the option draws. */
+  value?: string;
+  note?: string;
+  /** Child zones it has. */
+  kids: number;
+  onShow: () => void;
+  onName: (v: string) => void;
+  onSwatch: (v: string) => void;
+  onValue: (v: string) => void;
+  onAddChild: (kind: CtRegionKind) => void;
+  onRemove?: () => void;
+}) {
+  const [menu, setMenu] = useState(false);
+  return (
+    <div className={cx("rounded-md border px-1.5 py-1", props.active && "border-orange-500 ring-1 ring-orange-500")}>
+      <div className="flex items-center gap-1.5">
+        <CtTooltip label={props.active ? "Đang xem / sửa" : "Xem / sửa option này"}>
+          <button className={cx("rounded p-1 hover:bg-accent", props.active ? "text-orange-500" : "text-muted-foreground")} onClick={props.onShow}>
+            {props.active ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+          </button>
+        </CtTooltip>
+        {props.swatch !== undefined && (
+          <input type="color" className="h-6 w-6 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0" value={props.swatch} onChange={(e) => props.onSwatch(e.target.value)} aria-label="Màu swatch" />
+        )}
+        <CtInput className="h-7 flex-1 text-xs" value={props.name} placeholder={props.placeholder} onChange={(e) => props.onName(e.target.value)} onFocus={props.onShow} />
+        {props.note && <span className="text-[10px] uppercase text-muted-foreground">{props.note}</span>}
+        <CtTooltip label="Thêm option con (Text / Custom layer / Upload ảnh) — chỉ hiện khi khách chọn option này">
+          <button className={cx("rounded px-1 py-0.5 text-[10px] hover:bg-accent", props.kids ? "text-orange-600" : "text-muted-foreground")} onClick={() => setMenu((v) => !v)}>
+            + con{props.kids ? ` (${props.kids})` : ""}
+          </button>
+        </CtTooltip>
+        {props.onRemove && (
+          <button className="rounded p-1 text-destructive hover:bg-accent" onClick={props.onRemove} aria-label="Xoá option">
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      {props.value !== undefined && (
+        <div className="mt-1 flex items-center gap-1.5 pl-7">
+          <span className="shrink-0 text-[10px] text-muted-foreground">Chữ hiện</span>
+          <CtInput className="h-6 flex-1 text-xs" value={props.value} placeholder="(không vẽ chữ)" onChange={(e) => props.onValue(e.target.value)} onFocus={props.onShow} />
+        </div>
+      )}
+      {menu && (
+        <div className="mt-1 flex gap-1 pl-7">
+          {CHILD_KINDS.map((k) => (
+            <CtButton
+              key={k.kind}
+              size="sm"
+              variant="outline"
+              className="h-6 px-2 text-[11px]"
+              onClick={() => {
+                setMenu(false);
+                props.onAddChild(k.kind);
+              }}
+            >
+              <Plus className="h-3 w-3" /> {k.label}
+            </CtButton>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Object zone: groups of options
 // ---------------------------------------------------------------------------
 
 function ImageProps(props: InspectorProps & { region: CtRegion }) {
-  const { design, region, assets } = props;
+  const { design, region, assets, selection } = props;
   const cfg = region.config.image;
   const set = (patch: Partial<typeof cfg>) =>
     design.commit((s) => updateRegion(s, region.id, (r) => { const n = normalizeRegion(r); return { ...n, config: { ...n.config, image: { ...n.config.image, ...patch } } }; }));
   const items = design.state.items.filter((i) => i.region_id === region.id).sort((a, c) => a.sort_order - c.sort_order);
   const byId = new Map(assets.map((a) => [a.id, a]));
+  const hidden = new Set(cfg.hiddenAssetIds);
+  const offered = items.reduce((n, it) => n + [it.asset_id, ...variantsOf(assets, it.asset_id).map((v) => v.id)].filter((id) => !hidden.has(id)).length, 0);
+  const shown = selection[region.id]?.kind === "image" ? (selection[region.id] as { assetId: string | null }).assetId : null;
+  const kids = design.state.regions.filter((r) => r.config.parent?.regionId === region.id && r.config.parent.optionId === shown).length;
+  const [menu, setMenu] = useState(false);
 
   return (
     <div className="space-y-3 border-t pt-3">
-      <div className="grid grid-cols-[1fr_120px] gap-2">
-        <CtField label="Nhãn option">
-          <CtInput value={cfg.label} placeholder="Choose Dumpling" onChange={(e) => set({ label: e.target.value })} />
-        </CtField>
-        <CtField label="Hiển thị">
-          <CtSelect<CtOptionDisplay> value={cfg.display} onChange={(display) => set({ display })} options={DISPLAY_OPTIONS} />
-        </CtField>
-      </div>
-      {items.length > 1 && (
-        <div className="grid grid-cols-[1fr_120px] gap-2">
-          <CtField label="Nhãn nhóm">
-            <CtInput value={cfg.groupLabel} placeholder="Choose Style" onChange={(e) => set({ groupLabel: e.target.value })} />
-          </CtField>
-          <CtField label="Hiển thị nhóm">
-            <CtSelect<CtOptionDisplay> value={cfg.groupDisplay} onChange={(groupDisplay) => set({ groupDisplay })} options={DISPLAY_OPTIONS} />
-          </CtField>
+      <p className="rounded-md bg-sky-500/10 px-2 py-1.5 text-[11px] leading-snug text-sky-700 dark:text-sky-300">
+        {offered >= 2
+          ? `Khách chọn 1 trong ${offered} ảnh (chỉ chọn, không sửa) — vd. bộ kiểu tóc. Mặc định = ảnh đang chọn (viền cam).`
+          : "1 ảnh = layer cố định (khách không chọn). Thêm ảnh (kéo cả bộ từ tab Thư viện, hoặc bật ảnh ẩn) để khách chọn."}
+      </p>
+      <CtButton size="sm" className="w-full" onClick={() => props.onPickLayerImage(region.id)}>
+        <ImageIcon className="h-3.5 w-3.5" /> {items.length ? "Đổi ảnh…" : "Chọn ảnh…"} (thư viện ảnh tổ hợp / upload)
+      </CtButton>
+
+      {offered >= 2 && (
+        <>
+          <div className="grid grid-cols-[1fr_120px] gap-2">
+            <CtField label="Nhãn cho khách">
+              <CtInput value={cfg.label} placeholder="Choose hairstyle" onChange={(e) => set({ label: e.target.value })} />
+            </CtField>
+            <CtField label="Hiển thị">
+              <CtSelect<CtOptionDisplay> value={cfg.display} onChange={(display) => set({ display })} options={DISPLAY_OPTIONS} />
+            </CtField>
+          </div>
+          {items.length > 1 && items.some((it) => variantsOf(assets, it.asset_id).some((v) => !hidden.has(v.id))) && (
+            <div className="grid grid-cols-[1fr_120px] gap-2">
+              <CtField label="Nhãn nhóm">
+                <CtInput value={cfg.groupLabel} placeholder="Choose style" onChange={(e) => set({ groupLabel: e.target.value })} />
+              </CtField>
+              <CtField label="Hiển thị nhóm">
+                <CtSelect<CtOptionDisplay> value={cfg.groupDisplay} onChange={(groupDisplay) => set({ groupDisplay })} options={DISPLAY_OPTIONS} />
+              </CtField>
+            </div>
+          )}
+          <CtCheckbox checked={cfg.allowNone} onChange={(v) => set({ allowNone: v })} label='Cho phép "Không chọn"' hint="Thêm ô NO — khách có thể bỏ trống layer này." />
+        </>
+      )}
+
+      {items.length > 0 && (
+        <div>
+          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Ảnh trong layer ({items.length})</div>
+          <div className="space-y-2">
+            {items.map((it) => (
+              <GroupCard key={it.id} {...props} item={it} sub={byId.get(it.asset_id)} />
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">Bấm 1 ảnh = ảnh mặc định. Ảnh mờ = ẩn với khách (con mắt để bật). Kéo clipart / cả bộ từ tab Thư viện lên layer để thêm.</p>
         </div>
       )}
-      <CtCheckbox checked={cfg.allowNone} onChange={(v) => set({ allowNone: v })} label='Cho phép "Không chọn"' hint="Thêm ô NO — khách có thể bỏ trống vùng này." />
 
-      <div>
-        <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Nhóm option ({items.length})</span>
+      {shown && (
+        <div className="rounded-md border p-2">
+          <div className="flex items-center gap-1.5 text-[11px]">
+            <span className="flex-1 text-muted-foreground">
+              Option con của ảnh “{byId.get(shown)?.name || "đang chọn"}”{kids ? ` (${kids})` : ""} — hiện khi khách chọn ảnh này
+            </span>
+            <button className="rounded px-1 py-0.5 text-[11px] text-orange-600 hover:bg-accent" onClick={() => setMenu((v) => !v)}>
+              + con
+            </button>
+          </div>
+          {menu && (
+            <div className="mt-1 flex gap-1">
+              {CHILD_KINDS.map((k) => (
+                <CtButton
+                  key={k.kind}
+                  size="sm"
+                  variant="outline"
+                  className="h-6 px-2 text-[11px]"
+                  onClick={() => {
+                    setMenu(false);
+                    props.onAddChild({ regionId: region.id, optionId: shown }, k.kind);
+                  }}
+                >
+                  <Plus className="h-3 w-3" /> {k.label}
+                </CtButton>
+              ))}
+            </div>
+          )}
         </div>
-        <p className="mb-2 text-[11px] leading-snug text-muted-foreground">
-          Mỗi ảnh là 1 option. Một nhóm dùng chung vị trí/scale. Có 2+ nhóm thì khách chọn nhóm trước (vd. Glitter / No Glitter), đổi nhóm vẫn giữ đúng vị trí option.
-        </p>
-        <div className="space-y-2">
-          {items.map((it) => (
-            <GroupCard key={it.id} {...props} item={it} sub={byId.get(it.asset_id)} />
-          ))}
-        </div>
-        <p className="mt-1.5 text-[11px] text-muted-foreground">
-          Thêm nhóm: kéo clipart từ tab Thư viện thả lên layer này. Ảnh mờ = đang ẩn với khách — bấm con mắt để bật.
-        </p>
-      </div>
+      )}
     </div>
   );
 }
 
 function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionItem; sub: CtAsset | undefined }) {
   const { design, region, item, sub, assets, activeItemId, selection } = props;
-  const cfg = region.config.image;
   const active = item.id === activeItemId;
   if (!sub) return null;
   const options = [sub, ...variantsOf(assets, sub.id)];
-  const hidden = new Set(cfg.hiddenAssetIds);
   const cur = selection[region.id];
   const shown = cur?.kind === "image" ? cur.assetId : null;
   const t = item.transform;
 
-  const setCfg = (patch: Partial<typeof cfg>) =>
-    design.commit((s) => updateRegion(s, region.id, (r) => { const n = normalizeRegion(r); return { ...n, config: { ...n.config, image: { ...n.config.image, ...patch } } }; }));
   const setT = (patch: Partial<CtTransform>) => design.commit((s) => updateItem(s, item.id, (i) => ({ ...i, transform: { ...i.transform, ...patch } })));
+  const cfg = region.config.image;
+  const hidden = new Set(cfg.hiddenAssetIds);
   const toggleHidden = (id: string) =>
-    setCfg({ hiddenAssetIds: hidden.has(id) ? cfg.hiddenAssetIds.filter((x) => x !== id) : [...cfg.hiddenAssetIds, id] });
+    design.commit((s) =>
+      updateRegion(s, region.id, (r) => {
+        const n = normalizeRegion(r);
+        const list = n.config.image.hiddenAssetIds;
+        return { ...n, config: { ...n.config, image: { ...n.config.image, hiddenAssetIds: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] } } };
+      }),
+    );
 
   return (
     <div className={cx("rounded-md border p-2", active && "border-rose-500 ring-1 ring-rose-500")}>
       <div className="flex items-center gap-1.5">
-        <CtInput
-          className="h-7 flex-1 text-xs font-medium"
-          value={cfg.groupNames[item.id] ?? sub.name}
-          placeholder="Tên nhóm (vd. Glitter)"
-          onChange={(e) => setCfg({ groupNames: { ...cfg.groupNames, [item.id]: e.target.value } })}
-        />
-        <CtTooltip label={item.is_default ? "Nhóm mặc định" : "Đặt làm nhóm mặc định"}>
-          <button
-            className={cx("rounded p-1 hover:bg-accent", item.is_default ? "text-amber-500" : "text-muted-foreground")}
-            onClick={() => design.commit((s) => ({ ...s, items: s.items.map((i) => (i.region_id === region.id ? { ...i, is_default: i.id === item.id } : i)) }))}
-          >
-            <Crown className="h-3.5 w-3.5" />
-          </button>
-        </CtTooltip>
+        <span className="min-w-0 flex-1 truncate text-xs font-medium" title={sub.name}>
+          {sub.name || "(không tên)"}
+        </span>
         <CtTooltip label="Chỉnh vị trí / scale / xoay trên canvas" shortcut={["Enter"]}>
           <button className={cx("rounded p-1 hover:bg-accent", active && "bg-rose-500/15 text-rose-500")} onClick={() => props.onActiveItem(active ? null : item.id)}>
             <Move className="h-3.5 w-3.5" />
           </button>
         </CtTooltip>
-        <CtTooltip label="Gỡ nhóm khỏi layer (clipart vẫn trong thư viện)">
+        <CtTooltip label="Gỡ ảnh khỏi layer (clipart vẫn trong thư viện)">
           <button className="rounded p-1 text-destructive hover:bg-accent" onClick={() => design.commit((s) => ({ ...s, items: s.items.filter((i) => i.id !== item.id) }))}>
             <Trash2 className="h-3.5 w-3.5" />
           </button>

@@ -647,20 +647,49 @@ export interface CtPackBox {
 
 export type CtPackBlend = "normal" | "multiply" | "screen" | "overlay" | "soft-light" | "darken" | "lighten";
 
+/** Part of a layer's content that shows, as fractions of the uncropped content (0..1). */
+export interface CtPackCrop {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * A lasso cut on a layer: the outline as (u, v) pairs, fractions of the layer's full (uncropped, unflipped) content,
+ * so it stays on the content when the layer moves, turns, flips or is cropped. `keep` = only the inside stays;
+ * otherwise the inside is cut away.
+ */
+export interface CtPackCut {
+  points: number[];
+  keep: boolean;
+}
+
 interface CtPackLayerBase {
   id: string;
   name: string;
+  /** What shows on the scene — the cropped part when `crop` is set. */
   box: CtPackBox;
   opacity: number;
   hidden: boolean;
+  /** Cắt (image and product frames): the content is box / crop big, only `crop` of it shows; absent = all. */
+  crop?: CtPackCrop | null;
+  /** Mirrored along the layer's own axes. */
+  flipX?: boolean;
+  flipY?: boolean;
+  /** Cắt (lasso), in order. */
+  cuts?: CtPackCut[];
 }
 
 /** Image frame: a photo (background, fingers holding the ornament, stickers). */
 export interface CtPackImageLayer extends CtPackLayerBase {
   type: "image";
   url: string;
-  fit: "cover" | "contain" | "stretch";
+  /** "original" = the frame is the photo's real pixel size (drawn like cover); "stretch" only for the product scene. */
+  fit: "cover" | "contain" | "original" | "stretch";
   blend: CtPackBlend;
+  /** Gaussian blur of the photo (CSS blur), scene px; 0 = sharp. */
+  blur: number;
 }
 
 /** Linear gradient across a fill frame (lib/gradients.ts presets). */
@@ -701,6 +730,11 @@ export interface CtPackFrameLayer extends CtPackLayerBase {
   mainIndex: number;
   /** Saved artwork (composite) whose AI material version is drawn instead of the assembled one; null = assembled. */
   artworkId: string | null;
+  /**
+   * The version's material picture this frame shows (a vật liệu version, its đa sắc, or the vật liệu of a đa sắc
+   * of the version); null = the version's default material. Product-specific: a template drops it.
+   */
+  pictureId: string | null;
   shadow: CtPackShadow;
   /** Hole + cord: "auto" = as the material's rules say. */
   hanger: "auto" | "on" | "off";
@@ -722,7 +756,25 @@ export interface CtPackTextLayer extends CtPackLayerBase {
   shadow: boolean;
 }
 
-export type CtPackLayer = CtPackFillLayer | CtPackImageLayer | CtPackFrameLayer | CtPackTextLayer;
+/** One brush stroke, scene px: the path (x0, y0, x1, y1…) and the brush diameter; `erase` takes the blur off again. */
+export interface CtPackBrushStroke {
+  points: number[];
+  size: number;
+  erase: boolean;
+}
+
+/**
+ * Cọ làm mờ: wherever it is painted, everything under it (all layers below, merged) shows blurred. Covers the
+ * whole scene; its box is not used.
+ */
+export interface CtPackBlurLayer extends CtPackLayerBase {
+  type: "blur";
+  /** Blur radius, scene px. */
+  strength: number;
+  strokes: CtPackBrushStroke[];
+}
+
+export type CtPackLayer = CtPackFillLayer | CtPackImageLayer | CtPackFrameLayer | CtPackTextLayer | CtPackBlurLayer;
 export type CtPackLayerType = CtPackLayer["type"];
 
 /** One tổ hợp (scene). */
@@ -1524,7 +1576,8 @@ export interface CtCategoryHistoryEntry {
 // ---------------------------------------------------------------------------
 
 /** "create" → CtPromptSuggestion; "revise" → CtCategoryRevision (an empty note = review only). */
-export type CtAgentTaskKind = "create" | "revise";
+/** pack_image = "Tạo ảnh với AI" of the thư viện ảnh tổ hợp (input.pack, result CtPackImageResult). */
+export type CtAgentTaskKind = "create" | "revise" | "pack_image";
 
 /** waiting = the agent asked the editor something (ask_user) and ended its turn until they answer. */
 export type CtAgentTaskStatus = "pending" | "running" | "waiting" | "done" | "failed" | "cancelled";
@@ -1579,6 +1632,23 @@ export interface CtAgentTaskInput {
   images: Array<{ url: string; label: string }>;
   /** Reference photos the editor added (uploaded first). */
   refUrls: string[];
+  /** pack_image: what to make (the category fields are then empty). */
+  pack?: CtPackImageTaskInput;
+}
+
+/** A pack_image task's request. */
+export interface CtPackImageTaskInput {
+  description: string;
+  aspect: CtPackImageAspect;
+  /** A library photo to keep editing ("Chỉnh tiếp"), else null. */
+  baseId: string | null;
+  baseUrl: string;
+}
+
+/** What @flexiprint hands back for a pack_image task: the photos it kept (ct_pack_images ids). */
+export interface CtPackImageResult {
+  summary: string;
+  imageIds: string[];
 }
 
 export interface CtAgentTask {
@@ -1591,7 +1661,7 @@ export interface CtAgentTask {
   progress: CtAgentTaskProgress[];
   runs: CtAgentTaskRun[];
   questions: CtAgentQuestion[];
-  result: CtPromptSuggestion | CtCategoryRevision | null;
+  result: CtPromptSuggestion | CtCategoryRevision | CtPackImageResult | null;
   error: string;
   agent_job_id: string;
   agent_session_id: string;
@@ -1607,4 +1677,44 @@ export interface CtAgentStatus {
   /** The agent's card (name, title) when online. */
   name: string;
   error: string;
+}
+
+/** Aspect ratios "Tạo ảnh với AI" offers (thư viện ảnh tổ hợp). */
+export type CtPackImageAspect = "1:1" | "4:5" | "3:4" | "2:3" | "4:3" | "3:2" | "16:9" | "9:16";
+
+/**
+ * A photo of the thư viện ảnh tổ hợp (ct_pack_images, migration 015): uploaded, or made by AI from the editor's
+ * description + reference photos — FlexiPrint writes the prompt, the image model draws it. An AI row is also the
+ * history entry of that generation (running → done | failed).
+ */
+export interface CtPackImage {
+  id: string;
+  user_id: string | null;
+  name: string;
+  source: "upload" | "ai";
+  status: "running" | "done" | "failed";
+  url: string | null;
+  storage_path: string | null;
+  mime: string | null;
+  width: number | null;
+  height: number | null;
+  /** AI: what the editor asked for. */
+  description: string;
+  /** AI: the prompt FlexiPrint wrote and the model drew. */
+  prompt: string;
+  /** AI: reference photo urls. */
+  refs: string[];
+  aspect: string;
+  model: string;
+  error: string;
+  /** The @flexiprint task that made it (migration 016). */
+  task_id: string | null;
+  /** The photo it was edited from. */
+  parent_id: string | null;
+  /** Background cut out (a layer). */
+  transparent: boolean;
+  /** In the library — an agent's draft is not until it submits it. */
+  listed: boolean;
+  created_at: string;
+  updated_at: string;
 }

@@ -59,6 +59,7 @@ export const CT_TABLES = {
   categoryHistory: "ct_category_history",
   agentTasks: "ct_agent_tasks",
   mockupPacks: "ct_mockup_packs",
+  packImages: "ct_pack_images",
 } as const;
 
 /** Fonts offered for text regions (Google Fonts families). */

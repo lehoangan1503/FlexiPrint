@@ -53,6 +53,8 @@ fractions of the artwork / object (never mm or px for sizes), one anchor per pos
 - Read before you write: get_category, list_cliparts, view_image on the results, get_history (what was tried).
 - Reuse the library: style packs and materials are shared (list_style_packs / list_materials, "usedBy");
   details wording from other categories (list_product_details). Only the spec is per category.
+- Photos for mockups (backgrounds, scenes, hands, props): look in the tổ hợp photo library first
+  (list_pack_images, then view_image); only search the web or generate one when nothing fits.
 - A shared preset edited changes every category using it — say so in your result.
 - Before you submit, check your draft with assemble_prompts (pass your draft) and fix conflicts
   (flexiprint://guide/review-rules).

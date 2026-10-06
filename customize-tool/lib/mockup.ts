@@ -24,7 +24,11 @@ import type {
   CtMockupPack,
   CtMockupPackBody,
   CtPackBlend,
+  CtPackBlurLayer,
   CtPackBox,
+  CtPackBrushStroke,
+  CtPackCrop,
+  CtPackCut,
   CtPackFillLayer,
   CtPackFrameLayer,
   CtPackGradient,
@@ -117,6 +121,7 @@ interface RawLayer {
   blend?: string;
   mainIndex?: number;
   artworkId?: string | null;
+  pictureId?: string | null;
   shadow?: Partial<CtPackShadow> | boolean;
   hanger?: string;
   cordLength?: number;
@@ -128,6 +133,43 @@ interface RawLayer {
   color?: string;
   align?: string;
   gradient?: Partial<CtPackGradient> | null;
+  blur?: number;
+  crop?: Partial<CtPackCrop> | null;
+  flipX?: boolean;
+  flipY?: boolean;
+  strength?: number;
+  strokes?: Array<Partial<CtPackBrushStroke>>;
+  cuts?: Array<Partial<CtPackCut>>;
+}
+
+function cuts(raw: RawLayer["cuts"]): CtPackCut[] {
+  return (Array.isArray(raw) ? raw : [])
+    .map((c) => ({
+      points: (Array.isArray(c?.points) ? c.points : []).filter((n): n is number => typeof n === "number" && Number.isFinite(n)).slice(0, 4000),
+      keep: c?.keep === true,
+    }))
+    .filter((c) => c.points.length >= 6)
+    .slice(0, 100);
+}
+
+/** A crop that shows everything is no crop. */
+function crop(raw: Partial<CtPackCrop> | null | undefined): CtPackCrop | null {
+  if (!raw || typeof raw !== "object") return null;
+  const x = num(raw.x, 0, 0, 0.99);
+  const y = num(raw.y, 0, 0, 0.99);
+  const c = { x, y, w: num(raw.w, 1 - x, 0.01, 1 - x), h: num(raw.h, 1 - y, 0.01, 1 - y) };
+  return c.x < 0.0005 && c.y < 0.0005 && c.w > 0.9995 && c.h > 0.9995 ? null : c;
+}
+
+function strokes(raw: RawLayer["strokes"]): CtPackBrushStroke[] {
+  return (Array.isArray(raw) ? raw : [])
+    .map((st) => ({
+      points: (Array.isArray(st?.points) ? st.points : []).filter((n): n is number => typeof n === "number" && Number.isFinite(n)).slice(0, 4000),
+      size: num(st?.size, 80, 1, 2000),
+      erase: st?.erase === true,
+    }))
+    .filter((st) => st.points.length >= 2)
+    .slice(0, 500);
 }
 
 function gradient(raw: Partial<CtPackGradient> | null | undefined): CtPackGradient | null {
@@ -139,8 +181,20 @@ function gradient(raw: Partial<CtPackGradient> | null | undefined): CtPackGradie
 
 /** Old scenes (thước đo, vòng chi tiết) lose those layers; everything else carries over. */
 function normalizeLayer(raw: RawLayer, w: number, h: number): CtPackLayer | null {
-  const base = { id: str(raw.id) || newId(), name: str(raw.name), box: box(raw.box, w, h), opacity: num(raw.opacity, 1, 0, 1), hidden: raw.hidden === true };
+  const base = {
+    id: str(raw.id) || newId(),
+    name: str(raw.name),
+    box: box(raw.box, w, h),
+    opacity: num(raw.opacity, 1, 0, 1),
+    hidden: raw.hidden === true,
+    crop: crop(raw.crop),
+    flipX: raw.flipX === true,
+    flipY: raw.flipY === true,
+    cuts: cuts(raw.cuts),
+  };
   switch (raw.type) {
+    case "blur":
+      return { ...base, type: "blur", box: { x: 0, y: 0, w, h, rotation: 0 }, crop: null, cuts: [], strength: num(raw.strength, 20, 1, 200), strokes: strokes(raw.strokes) };
     case "fill":
       return { ...base, type: "fill", color: str(raw.color, "#ffffff"), gradient: gradient(raw.gradient) };
     case "image":
@@ -148,8 +202,9 @@ function normalizeLayer(raw: RawLayer, w: number, h: number): CtPackLayer | null
         ...base,
         type: "image",
         url: str(raw.url),
-        fit: raw.fit === "contain" || raw.fit === "stretch" ? raw.fit : "cover",
+        fit: raw.fit === "contain" || raw.fit === "original" || raw.fit === "stretch" ? raw.fit : "cover",
         blend: BLENDS.includes(raw.blend as CtPackBlend) ? (raw.blend as CtPackBlend) : "normal",
+        blur: num(raw.blur, 0, 0, 200),
       };
     case "frame":
       return {
@@ -157,6 +212,7 @@ function normalizeLayer(raw: RawLayer, w: number, h: number): CtPackLayer | null
         type: "frame",
         mainIndex: Math.round(num(raw.mainIndex, 0, 0, 999)),
         artworkId: typeof raw.artworkId === "string" && raw.artworkId ? raw.artworkId : null,
+        pictureId: typeof raw.pictureId === "string" && raw.pictureId ? raw.pictureId : null,
         shadow: shadow(typeof raw.shadow === "object" ? raw.shadow : undefined),
         hanger: raw.hanger === "on" || raw.hanger === "off" ? raw.hanger : "auto",
         cordLength: num(raw.cordLength, h * 0.4, 0, h * 4),
@@ -217,13 +273,14 @@ export const LAYER_LABEL: Record<CtPackLayerType, string> = {
   image: "Image frame",
   frame: "Sản phẩm",
   text: "Chữ",
+  blur: "Cọ làm mờ",
 };
 
 /**
  * A new layer on a w×h canvas: fills and image frames cover the whole canvas
  * (the edit frame), text sits in the middle.
  */
-export function newLayer(type: Exclude<CtPackLayerType, "frame">, w: number, h: number, extra: { url?: string } = {}): CtPackLayer {
+export function newLayer(type: Exclude<CtPackLayerType, "frame" | "blur">, w: number, h: number, extra: { url?: string } = {}): CtPackLayer {
   const full: CtPackBox = { x: 0, y: 0, w, h, rotation: 0 };
   const base = { id: newId(), name: LAYER_LABEL[type], opacity: 1, hidden: false };
   const side = Math.min(w, h);
@@ -231,7 +288,7 @@ export function newLayer(type: Exclude<CtPackLayerType, "frame">, w: number, h: 
     case "fill":
       return { ...base, type, box: full, color: "#ffffff", gradient: null };
     case "image":
-      return { ...base, type, box: full, url: extra.url ?? "", fit: "cover", blend: "normal" };
+      return { ...base, type, box: full, url: extra.url ?? "", fit: "cover", blend: "normal", blur: 0 };
     case "text": {
       const bw = Math.round(w * 0.6);
       const bh = Math.round(h * 0.1);
@@ -251,6 +308,11 @@ export function newLayer(type: Exclude<CtPackLayerType, "frame">, w: number, h: 
   }
 }
 
+/** A blur brush layer over the whole w×h scene, nothing painted yet. */
+export function newBlurLayer(w: number, h: number, strength: number): CtPackBlurLayer {
+  return { id: newId(), name: LAYER_LABEL.blur, type: "blur", box: { x: 0, y: 0, w, h, rotation: 0 }, opacity: 1, hidden: false, strength, strokes: [] };
+}
+
 export function newFrame(slide: Pick<CtPackSlide, "width" | "height">, mainIndex: number, at: { x: number; y: number } | null, aspect: number): CtPackFrameLayer {
   const side = Math.min(slide.width, slide.height) * 0.5;
   const w = aspect >= 1 ? side : side * aspect;
@@ -266,6 +328,7 @@ export function newFrame(slide: Pick<CtPackSlide, "width" | "height">, mainIndex
     hidden: false,
     mainIndex,
     artworkId: null,
+    pictureId: null,
     shadow: shadow(undefined),
     hanger: "auto",
     cordLength: Math.round(slide.height * 0.3),
@@ -290,6 +353,12 @@ export function resizeSlide(slide: CtPackSlide, width: number, height: number): 
   const k = Math.min(kx, ky);
   const layers = slide.layers.map((l): CtPackLayer => {
     const b = l.box;
+    if (l.type === "blur")
+      return {
+        ...l,
+        box: { x: 0, y: 0, w, h, rotation: 0 },
+        strokes: l.strokes.map((st) => ({ ...st, size: st.size * k, points: st.points.map((v, i) => v * (i % 2 ? ky : kx)) })),
+      };
     if (l.type === "fill" || l.type === "image") return { ...l, box: { ...b, x: b.x * kx, y: b.y * ky, w: b.w * kx, h: b.h * ky } };
     const cx = (b.x + b.w / 2) * kx;
     const cy = (b.y + b.h / 2) * ky;
@@ -319,8 +388,61 @@ export function sceneIsOpaque(slide: CtPackSlide): boolean {
       l.box.y <= 0 &&
       l.box.x + l.box.w >= slide.width &&
       l.box.y + l.box.h >= slide.height &&
-      (l.type === "fill" || (l.type === "image" && l.fit !== "contain" && l.blend === "normal")),
+      (l.type === "fill" || (l.type === "image" && l.fit !== "contain" && l.blend === "normal" && !l.blur)),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Cắt (crop)
+// ---------------------------------------------------------------------------
+
+const NO_CROP: CtPackCrop = { x: 0, y: 0, w: 1, h: 1 };
+
+/** Rotate (x, y) by `deg`. */
+function turn(x: number, y: number, deg: number): { x: number; y: number } {
+  const a = (deg * Math.PI) / 180;
+  return { x: x * Math.cos(a) - y * Math.sin(a), y: x * Math.sin(a) + y * Math.cos(a) };
+}
+
+/** The uncropped content of a layer on the scene (its box when not cropped). */
+export function cropFull(l: Pick<CtPackLayer, "box" | "crop">): CtPackBox {
+  const b = l.box;
+  const c = l.crop ?? NO_CROP;
+  const fw = b.w / c.w;
+  const fh = b.h / c.h;
+  // Full centre relative to the shown centre, in the layer's axes.
+  const d = turn(fw / 2 - (c.x * fw + b.w / 2), fh / 2 - (c.y * fh + b.h / 2), b.rotation);
+  const cx = b.x + b.w / 2 + d.x;
+  const cy = b.y + b.h / 2 + d.y;
+  return { x: cx - fw / 2, y: cy - fh / 2, w: fw, h: fh, rotation: b.rotation };
+}
+
+/** What shows of `full` with crop `c`: the layer's box. */
+export function cropBox(full: CtPackBox, c: CtPackCrop): CtPackBox {
+  const w = c.w * full.w;
+  const h = c.h * full.h;
+  const d = turn(c.x * full.w + w / 2 - full.w / 2, c.y * full.h + h / 2 - full.h / 2, full.rotation);
+  const cx = full.x + full.w / 2 + d.x;
+  const cy = full.y + full.h / 2 + d.y;
+  return { x: cx - w / 2, y: cy - h / 2, w, h, rotation: full.rotation };
+}
+
+/** The layer cropped to `c` (fractions of its full content, clamped); everything = no crop. */
+export function withCrop<L extends CtPackLayer>(l: L, full: CtPackBox, c: CtPackCrop): L {
+  const next = crop(c);
+  return { ...l, crop: next, box: cropBox(full, next ?? NO_CROP) };
+}
+
+/** A scene point as (u, v) on the layer's full content (fractions; through its turn, flip and crop) — for cuts. */
+export function sceneToContent(l: Pick<CtPackLayer, "box" | "crop" | "flipX" | "flipY">, x: number, y: number): { u: number; v: number } {
+  const b = l.box;
+  const c = l.crop ?? NO_CROP;
+  const fw = b.w / c.w;
+  const fh = b.h / c.h;
+  const d = turn(x - (b.x + b.w / 2), y - (b.y + b.h / 2), -b.rotation);
+  const lx = l.flipX ? -d.x : d.x;
+  const ly = l.flipY ? -d.y : d.y;
+  return { u: (lx + c.x * fw + b.w / 2) / fw, v: (ly + c.y * fh + b.h / 2) / fh };
 }
 
 // ---------------------------------------------------------------------------
@@ -372,13 +494,20 @@ export function selectionCliparts(selection: CtSelection, assets: CtAsset[], def
 /** Cliparts of a frame with no material version yet — they must get one first. A frame with an AI artwork needs nothing. */
 export function frameMissing(frame: CtPackFrameLayer, ctx: CtFrameContext): CtAsset[] {
   if (frame.artworkId && renditionOf(ctx.assets, frame.artworkId)) return [];
-  return selectionCliparts(frameSelection(frame, ctx), ctx.assets, ctx.main.id).filter((c) => !renditionOf(ctx.assets, c.id));
+  const picked = framePicture(frame, ctx) ? frameMain(frame, ctx).id : null;
+  return selectionCliparts(frameSelection(frame, ctx), ctx.assets, ctx.main.id).filter((c) => c.id !== picked && !renditionOf(ctx.assets, c.id));
 }
 
 /** Hanger rules: the material of the frame's main version. */
 export function frameRules(frame: CtPackFrameLayer, ctx: CtFrameContext): CtMaterialRules {
-  const r = renditionOf(ctx.assets, frameMain(frame, ctx).id);
+  const pick = framePicture(frame, ctx);
+  const r = pick ? (pick.meta.material ? pick : ctx.assets.find((a) => a.id === pick.parent_id) ?? pick) : renditionOf(ctx.assets, frameMain(frame, ctx).id);
   return normalizeMaterialRules(ctx.presets.find((p) => p.id === r?.meta.material)?.params.rules);
+}
+
+/** The material picture a frame picked for its version, when it is (still) among the assets. */
+export function framePicture(frame: Pick<CtPackFrameLayer, "pictureId">, ctx: Pick<CtFrameContext, "assets">): CtAsset | null {
+  return frame.pictureId ? (ctx.assets.find((a) => a.id === frame.pictureId && a.role === "rendition") ?? null) : null;
 }
 
 const frameRenders = new Map<string, Promise<string>>();
@@ -392,8 +521,19 @@ export function frameArt(frame: CtPackFrameLayer, ctx: CtFrameContext): Promise<
   const ai = frame.artworkId ? renditionOf(ctx.assets, frame.artworkId) : null;
   if (ai) return Promise.resolve({ url: ai.url, hole: rules.hole, cord: rules.cord });
   const selection = frameSelection(frame, ctx);
-  const shown = withRenditions(ctx.assets);
+  const pick = framePicture(frame, ctx);
+  const mainId = frameMain(frame, ctx).id;
+  // The picked picture stands in for the version; a đa sắc of a vật liệu keeps that vật liệu's padding.
+  const pad = pick ? (pick.meta.pad ?? ctx.assets.find((a) => a.id === pick.parent_id)?.meta.pad) : undefined;
+  const shown = withRenditions(ctx.assets).map((a) => {
+    if (!pick || a.id !== mainId) return a;
+    const meta = { ...a.meta };
+    delete meta.pad;
+    if (pad) meta.pad = pad;
+    return { ...a, url: pick.url, meta };
+  });
   const key = JSON.stringify([
+    "bleed",
     selection,
     selectionCliparts(selection, shown, ctx.main.id).map((a) => a.url),
     ctx.regions.map((r) => [r.id, r.shape, r.config, r.sort_order]),
@@ -402,7 +542,8 @@ export function frameArt(frame: CtPackFrameLayer, ctx: CtFrameContext): Promise<
   ]);
   let job = frameRenders.get(key);
   if (!job) {
-    job = renderComposite({ main: ctx.main, assets: shown, regions: ctx.regions, items: ctx.items, selection, scale: 1, layouts: ctx.layouts })
+    // bleed: the material's plate / cord reach past the main's box — the frame shows all of it (trimmed later).
+    job = renderComposite({ main: ctx.main, assets: shown, regions: ctx.regions, items: ctx.items, selection, scale: 1, layouts: ctx.layouts, bleed: true })
       .then((c) => canvasToBlob(c, "image/png"))
       .then((b) => URL.createObjectURL(b));
     job.catch(() => frameRenders.delete(key));
@@ -430,7 +571,7 @@ export async function sceneArts(slide: CtPackSlide, ctx: CtFrameContext): Promis
 /** A set's scene for another product: frames keep their version position and draw that product's design. */
 export function sceneForProduct(slide: CtPackSlide): CtPackSlide {
   const copy = cloneSlide(slide, slide.name);
-  return { ...copy, layers: copy.layers.map((l) => (l.type === "frame" ? { ...l, artworkId: null } : l)) };
+  return { ...copy, layers: copy.layers.map((l) => (l.type === "frame" ? { ...l, artworkId: null, pictureId: null } : l)) };
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +662,8 @@ const CORD_COLORS: Record<Exclude<CtCordStyle, "none">, [string, string, string]
 
 export interface RenderSlideInput {
   slide: CtPackSlide;
+  /** Layer being cropped (editor): its cropped-away part shows faintly. */
+  ghost?: string | null;
   /** Frame layer id -> picture; missing = a placeholder (when `placeholders`) or nothing. */
   arts: Record<string, CtSlotArt | null | undefined>;
   /** Output px per pack px. */
@@ -567,32 +710,174 @@ export async function drawSlide(ctx: CanvasRenderingContext2D, input: RenderSlid
     ctx.fillStyle = slide.background;
     ctx.fillRect(0, 0, pack.width, pack.height);
   }
-  for (const layer of layers) {
+  for (const shownLayer of layers) {
     ctx.save();
-    ctx.globalAlpha = layer.opacity;
+    ctx.globalAlpha = shownLayer.opacity;
+    if (shownLayer.type === "blur") {
+      drawBlurLayer(ctx, shownLayer, scale);
+      ctx.restore();
+      continue;
+    }
+    // Being cropped (editor): all of it shows faintly around the cut.
+    if (input.ghost === shownLayer.id && shownLayer.crop) {
+      ctx.save();
+      ctx.globalAlpha *= 0.35;
+      drawWhole(ctx, shownLayer, "outside");
+      ctx.restore();
+    }
+    drawWhole(ctx, shownLayer, "inside");
+    ctx.restore();
+  }
+  ctx.restore();
+
+  /** A layer with its crop (only `part` of it: the shown part, or what is cropped away), flip and cuts. */
+  function drawWhole(c: CanvasRenderingContext2D, l: Exclude<CtPackLayer, CtPackBlurLayer>, part: "inside" | "outside"): void {
+    if (!l.cuts?.length) {
+      c.save();
+      const full = enterLayer(c, l, part);
+      drawContent(c, full);
+      c.restore();
+      return;
+    }
+    // Cuts take pixels off this layer only: drawn apart, cut, then laid on the scene.
+    const off = blank(c.canvas.width, c.canvas.height);
+    const o = off.getContext("2d");
+    if (!o) return;
+    o.setTransform(c.getTransform());
+    const full = enterLayer(o, l, part);
+    o.save();
+    drawContent(o, full);
+    o.restore();
+    enterBox(o, full.box);
+    for (const cut of l.cuts) {
+      o.globalCompositeOperation = cut.keep ? "destination-in" : "destination-out";
+      o.beginPath();
+      for (let i = 0; i + 1 < cut.points.length; i += 2) o.lineTo((cut.points[i] - 0.5) * full.box.w, (cut.points[i + 1] - 0.5) * full.box.h);
+      o.closePath();
+      o.fill();
+    }
+    c.save();
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    if (l.type === "image") c.globalCompositeOperation = COMPOSITE[l.blend];
+    c.drawImage(off, 0, 0);
+    c.restore();
+  }
+
+  function drawContent(c: CanvasRenderingContext2D, layer: Exclude<CtPackLayer, CtPackBlurLayer>): void {
     switch (layer.type) {
       case "fill":
-        drawFillLayer(ctx, layer);
+        drawFillLayer(c, layer);
         break;
       case "image": {
         const art = loaded.get(layer.url);
-        if (art) drawImageLayer(ctx, layer, art.img);
-        else if (input.placeholders && !layer.url) drawPlaceholder(ctx, layer.box, "Ảnh");
+        if (art) drawImageLayer(c, layer, art.img, scale);
+        else if (input.placeholders && !layer.url) drawPlaceholder(c, layer.box, "Ảnh");
         break;
       }
       case "frame": {
         const a = input.arts[layer.id];
         const art = a ? loaded.get(a.url) : undefined;
-        if (a && art) drawFrameLayer(ctx, layer, a, art, scale);
-        else if (input.placeholders) drawPlaceholder(ctx, layer.box, "…");
+        if (a && art) drawFrameLayer(c, layer, a, art, scale);
+        else if (input.placeholders) drawPlaceholder(c, layer.box, "…");
         break;
       }
       case "text":
-        drawTextLayer(ctx, layer, scale);
+        drawTextLayer(c, layer, scale);
         break;
     }
-    ctx.restore();
   }
+}
+
+/**
+ * Set `c` up to draw layer `l` at its FULL size: clipped to its crop (`inside`) or to everything but it
+ * (`outside`), mirrored about its shown centre. Returns the layer with its full box.
+ */
+function enterLayer<L extends Exclude<CtPackLayer, CtPackBlurLayer>>(c: CanvasRenderingContext2D, l: L, part: "inside" | "outside"): L {
+  const b = l.box;
+  if (!l.crop && !l.flipX && !l.flipY) return l;
+  enterBox(c, b);
+  if (l.crop) {
+    c.beginPath();
+    if (part === "outside") {
+      const far = (b.w + b.h) * 20;
+      c.rect(-far, -far, far * 2, far * 2);
+    }
+    c.rect(-b.w / 2, -b.h / 2, b.w, b.h);
+    c.clip(part === "outside" ? "evenodd" : "nonzero");
+  }
+  if (l.flipX || l.flipY) c.scale(l.flipX ? -1 : 1, l.flipY ? -1 : 1);
+  if (b.rotation) c.rotate((-b.rotation * Math.PI) / 180);
+  c.translate(-(b.x + b.w / 2), -(b.y + b.h / 2));
+  return l.crop ? { ...l, box: cropFull(l) } : l;
+}
+
+function blank(w: number, h: number): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(w));
+  c.height = Math.max(1, Math.round(h));
+  return c;
+}
+
+/** Trace one brush stroke (a dot when it has one point) in scene px. */
+function traceStroke(m: CanvasRenderingContext2D, st: CtPackBrushStroke): void {
+  const p = st.points;
+  m.lineWidth = st.size;
+  m.beginPath();
+  if (p.length < 4) {
+    m.arc(p[0], p[1], st.size / 2, 0, Math.PI * 2);
+    m.fill();
+    return;
+  }
+  m.moveTo(p[0], p[1]);
+  for (let i = 2; i + 1 < p.length; i += 2) m.lineTo(p[i], p[i + 1]);
+  m.stroke();
+}
+
+/**
+ * Cọ làm mờ: everything drawn so far (all layers below, merged) blurred, kept where the strokes painted it — soft
+ * edged — and laid back on top.
+ */
+function drawBlurLayer(ctx: CanvasRenderingContext2D, l: CtPackBlurLayer, scale: number): void {
+  if (!l.strokes.length) return;
+  const below = ctx.canvas;
+  const W = below.width;
+  const H = below.height;
+  const r = Math.max(0.5, l.strength * scale);
+  const pad = Math.ceil(r * 3);
+  // Room around the scene filled with its own stretched edges, so the blur doesn't fade in from the border.
+  const big = blank(W + pad * 2, H + pad * 2);
+  const g = big.getContext("2d");
+  const blurred = blank(W, H);
+  const bctx = blurred.getContext("2d");
+  const mask = blank(W, H);
+  const m = mask.getContext("2d");
+  const soft = blank(W, H);
+  const sm = soft.getContext("2d");
+  if (!g || !bctx || !m || !sm) return;
+  g.drawImage(below, 0, 0, big.width, big.height);
+  g.drawImage(below, pad, pad);
+  bctx.filter = `blur(${r}px)`;
+  bctx.drawImage(big, -pad, -pad);
+  bctx.filter = "none";
+  // Where it is painted (erase strokes take it off), edges feathered over ~12% of the brush.
+  m.setTransform(scale, 0, 0, scale, 0, 0);
+  m.lineCap = "round";
+  m.lineJoin = "round";
+  m.fillStyle = "#000";
+  m.strokeStyle = "#000";
+  for (const st of l.strokes) {
+    m.globalCompositeOperation = st.erase ? "destination-out" : "source-over";
+    traceStroke(m, st);
+  }
+  const feather = Math.max(1, (l.strokes.reduce((a, st) => a + st.size, 0) / l.strokes.length) * scale * 0.12);
+  sm.filter = `blur(${feather}px)`;
+  sm.drawImage(mask, 0, 0);
+  bctx.globalCompositeOperation = "destination-in";
+  bctx.drawImage(soft, 0, 0);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = l.opacity;
+  ctx.drawImage(blurred, 0, 0);
   ctx.restore();
 }
 
@@ -641,26 +926,37 @@ function drawFillLayer(ctx: CanvasRenderingContext2D, l: CtPackFillLayer): void 
   ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
 }
 
-function drawImageLayer(ctx: CanvasRenderingContext2D, l: CtPackImageLayer, img: HTMLImageElement): void {
+function drawImageLayer(ctx: CanvasRenderingContext2D, l: CtPackImageLayer, img: HTMLImageElement, scale: number): void {
   const b = l.box;
   enterBox(ctx, b);
   ctx.globalCompositeOperation = COMPOSITE[l.blend];
   const iw = img.naturalWidth;
   const ih = img.naturalHeight;
-  if (l.fit === "stretch") {
-    ctx.drawImage(img, -b.w / 2, -b.h / 2, b.w, b.h);
-    return;
-  }
+  // CSS blur; the filter works in output px, outside the transform.
+  if (l.blur > 0) ctx.filter = `blur(${l.blur * scale}px)`;
   if (l.fit === "contain") {
     const s = Math.min(b.w / iw, b.h / ih);
     ctx.drawImage(img, (-iw * s) / 2, (-ih * s) / 2, iw * s, ih * s);
     return;
   }
-  // cover: crop the image to the box.
-  const s = Math.max(b.w / iw, b.h / ih);
-  const sw = b.w / s;
-  const sh = b.h / s;
-  ctx.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, -b.w / 2, -b.h / 2, b.w, b.h);
+  // Blurred edges fade to transparent: draw past the frame by the blur and clip, so it stays filled to the edge.
+  const pad = l.blur * 2;
+  if (pad) {
+    ctx.beginPath();
+    ctx.rect(-b.w / 2, -b.h / 2, b.w, b.h);
+    ctx.clip();
+  }
+  const dw = b.w + pad * 2;
+  const dh = b.h + pad * 2;
+  if (l.fit === "stretch") {
+    ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    return;
+  }
+  // cover / original: crop the image to the box (original: the box already has its proportions).
+  const s = Math.max(dw / iw, dh / ih);
+  const sw = dw / s;
+  const sh = dh / s;
+  ctx.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, -dw / 2, -dh / 2, dw, dh);
 }
 
 /** Where the trimmed art lands inside a frame box (box-centred coords). */

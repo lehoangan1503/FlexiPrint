@@ -11,7 +11,10 @@
  *            clicked in as a product frame; an Image frame (a photo, the
  *            size of the edit frame); a background (colour or gradient,
  *            lib/gradients.ts); text.
- *   centre   the edit frame: move / resize / rotate the selected frame.
+ *   centre   the edit frame: move / resize / rotate the selected frame; a
+ *            vertical toolbar (EditTools): chọn (V), crop the active frame
+ *            (C), cắt = lasso an area off it (L), cọ làm mờ (B) / tẩy (E) — a blur layer over everything
+ *            under it, merged — lật, nhân bản (⌘D), ⌘Z / ⇧⌘Z.
  *   right    the frames, top first: drag to restack, eye, delete; the
  *            selected frame's settings (size typed in, …) or, with none
  *            selected, the edit frame's size.
@@ -30,19 +33,31 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlignCenter,
+  Brush,
+  Copy,
+  Crop,
+  Eraser,
+  Lasso,
+  FlipHorizontal2,
+  FlipVertical2,
+  MousePointer2,
   AlignLeft,
   AlignRight,
   Check,
   Download,
   Eye,
   EyeOff,
+  Frame,
   GripVertical,
+  Hand,
   ImagePlus,
   Layers,
   Loader2,
+  Lock,
   Maximize,
   Package,
   PaintBucket,
+  Plus,
   Redo2,
   Save,
   Sparkles,
@@ -56,9 +71,12 @@ import type {
   CtMainLayout,
   CtMockupPack,
   CtPackBlend,
+  CtPackBlurLayer,
   CtPackBox,
+  CtPackBrushStroke,
   CtPackFillLayer,
   CtPackFrameLayer,
+  CtPackImage,
   CtPackImageLayer,
   CtPackLayer,
   CtPackSlide,
@@ -80,6 +98,9 @@ import {
   frameSelection,
   gradientCss,
   LAYER_LABEL,
+  cropFull,
+  newBlurLayer,
+  sceneToContent,
   newFrame,
   newLayer,
   newSlide,
@@ -95,9 +116,10 @@ import {
 import { ctApi } from "../../lib/api-client";
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtNumber, CtSelect, CtTextarea, CtTooltip, cx } from "../ui";
 import { ctConfirm, ctPrompt } from "../dialogs";
-import { PackCanvas } from "../mockup/pack-canvas";
-import { pickImageFile } from "./scene-dialog";
+import { canCrop, PackCanvas, type CtPackTool } from "../mockup/pack-canvas";
+import { newId } from "../../lib/geometry";
 import { EnhanceDialog, type EnhanceItem } from "./enhance-dialog";
+import { nearestAspect, PackImageLibrary } from "./pack-image-library";
 
 /** dataTransfer type of a main version dragged from the strip. */
 const VERSION_DRAG = "application/x-ct-version";
@@ -105,6 +127,15 @@ const VERSION_DRAG = "application/x-ct-version";
 const LAYER_DRAG = "application/x-ct-layer";
 /** Longest side a saved tổ hợp is rendered at. */
 const SAVE_MAX_SIDE = 3000;
+
+const TOOL_KEYS: Record<string, CtPackTool> = {
+  v: "select",
+  h: "hand",
+  c: "crop",
+  l: "cut",
+  b: "brush",
+  e: "erase",
+};
 
 const BLENDS: CtPackBlend[] = ["normal", "multiply", "screen", "overlay", "soft-light", "darken", "lighten"];
 
@@ -141,6 +172,88 @@ export interface PreviewPanelProps {
   /** Delete without asking (the panel asks first). */
   onDelete: (a: CtAsset) => Promise<void>;
   flash: (msg: string) => void;
+}
+
+/** The box at another aspect (w / h): same area, same centre. */
+function boxToRatio(b: CtPackBox, aspect: number): CtPackBox {
+  const w = Math.sqrt(b.w * b.h * aspect);
+  const h = w / aspect;
+  return {
+    ...b,
+    x: Math.round(b.x + (b.w - w) / 2),
+    y: Math.round(b.y + (b.h - h) / 2),
+    w: Math.round(w),
+    h: Math.round(h),
+  };
+}
+
+/** The box at w×h, same centre. */
+function boxAtSize(b: CtPackBox, w: number, h: number): CtPackBox {
+  return {
+    ...b,
+    x: Math.round(b.x + (b.w - w) / 2),
+    y: Math.round(b.y + (b.h - h) / 2),
+    w: Math.round(w),
+    h: Math.round(h),
+  };
+}
+
+/**
+ * A version's material pictures in picker order: each vật liệu version followed by its đa sắc, then the vật liệu
+ * of the version's own đa sắc.
+ */
+function orderMaterials(list: CtAsset[], versionId: string): CtAsset[] {
+  const byTime = (a: CtAsset, b: CtAsset) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at);
+  const own = list.filter((a) => a.parent_id === versionId && !a.meta?.variant).sort(byTime);
+  const ownIds = new Set(own.map((a) => a.id));
+  return [
+    ...own.flatMap((r) => [r, ...list.filter((a) => a.parent_id === r.id && a.meta?.variant).sort(byTime)]),
+    ...list.filter((a) => a.parent_id !== versionId && !ownIds.has(a.parent_id ?? "")).sort(byTime),
+  ];
+}
+
+/** Short label of a material picture: "đa sắc" (of a vật liệu, or vật liệu of a đa sắc), its material version ("có dây"), or "vật liệu". */
+function materialLabel(pic: CtAsset, versionId: string): string {
+  const version = typeof pic.meta?.materialVersion === "string" ? pic.meta.materialVersion : "";
+  if (pic.meta?.variant || pic.parent_id !== versionId) return version ? `đa sắc · ${version}` : "đa sắc";
+  return version || "vật liệu";
+}
+
+/** Which material picture of its version a product frame shows. */
+function FramePicture({
+  layer,
+  versions,
+  materials,
+  onPatch,
+}: {
+  layer: CtPackFrameLayer;
+  versions: CtAsset[];
+  materials: Record<string, CtAsset[]>;
+  onPatch: LayerSettingsProps["onPatch"];
+}) {
+  const v = versions[Math.min(layer.mainIndex, versions.length - 1)];
+  const list = v ? (materials[v.id] ?? []) : [];
+  if (!v || list.length < 2) return null;
+  return (
+    <CtField label="Vật liệu / đa sắc">
+      <CtSelect
+        value={layer.pictureId ?? ""}
+        onChange={(id) =>
+          onPatch({
+            pictureId: id || null,
+            artworkId: null,
+          } as Partial<CtPackFrameLayer>)
+        }
+        options={[
+          { value: "", label: "Mặc định" },
+          ...list.map((a, i) => ({
+            value: a.id,
+            label: `${i + 1}. ${materialLabel(a, v.id)}${a.name ? ` — ${a.name}` : ""}`,
+          })),
+        ]}
+      />
+    </CtField>
+  );
 }
 
 function imageSize(url: string): Promise<{ w: number; h: number }> {
@@ -210,7 +323,18 @@ export function PreviewPanel(props: PreviewPanelProps) {
     setFuture(future.slice(1));
     setSceneState(next);
   };
-  const keys = useRef({ undo, redo, remove: () => {} });
+  // Vertical toolbar state (EditTools).
+  const [tool, setTool] = useState<CtPackTool>("select");
+  const [brushSize, setBrushSize] = useState(120);
+  const [blurStrength, setBlurStrength] = useState(20);
+  const keys = useRef({
+    undo,
+    redo,
+    remove: () => {},
+    duplicate: () => {},
+    tool: (_t: CtPackTool) => {},
+    brush: (_k: number) => {},
+  });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -219,8 +343,16 @@ export function PreviewPanel(props: PreviewPanelProps) {
         e.preventDefault();
         if (e.shiftKey) keys.current.redo();
         else keys.current.undo();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        keys.current.duplicate();
       } else if (e.key === "Delete" || e.key === "Backspace") {
         keys.current.remove();
+      } else if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+        const tool = TOOL_KEYS[e.key.toLowerCase()];
+        if (tool) keys.current.tool(tool);
+        else if (e.key === "Escape" || e.key === "Enter") keys.current.tool("select");
+        else if (e.key === "[" || e.key === "]") keys.current.brush(e.key === "]" ? 1.25 : 0.8);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -229,7 +361,10 @@ export function PreviewPanel(props: PreviewPanelProps) {
 
   const layer = scene.layers.find((l) => l.id === layerId) ?? null;
   const patchLayer = (id: string, patch: Partial<CtPackLayer>, how: "commit" | "live" = "commit") => {
-    const next = { ...scene, layers: scene.layers.map((l) => (l.id === id ? ({ ...l, ...patch } as CtPackLayer) : l)) };
+    const next = {
+      ...scene,
+      layers: scene.layers.map((l) => (l.id === id ? ({ ...l, ...patch } as CtPackLayer) : l)),
+    };
     if (how === "live") live(next);
     else commit(next);
   };
@@ -249,21 +384,138 @@ export function PreviewPanel(props: PreviewPanelProps) {
   };
   /** New frames go on top — a background goes to the bottom. */
   const addLayer = (l: CtPackLayer) => {
-    commit({ ...scene, layers: l.type === "fill" ? [l, ...scene.layers] : [...scene.layers, l] });
+    commit({
+      ...scene,
+      layers: l.type === "fill" ? [l, ...scene.layers] : [...scene.layers, l],
+    });
     setLayerId(l.id);
   };
   useEffect(() => {
-    keys.current = { undo, redo, remove: () => layerId && removeLayer(layerId) };
+    keys.current = {
+      undo,
+      redo,
+      remove: () => layerId && removeLayer(layerId),
+      duplicate: () => layer && duplicate(layer),
+      tool: (t) => setTool(t),
+      brush: (k) => setBrushSize((v) => Math.round(Math.min(1000, Math.max(4, v * k)))),
+    };
   });
 
+  // ---------------------------------------------------------------- tools (vertical toolbar)
+  /** Layer + stroke index the stroke being painted lives at. */
+  const painting = useRef<{ layerId: string; index: number } | null>(null);
+  /** The blur layer strokes go on: the selected one, else the topmost layer when it is one. */
+  const blurTarget = (): CtPackBlurLayer | null => {
+    const sel = scene.layers.find((l): l is CtPackBlurLayer => l.id === layerId && l.type === "blur");
+    const top = scene.layers[scene.layers.length - 1];
+    return sel ?? (top?.type === "blur" ? top : null);
+  };
+  const onStroke = (stroke: CtPackBrushStroke, done: boolean) => {
+    let layers = scene.layers;
+    let at = painting.current;
+    if (!at) {
+      const target = blurTarget();
+      if (!target && stroke.erase) return;
+      const l = target ?? newBlurLayer(scene.width, scene.height, blurStrength);
+      if (!target) layers = [...layers, l];
+      at = { layerId: l.id, index: l.strokes.length };
+      painting.current = at;
+      setLayerId(l.id);
+    }
+    const { layerId: id, index } = at;
+    const next = {
+      ...scene,
+      layers: layers.map((l) => (l.id === id && l.type === "blur" ? { ...l, strokes: [...l.strokes.slice(0, index), stroke] } : l)),
+    };
+    if (done) {
+      painting.current = null;
+      commit(next);
+    } else live(next);
+  };
+  const setStrength = (strength: number, how: "commit" | "live") => {
+    setBlurStrength(strength);
+    const target = blurTarget();
+    if (target) patchLayer(target.id, { strength } as Partial<CtPackBlurLayer>, how);
+  };
+
+  /** Lasso: cut the circled area away, or keep only it. */
+  const [cutKeep, setCutKeep] = useState(false);
+  const onCut = (id: string, points: number[]) => {
+    const l = scene.layers.find((x) => x.id === id);
+    if (!l || l.type === "blur") return;
+    const uv: number[] = [];
+    for (let i = 0; i + 1 < points.length; i += 2) {
+      const q = sceneToContent(l, points[i], points[i + 1]);
+      uv.push(Math.round(q.u * 10000) / 10000, Math.round(q.v * 10000) / 10000);
+    }
+    patchLayer(id, {
+      cuts: [...(l.cuts ?? []), { points: uv, keep: cutKeep }],
+    });
+  };
+
+  /** A copy just above it, nudged so it shows. */
+  const duplicate = (l: CtPackLayer) => {
+    if (l.type === "blur") return;
+    const copy = {
+      ...l,
+      id: newId(),
+      name: `${l.name} (copy)`,
+      box: { ...l.box, x: l.box.x + 40, y: l.box.y + 40 },
+    };
+    const i = scene.layers.findIndex((x) => x.id === l.id);
+    commit({
+      ...scene,
+      layers: [...scene.layers.slice(0, i + 1), copy, ...scene.layers.slice(i + 1)],
+    });
+    setLayerId(copy.id);
+  };
+
   // ---------------------------------------------------------------- frames
+  /** Every material picture of each version (vật liệu, their đa sắc, vật liệu of its đa sắc), by version id. */
+  const [materials, setMaterials] = useState<Record<string, CtAsset[]>>({});
+  const versionIds = versions.map((v) => v.id).join(",");
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all(
+      versions.map((v) =>
+        ctApi
+          .clipartMaterials(v.id)
+          .then((list): [string, CtAsset[]] => [v.id, orderMaterials(list, v.id)])
+          .catch((): [string, CtAsset[]] => [v.id, []]),
+      ),
+    ).then((list) => !cancelled && setMaterials(Object.fromEntries(list)));
+    return () => {
+      cancelled = true;
+    };
+    // versions is read through versionIds: a new array with the same versions must not refetch
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versionIds]);
+  /** The product's assets + those pictures, so a frame can draw the one it picked. */
+  const frameAssets = useMemo(() => {
+    const have = new Set(assets.map((a) => a.id));
+    return [
+      ...assets,
+      ...Object.values(materials)
+        .flat()
+        .filter((a) => !have.has(a.id) && have.add(a.id)),
+    ];
+  }, [assets, materials]);
   const ctx = useMemo<CtFrameContext>(
-    () => ({ samples, main, mains: versions, assets, regions, items, layouts, presets }),
-    [samples, main, versions, assets, regions, items, layouts, presets],
+    () => ({
+      samples,
+      main,
+      mains: versions,
+      assets: frameAssets,
+      regions,
+      items,
+      layouts,
+      presets,
+    }),
+    [samples, main, versions, frameAssets, regions, items, layouts, presets],
   );
   const frames = scene.layers.filter((l): l is CtPackFrameLayer => l.type === "frame");
   /** Only what changes a frame's picture — not its box. */
-  const framesKey = JSON.stringify(frames.map((f) => [f.id, f.mainIndex, f.artworkId, f.hidden]));
+  const framesKey = JSON.stringify(frames.map((f) => [f.id, f.mainIndex, f.artworkId, f.pictureId, f.hidden]));
   const [arts, setArts] = useState<Record<string, CtSlotArt>>({});
   useEffect(() => {
     let cancelled = false;
@@ -309,40 +561,69 @@ export function PreviewPanel(props: PreviewPanelProps) {
     if (first) props.onCreateMaterial(list.filter((a) => origin(a) === origin(first)));
   };
 
-  const addFrame = (versionId: string, at: { x: number; y: number } | null) => {
+  /** `pictureId`: one of the version's material pictures; null = its default material. */
+  const addFrame = (versionId: string, at: { x: number; y: number } | null, pictureId: string | null = null) => {
     const index = Math.max(0, versions.findIndex((v) => v.id === versionId));
     const v = versions[index] ?? main;
     const f = newFrame(scene, index, at, main.width / main.height);
-    f.name = v.name || `Version ${index + 1}`;
+    const pic = pictureId ? materials[v.id]?.find((a) => a.id === pictureId) : undefined;
+    f.name = [v.name || `Version ${index + 1}`, pic && materialLabel(pic, v.id)].filter(Boolean).join(" · ");
+    f.pictureId = pic?.id ?? null;
     addLayer(f);
   };
 
-  // ---------------------------------------------------------------- image frames, background, text
-  const upload = async (): Promise<{ url: string; w: number; h: number } | null> => {
-    const file = await pickImageFile();
-    if (!file) return null;
-    setBusy("Đang upload ảnh…");
-    setError(null);
-    try {
-      const r = await ctApi.uploadPackImage(file);
-      return { url: r.url, w: r.width, h: r.height };
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload thất bại");
-      return null;
-    } finally {
-      setBusy(null);
+  /** Version whose material pictures show under the toolbar. */
+  const [openVersion, setOpenVersion] = useState<string | null>(null);
+  const openList = openVersion ? (materials[openVersion] ?? []) : [];
+  /** Finished artwork of each picture of the open version (same render its frame uses). */
+  const [picThumbs, setPicThumbs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const index = versions.findIndex((v) => v.id === openVersion);
+    if (index < 0) return;
+    let cancelled = false;
+    for (const pic of materials[versions[index].id] ?? []) {
+      const f = { ...newFrame({ width: 1000, height: 1000 }, index, null, 1), pictureId: pic.id };
+      void frameArt(f, ctx)
+        .then((a) => !cancelled && setPicThumbs((t) => ({ ...t, [pic.id]: a.url })))
+        .catch(() => undefined);
     }
-  };
+    return () => {
+      cancelled = true;
+    };
+  }, [openVersion, versions, materials, ctx]);
 
+  // ---------------------------------------------------------------- image frames, background, text
+  /** The photo library is open for a new image frame, or to change one's photo. */
+  const [libraryFor, setLibraryFor] = useState<{
+    replace: string | null;
+  } | null>(null);
   /** An image frame fills the edit frame (cover); its size is typed in on the right. */
-  const addImageFrame = async () => {
-    const img = await upload();
-    if (img) addLayer(newLayer("image", scene.width, scene.height, { url: img.url }));
+  const addImageFrame = () => setLibraryFor({ replace: null });
+  const replaceImage = (l: CtPackImageLayer) => setLibraryFor({ replace: l.id });
+  const usePhoto = (img: CtPackImage) => {
+    if (!img.url) return;
+    const target = libraryFor?.replace ? scene.layers.find((x): x is CtPackImageLayer => x.id === libraryFor.replace && x.type === "image") : undefined;
+    if (!target) return addLayer(newLayer("image", scene.width, scene.height, { url: img.url }));
+    const w = img.width ?? 0;
+    const h = img.height ?? 0;
+    patchLayer(target.id, target.fit === "original" && w > 1 && h > 1 ? { url: img.url, box: boxAtSize(target.box, w, h) } : { url: img.url });
   };
 
-  const replaceImage = async (l: CtPackImageLayer) => {
-    const img = await upload();
-    if (img) patchLayer(l.id, { url: img.url });
+  /** Photo fit; "original" makes the frame the photo's real pixel size (the edit frame stays, overflow is cut). */
+  const setFit = async (l: CtPackImageLayer, fit: CtPackImageLayer["fit"]) => {
+    // Leaving "original": cover / contain work against the edit frame again, so the frame fills it.
+    if (fit !== "original")
+      return patchLayer(
+        l.id,
+        l.fit === "original"
+          ? {
+              fit,
+              box: { x: 0, y: 0, w: scene.width, h: scene.height, rotation: 0 },
+            }
+          : { fit },
+      );
+    const { w, h } = await imageSize(l.url);
+    patchLayer(l.id, w > 1 && h > 1 ? { fit, box: boxAtSize(l.box, w, h), crop: null } : { fit });
   };
 
   /** The edit frame takes the photo's proportions (same area); the photo then fills it. */
@@ -352,14 +633,33 @@ export function PreviewPanel(props: PreviewPanelProps) {
     const area = scene.width * scene.height;
     const width = Math.sqrt((area * w) / h);
     const resized = resizeSlide(scene, width, (width * h) / w);
-    commit({ ...resized, layers: resized.layers.map((x) => (x.id === l.id ? { ...x, box: { x: 0, y: 0, w: resized.width, h: resized.height, rotation: 0 } } : x)) });
+    commit({
+      ...resized,
+      layers: resized.layers.map((x) =>
+        x.id === l.id
+          ? {
+              ...x,
+              box: {
+                x: 0,
+                y: 0,
+                w: resized.width,
+                h: resized.height,
+                rotation: 0,
+              },
+            }
+          : x,
+      ),
+    });
   };
 
   // ---------------------------------------------------------------- save / templates
   const saved = useMemo(() => assets.filter((a) => a.role === "mockup").sort((a, b) => a.created_at.localeCompare(b.created_at)), [assets]);
   const savedScenes = saved.filter((m) => m.meta.scene);
   /** "#n" of a saved tổ hợp: its place in the list. */
-  const numbered: EnhanceItem[] = saved.map((asset, i) => ({ asset, number: i + 1 }));
+  const numbered: EnhanceItem[] = saved.map((asset, i) => ({
+    asset,
+    number: i + 1,
+  }));
 
   const renderScene = async (s: CtPackSlide, a: Record<string, CtSlotArt>) => {
     const scale = Math.min(1, SAVE_MAX_SIDE / Math.max(s.width, s.height));
@@ -399,6 +699,25 @@ export function PreviewPanel(props: PreviewPanelProps) {
     setLayerId(null);
   };
 
+  /** A blank edit frame of the same size; asks first when the current one has changes not saved. */
+  const newScene = async () => {
+    const savedScene = openedId ? saved.find((m) => m.id === openedId)?.meta.scene : undefined;
+    const dirty = scene.layers.length > 0 && (!savedScene || JSON.stringify(normalizeSlide(savedScene).layers) !== JSON.stringify(scene.layers));
+    if (
+      dirty &&
+      !(await ctConfirm({
+        title: "Bỏ tổ hợp đang làm?",
+        message: "Có thay đổi chưa lưu. Bấm “Lưu tổ hợp” trước nếu muốn giữ.",
+        confirmLabel: "Mở tổ hợp mới",
+        cancelLabel: "Ở lại",
+      }))
+    )
+      return;
+    commit(newSlide(`Tổ hợp ${saved.length + 1}`, scene.width, scene.height));
+    setOpenedId(null);
+    setLayerId(null);
+  };
+
   const download = async () => {
     const blob = await renderScene(scene, arts);
     const url = URL.createObjectURL(blob);
@@ -425,7 +744,10 @@ export function PreviewPanel(props: PreviewPanelProps) {
       const pack = await ctApi.createPack({
         name: name.trim(),
         notes: "",
-        slides: list.map((m) => ({ ...normalizeSlide(m.meta.scene ?? {}), name: m.name })),
+        slides: list.map((m) => ({
+          ...normalizeSlide(m.meta.scene ?? {}),
+          name: m.name,
+        })),
         thumbnail_url: list[0].url,
       });
       setPacks((p) => [...p, pack]);
@@ -474,13 +796,28 @@ export function PreviewPanel(props: PreviewPanelProps) {
     setError(null);
     try {
       const sel = frameSelection(f, ctx);
-      const canvas = await renderComposite({ main, assets, regions, items, selection: sel, scale: 1, layouts });
+      const canvas = await renderComposite({
+        main,
+        assets,
+        regions,
+        items,
+        selection: sel,
+        scale: 1,
+        layouts,
+      });
       const [artwork] = await props.onSaveComposites([{ blob: await canvasToBlob(canvas, "image/png"), selection: sel }]);
       if (!artwork) throw new Error("Không lưu được artwork");
       setBusy("AI đang tạo vật liệu cho artwork…");
       const runId = await ctApi.studioRun({
         recipe: "artwork_material",
-        params: { artwork_id: artwork.id, material_id: materialId, edge_px: 0, extra: "", model: "", name: `${f.name} · vật liệu AI` },
+        params: {
+          artwork_id: artwork.id,
+          material_id: materialId,
+          edge_px: 0,
+          extra: "",
+          model: "",
+          name: `${f.name} · vật liệu AI`,
+        },
       });
       for (;;) {
         await new Promise((r) => window.setTimeout(r, 2500));
@@ -488,7 +825,9 @@ export function PreviewPanel(props: PreviewPanelProps) {
         if (st.status === "error") throw new Error(st.error ?? "AI lỗi");
         if (st.status === "done") {
           props.onAdded(st.assets);
-          patchLayer(f.id, { artworkId: artwork.id } as Partial<CtPackFrameLayer>);
+          patchLayer(f.id, {
+            artworkId: artwork.id,
+          } as Partial<CtPackFrameLayer>);
           props.flash("Đã có vật liệu AI cho artwork — frame dùng bản này");
           break;
         }
@@ -509,6 +848,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
       const url = arts[l.id]?.url;
       return url ? <img src={url} alt="" className="h-full w-full object-contain" /> : <Package className="m-auto h-3.5 w-3.5" />;
     }
+    if (l.type === "blur") return <Brush className="m-auto h-3.5 w-3.5" />;
     return <Type className="m-auto h-3.5 w-3.5" />;
   };
 
@@ -517,21 +857,54 @@ export function PreviewPanel(props: PreviewPanelProps) {
   const [overRow, setOverRow] = useState<string | null>(null);
 
   return (
-    <div className="grid h-full grid-cols-[1fr_320px] overflow-hidden">
+    <div className="grid h-full grid-cols-[72px_1fr_320px] overflow-hidden">
+      {/* Saved tổ hợp, like the Version column: click = open it, + = a new blank one */}
+      <div className="flex min-h-0 flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden border-r bg-background p-1.5">
+        <span className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Tổ hợp</span>
+        {numbered
+          .filter(({ asset: m }) => m.meta.scene)
+          .map(({ asset: m, number }) => (
+            <CtTooltip key={m.id} label={`#${number} ${m.name} — click để mở lại`} side="right">
+              <button
+                type="button"
+                onClick={() => openSaved(m)}
+                className={cx("relative block h-14 w-14 shrink-0 overflow-hidden rounded-md border", m.id === openedId ? "ring-2 ring-sky-500" : "opacity-75 hover:opacity-100")}
+                style={CHECKER_STYLE}
+              >
+                <img src={m.url} alt={m.name} className="h-full w-full object-cover" draggable={false} />
+                <span className="absolute bottom-0.5 right-0.5 rounded bg-black/70 px-1 text-[9px] font-semibold leading-tight text-white">#{number}</span>
+              </button>
+            </CtTooltip>
+          ))}
+        {!openedId && (
+          <CtTooltip label={`${scene.name} — đang làm, chưa lưu`} side="right">
+            <div className="h-14 w-14 shrink-0 rounded-md border border-dashed bg-muted/40 ring-2 ring-sky-500" />
+          </CtTooltip>
+        )}
+        <CtTooltip label="Tổ hợp mới: mở 1 vùng edit trống (cùng kích thước)" side="right">
+          <button
+            type="button"
+            onClick={() => void newScene()}
+            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-dashed text-muted-foreground hover:border-sky-500 hover:bg-sky-500/10 hover:text-sky-500"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        </CtTooltip>
+      </div>
       <div className="flex min-h-0 flex-col">
         {/* Toolbar: what can go in — each becomes its own frame */}
         <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b bg-background px-3 py-2">
           <span className="text-[11px] text-muted-foreground">Kéo vào:</span>
           {versions.map((v) => (
-            <CtTooltip key={v.id} label={`${v.name} — artwork hoàn chỉnh, kéo vào vùng edit (hoặc click)`}>
+            <CtTooltip key={v.id} label={`${v.name} — kéo vào vùng edit; click để xem mọi vật liệu, đa sắc của nó`}>
               <button
                 draggable
                 onDragStart={(e) => {
                   e.dataTransfer.setData(VERSION_DRAG, v.id);
                   e.dataTransfer.effectAllowed = "copy";
                 }}
-                onClick={() => addFrame(v.id, null)}
-                className="relative h-10 w-10 cursor-grab overflow-hidden rounded-md border hover:border-sky-500"
+                onClick={() => setOpenVersion(openVersion === v.id ? null : v.id)}
+                className={cx("relative h-10 w-10 cursor-grab overflow-hidden rounded-md border hover:border-sky-500", openVersion === v.id && "ring-2 ring-sky-500")}
                 style={CHECKER_STYLE}
               >
                 {thumbs[v.id] ? (
@@ -544,8 +917,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
             </CtTooltip>
           ))}
           <span className="mx-1 h-6 w-px bg-border" />
-          <CtTooltip label="Ảnh (nền, tay cầm, sticker…) — mặc định phủ kín khung edit">
-            <CtButton size="sm" onClick={() => void addImageFrame()} disabled={!!busy}>
+          <CtTooltip label="Ảnh (nền, tay cầm, sticker…) từ thư viện ảnh tổ hợp — tải lên hoặc tạo bằng AI; mặc định phủ kín khung edit">
+            <CtButton size="sm" onClick={addImageFrame} disabled={!!busy}>
               <ImagePlus className="h-3.5 w-3.5" /> Image frame
             </CtButton>
           </CtTooltip>
@@ -574,7 +947,62 @@ export function PreviewPanel(props: PreviewPanelProps) {
           </span>
         </div>
 
+        {openVersion && (
+          <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b bg-muted/30 px-3 py-2">
+            <span className="shrink-0 text-[11px] text-muted-foreground">{versions.find((v) => v.id === openVersion)?.name || "Version"} — vật liệu, đa sắc:</span>
+            {openList.map((pic) => {
+              const label = materialLabel(pic, openVersion);
+              return (
+                <CtTooltip key={pic.id} label={`${pic.name || label} — kéo vào vùng edit (hoặc click)`}>
+                  <button
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData(VERSION_DRAG, `${openVersion}|${pic.id}`);
+                      e.dataTransfer.effectAllowed = "copy";
+                    }}
+                    onClick={() => addFrame(openVersion, null, pic.id)}
+                    className="relative h-14 w-14 shrink-0 cursor-grab overflow-hidden rounded-md border hover:border-sky-500"
+                    style={CHECKER_STYLE}
+                  >
+                    {picThumbs[pic.id] ? (
+                      <img src={picThumbs[pic.id]} alt="" className="h-full w-full object-contain" draggable={false} />
+                    ) : (
+                      <Loader2 className="m-auto h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    )}
+                    <span className="absolute inset-x-0 bottom-0 truncate bg-black/60 px-0.5 text-[8px] leading-tight text-white">{label}</span>
+                  </button>
+                </CtTooltip>
+              );
+            })}
+            {!openList.length && <span className="text-[11px] text-muted-foreground">Chưa có vật liệu — tạo trong thư viện.</span>}
+          </div>
+        )}
+
         <div className="relative min-h-0 flex-1">
+          <EditTools
+            tool={tool}
+            onTool={setTool}
+            layer={layer}
+            brushSize={brushSize}
+            onBrushSize={setBrushSize}
+            strength={blurStrength}
+            onStrength={setStrength}
+            onFlip={(axis) => layer && layer.type !== "blur" && patchLayer(layer.id, axis === "x" ? { flipX: !layer.flipX } : { flipY: !layer.flipY })}
+            onDuplicate={() => layer && duplicate(layer)}
+            onUncrop={() => layer && patchLayer(layer.id, { box: cropFull(layer), crop: null })}
+            cutKeep={cutKeep}
+            onCutKeep={setCutKeep}
+            onUncut={(all) =>
+              layer &&
+              patchLayer(layer.id, {
+                cuts: all ? [] : (layer.cuts ?? []).slice(0, -1),
+              })
+            }
+            canUndo={past.length > 0}
+            canRedo={future.length > 0}
+            onUndo={undo}
+            onRedo={redo}
+          />
           <PackCanvas
             className="h-full w-full bg-muted/40"
             slide={scene}
@@ -582,8 +1010,16 @@ export function PreviewPanel(props: PreviewPanelProps) {
             selectedId={layerId}
             onSelect={setLayerId}
             onBox={(id, box, done) => patchLayer(id, { box }, done ? "commit" : "live")}
+            tool={tool}
+            brushSize={brushSize}
+            onCrop={(id, patch, done) => patchLayer(id, patch, done ? "commit" : "live")}
+            onStroke={onStroke}
+            onCut={onCut}
             dropType={VERSION_DRAG}
-            onDropAt={(id, at) => addFrame(id, at)}
+            onDropAt={(data, at) => {
+              const [id, pictureId] = data.split("|");
+              addFrame(id, at, pictureId || null);
+            }}
           />
           {scene.layers.length === 0 && (
             <div className="pointer-events-none absolute inset-x-0 top-6 text-center text-xs text-muted-foreground">
@@ -621,7 +1057,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
               )}
             </span>
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-1">
+          {/* p-1: room for the opened one's ring, which the scroller would clip. */}
+          <div className="flex gap-2 overflow-x-auto p-1">
             {numbered.map(({ asset: m, number }) => {
               const on = picked.includes(m.id);
               return (
@@ -645,7 +1082,14 @@ export function PreviewPanel(props: PreviewPanelProps) {
                   <button
                     className="absolute left-1 top-1 hidden rounded bg-black/60 p-0.5 text-white group-hover:block"
                     onClick={async () => {
-                      if (await ctConfirm({ title: `Xoá “${m.name}”?`, tone: "danger", confirmLabel: "Xoá" })) await props.onDelete(m);
+                      if (
+                        await ctConfirm({
+                          title: `Xoá “${m.name}”?`,
+                          tone: "danger",
+                          confirmLabel: "Xoá",
+                        })
+                      )
+                        await props.onDelete(m);
                     }}
                   >
                     <Trash2 className="h-3 w-3" />
@@ -739,6 +1183,22 @@ export function PreviewPanel(props: PreviewPanelProps) {
             </div>
           ))}
           {shown.length === 0 && <p className="px-3 py-4 text-xs text-muted-foreground">Chưa có frame nào.</p>}
+          {/* The edit frame itself: always the bottom row, fixed — not draggable, never hidden or deleted. */}
+          <div
+            onClick={() => setLayerId(null)}
+            className={cx("flex cursor-pointer items-center gap-1.5 border-t px-2 py-1.5 text-xs", layerId === null ? "bg-sky-500/15" : "hover:bg-accent")}
+          >
+            <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded border" style={CHECKER_STYLE}>
+              <Frame className="h-3.5 w-3.5 text-muted-foreground" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">Khung edit</span>
+              <span className="block text-[10px] text-muted-foreground">
+                {scene.width}×{scene.height} · khung gốc
+              </span>
+            </span>
+          </div>
         </div>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
@@ -752,8 +1212,10 @@ export function PreviewPanel(props: PreviewPanelProps) {
               busy={!!busy}
               onPatch={(patch, how) => patchLayer(layer.id, patch, how)}
               onCommit={() => commit(scene)}
-              onReplaceImage={(l) => void replaceImage(l)}
+              onReplaceImage={replaceImage}
               onFrameToImage={(l) => void frameToImage(l)}
+              onFit={(l, fit) => void setFit(l, fit)}
+              materials={materials}
               onAiMaterial={(f) => void aiMaterial(f)}
             />
           ) : (
@@ -773,6 +1235,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
         </div>
       </div>
 
+      {/* Mounted per opening, so it starts fresh each time. */}
+      {libraryFor && <PackImageLibrary open onOpenChange={(o) => !o && setLibraryFor(null)} onPick={usePhoto} aspect={nearestAspect(scene.width, scene.height)} />}
       <EnhanceDialog
         open={enhanceOpen}
         onOpenChange={setEnhanceOpen}
@@ -828,6 +1292,9 @@ interface LayerSettingsProps {
   onCommit: () => void;
   onReplaceImage: (l: CtPackImageLayer) => void;
   onFrameToImage: (l: CtPackImageLayer) => void;
+  onFit: (l: CtPackImageLayer, fit: CtPackImageLayer["fit"]) => void;
+  /** Material pictures of each version, by version id. */
+  materials: Record<string, CtAsset[]>;
   onAiMaterial: (f: CtPackFrameLayer) => void;
 }
 
@@ -835,12 +1302,25 @@ function LayerSettings(p: LayerSettingsProps) {
   const { layer, scene } = p;
   const b = layer.box;
   const setBox = (patch: Partial<CtPackBox>) => p.onPatch({ box: { ...b, ...patch } });
+  if (layer.type === "blur") return <BlurSettings layer={layer} onPatch={p.onPatch} onCommit={p.onCommit} />;
   return (
     <>
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold">{LAYER_LABEL[layer.type]}</p>
         <CtTooltip label="Phủ kín khung edit">
-          <CtButton size="sm" variant="ghost" onClick={() => setBox({ x: 0, y: 0, w: scene.width, h: scene.height, rotation: 0 })}>
+          <CtButton
+            size="sm"
+            variant="ghost"
+            onClick={() =>
+              setBox({
+                x: 0,
+                y: 0,
+                w: scene.width,
+                h: scene.height,
+                rotation: 0,
+              })
+            }
+          >
             <Maximize className="h-3.5 w-3.5" /> Vừa khung
           </CtButton>
         </CtTooltip>
@@ -884,13 +1364,15 @@ function LayerSettings(p: LayerSettingsProps) {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <CtField label="Ảnh trong frame">
-              <CtSelect
+              <CtSelect<CtPackImageLayer["fit"]>
                 value={layer.fit}
-                onChange={(fit) => p.onPatch({ fit })}
+                onChange={(fit) => p.onFit(layer, fit)}
                 options={[
                   { value: "cover", label: "Phủ kín (cắt)" },
                   { value: "contain", label: "Vừa (không cắt)" },
-                  { value: "stretch", label: "Kéo giãn" },
+                  { value: "original", label: "Tỉ lệ gốc của ảnh" },
+                  // Old frames keep showing their stretch until changed.
+                  ...(layer.fit === "stretch" ? [{ value: "stretch" as const, label: "Kéo giãn" }] : []),
                 ]}
               />
             </CtField>
@@ -898,6 +1380,41 @@ function LayerSettings(p: LayerSettingsProps) {
               <CtSelect value={layer.blend} onChange={(blend) => p.onPatch({ blend })} options={BLENDS.map((x) => ({ value: x, label: x }))} />
             </CtField>
           </div>
+          <CtField label={`Làm nhoè (blur) — ${layer.blur}px`}>
+            <input
+              type="range"
+              className="w-full accent-sky-500"
+              min={0}
+              max={100}
+              value={layer.blur}
+              onChange={(e) => p.onPatch({ blur: Number(e.target.value) }, "live")}
+              onPointerUp={p.onCommit}
+              onKeyUp={p.onCommit}
+            />
+          </CtField>
+          <CtField label="Tỉ lệ frame">
+            <div className="flex flex-wrap gap-1">
+              {SIZE_PRESETS.map((r) => {
+                const on = layer.fit !== "original" && Math.abs(b.w / b.h - r.w / r.h) < 0.01;
+                return (
+                  <CtButton
+                    key={r.label}
+                    size="sm"
+                    variant={on ? "primary" : "outline"}
+                    // A preset shape is no longer the photo's own: it fills it (cover).
+                    onClick={() =>
+                      p.onPatch({
+                        box: boxToRatio(b, r.w / r.h),
+                        ...(layer.fit === "original" ? { fit: "cover" as const } : {}),
+                      })
+                    }
+                  >
+                    {r.label}
+                  </CtButton>
+                );
+              })}
+            </div>
+          </CtField>
         </>
       )}
       {layer.type === "text" && <TextSettings layer={layer} onPatch={p.onPatch} onCommit={p.onCommit} />}
@@ -907,11 +1424,22 @@ function LayerSettings(p: LayerSettingsProps) {
             <CtField label="Version">
               <CtSelect
                 value={String(Math.min(layer.mainIndex, p.versions.length - 1))}
-                onChange={(v) => p.onPatch({ mainIndex: Number(v), artworkId: null, name: p.versions[Number(v)]?.name || layer.name } as Partial<CtPackFrameLayer>)}
-                options={p.versions.map((v, i) => ({ value: String(i), label: v.name || `Version ${i + 1}` }))}
+                onChange={(v) =>
+                  p.onPatch({
+                    mainIndex: Number(v),
+                    artworkId: null,
+                    pictureId: null,
+                    name: p.versions[Number(v)]?.name || layer.name,
+                  } as Partial<CtPackFrameLayer>)
+                }
+                options={p.versions.map((v, i) => ({
+                  value: String(i),
+                  label: v.name || `Version ${i + 1}`,
+                }))}
               />
             </CtField>
           )}
+          <FramePicture layer={layer} versions={p.versions} materials={p.materials} onPatch={p.onPatch} />
           <CtCheckbox checked={layer.shadow.enabled} onChange={(enabled) => p.onPatch({ shadow: { ...layer.shadow, enabled } })} label="Đổ bóng" />
           {layer.shadow.enabled && (
             <div className="grid grid-cols-3 gap-2">
@@ -926,7 +1454,14 @@ function LayerSettings(p: LayerSettingsProps) {
                   value={Math.round(layer.shadow.opacity * 100)}
                   min={0}
                   max={100}
-                  onChange={(v) => p.onPatch({ shadow: { ...layer.shadow, opacity: Math.min(1, Math.max(0, v / 100)) } })}
+                  onChange={(v) =>
+                    p.onPatch({
+                      shadow: {
+                        ...layer.shadow,
+                        opacity: Math.min(1, Math.max(0, v / 100)),
+                      },
+                    })
+                  }
                 />
               </CtField>
             </div>
@@ -989,7 +1524,16 @@ function FillSettings({ layer, onPatch, onCommit }: { layer: CtPackFillLayer; on
           size="sm"
           className="flex-1 justify-center"
           variant={g ? "primary" : "outline"}
-          onClick={() => !g && onPatch({ gradient: { name: CT_GRADIENTS[0].name, colors: CT_GRADIENTS[0].colors, angle: 90 } })}
+          onClick={() =>
+            !g &&
+            onPatch({
+              gradient: {
+                name: CT_GRADIENTS[0].name,
+                colors: CT_GRADIENTS[0].colors,
+                angle: 90,
+              },
+            })
+          }
         >
           Gradient
         </CtButton>
@@ -1021,8 +1565,18 @@ function FillSettings({ layer, onPatch, onCommit }: { layer: CtPackFillLayer; on
                 key={x.name}
                 title={x.name}
                 className={cx("aspect-square rounded border", x.name === g.name && "ring-2 ring-sky-500")}
-                style={{ background: gradientCss({ colors: x.colors, angle: g.angle }) }}
-                onClick={() => onPatch({ gradient: { name: x.name, colors: x.colors, angle: g.angle } })}
+                style={{
+                  background: gradientCss({ colors: x.colors, angle: g.angle }),
+                }}
+                onClick={() =>
+                  onPatch({
+                    gradient: {
+                      name: x.name,
+                      colors: x.colors,
+                      angle: g.angle,
+                    },
+                  })
+                }
               />
             ))}
             {list.length === 0 && <p className="col-span-6 text-[11px] text-muted-foreground">Không có gradient nào khớp.</p>}
@@ -1034,7 +1588,18 @@ function FillSettings({ layer, onPatch, onCommit }: { layer: CtPackFillLayer; on
                 type="color"
                 className="h-7 w-8 cursor-pointer rounded border"
                 value={/^#[0-9a-f]{6}$/i.test(c) ? c : "#ffffff"}
-                onChange={(e) => onPatch({ gradient: { ...g, name: "", colors: g.colors.map((x, j) => (j === i ? e.target.value : x)) } }, "live")}
+                onChange={(e) =>
+                  onPatch(
+                    {
+                      gradient: {
+                        ...g,
+                        name: "",
+                        colors: g.colors.map((x, j) => (j === i ? e.target.value : x)),
+                      },
+                    },
+                    "live",
+                  )
+                }
                 onBlur={onCommit}
               />
             ))}
@@ -1042,6 +1607,227 @@ function FillSettings({ layer, onPatch, onCommit }: { layer: CtPackFillLayer; on
         </>
       )}
     </>
+  );
+}
+
+/** Cọ làm mờ layer: how strong, and its strokes. */
+function BlurSettings({ layer, onPatch, onCommit }: { layer: CtPackBlurLayer; onPatch: LayerSettingsProps["onPatch"]; onCommit: () => void }) {
+  const painted = layer.strokes.filter((st) => !st.erase).length;
+  return (
+    <>
+      <p className="text-xs font-semibold">Cọ làm mờ</p>
+      <CtField label="Tên">
+        <CtInput key={layer.id} defaultValue={layer.name} onBlur={(e) => e.target.value !== layer.name && onPatch({ name: e.target.value })} />
+      </CtField>
+      <CtField label={`Độ nhoè — ${layer.strength}px`}>
+        <input
+          type="range"
+          className="w-full accent-sky-500"
+          min={1}
+          max={80}
+          value={layer.strength}
+          onChange={(e) => onPatch({ strength: Number(e.target.value) } as Partial<CtPackBlurLayer>, "live")}
+          onPointerUp={onCommit}
+          onKeyUp={onCommit}
+        />
+      </CtField>
+      <CtField label="Độ đậm (%)">
+        <CtNumber value={Math.round(layer.opacity * 100)} min={0} max={100} onChange={(v) => onPatch({ opacity: Math.min(1, Math.max(0, v / 100)) })} />
+      </CtField>
+      <p className="text-[11px] text-muted-foreground">
+        {painted} nét cọ
+        {layer.strokes.length > painted ? ` · ${layer.strokes.length - painted} nét tẩy` : ""} — làm mờ mọi thứ nằm dưới layer này (đã gộp).
+      </p>
+      <div className="flex gap-1.5">
+        <CtButton
+          size="sm"
+          className="flex-1 justify-center"
+          disabled={!layer.strokes.length}
+          onClick={() =>
+            onPatch({
+              strokes: layer.strokes.slice(0, -1),
+            } as Partial<CtPackBlurLayer>)
+          }
+        >
+          Bỏ nét cuối
+        </CtButton>
+        <CtButton size="sm" className="flex-1 justify-center" disabled={!layer.strokes.length} onClick={() => onPatch({ strokes: [] } as Partial<CtPackBlurLayer>)}>
+          Xoá hết nét
+        </CtButton>
+      </div>
+    </>
+  );
+}
+
+interface EditToolsProps {
+  tool: CtPackTool;
+  onTool: (t: CtPackTool) => void;
+  /** The active frame. */
+  layer: CtPackLayer | null;
+  brushSize: number;
+  onBrushSize: (v: number) => void;
+  strength: number;
+  onStrength: (v: number, how: "commit" | "live") => void;
+  onFlip: (axis: "x" | "y") => void;
+  onDuplicate: () => void;
+  onUncrop: () => void;
+  cutKeep: boolean;
+  onCutKeep: (keep: boolean) => void;
+  /** Take the last cut off, or all of them. */
+  onUncut: (all: boolean) => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+}
+
+const TOOLS: Array<{ id: CtPackTool; icon: typeof Crop; label: string }> = [
+  { id: "select", icon: MousePointer2, label: "Chọn / di chuyển (V)" },
+  {
+    id: "hand",
+    icon: Hand,
+    label: "Kéo vùng edit (H, hoặc giữ Space) — ⌘ + cuộn / pinch để zoom",
+  },
+  {
+    id: "crop",
+    icon: Crop,
+    label: "Crop frame đang chọn (C) — kéo cạnh / góc, kéo bên trong để dời khung crop; Enter / Esc xong",
+  },
+  {
+    id: "cut",
+    icon: Lasso,
+    label: "Cắt (L) — khoanh một vùng trên frame đang chọn, thả tay là cắt",
+  },
+  {
+    id: "brush",
+    icon: Brush,
+    label: "Cọ làm mờ (B) — làm mờ mọi thứ bên dưới; [ ] đổi cỡ cọ",
+  },
+  { id: "erase", icon: Eraser, label: "Tẩy vùng mờ (E)" },
+];
+
+/** The vertical toolbar on the edit frame + the active tool's options beside it. */
+function EditTools(p: EditToolsProps) {
+  const l = p.layer && p.layer.type !== "blur" ? p.layer : null;
+  const btn = (on: boolean) =>
+    cx("flex h-8 w-8 items-center justify-center rounded-md", on ? "bg-sky-500 text-white" : "hover:bg-accent disabled:opacity-40 disabled:hover:bg-transparent");
+  const tip = (label: string, node: React.ReactElement) => (
+    <CtTooltip key={label} label={label} side="right">
+      {node}
+    </CtTooltip>
+  );
+  return (
+    <div className="pointer-events-none absolute left-3 top-3 z-10 flex items-start gap-2">
+      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-lg border bg-background/95 p-1 shadow-md">
+        {TOOLS.map((t) =>
+          tip(
+            t.label,
+            <button className={btn(p.tool === t.id)} onClick={() => p.onTool(t.id)}>
+              <t.icon className="h-4 w-4" />
+            </button>,
+          ),
+        )}
+        <span className="mx-1 my-0.5 h-px bg-border" />
+        {tip(
+          "Lật ngang frame đang chọn",
+          <button className={btn(!!l?.flipX)} disabled={!l} onClick={() => p.onFlip("x")}>
+            <FlipHorizontal2 className="h-4 w-4" />
+          </button>,
+        )}
+        {tip(
+          "Lật dọc frame đang chọn",
+          <button className={btn(!!l?.flipY)} disabled={!l} onClick={() => p.onFlip("y")}>
+            <FlipVertical2 className="h-4 w-4" />
+          </button>,
+        )}
+        {tip(
+          "Nhân bản frame (⌘D)",
+          <button className={btn(false)} disabled={!l} onClick={p.onDuplicate}>
+            <Copy className="h-4 w-4" />
+          </button>,
+        )}
+        <span className="mx-1 my-0.5 h-px bg-border" />
+        {tip(
+          "Hoàn tác (⌘Z)",
+          <button className={btn(false)} disabled={!p.canUndo} onClick={p.onUndo}>
+            <Undo2 className="h-4 w-4" />
+          </button>,
+        )}
+        {tip(
+          "Làm lại (⇧⌘Z)",
+          <button className={btn(false)} disabled={!p.canRedo} onClick={p.onRedo}>
+            <Redo2 className="h-4 w-4" />
+          </button>,
+        )}
+      </div>
+
+      {(p.tool === "brush" || p.tool === "erase") && (
+        <div className="pointer-events-auto w-48 space-y-2 rounded-lg border bg-background/95 p-2 text-[11px] shadow-md">
+          <label className="block">
+            Cỡ cọ — {p.brushSize}px
+            <input type="range" className="w-full accent-sky-500" min={4} max={1000} value={p.brushSize} onChange={(e) => p.onBrushSize(Number(e.target.value))} />
+          </label>
+          {p.tool === "brush" && (
+            <label className="block">
+              Độ nhoè — {p.strength}px
+              <input
+                type="range"
+                className="w-full accent-sky-500"
+                min={1}
+                max={80}
+                value={p.strength}
+                onChange={(e) => p.onStrength(Number(e.target.value), "live")}
+                onPointerUp={(e) => p.onStrength(Number(e.currentTarget.value), "commit")}
+              />
+            </label>
+          )}
+          <p className="text-muted-foreground">{p.tool === "brush" ? "Cọ lên ảnh: mọi layer bên dưới được gộp lại rồi làm mờ chỗ cọ." : "Cọ để bỏ mờ ở chỗ đã cọ."}</p>
+        </div>
+      )}
+      {p.tool === "cut" && (
+        <div className="pointer-events-auto w-48 space-y-2 rounded-lg border bg-background/95 p-2 text-[11px] shadow-md">
+          <p>{l ? <>Khoanh vùng trên “{l.name}”, thả tay là cắt.</> : "Chọn một frame rồi khoanh vùng cần cắt."}</p>
+          <div className="grid grid-cols-2 gap-1">
+            <CtButton size="sm" variant={p.cutKeep ? "outline" : "primary"} className="justify-center" onClick={() => p.onCutKeep(false)}>
+              Bỏ vùng khoanh
+            </CtButton>
+            <CtButton size="sm" variant={p.cutKeep ? "primary" : "outline"} className="justify-center" onClick={() => p.onCutKeep(true)}>
+              Giữ vùng khoanh
+            </CtButton>
+          </div>
+          {l && !!l.cuts?.length && (
+            <div className="grid grid-cols-2 gap-1">
+              <CtButton size="sm" className="justify-center" onClick={() => p.onUncut(false)}>
+                Bỏ vết cuối
+              </CtButton>
+              <CtButton size="sm" className="justify-center" onClick={() => p.onUncut(true)}>
+                Bỏ hết ({l.cuts.length})
+              </CtButton>
+            </div>
+          )}
+          <CtButton size="sm" variant="primary" className="w-full justify-center" onClick={() => p.onTool("select")}>
+            <Check className="h-3.5 w-3.5" /> Xong (Enter)
+          </CtButton>
+        </div>
+      )}
+      {p.tool === "crop" && (
+        <div className="pointer-events-auto w-48 space-y-2 rounded-lg border bg-background/95 p-2 text-[11px] shadow-md">
+          {l && canCrop(l) ? (
+            <>
+              <p>Kéo cạnh / góc để crop “{l.name}”. Kéo bên trong để dời khung crop tới chỗ muốn; phần mờ là phần bị crop.</p>
+              <CtButton size="sm" className="w-full justify-center" disabled={!l.crop} onClick={p.onUncrop}>
+                Bỏ crop
+              </CtButton>
+            </>
+          ) : (
+            <p className="text-muted-foreground">Chọn một Image frame hoặc frame sản phẩm để crop.</p>
+          )}
+          <CtButton size="sm" variant="primary" className="w-full justify-center" onClick={() => p.onTool("select")}>
+            <Check className="h-3.5 w-3.5" /> Xong (Enter)
+          </CtButton>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1059,13 +1845,23 @@ function TextSettings({ layer, onPatch, onCommit }: { layer: CtPackTextLayer; on
             value={layer.fontFamily}
             onChange={(fontFamily) => {
               const w = CT_FONTS.find((f) => f.family === fontFamily)?.weights ?? [];
-              onPatch({ fontFamily, fontWeight: w.includes(layer.fontWeight) ? layer.fontWeight : (w[w.length - 1] ?? 400) });
+              onPatch({
+                fontFamily,
+                fontWeight: w.includes(layer.fontWeight) ? layer.fontWeight : (w[w.length - 1] ?? 400),
+              });
             }}
             options={CT_FONTS.map((f) => ({ value: f.family, label: f.label }))}
           />
         </CtField>
         <CtField label="Độ đậm">
-          <CtSelect value={String(layer.fontWeight)} onChange={(v) => onPatch({ fontWeight: Number(v) })} options={weights.map((w) => ({ value: String(w), label: String(w) }))} />
+          <CtSelect
+            value={String(layer.fontWeight)}
+            onChange={(v) => onPatch({ fontWeight: Number(v) })}
+            options={weights.map((w) => ({
+              value: String(w),
+              label: String(w),
+            }))}
+          />
         </CtField>
         <CtField label="Cỡ chữ">
           <CtNumber value={Math.round(layer.fontSize)} min={6} max={1000} onChange={(fontSize) => fontSize >= 6 && onPatch({ fontSize })} />

@@ -34,7 +34,8 @@
  *   POST   ai/category-revise            multipart: category (JSON {id?, name, spec, rules}), note, image_file/image_label/image_url×≤12 (numbered results), ref_url×≤4 → CtCategoryRevision (recorded in ct_category_history)
  *   POST   ai/category-review            multipart: category (JSON {id?, name, spec, rules}) → CtCategoryRevision: the prompts checked as assembled, fixes as a plan (server/ai/prompt-review.ts)
  *   GET    ai/agent-status               → CtAgentStatus (the @flexiprint agent on agent_ide: configured / online)
- *   POST   ai/agent-tasks                {kind: create|revise, input: CtAgentTaskInput} → CtAgentTask, sent to agent_ide (server/agent/tasks.ts)
+ *   GET    ai/agent-tasks?kind=          → { tasks } the editor's latest (photo library history: kind pack_image)
+ *   POST   ai/agent-tasks                {kind: create|revise|pack_image, input: CtAgentTaskInput} → CtAgentTask, sent to agent_ide (server/agent/tasks.ts)
  *   GET    ai/agent-tasks/:id            → CtAgentTask (progress, then result in the built-in LLM's shape)
  *   POST   ai/agent-tasks/:id/answer     {question_id, choices, text} — answer the agent's question (ask_user)
  *   POST   ai/agent-tasks/:id/cancel
@@ -62,6 +63,7 @@
  *   POST   library/cliparts/:id/replace  { with, keep_renditions? } — products using it switch to clipart `with`, then it is deleted
  *                                       (keep_renditions: its vật liệu versions move to `with` too, to be made again)
  *   GET    library/cliparts/:id/usage    → { usage: CtClipartUsage[] }
+ *   GET    library/cliparts/:id/materials → { cliparts } its vật liệu, their đa sắc, vật liệu of its đa sắc
  *   POST   assets/:id/promote            { category_id } — move a product clipart into the library
  *   POST   products/:id/mains            { asset_id } — use a library main as a version
  *   DELETE products/:id/mains/:assetId
@@ -70,6 +72,11 @@
  *   PATCH  library/packs/:id             CtMockupPackBody
  *   DELETE library/packs/:id
  *   POST   library/packs/images          multipart file → { url, width, height }
+ *   GET    library/pack-images?q=&scope= → { images }  thư viện ảnh tổ hợp (server/pack-images.ts)
+ *   POST   library/pack-images           multipart file, name → { image }
+ *   POST   library/pack-images/generate  multipart description, aspect, refs, ref files → { image } (running)
+ *   GET    library/pack-images/:id       → { image }
+ *   DELETE library/pack-images/:id
  *   GET    presets?kind=                 → { presets, admin }  (style_pack | material | scene)
  *   POST   presets                       CtPresetBody
  *   PATCH  presets/:id                   CtPresetBody
@@ -108,9 +115,10 @@ import * as st from "./ai-styles";
 import * as lib from "./library";
 import * as studio from "./studio";
 import * as packs from "./mockup-packs";
+import * as packImages from "./pack-images";
 import { reviewCategoryPrompts, suggestCategoryPrompts, suggestCategoryRevision, suggestDetails, suggestPresetPrompt, suggestRefine } from "./ai/prompt-writer";
 import { mcpEndpoint } from "./mcp/server";
-import { agentStatus, answerAgentTask, cancelAgentTask, createAgentTask, getAgentTask } from "./agent/tasks";
+import { agentStatus, answerAgentTask, cancelAgentTask, createAgentTask, getAgentTask, listAgentTasks } from "./agent/tasks";
 
 export interface CtRouteContext {
   params: Promise<{ path?: string[] }>;
@@ -171,6 +179,7 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
     if (id === "category-revise" && method === "POST") return suggestCategoryRevision(session, await req.formData());
     if (id === "category-review" && method === "POST") return reviewCategoryPrompts(session, await req.formData());
     if (id === "agent-status" && method === "GET") return agentStatus();
+    if (id === "agent-tasks" && !sub && method === "GET") return listAgentTasks(session, req.nextUrl.searchParams.get("kind"));
     if (id === "agent-tasks" && !sub && method === "POST") return createAgentTask(session, await readJson<unknown>(req));
     if (id === "agent-tasks" && sub && !path[3] && method === "GET") return getAgentTask(session, sub);
     if (id === "agent-tasks" && sub && path[3] === "cancel" && method === "POST") return cancelAgentTask(session, sub);
@@ -267,6 +276,14 @@ async function dispatchLibrary(req: NextRequest, session: CtSession, path: strin
   const [, resource, id, sub] = path;
   const method = req.method;
   if (resource === "packs" && id === "images" && !sub && method === "POST") return packs.uploadPackImage(session, await req.formData());
+  if (resource === "pack-images") {
+    if (!id && method === "GET") return packImages.listPackImages(session, req.nextUrl.searchParams);
+    if (!id && method === "POST") return packImages.uploadPackLibraryImage(session, await req.formData());
+    if (id === "generate" && !sub && method === "POST") return packImages.generatePackImage(session, await req.formData());
+    if (id && UUID.test(id) && !sub && method === "GET") return packImages.getPackImage(session, id);
+    if (id && UUID.test(id) && !sub && method === "DELETE") return packImages.deletePackImage(session, id);
+    return h.jsonError("Not found", 404);
+  }
   if (id && !UUID.test(id)) return h.jsonError("id không hợp lệ", 400);
   if (resource === "packs" && !sub) {
     if (!id && method === "GET") return packs.listPacks(session);
@@ -292,6 +309,7 @@ async function dispatchLibrary(req: NextRequest, session: CtSession, path: strin
     }
     if (!id && method === "POST") return lib.uploadClipart(session, await req.formData());
     if (id && sub === "usage" && method === "GET") return lib.getClipartUsage(session, id);
+    if (id && sub === "materials" && method === "GET") return lib.getClipartMaterials(session, id);
     if (id && !sub && method === "PATCH") {
       const body = await readJson<CtUpdateClipartBody>(req);
       return body ? lib.updateClipart(session, id, body) : h.jsonError("Body không hợp lệ", 400);

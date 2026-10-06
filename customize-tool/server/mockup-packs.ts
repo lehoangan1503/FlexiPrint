@@ -78,7 +78,7 @@ export async function uploadPackImage(s: CtSession, form: FormData): Promise<Nex
   if (file.size > Math.min(MAX_IMAGE_BYTES, CT_CONFIG.maxUploadBytes)) return jsonError("Ảnh quá lớn (tối đa 25MB)", 413);
   const data = Buffer.from(await file.arrayBuffer());
   const info = readImageInfo(data);
-  if (!info) return jsonError("File không phải ảnh PNG/JPEG/WebP hợp lệ", 400);
+  if (!info) return jsonError("Trình duyệt này không mở được định dạng ảnh này — thử Chrome/Safari mới hoặc đổi sang PNG/JPEG", 400);
   try {
     const url = await ctUpload(ctLibraryPath(s.user.id, null, "pack", info.mime), data, info.mime);
     return NextResponse.json({ url, width: info.width, height: info.height }, { status: 201 });

@@ -5,6 +5,8 @@
 import { CT_CONFIG } from "../config";
 import type {
   CtCategoryHistoryEntry,
+  CtPackImage,
+  CtPackImageAspect,
   CtAgentStatus,
   CtAgentTask,
   CtAgentTaskInput,
@@ -168,6 +170,8 @@ export const ctApi = {
    */
   replaceClipart: (id: string, withId: string, keepRenditions = false) =>
     call<{ usage: CtClipartUsage[]; moved: string[] }>(`library/cliparts/${id}/replace`, json("POST", { with: withId, ...(keepRenditions ? { keep_renditions: true } : {}) })),
+  /** Material pictures of a clipart: vật liệu versions, their đa sắc, vật liệu of its đa sắc. */
+  clipartMaterials: (id: string) => call<{ cliparts: CtAsset[] }>(`library/cliparts/${id}/materials`).then((r) => r.cliparts),
   clipartUsage: (id: string) => call<{ usage: CtClipartUsage[] }>(`library/cliparts/${id}/usage`).then((r) => r.usage),
   /** Move a product clipart (with its versions) into the library. */
   promoteAsset: (id: string, categoryId: string | null) =>
@@ -180,6 +184,44 @@ export const ctApi = {
   createPack: (body: CtMockupPackBody) => call<{ pack: CtMockupPack }>("library/packs", json("POST", body)).then((r) => r.pack),
   updatePack: (id: string, body: CtMockupPackBody) => call<{ pack: CtMockupPack }>(`library/packs/${id}`, json("PATCH", body)).then((r) => r.pack),
   deletePack: (id: string) => call<void>(`library/packs/${id}`, { method: "DELETE" }),
+  /** Thư viện ảnh tổ hợp: newest first; scope "mine" = my uploads, "ai" = AI-made (with history). */
+  listPackImages: (scope: "all" | "mine" | "ai" = "all", q = "") => {
+    const params = new URLSearchParams({ scope });
+    if (q) params.set("q", q);
+    return call<{ images: CtPackImage[] }>(`library/pack-images?${params}`).then((r) => r.images);
+  },
+  getPackImage: (id: string) => call<{ image: CtPackImage }>(`library/pack-images/${id}`).then((r) => r.image),
+  /** Saved as <name>_<timestamp>.<ext>. */
+  uploadPackLibraryImage: (file: Blob, name: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("name", name);
+    return call<{ image: CtPackImage }>("library/pack-images", { method: "POST", body: form }).then((r) => r.image);
+  },
+  /**
+   * Starts a direct generation (status "running"): poll getPackImage. `refs` = library urls, `files` = new reference
+   * photos; `prompt` = drawn as written (else a one-shot LLM writes it); `parentId` = the photo it edits (sent first).
+   */
+  generatePackImage: (body: {
+    description: string;
+    aspect: CtPackImageAspect;
+    refs: string[];
+    files: Blob[];
+    prompt?: string;
+    parentId?: string | null;
+    transparent?: boolean;
+  }) => {
+    const form = new FormData();
+    form.append("description", body.description);
+    form.append("aspect", body.aspect);
+    form.append("refs", JSON.stringify(body.refs));
+    if (body.prompt) form.append("prompt", body.prompt);
+    if (body.parentId) form.append("parent_id", body.parentId);
+    if (body.transparent) form.append("transparent", "1");
+    for (const f of body.files) form.append("ref", f);
+    return call<{ image: CtPackImage }>("library/pack-images/generate", { method: "POST", body: form }).then((r) => r.image);
+  },
+  deletePackImage: (id: string) => call<void>(`library/pack-images/${id}`, { method: "DELETE" }),
   /** A background / overlay / slot sample picture for a pack. */
   uploadPackImage: (file: Blob) => {
     const form = new FormData();
@@ -241,6 +283,8 @@ export const ctApi = {
   /** Hand the dialog's AI work to the agent instead of the built-in LLM (migration 011). */
   createAgentTask: (body: { kind: CtAgentTaskKind; input: CtAgentTaskInput }) => call<CtAgentTask>("ai/agent-tasks", json("POST", body)),
   agentTask: (id: string) => call<CtAgentTask>(`ai/agent-tasks/${id}`),
+  /** The editor's latest agent tasks of a kind, newest first. */
+  listAgentTasks: (kind: CtAgentTaskKind) => call<{ tasks: CtAgentTask[] }>(`ai/agent-tasks?kind=${kind}`).then((r) => r.tasks),
   cancelAgentTask: (id: string) => call<CtAgentTask>(`ai/agent-tasks/${id}/cancel`, { method: "POST" }),
   /** Answer the agent's question (ask_user): it continues the task with it. */
   answerAgentTask: (id: string, body: { question_id: string; choices: string[]; text: string }) => call<CtAgentTask>(`ai/agent-tasks/${id}/answer`, json("POST", body)),

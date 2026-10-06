@@ -444,6 +444,15 @@ async function subOptionProducts(db: Db, ids: string[]): Promise<Array<Pick<CtPr
   return [...byId.values()];
 }
 
+/**
+ * GET library/cliparts/:id/materials → the material pictures of a clipart (tổ hợp picker): its vật liệu versions,
+ * the đa sắc of those, and the vật liệu of its own đa sắc — newest first within each.
+ */
+export async function getClipartMaterials(s: CtSession, id: string): Promise<NextResponse> {
+  const kids = await descendants(s.supabase, [id]);
+  return NextResponse.json({ cliparts: kids.filter((k) => k.role === "rendition") });
+}
+
 export async function getClipartUsage(s: CtSession, id: string): Promise<NextResponse> {
   const kids = await descendants(s.supabase, [id]);
   return NextResponse.json({ usage: await clipartUsage(s.supabase, [id, ...kids.map((k) => k.id)]) });

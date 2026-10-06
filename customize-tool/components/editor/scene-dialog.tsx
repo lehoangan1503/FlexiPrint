@@ -33,14 +33,47 @@ export interface SceneDialogProps {
 }
 
 /** Pick an image file from disk. */
-export function pickImageFile(): Promise<File | null> {
+/** Any image the browser can open (AVIF, GIF, BMP, SVG, HEIC on Safari…); see toUploadable. */
+export function pickImageFile(): Promise<Blob | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "image/png,image/jpeg,image/webp";
-    input.onchange = () => resolve(input.files?.[0] ?? null);
+    input.accept = "image/*,.avif,.heic,.heif";
+    input.onchange = () => {
+      const file = input.files?.[0];
+      // Undecodable here: send it as is, the server says what is wrong.
+      resolve(file ? toUploadable(file).catch(() => file) : null);
+    };
     input.click();
   });
+}
+
+export const UPLOADABLE = ["image/png", "image/jpeg", "image/webp"];
+
+/**
+ * The server takes PNG / JPEG / WebP: anything else is decoded by the
+ * browser and re-encoded as WebP (PNG where WebP can't be written), alpha kept.
+ */
+export async function toUploadable(file: File): Promise<Blob> {
+  if (UPLOADABLE.includes(file.type)) return file;
+  const src = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("decode"));
+      el.src = src;
+    });
+    const canvas = document.createElement("canvas");
+    // SVGs without a size report 0: give them one.
+    canvas.width = img.naturalWidth || 2000;
+    canvas.height = img.naturalHeight || 2000;
+    canvas.getContext("2d")?.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const webp = await canvasToBlob(canvas, "image/webp", 0.95);
+    return webp.type === "image/webp" ? webp : canvasToBlob(canvas, "image/png");
+  } finally {
+    URL.revokeObjectURL(src);
+  }
 }
 
 export function SceneDialog(props: SceneDialogProps) {
@@ -83,8 +116,8 @@ export function SceneDialog(props: SceneDialogProps) {
       height: scene.height,
       background: "",
       layers: [
-        { id: BG_ID, name: "Nền", type: "image", box: { x: 0, y: 0, w: scene.width, h: scene.height, rotation: 0 }, opacity: 1, hidden: false, url: scene.url, fit: "stretch", blend: "normal" },
-        { id: DESIGN_ID, name: "Thiết kế", type: "image", box: { ...box, rotation: 0 }, opacity: 1, hidden: !designUrl, url: designUrl ?? "", fit: "stretch", blend: "normal" },
+        { id: BG_ID, name: "Nền", type: "image", box: { x: 0, y: 0, w: scene.width, h: scene.height, rotation: 0 }, opacity: 1, hidden: false, url: scene.url, fit: "stretch", blend: "normal", blur: 0 },
+        { id: DESIGN_ID, name: "Thiết kế", type: "image", box: { ...box, rotation: 0 }, opacity: 1, hidden: !designUrl, url: designUrl ?? "", fit: "stretch", blend: "normal", blur: 0 },
       ],
     };
   }, [scene, box, designUrl]);

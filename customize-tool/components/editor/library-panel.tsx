@@ -36,9 +36,29 @@ export interface CtClipartDrag {
   family: CtAsset[];
   /**
    * Several pictures picked together (click / Shift+click / "Chọn hết") and dragged as one: they become ONE
-   * custom layer whose options are these pictures, the first shown by default. Absent = just `asset`.
+   * custom layer. Pictures of different gốc are its option groups (side by side); a gốc's đa sắc / vật liệu picked
+   * with it are options inside its group. Absent = just `asset`.
    */
-  set?: Array<{ asset: CtAsset; family: CtAsset[] }>;
+  set?: CtClipartSetEntry[];
+}
+
+export interface CtClipartSetEntry {
+  asset: CtAsset;
+  family: CtAsset[];
+  /** The gốc this picture hangs off (itself for a gốc) and what it brings along — the group it lands in. */
+  root: { asset: CtAsset; family: CtAsset[] };
+}
+
+/** The gốc a library picture hangs off (itself for a gốc). */
+function rootOf(list: CtAsset[], a: CtAsset): CtAsset {
+  const byId = new Map(list.map((x) => [x.id, x]));
+  let cur = a;
+  for (let i = 0; i < 4 && cur.parent_id; i++) {
+    const up = byId.get(cur.parent_id);
+    if (!up) break;
+    cur = up;
+  }
+  return cur;
 }
 
 /** What a dragged picture brings along (see CtClipartDrag.family). */
@@ -141,7 +161,12 @@ export function LibraryPanel(props: LibraryPanelProps) {
     payload: (a) => {
       const base: CtClipartDrag = { asset: a, family: dragFamily(cliparts, a) };
       if (selected.length < 2 || !selected.includes(a.id)) return base;
-      const set = order.filter((x) => selected.includes(x.id)).map((x) => ({ asset: x, family: dragFamily(cliparts, x) }));
+      const set = order
+        .filter((x) => selected.includes(x.id))
+        .map((x): CtClipartSetEntry => {
+          const root = rootOf(cliparts, x);
+          return { asset: x, family: dragFamily(cliparts, x), root: { asset: root, family: dragFamily(cliparts, root) } };
+        });
       return { asset: set[0].asset, family: set[0].family, set };
     },
   };
@@ -163,7 +188,9 @@ export function LibraryPanel(props: LibraryPanelProps) {
         {selected.length ? (
           <>
             <span className="font-medium text-sky-600">Đã chọn {selected.length}</span>
-            <span className="min-w-0 flex-1 truncate text-muted-foreground">— kéo 1 ảnh đã chọn lên canvas = 1 custom layer, các ảnh là option</span>
+            <span className="min-w-0 flex-1 truncate text-muted-foreground" title="Clipart gốc khác nhau = các nhóm ngang cấp; đa sắc / vật liệu của 1 gốc = option con trong nhóm của gốc đó">
+              — kéo lên canvas = 1 custom layer: mỗi gốc 1 nhóm, đa sắc / vật liệu là option con
+            </span>
             <button className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-accent" onClick={() => setSelected([])}>
               <X className="h-3 w-3" /> Bỏ chọn
             </button>

@@ -57,7 +57,7 @@ import type {
 import { CT_BASE_OPTION } from "../../types";
 import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, orientedBox, resolvePhotoFrame, shapeBounds } from "../../lib/geometry";
 import { useImageSize } from "./use-image-size";
-import { formOrder, hasTestPhoto, normalizeRegion, textMode, variantsOf, ZONE_TEXT_STYLE_KEYS, zoneSubtree } from "../../lib/design";
+import { defaultRegionSelection, formOrder, hasTestPhoto, normalizeRegion, textMode, variantsOf, ZONE_TEXT_STYLE_KEYS, zoneSubtree } from "../../lib/design";
 import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
 import { PhotoGuideDialog } from "./photo-guide-dialog";
 import { aiStyleModel } from "../../lib/ai-style-models";
@@ -1235,7 +1235,7 @@ function ImageProps(props: InspectorProps & { region: CtRegion }) {
     <div className="space-y-3 border-t pt-3">
       <p className="rounded-md bg-sky-500/10 px-2 py-1.5 text-[11px] leading-snug text-sky-700 dark:text-sky-300">
         {offered >= 2
-          ? `Khách chọn 1 trong ${offered} ảnh (chỉ chọn, không sửa) — vd. bộ kiểu tóc. Mặc định = ảnh đang chọn (viền cam).`
+          ? `Khách chọn 1 trong ${offered} ảnh (chỉ chọn, không sửa) — vd. bộ kiểu tóc. Mặc định = card / ảnh viền cam (bấm để đổi).`
           : "1 ảnh = layer cố định (khách không chọn). Thêm ảnh (kéo cả bộ từ tab Thư viện, hoặc bật ảnh ẩn) để khách chọn."}
       </p>
       <CtButton size="sm" className="w-full" onClick={() => props.onPickLayerImage(region.id)}>
@@ -1274,7 +1274,7 @@ function ImageProps(props: InspectorProps & { region: CtRegion }) {
               <GroupCard key={it.id} {...props} item={it} sub={byId.get(it.asset_id)} />
             ))}
           </div>
-          <p className="mt-1.5 text-[11px] text-muted-foreground">Bấm 1 ảnh = ảnh mặc định. Ảnh mờ = ẩn với khách (con mắt để bật). Kéo clipart / cả bộ từ tab Thư viện lên layer để thêm.</p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">Bấm 1 card / 1 ảnh = mặc định (viền cam). Ảnh mờ = ẩn với khách (con mắt để bật). Kéo clipart / cả bộ từ tab Thư viện lên layer để thêm.</p>
         </div>
       )}
 
@@ -1320,10 +1320,19 @@ function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionIte
   const cur = selection[region.id];
   const shown = cur?.kind === "image" ? cur.assetId : null;
   const t = item.transform;
-
-  const setT = (patch: Partial<CtTransform>) => design.commit((s) => updateItem(s, item.id, (i) => ({ ...i, transform: { ...i.transform, ...patch } })));
   const cfg = region.config.image;
   const hidden = new Set(cfg.hiddenAssetIds);
+  const offered = options.filter((o) => !hidden.has(o.id));
+  const def = defaultRegionSelection(region, design.state.items, assets);
+  const defId = def.kind === "image" ? def.assetId : null;
+  const isDefault = options.some((o) => o.id === defId);
+  /** This option is what customers see first (and what the canvas shows). */
+  const makeDefault = (id: string) => {
+    if (id !== defId) design.commit((s) => updateRegion(s, region.id, (r) => { const n = normalizeRegion(r); return { ...n, config: { ...n.config, image: { ...n.config.image, defaultAssetId: id } } }; }));
+    props.onPreviewOption(region.id, id);
+  };
+
+  const setT = (patch: Partial<CtTransform>) => design.commit((s) => updateItem(s, item.id, (i) => ({ ...i, transform: { ...i.transform, ...patch } })));
   const toggleHidden = (id: string) =>
     design.commit((s) =>
       updateRegion(s, region.id, (r) => {
@@ -1334,11 +1343,23 @@ function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionIte
     );
 
   return (
-    <div className={cx("rounded-md border p-2", active && "border-rose-500 ring-1 ring-rose-500")}>
+    <div
+      className={cx(
+        "cursor-pointer rounded-md border p-2 transition-colors hover:border-orange-400/70",
+        isDefault && "border-orange-500 bg-orange-500/5 ring-1 ring-orange-500",
+        active && "border-rose-500 ring-1 ring-rose-500",
+      )}
+      onClick={(e) => {
+        // The whole card picks this group as the default (its shown option, else its first offered one).
+        if ((e.target as HTMLElement).closest("button,input,label")) return;
+        if (!isDefault) makeDefault((offered.find((o) => o.id === shown) ?? offered[0] ?? sub).id);
+      }}
+    >
       <div className="flex items-center gap-1.5">
         <span className="min-w-0 flex-1 truncate text-xs font-medium" title={sub.name}>
           {sub.name || "(không tên)"}
         </span>
+        {isDefault && <span className="shrink-0 rounded bg-orange-500 px-1.5 text-[10px] font-medium leading-4 text-white">Mặc định</span>}
         <CtTooltip label="Chỉnh vị trí / scale / xoay trên canvas" shortcut={["Enter"]}>
           <button className={cx("rounded p-1 hover:bg-accent", active && "bg-rose-500/15 text-rose-500")} onClick={() => props.onActiveItem(active ? null : item.id)}>
             <Move className="h-3.5 w-3.5" />
@@ -1358,9 +1379,9 @@ function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionIte
             <div key={o.id} className="group relative">
               <CtTooltip label={o.name || "(không tên)"}>
                 <button
-                  className={cx("block aspect-square w-full overflow-hidden rounded border", shown === o.id && "ring-2 ring-orange-500", isHidden && "opacity-30")}
+                  className={cx("block aspect-square w-full overflow-hidden rounded border", defId === o.id && "ring-2 ring-orange-500", shown === o.id && defId !== o.id && "ring-2 ring-sky-500", isHidden && "opacity-30")}
                   style={CHECKER_STYLE}
-                  onClick={() => props.onPreviewOption(region.id, o.id)}
+                  onClick={() => (isHidden ? props.onPreviewOption(region.id, o.id) : makeDefault(o.id))}
                 >
                   <img src={o.url} alt="" className="h-full w-full object-contain" loading="lazy" />
                 </button>

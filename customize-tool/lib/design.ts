@@ -46,6 +46,8 @@ export function defaultRegionConfig(kind: CtRegionKind): CtRegionConfig {
       groupDisplay: "button",
       groupNames: {},
       hiddenAssetIds: [],
+      extraOptions: {},
+      defaultAssetId: null,
       allowNone: false,
     },
     text: {
@@ -467,6 +469,8 @@ export function defaultRegionSelection(region: CtRegion, items: CtRegionItem[], 
       return { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM }, style: r.config.photo.defaultStyle, sourceUrl: null };
     case "image": {
       const groups = regionGroups(r, items, assets);
+      const picked = r.config.image.defaultAssetId;
+      if (picked && locateOption(groups, picked).group >= 0) return { kind: "image", assetId: picked };
       const def = groups.find((g) => g.item.is_default) ?? groups[0];
       return { kind: "image", assetId: def ? def.options[0].id : null };
     }

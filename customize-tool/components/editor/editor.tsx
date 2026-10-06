@@ -68,7 +68,7 @@ import { StorefrontPreview } from "./storefront-preview";
 import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zoneOptionView } from "./use-design";
 import { nearestAspect, PackImageLibrary } from "./pack-image-library";
 import { PrintDialog } from "./print-dialog";
-import { CLIPART_DRAG, type CtClipartDrag } from "./library-panel";
+import { CLIPART_DRAG, type CtClipartDrag, type CtClipartSetEntry } from "./library-panel";
 import { ClipartPickerDialog } from "./clipart-picker";
 import { CtAiDialog, type CtAiTarget } from "../studio/ai-dialog";
 import { ctConfirm } from "../dialogs";
@@ -910,36 +910,63 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   };
 
   /**
-   * A set of pictures dragged together: ONE custom layer whose options are the pictures (each a group of the
-   * layer, its đa sắc hidden), the first shown by default. Dropped on a custom layer, they join it.
+   * A set of pictures dragged together: ONE custom layer. Pictures are grouped by the gốc they hang off — each gốc
+   * is an option group (side by side), and its đa sắc / vật liệu picked with it are the options inside that group
+   * (a vật liệu picks the picture it was made from, drawn in its material; a đa sắc of a vật liệu version is offered
+   * through config.image.extraOptions). What wasn't picked stays hidden. Dropped on a custom layer, they join it.
    */
-  const dropSet = (set: NonNullable<CtClipartDrag["set"]>, at: CtPoint | null) => {
+  const dropSet = (set: CtClipartSetEntry[], at: CtPoint | null) => {
     if (!main || !product) return;
-    const heads = set.map((d) => asLayerClipart(d.asset));
-    const extra = set.flatMap((d) => {
-      const members = d.asset.parent_id === null ? d.family.filter((a) => a.role === "variant" && a.parent_id === d.asset.id) : [];
-      return d.family.filter((a) => a.id !== d.asset.id && (a.role === "rendition" || members.includes(a)));
+    interface Group {
+      head: CtAsset;
+      bring: CtAsset[];
+      members: string[];
+      picked: string[];
+      extras: CtAsset[];
+    }
+    const groups = new Map<string, Group>();
+    const flat: string[] = [];
+    for (const e of set) {
+      const root = e.root.asset;
+      let g = groups.get(root.id);
+      if (!g) {
+        const members = root.parent_id === null ? e.root.family.filter((a) => a.role === "variant" && a.parent_id === root.id).map((a) => a.id) : [];
+        const bring = e.root.family.filter((a) => a.id !== root.id && (a.role === "rendition" || members.includes(a.id)));
+        g = { head: asLayerClipart(root), bring, members, picked: [], extras: [] };
+        groups.set(root.id, g);
+      }
+      const a = e.asset;
+      let id = a.id;
+      if (a.id === root.id || g.members.includes(a.id)) flat.push(a.id);
+      else if (a.role === "rendition" && !a.meta?.variant && a.parent_id) id = a.parent_id;
+      else g.extras.push(asMainOption(a, root.id));
+      if (!g.picked.includes(id)) g.picked.push(id);
+    }
+    const list = [...groups.values()];
+    const added = [...list.flatMap((g) => [g.head, ...g.bring]), ...list.flatMap((g) => g.extras)];
+    setAssets((cur) => {
+      const have = new Set(cur.map((a) => a.id));
+      return [...cur, ...added.filter((a) => !have.has(a.id) && have.add(a.id))];
     });
-    const hidden = set.flatMap((d) => (d.asset.parent_id === null ? d.family.filter((a) => a.role === "variant" && a.parent_id === d.asset.id).map((a) => a.id) : []));
-    setAssets((list) => {
-      const have = new Set(list.map((a) => a.id));
-      return [...list, ...[...heads, ...extra].filter((a) => !have.has(a.id) && have.add(a.id))];
-    });
-    keepAsDragged(heads.map((h) => h.id));
+    keepAsDragged(flat);
     const p = at ?? { x: main.width / 2, y: main.height / 2 };
     const hit = [...regions].reverse().find((r) => r.kind === "image" && pointInShape(p, r.shape));
     const size = Math.round(Math.min(main.width, main.height) * 0.3);
-    const first = heads[0];
+    const first = list[0].head;
     const box = fitAspect(
       { x: Math.min(Math.max(p.x - size / 2, 0), main.width - size), y: Math.min(Math.max(p.y - size / 2, 0), main.height - size), w: size, h: size },
       first.width,
       first.height,
     );
-    const layer = hit ?? { ...makeRegion(product.id, "image", { type: "rect", x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h), radius: 0 }, regions.length), name: `Bộ ${heads.length} ảnh` };
+    const layer = hit ?? { ...makeRegion(product.id, "image", { type: "rect", x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h), radius: 0 }, regions.length), name: list.length > 1 ? `Bộ ${list.length} nhóm` : first.name || "Bộ ảnh" };
     const have = new Set(items.filter((i) => i.region_id === layer.id).map((i) => i.asset_id));
     const start = items.filter((i) => i.region_id === layer.id).length;
-    const fresh = heads.filter((h) => !have.has(h.id));
-    const newItems = fresh.map((h, i) => makeItem(layer.id, h.id, start + i));
+    const fresh = list.filter((g) => !have.has(g.head.id));
+    const newItems = fresh.map((g, i) => makeItem(layer.id, g.head.id, start + i));
+    // A new group shows only what was picked; a group already in the layer just gets the picked ones switched on.
+    const hide = fresh.flatMap((g) => [g.head.id, ...g.members].filter((id) => !g.picked.includes(id)));
+    const show = new Set(list.flatMap((g) => g.picked));
+    const extraOptions = Object.fromEntries(list.flatMap((g) => g.extras.map((x) => [x.id, g.head.id] as const)));
     ed.commit((s) => {
       const regionsNow = hit ? s.regions : [...s.regions, layer];
       return {
@@ -947,17 +974,32 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         regions: regionsNow.map((x) => {
           if (x.id !== layer.id) return x;
           const n = normalizeRegion(x);
-          return { ...n, config: { ...n.config, image: { ...n.config.image, label: hit ? n.config.image.label : "Choose style", hiddenAssetIds: [...new Set([...n.config.image.hiddenAssetIds, ...hidden])] } } };
+          const img = n.config.image;
+          return {
+            ...n,
+            config: {
+              ...n.config,
+              image: {
+                ...img,
+                label: hit ? img.label : "Choose option",
+                groupLabel: hit ? img.groupLabel : "Choose style",
+                hiddenAssetIds: [...new Set([...img.hiddenAssetIds, ...hide])].filter((id) => !show.has(id)),
+                extraOptions: { ...img.extraOptions, ...extraOptions },
+                defaultAssetId: hit ? img.defaultAssetId : (list[0].picked[0] ?? null),
+              },
+            },
+          };
         }),
         items: [...s.items, ...newItems],
       };
     });
     setSelectedRegionId(layer.id);
     setActiveItemId(newItems[0]?.id ?? null);
-    if (!hit) setSelection((sel) => ({ ...sel, [layer.id]: { kind: "image", assetId: first.id } }));
+    if (!hit) setSelection((sel) => ({ ...sel, [layer.id]: { kind: "image", assetId: list[0].picked[0] ?? first.id } }));
     setEditTarget("region");
     setTool("select");
-    flash(`${hit ? "Thêm" : "Tạo custom layer với"} ${fresh.length} ảnh — khách chọn 1 trong bộ (không sửa). Nhớ Lưu thiết kế`);
+    const options = list.reduce((n, g) => n + g.picked.length, 0);
+    flash(`${hit ? "Thêm vào layer" : "Tạo custom layer"}: ${list.length} nhóm, ${options} option — khách chọn (không sửa). Nhớ Lưu thiết kế`);
   };
 
   /**

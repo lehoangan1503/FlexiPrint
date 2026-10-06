@@ -721,8 +721,24 @@ async function loadSubOptions(db: Db, product: CtProduct, have: Set<string>): Pr
   });
 }
 
+/**
+ * Pictures a layer group offers beyond its gốc's đa sắc (config.image.extraOptions — a đa sắc of a vật liệu version
+ * picked with its gốc), as the product reads them: role variant, parent = the group's sub.
+ */
+async function loadGroupExtras(db: Db, product: CtProduct, regions: CtRegion[], have: Set<string>): Promise<CtAsset[]> {
+  const want = new Map<string, string>();
+  for (const r of regions) {
+    const extra: unknown = r.config?.image?.extraOptions;
+    if (!extra || typeof extra !== "object") continue;
+    for (const [id, subId] of Object.entries(extra as Record<string, unknown>)) if (typeof subId === "string" && !have.has(id)) want.set(id, subId);
+  }
+  if (!want.size) return [];
+  const { data } = await db.from(CT_TABLES.assets).select("*").in("id", [...want.keys()]).returns<CtAsset[]>();
+  return (data ?? []).filter((a) => a.product_id === null || a.product_id === product.id).map((a) => asMainOption(a, want.get(a.id) ?? ""));
+}
+
 /** Every asset the editor / publish needs: the product's own + the library cliparts it uses. */
-export async function loadProductAssets(db: Db, product: CtProduct, items: CtRegionItem[]): Promise<CtAsset[]> {
+export async function loadProductAssets(db: Db, product: CtProduct, items: CtRegionItem[], regions: CtRegion[] = []): Promise<CtAsset[]> {
   const [{ data: own }, { data: links }] = await Promise.all([
     db.from(CT_TABLES.assets).select("*").eq("product_id", product.id).order("sort_order").order("created_at").returns<CtAsset[]>(),
     db.from(CT_TABLES.productMains).select("asset_id").eq("product_id", product.id).returns<Array<{ asset_id: string }>>(),
@@ -734,7 +750,8 @@ export async function loadProductAssets(db: Db, product: CtProduct, items: CtReg
   const libIds = [...wanted].filter((id) => !ownIds.has(id));
   const lib = await loadLinkedAssets(db, product.id, libIds, product.main_asset_id);
   const list = [...ownList, ...lib.filter((a) => !ownIds.has(a.id))];
-  return [...list, ...(await loadSubOptions(db, product, new Set(list.map((a) => a.id))))];
+  const withOptions = [...list, ...(await loadSubOptions(db, product, new Set(list.map((a) => a.id))))];
+  return [...withOptions, ...(await loadGroupExtras(db, product, regions, new Set(withOptions.map((a) => a.id))))];
 }
 
 // ---------------------------------------------------------------------------

@@ -305,6 +305,13 @@ export interface CtImageConfig {
   groupNames: Record<string, string>;
   /** Options not offered to customers (e.g. an AI base image). */
   hiddenAssetIds: string[];
+  /**
+   * Library pictures offered inside a group that are not the gốc's own đa sắc (a đa sắc of a vật liệu version):
+   * picture id -> the group's sub asset id. The product reads them as variants of that sub.
+   */
+  extraOptions: Record<string, string>;
+  /** The option customers see first (clicked in the inspector); null / no longer offered = the first group's first option. */
+  defaultAssetId: string | null;
   /** Storefront may show "None" for this region. */
   allowNone: boolean;
 }

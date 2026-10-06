@@ -107,7 +107,7 @@ export async function getBundle(s: CtSession, productId: string): Promise<NextRe
     : { data: [] as CtRegionItem[] };
 
   // The product's own assets + the library cliparts its zones / main versions use.
-  const assets = await loadProductAssets(s.supabase, product, items.data ?? []);
+  const assets = await loadProductAssets(s.supabase, product, items.data ?? [], regions.data ?? []);
 
   const bundle: CtProductBundle = {
     product,
@@ -206,7 +206,7 @@ async function publishTemplate(
   const items = regionIds.length
     ? await s.supabase.from(CT_TABLES.items).select("*").in("region_id", regionIds).returns<CtRegionItem[]>()
     : { data: [] as CtRegionItem[] };
-  const assets = await loadProductAssets(s.supabase, product, items.data ?? []);
+  const assets = await loadProductAssets(s.supabase, product, items.data ?? [], regions.data ?? []);
 
   const version = (last.data?.version ?? 0) + 1;
   const publishedAt = new Date().toISOString();

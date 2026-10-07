@@ -95,6 +95,7 @@ import {
   fillCss,
   frameArt,
   frameMain,
+  framePicture,
   frameRules,
   frameMissing,
   frameSelection,
@@ -224,6 +225,14 @@ function orderMaterials(list: CtAsset[], versionId: string): CtAsset[] {
     ...own.flatMap((r) => [r, ...list.filter((a) => a.parent_id === r.id && a.meta?.variant).sort(byTime)]),
     ...list.filter((a) => a.parent_id !== versionId && !ownIds.has(a.parent_id ?? "")).sort(byTime),
   ];
+}
+
+/** The vật liệu version ("có dây"; "" = base) a material picture is — a đa sắc goes by the vật liệu it was made from. */
+function pictureMaterialVersion(pic: CtAsset, assets: CtAsset[]): string {
+  const own = pic.meta?.materialVersion;
+  if (typeof own === "string") return own;
+  const parent = pic.meta?.variant ? assets.find((a) => a.id === pic.parent_id) : undefined;
+  return typeof parent?.meta?.materialVersion === "string" ? parent.meta.materialVersion : "";
 }
 
 /** Short label of a material picture: "đa sắc" (of a vật liệu, or vật liệu of a đa sắc), its material version ("có dây"), or "vật liệu". */
@@ -713,41 +722,65 @@ export function PreviewPanel(props: PreviewPanelProps) {
    * One saved tổ hợp becomes the customer's editing canvas on the storefront: its scene, every product frame
    * showing the live design. Its frames keep box / shadow / cord; the material rules give the hanger.
    */
-  const chooseMockupEdit = (id: string) => {
-    const m = saved.find((a) => a.id === id);
-    if (!m?.meta.scene) {
-      props.onMockupEdit(null);
-      setEye(false);
-      return;
-    }
-    const slide = sceneForProduct(normalizeSlide(m.meta.scene));
+  /** The mockup edit made from a saved tổ hợp, or null when it has no scene. */
+  const mockupEditOf = (m: CtAsset | undefined): CtMockupEdit | null => {
+    if (!m?.meta.scene) return null;
+    // Hanger + vật liệu version from the frames as the tổ hợp drew them (their picked "có dây" picture), before the
+    // scene is made product-neutral.
+    const original = normalizeSlide(m.meta.scene);
     const frames: CtMockupEdit["frames"] = {};
-    for (const l of slide.layers) {
+    let materialVersion: string | null = null;
+    for (const l of original.layers) {
       if (l.type !== "frame") continue;
       const rules = frameRules(l, ctx);
       frames[l.id] = { hole: rules.hole, cord: rules.cord };
+      const pick = framePicture(l, ctx);
+      if (pick && materialVersion === null) materialVersion = pictureMaterialVersion(pick, ctx.assets);
     }
-    props.onMockupEdit({ assetId: m.id, slide, frames });
+    return { assetId: m.id, slide: sceneForProduct(original), frames, materialVersion };
+  };
+  const chooseMockupEdit = (id: string) => {
+    const next = mockupEditOf(saved.find((a) => a.id === id));
+    props.onMockupEdit(next);
+    if (!next) return setEye(false);
     props.flash("Mockup edit: khách sẽ chỉnh thiết kế trên tổ hợp này — nhớ Lưu thiết kế");
   };
-  /** 👁: the chosen tổ hợp with its rendered product taken out — only the custom area (dashed) is left. */
+  // A mockup edit picked before it kept the vật liệu version: taken again from its tổ hợp once the frames' pictures
+  // are loaded (then Lưu thiết kế + Deploy).
+  useEffect(() => {
+    const cur = props.mockupEdit;
+    if (!cur || cur.materialVersion !== null) return;
+    const next = mockupEditOf(saved.find((a) => a.id === cur.assetId));
+    if (next && next.materialVersion !== null) props.onMockupEdit(next);
+    // mockupEditOf reads ctx / saved, both listed
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.mockupEdit, saved, ctx]);
+  /**
+   * 👁: the chosen tổ hợp as the storefront opens it — the same scene and product, the customer's photo zones
+   * empty (the sample photo, e.g. the cat, is taken out).
+   */
   const [eye, setEye] = useState(false);
   const [eyeUrl, setEyeUrl] = useState<string | null>(null);
   const mockupEdit = props.mockupEdit;
+  const eyeScene = saved.find((a) => a.id === mockupEdit?.assetId)?.meta.scene;
   useEffect(() => {
-    if (!eye || !mockupEdit) {
+    if (!eye || !eyeScene) {
       setEyeUrl(null);
       return;
     }
     let cancelled = false;
-    const s = mockupEdit.slide;
-    void renderSlide({ slide: s, arts: {}, scale: Math.min(1, 900 / Math.max(s.width, s.height)), placeholders: true, placeholderLabel: "Custom" })
+    const original = normalizeSlide(eyeScene);
+    // An AI artwork has the sample photo baked in: the frame is re-drawn from the design instead.
+    const s = { ...original, layers: original.layers.map((l) => (l.type === "frame" ? { ...l, artworkId: null } : l)) };
+    const samples = Object.fromEntries(Object.entries(ctx.samples).filter(([, v]) => v.kind !== "photo"));
+    void sceneArts(s, { ...ctx, samples })
+      .then((arts) => renderSlide({ slide: s, arts, scale: Math.min(1, 900 / Math.max(s.width, s.height)) }))
       .then((c) => !cancelled && setEyeUrl(c.toDataURL("image/png")))
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [eye, mockupEdit]);
+  }, [eye, eyeScene, ctx]);
   const savedScenes = saved.filter((m) => m.meta.scene);
   /** "#n" of a saved tổ hợp: its place in the list. */
   const numbered: EnhanceItem[] = saved.map((asset, i) => ({
@@ -1134,7 +1167,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
             <span className="text-[11px] text-muted-foreground">Click để mở lại · tick để chọn</span>
             <span className="ml-auto flex items-center gap-1.5">
               {/* Templates ("Lưu làm template" / "Dùng template") are hidden for now. */}
-              <CtTooltip label="Mockup edit: khách chỉnh thiết kế ngay trên tổ hợp này (ảnh sản phẩm thay bằng thiết kế live)">
+              <CtTooltip label="Mockup edit: khách chỉnh thiết kế ngay trên tổ hợp này (giữ y nguyên tổ hợp, vùng ảnh upload để trống)">
                 <span className="text-xs font-medium">Mockup edit</span>
               </CtTooltip>
               <CtSelect
@@ -1143,7 +1176,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
                 onChange={chooseMockupEdit}
                 options={[{ value: "__none", label: "Không dùng" }, ...numbered.filter((n) => n.asset.meta.scene).map((n) => ({ value: n.asset.id, label: `#${n.number} ${n.asset.name}` }))]}
               />
-              <CtTooltip label={eye ? "Tắt xem trước" : "Xem trước mockup edit: ảnh sản phẩm bị xoá, chỉ còn vùng custom"}>
+              <CtTooltip label={eye ? "Tắt xem trước" : "Xem trước mockup edit: tổ hợp y nguyên, vùng ảnh khách upload để trống"}>
                 <span>
                   <CtButton size="icon" variant={eye ? "primary" : "ghost"} disabled={!mockupEdit} onClick={() => setEye((v) => !v)}>
                     {eye ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
@@ -1200,7 +1233,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
             <div className="mt-2 flex items-start gap-3 rounded-md border p-2">
               <img src={eyeUrl} alt="" className="max-h-64 rounded border" style={CHECKER_STYLE} />
               <p className="text-[11px] leading-snug text-muted-foreground">
-                Mockup edit trên store: ảnh sản phẩm trong tổ hợp được xoá, vùng “Custom” là chỗ thiết kế live của khách (đổi option, nhập chữ, upload ảnh là thấy ngay). Pack nhiều thiết kế: mỗi khung hiện 1 thiết kế.
+                Mockup edit trên store: y nguyên tổ hợp này (cùng vật liệu, dây treo), chỉ có vùng ảnh khách upload để trống. Khách đổi option, nhập chữ, upload ảnh là thấy ngay trên tổ hợp. Ảnh tổ hợp gốc (có ảnh mẫu) vẫn dùng làm ảnh sản phẩm. Pack nhiều thiết kế: mỗi khung hiện 1 thiết kế.
               </p>
             </div>
           )}

@@ -642,6 +642,11 @@ export interface CtMockupEdit {
   slide: CtPackSlide;
   /** Product frame id → its material's hanger (hole + cord). */
   frames: Record<string, { hole: boolean; cord: CtCordStyle }>;
+  /**
+   * The vật liệu version the tổ hợp's frames picked ("có dây"; "" = base): the storefront draws the design in it,
+   * whatever option the customer picks. null = the product's own (config.material.version).
+   */
+  materialVersion: string | null;
 }
 
 /** What a published template carries (no design samples). */

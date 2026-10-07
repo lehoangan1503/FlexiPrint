@@ -48,7 +48,8 @@ export function buildTemplate(args: {
   // The customer always sees the material version (vật liệu) of every clipart that has one — the canvas, the photo
   // dialog, the cart preview; option swatches keep the flat clipart (meta.thumb). Cliparts switched to flat for
   // this product (flatIds) stay flat. Print files use the flat art (lib/materials, not this template).
-  const assets = displayAssets(args.assets, "rendition", config.material.flatIds, config.material.version);
+  // A mockup edit draws the design in the vật liệu version its tổ hợp shows ("có dây"), like the tổ hợp itself.
+  const assets = displayAssets(args.assets, "rendition", config.material.flatIds, config.mockupEdit?.materialVersion ?? config.material.version);
   const flatUrl = new Map(args.assets.map((a) => [a.id, a.url]));
   const main = assets.find((a) => a.id === product.main_asset_id && a.role === "main");
   if (!main) throw new Error("Chưa có main object — không publish được");

@@ -290,7 +290,7 @@ function normalizeMockupEdit(raw: unknown): CtMockupEdit | null {
   if (typeof m.assetId !== "string" || !m.slide || typeof m.slide !== "object" || !Array.isArray(m.slide.layers)) return null;
   const frames: CtMockupEdit["frames"] = {};
   for (const [id, f] of Object.entries(m.frames ?? {})) if (f && typeof f === "object") frames[id] = { hole: f.hole === true, cord: f.cord ?? "none" };
-  return { assetId: m.assetId, slide: m.slide, frames };
+  return { assetId: m.assetId, slide: m.slide, frames, materialVersion: typeof m.materialVersion === "string" ? m.materialVersion : null };
 }
 
 /** One entry per version, ids unique across versions (an asset is the sub-option of one version only). */

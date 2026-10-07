@@ -80,9 +80,11 @@ class RulesOverride(TypedDict, total=False):
     anchor: Literal["center", "bottom"]
 
 
-class MaterialTarget(TypedDict):
+class MaterialTarget(TypedDict, total=False):
     clipart_id: str
     name: str
+    # Theo khuôn (CtStudioFrameTarget): {cut, meta}
+    frame: dict
 
 
 ApiNode = dict  # {"class_type": str, "inputs": {...}} — ComfyUI's own shape
@@ -518,25 +520,73 @@ def _material(p: dict) -> ApiPrompt:
         if not isinstance(t, dict):
             continue
         load = g.add("FP_LoadClipart", {"clipart": _uuid(t.get("clipart_id"), "Clipart")})
+        frame = _frame(t.get("frame"))
+        # Theo khuôn: the clipart cut to the product's khuôn first, the material keeps that outline.
+        src = g.add("FP_FrameClipart", {"image": _out(load, 0), "mask": _out(load, 1), "cut": frame[0]}) if frame else load
         mat = g.add(
             "FP_Material",
             {
-                "images": _out(load, 0),
+                "images": _out(src, 0),
                 "material": material,
                 "lock": lock,
                 "edge_px": edge,
                 "extra": extra,
                 "model": model,
                 "seed": _seed(),
-                "masks": _out(load, 1),
+                "masks": _out(src, 1),
                 "context": _out(load, 3),
                 "names": _name(t.get("name"), "vật liệu"),
                 "parent_ids": _out(load, 2),
                 **({"draft": draft} if draft else {}),
+                **({"frame": frame[1]} if frame else {}),
             },
         )
         _save_renditions(g, mat, _out(load, 3), material)
     return g.nodes
+
+
+def _num(v: object, lo: float = -1e6, hi: float = 1e6) -> float:
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v:
+        raise RecipeError("Khuôn: số không hợp lệ")
+    return max(lo, min(hi, float(v)))
+
+
+def _poly(v: object) -> list[list[float]]:
+    if not isinstance(v, list) or not 3 <= len(v) <= 2000:
+        raise RecipeError("Khuôn: đường viền không hợp lệ")
+    out = []
+    for p in v:
+        if not isinstance(p, list) or len(p) != 2:
+            raise RecipeError("Khuôn: điểm không hợp lệ")
+        out.append([_num(p[0]), _num(p[1])])
+    return out
+
+
+def _frame(v: object) -> tuple[str, str] | None:
+    """A target made theo khuôn ({cut, meta} — CtStudioFrameTarget) → (cut JSON for FP Frame Clipart, meta JSON for
+    FP Material's frame). None = the clipart as it is."""
+    if v is None:
+        return None
+    if not isinstance(v, dict) or not isinstance(v.get("cut"), dict) or not isinstance(v.get("meta"), dict):
+        raise RecipeError("Khuôn không hợp lệ")
+    c, m = v["cut"], v["meta"]
+    art = c.get("art") if isinstance(c.get("art"), dict) else {}
+    cut = {
+        "w": int(_num(c.get("w"), 16, 4096)),
+        "h": int(_num(c.get("h"), 16, 4096)),
+        "art": {k: _num(art.get(k, 0)) for k in ("x", "y", "w", "h", "rotation")},
+        "clip": _poly(c.get("clip")),
+        "cuts": [_poly(x) for x in (c.get("cuts") if isinstance(c.get("cuts"), list) else [])[:40]],
+    }
+    if cut["art"]["w"] <= 0 or cut["art"]["h"] <= 0:
+        raise RecipeError("Khuôn: khung clipart không hợp lệ")
+    box = m.get("box") if isinstance(m.get("box"), dict) else {}
+    meta = {
+        "productId": _uuid(m.get("productId"), "Sản phẩm của khuôn"),
+        "regionId": _uuid(m.get("regionId"), "Layer khuôn"),
+        "box": {k: _num(box.get(k, 0)) for k in ("x", "y", "w", "h")},
+    }
+    return json.dumps(cut), json.dumps(meta)
 
 
 def _draft(v: object) -> str:

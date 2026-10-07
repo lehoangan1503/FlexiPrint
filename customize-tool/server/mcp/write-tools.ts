@@ -103,7 +103,7 @@ export const CT_MCP_WRITE_TOOLS: CtMcpTool[] = [
     description: [
       "SAVE a category (no category = create one). Only when a person asked you directly to change / create it — a web-app task is answered with submit_result instead.",
       "Give only the fields to change; the rest stays. Updating needs expected_updated_at = updatedAt from your latest get_category (refused if someone saved since).",
-      "Fields: name, spec, usage (main | element), details [{text, mode, label}], details_note, style_pack_id, material_ids [ids], design_refs [urls], product_refs [urls].",
+      "Fields: name, spec, usage (main | element), shape (alpha | frame), details [{text, mode, label}], details_note, style_pack_id, material_ids [ids], design_refs [urls], product_refs [urls].",
       "Always: why (Vietnamese, for the history) and requested_by (who asked). Check the result with assemble_prompts first.",
     ].join(" "),
     inputSchema: {
@@ -114,6 +114,11 @@ export const CT_MCP_WRITE_TOOLS: CtMcpTool[] = [
         name: { type: "string", description: "Name (required to create)." },
         spec: { type: "string", description: "Full spec, English." },
         usage: { type: "string", description: "main | element (create; default main)." },
+        shape: {
+          type: "string",
+          description:
+            "alpha = cut along the clipart's outline (die-cut acrylic, sticker; the clipart is the object alone) | frame = fixed-shape product (round ceramic ornament, mug, trousers; the clipart is a full-bleed picture, a product's khuôn vật liệu cuts the shape).",
+        },
         details: { type: "array", items: { type: "object" }, description: "FULL details list [{text, mode: always|version, label}]." },
         details_note: { type: "string", description: "The editor's description of the product." },
         style_pack_id: { type: "string", description: "A style pack id (list_style_packs). Required to create." },
@@ -138,6 +143,7 @@ export const CT_MCP_WRITE_TOOLS: CtMcpTool[] = [
       const rules: CtCategoryRules = normalizeCategoryRules(cur?.rules ?? {});
       if (args.details !== undefined) rules.details = normalizeMaterialSpecs(args.details);
       if (args.details_note !== undefined) rules.detailsNote = str(args.details_note);
+      if (args.shape !== undefined) rules.shape = str(args.shape) === "frame" ? "frame" : "alpha";
       if (args.style_pack_id !== undefined) {
         if (!lib.stylePacks.some((p) => p.id === str(args.style_pack_id))) throw new Error("style_pack_id is not a style pack (list_style_packs)");
         rules.stylePackId = str(args.style_pack_id);

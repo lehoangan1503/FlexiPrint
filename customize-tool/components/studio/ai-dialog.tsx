@@ -26,6 +26,7 @@ import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, ImagePlus, Loa
 import type {
   CtAsset,
   CtClipartCategory,
+  CtClipartFrame,
   CtMaterialSpec,
   CtPreset,
   CtStudioLine,
@@ -153,6 +154,11 @@ interface MaterialForm {
   more: CtAsset[];
   /** Set members (variants) rendered too — every ticked origin always is. */
   targetIds: string[];
+  /**
+   * Made "theo khuôn" of this product (lib/material-frame): every clipart cut to its khuôn vật liệu first, the
+   * vật liệu keeps that outline — all the same size. null = theo alpha (the clipart's own outline).
+   */
+  frameProductId: string | null;
 }
 
 interface RunState {
@@ -265,7 +271,9 @@ export function CtAiDialog({ target, onClose, onSaved, onReplaced, resultAction 
 
   const [origin, setOrigin] = useState<OriginForm>(() => emptyOrigin(""));
   const [variant, setVariant] = useState<VariantForm>({ lines: [] });
-  const [material, setMaterial] = useState<MaterialForm>({ materialId: "", more: [], targetIds: [] });
+  const [material, setMaterial] = useState<MaterialForm>({ materialId: "", more: [], targetIds: [], frameProductId: null });
+  /** Gốc id → the khuôn vật liệu of the products showing it (step 3 "theo khuôn"). */
+  const [frames, setFrames] = useState<Record<string, CtClipartFrame[]>>({});
 
   /** Library listing for the clipart picker (Biến thể / Vật liệu without a target clipart). */
   const [library, setLibrary] = useState<CtAsset[] | null>(null);
@@ -421,6 +429,30 @@ export function CtAiDialog({ target, onClose, onSaved, onReplaced, resultAction 
     const seen = new Set<string>();
     return [...family, ...more].filter((a) => !seen.has(a.id) && Boolean(seen.add(a.id)));
   }, [family, material.more, library]);
+  // Step 3: the khuôn vật liệu of the products each ticked gốc is a version of.
+  const frameOrigins = useMemo(() => (recipe === "material" ? materialClips.filter((c) => c.role !== "rendition").map((c) => c.id) : []), [recipe, materialClips]);
+  useEffect(() => {
+    const missing = frameOrigins.filter((id) => !(id in frames));
+    if (!missing.length) return;
+    let live = true;
+    void Promise.all(missing.map((id) => ctApi.clipartFrames(id).then((list) => [id, list] as const).catch(() => [id, [] as CtClipartFrame[]] as const))).then((got) => {
+      if (live) setFrames((cur) => ({ ...cur, ...Object.fromEntries(got) }));
+    });
+    return () => {
+      live = false;
+    };
+  }, [frameOrigins, frames]);
+  /** Products with a khuôn for at least one ticked gốc — and the gốc each one lacks. */
+  const frameProducts = useMemo(() => {
+    const byProduct = new Map<string, { frame: CtClipartFrame; has: Set<string> }>();
+    for (const id of frameOrigins)
+      for (const f of frames[id] ?? []) {
+        const cur = byProduct.get(f.productId) ?? { frame: f, has: new Set<string>() };
+        cur.has.add(id);
+        byProduct.set(f.productId, cur);
+      }
+    return [...byProduct.values()].map(({ frame, has }) => ({ frame, missing: materialClips.filter((c) => frameOrigins.includes(c.id) && !has.has(c.id)) }));
+  }, [frameOrigins, frames, materialClips]);
   const needsPicker = recipe !== "origin";
   useEffect(() => {
     if (open && needsPicker && library === null) void loadLibrary();
@@ -658,7 +690,18 @@ export function CtAiDialog({ target, onClose, onSaved, onReplaced, resultAction 
       const preset = materials.find((m) => m.id === material.materialId);
       const ids = new Set([...materialClips.map((c) => c.id), ...material.targetIds]);
       // A vật liệu version (picked as a đa sắc source) is no source of another material.
-      const targets = materialFamily.filter((a) => ids.has(a.id) && a.role !== "rendition").map((a) => ({ clipart_id: a.id, name: `${a.name} · ${preset?.name ?? "vật liệu"}` }));
+      const chosen = materialFamily.filter((a) => ids.has(a.id) && a.role !== "rendition");
+      const product = material.frameProductId ? frameProducts.find((p) => p.frame.productId === material.frameProductId) : null;
+      if (material.frameProductId && !product) return "Sản phẩm của khuôn không còn — chọn lại khuôn";
+      if (product?.missing.length) return `${product.missing.map((c) => `“${c.name}”`).join(", ")} chưa có khuôn trong “${product.frame.productName}” — bỏ chọn, hoặc làm theo alpha`;
+      const targets = chosen.map((a) => {
+        const name = `${a.name} · ${preset?.name ?? "vật liệu"}`;
+        if (!product) return { clipart_id: a.id, name };
+        // A đa sắc is cut like its gốc: it is drawn in the gốc's version frame.
+        const gocId = materialClips.some((c) => c.id === a.id) ? a.id : (a.parent_id ?? a.id);
+        const f = (frames[gocId] ?? []).find((x) => x.productId === product.frame.productId) ?? product.frame;
+        return { clipart_id: a.id, name: `${name} · khuôn ${f.productName}`, frame: { cut: f.cut, meta: { productId: f.productId, regionId: f.regionId, box: f.box } } };
+      });
       if (!targets.length) return "Chọn ít nhất 1 clipart";
       return { recipe, params: { material_id: material.materialId, targets, lock: "preset", edge_px: 0, extra: "", model } };
     }
@@ -714,7 +757,7 @@ export function CtAiDialog({ target, onClose, onSaved, onReplaced, resultAction 
     setRecipe(next);
     setResults(null);
     setVariant((v) => ({ ...v, lines: [] }));
-    setMaterial((m) => ({ ...m, more: [], targetIds: [a.id] }));
+    setMaterial((m) => ({ ...m, more: [], targetIds: [a.id], frameProductId: null }));
   };
 
   /**
@@ -834,6 +877,14 @@ export function CtAiDialog({ target, onClose, onSaved, onReplaced, resultAction 
                       origin: o,
                       items: materialFamily.filter((a) => a.role !== "rendition" && (a.id === o.id || a.parent_id === o.id)),
                     }))}
+                  />
+                )}
+                {recipe === "material" && clip && (
+                  <FrameFields
+                    value={material.frameProductId}
+                    onChange={(frameProductId) => setMaterial((m) => ({ ...m, frameProductId }))}
+                    products={frameProducts}
+                    loading={frameOrigins.some((id) => !(id in frames))}
                   />
                 )}
               </div>
@@ -2126,6 +2177,57 @@ function VariantFields({
       </CtField>
 
     </>
+  );
+}
+
+/**
+ * Step 3: theo alpha (the clipart's own outline — acrylic cut to shape) or theo khuôn of a product (a round
+ * ornament, trousers: the clipart cut to that product's khuôn vật liệu, all the same size). Only products where
+ * the gốc is a version with a khuôn are listed.
+ */
+function FrameFields({
+  value,
+  onChange,
+  products,
+  loading,
+}: {
+  value: string | null;
+  onChange: (productId: string | null) => void;
+  products: Array<{ frame: CtClipartFrame; missing: CtAsset[] }>;
+  loading: boolean;
+}) {
+  if (!products.length && !value)
+    return (
+      <p className="text-[11px] text-muted-foreground">
+        {loading
+          ? "Đang tìm khuôn sản phẩm…"
+          : "Vật liệu theo alpha (viền của clipart). Sản phẩm hình cố định (ornament tròn, cái quần…): đưa clipart vào 1 sản phẩm, vẽ “Khuôn vật liệu” (phím K) — khuôn hiện ở đây."}
+      </p>
+    );
+  const tile = (on: boolean) => cx("flex w-28 flex-col items-center gap-1 rounded-md border-2 p-1.5 text-center text-[11px]", on ? "border-sky-500 bg-sky-500/5" : "border-transparent hover:border-muted-foreground/30");
+  return (
+    <CtField label="Hình dạng vật liệu" hint="Theo khuôn: clipart cắt theo khuôn của sản phẩm (cả vùng cắt bỏ / lỗ đục) rồi mới làm vật liệu — giữ y nguyên viền, mọi clipart ra cùng kích thước 100%.">
+      <div className="flex flex-wrap gap-1.5">
+        <button className={tile(value === null)} onClick={() => onChange(null)}>
+          <div className="flex h-14 w-14 items-center justify-center rounded border border-dashed text-[10px] text-muted-foreground">alpha</div>
+          <span className="leading-tight">Theo alpha (viền clipart)</span>
+        </button>
+        {products.map(({ frame: f, missing }) => (
+          <button key={f.productId} className={tile(value === f.productId)} onClick={() => onChange(f.productId)} title={missing.length ? `Chưa có khuôn cho: ${missing.map((c) => c.name).join(", ")}` : undefined}>
+            <svg viewBox={`-0.05 -0.05 ${f.box.w / Math.max(f.box.w, f.box.h) + 0.1} ${f.box.h / Math.max(f.box.w, f.box.h) + 0.1}`} className="h-14 w-14">
+              <path
+                d={`M${f.outline.map(([x, y]) => `${(x * f.box.w) / Math.max(f.box.w, f.box.h)},${(y * f.box.h) / Math.max(f.box.w, f.box.h)}`).join("L")}Z`}
+                fill="rgba(245,158,11,0.15)"
+                stroke="#f59e0b"
+                strokeWidth={0.03}
+              />
+            </svg>
+            <span className="line-clamp-2 leading-tight">Khuôn: {f.productName}</span>
+            {missing.length > 0 && <span className="text-[10px] text-amber-600">thiếu {missing.length} clipart</span>}
+          </button>
+        ))}
+      </div>
+    </CtField>
   );
 }
 

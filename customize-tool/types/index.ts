@@ -317,6 +317,12 @@ export interface CtImageConfig {
   defaultAssetId: string | null;
   /** Storefront may show "None" for this region. */
   allowNone: boolean;
+  /**
+   * Linked layer (server/mcp/layer-rules.ts §6): this layer is not a customer choice — it shows the option at the
+   * same group / option position as layer `follows` shows (the back half of a hairstyle follows the front half).
+   * Its groups must mirror the leader's: same names, same counts, same order.
+   */
+  follows?: string;
 }
 
 export interface CtRegionConfig {
@@ -344,6 +350,14 @@ export interface CtRegionConfig {
   options: CtZoneOptions;
   /** A child zone: only there while its parent shows one option (CtZoneParent). */
   parent?: CtZoneParent;
+  /**
+   * Custom layers: this layer's outline is the product's fixed shape (a round ornament, a pair of trousers) — the
+   * "khuôn vật liệu". The print file is cut to it, and a vật liệu made "theo khuôn" is the clipart cut to it (minus
+   * `cuts`) — every clipart of the khuôn gives a vật liệu of exactly the same size. One per version.
+   */
+  materialFrame?: boolean;
+  /** Khuôn vật liệu: parts cut out of the piece (a hanging hole), artboard px. */
+  cuts?: CtShape[];
 }
 
 /**
@@ -443,6 +457,11 @@ export interface CtAssetMeta {
    * exactly at (pad.x·w, pad.y·h) inside it.
    */
   pad?: CtRenditionPad;
+  /**
+   * Renditions made "theo khuôn": the clipart cut to a product's khuôn vật liệu (CtRegionConfig.materialFrame) —
+   * used by that product only, drawn over the khuôn's box (pad around it) instead of the clipart's frame.
+   */
+  frame?: CtRenditionFrame;
   /** AI-made set members / renditions: silhouette match against the parent (1 = identical). */
   iou?: number;
   /** Set members: how it was made from its origin (the variant line) — a fixed origin remakes it the same way. */
@@ -467,6 +486,40 @@ export interface CtColorSource {
 export interface CtRenditionPad {
   x: number;
   y: number;
+}
+
+export interface CtRenditionFrame {
+  productId: string;
+  /** The khuôn layer it was cut to. */
+  regionId: string;
+  /** The khuôn's box on the artboard when it was made (artboard px) — used if the layer is gone. */
+  box: CtBounds;
+}
+
+/**
+ * A clipart cut to a khuôn vật liệu, for FP_FrameClipart: the output canvas (w × h px), where the clipart lands
+ * on it (its version frame, turned about its centre), the khuôn outline and the parts cut out — all canvas px.
+ * Same khuôn = same canvas, whichever clipart.
+ */
+export interface CtFrameCut {
+  w: number;
+  h: number;
+  art: CtMainFrame;
+  clip: [number, number][];
+  cuts: [number, number][][];
+}
+
+/** A product's khuôn vật liệu a library clipart can be made "theo khuôn" with (step 3 of Tạo bằng AI). */
+export interface CtClipartFrame {
+  productId: string;
+  productName: string;
+  regionId: string;
+  regionName: string;
+  /** The khuôn's box on the artboard (artboard px). */
+  box: CtBounds;
+  /** The outline (for a thumbnail), in box-relative 0..1 coordinates. */
+  outline: [number, number][];
+  cut: CtFrameCut;
 }
 
 export interface CtAssetVariantLine {
@@ -940,6 +993,14 @@ export interface CtCategoryRules {
   background: CtCategoryBackground;
   /** Set members keep the origin's exact alpha (same outline, same size). */
   lockSilhouette: boolean;
+  /**
+   * The finished product's outline:
+   *   alpha  cut along the clipart's own outline (acrylic die-cut, sticker) — the clipart is the object alone, its
+   *          vật liệu follows its alpha
+   *   frame  a fixed shape (round ceramic ornament, trousers, a framed print) — the clipart is a full-bleed picture,
+   *          background included; a product's khuôn vật liệu cuts the shape (lib/material-frame)
+   */
+  shape: CtProductShape;
   /** Style pack (ct_presets kind style_pack) — required for a new category. */
   stylePackId: string | null;
   /**
@@ -963,6 +1024,8 @@ export interface CtCategoryRules {
   /** The editor's description the details were read from. */
   detailsNote: string;
 }
+
+export type CtProductShape = "alpha" | "frame";
 
 export interface CtClipartCategory {
   id: string;
@@ -1107,6 +1170,8 @@ export interface CtPromptSuggestion {
   materials: CtSuggestedPreset[];
   /** Chi tiết thành phẩm read from the references / the note (hole, cord, clip…); empty when none. */
   details: CtMaterialSpec[];
+  /** Die-cut along the clipart (alpha) or a fixed-shape product cut by a khuôn (frame) — read from the note / photos. */
+  shape: CtProductShape;
   /** Per detail: the category whose wording it reuses, or null when written new. */
   detailSources: Array<string | null>;
   /** What was reused and what is new, for the editor (Vietnamese). */
@@ -1504,11 +1569,17 @@ export interface CtStudioVariantParams {
 
 export interface CtStudioMaterialParams {
   material_id: string;
-  targets: Array<{ clipart_id: string; name: string }>;
+  /** `frame`: made "theo khuôn" — the clipart cut to a product's khuôn vật liệu before the material is drawn. */
+  targets: Array<{ clipart_id: string; name: string; frame?: CtStudioFrameTarget }>;
   lock: CtStudioLock;
   edge_px: number;
   extra: string;
   model: string;
+}
+
+export interface CtStudioFrameTarget {
+  cut: CtFrameCut;
+  meta: CtRenditionFrame;
 }
 
 export interface CtStudioMockupParams {

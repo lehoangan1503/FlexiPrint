@@ -76,6 +76,7 @@ import {
   regionGroups,
   selectedMainId,
   selectedMainImageId,
+  isLinkedLayer,
 } from "../lib/design";
 import { IDENTITY_TRANSFORM, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds } from "../lib/geometry";
 import { filterBlob, processPhoto, shrinkImage } from "../lib/photo-process";
@@ -364,6 +365,8 @@ export class Customizer {
   /** A custom layer with fewer than 2 pictures to pick from is simply drawn (no picker, not in the cart). */
   private isFixedLayer(r: CtRegion): boolean {
     if (r.kind !== "image") return false;
+    // A linked layer shows what its leader shows: no picker, not in the cart.
+    if (isLinkedLayer(r, this.regions)) return true;
     const offered = regionGroups(r, this.tpl.items, this.tpl.assets).reduce((n, g) => n + g.options.length, 0);
     return offered + (r.config.image.allowNone ? 1 : 0) < 2;
   }
@@ -564,7 +567,7 @@ export class Customizer {
       return;
     }
     // The design on the product's background (Thiết kế → Nền), when it has one.
-    const b = compositeBleed({ main: this.main, assets: this.tpl.assets, selection: this.selection, layouts: this.tpl.config.layouts });
+    const b = compositeBleed({ main: this.main, assets: this.tpl.assets, regions: this.regions, selection: this.selection, layouts: this.tpl.config.layouts });
     const bleed = { x: b.x / this.main.width, y: b.y / this.main.height };
     const off = await this.product(this.selection, side)
       .then((c) => drawOnScene(this.tpl.config.scene, c, side, bleed))

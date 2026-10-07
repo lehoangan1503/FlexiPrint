@@ -5,10 +5,11 @@
  * scaled once at the end, so preview and full-res export are the same picture.
  */
 
-import type { CtMainLayout, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtShape, CtTextConfig, CtTransform } from "../types";
+import type { CtMainFrame, CtMainLayout, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtShape, CtTextConfig, CtTransform } from "../types";
 import { itemPlacement, orientedBox, photoFrameBox, resolvePhotoFrame, shapeBounds } from "./geometry";
-import { activeRegions, normalizeRegion, regionForSelection, selectedMainId, selectedMainImageId, textMode, zoneText } from "./design";
+import { activeRegions, normalizeRegion, regionForSelection, resolveLinked, selectedMainId, selectedMainImageId, textMode, zoneText } from "./design";
 import { mainFrameFor, resolveLayout } from "./layout";
+import { frameRegionFor, renditionFrameBox, traceFrame } from "./material-frame";
 
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 
@@ -47,14 +48,31 @@ export interface CompositeInput {
    * of the material version is cut off. Off (default): the canvas is the main's own box, as the print uses.
    */
   bleed?: boolean;
+  /**
+   * The print file of a product with a khuôn vật liệu (lib/material-frame): the canvas is the khuôn's box and
+   * everything outside it (and its cut-out parts) is cleared. No khuôn: the main's own box, as without.
+   */
+  cutToFrame?: boolean;
+}
+
+/**
+ * Where the shown main picture is drawn: its version frame, or — a vật liệu made theo khuôn (meta.frame) — the
+ * khuôn's box, upright. `pad`: the rendition's padding, a fraction of that box.
+ */
+function mainPictureBox(input: Pick<CompositeInput, "main" | "assets" | "selection" | "layouts" | "regions">): { f: CtMainFrame; pad?: CtRenditionPad } {
+  const { main } = input;
+  const mainId = selectedMainId(input.selection, input.assets, main.id);
+  const imageId = selectedMainImageId(input.selection, input.assets, main.id);
+  const shown = input.assets.find((a) => a.id === imageId) ?? input.assets.find((a) => a.id === mainId);
+  const frame = shown?.meta?.frame;
+  if (frame) return { f: { ...renditionFrameBox(input.regions, frame), rotation: 0 }, pad: shown?.meta?.pad };
+  return { f: mainFrameFor(input.layouts, mainId, main.width, main.height), pad: shown?.meta?.pad };
 }
 
 /** Extra room around the main's box the shown main version's rendition needs, in main pixels. */
-export function compositeBleed(input: Pick<CompositeInput, "main" | "assets" | "selection" | "layouts">): { x: number; y: number } {
+export function compositeBleed(input: Pick<CompositeInput, "main" | "assets" | "selection" | "layouts"> & Partial<Pick<CompositeInput, "regions">>): { x: number; y: number } {
   const { main } = input;
-  const imageId = selectedMainImageId(input.selection, input.assets, main.id);
-  const f = mainFrameFor(input.layouts, selectedMainId(input.selection, input.assets, main.id), main.width, main.height);
-  const pad = input.assets.find((a) => a.id === imageId)?.meta?.pad;
+  const { f, pad } = mainPictureBox({ ...input, regions: input.regions ?? [] });
   const px = (pad?.x ?? 0) * f.w;
   const py = (pad?.y ?? 0) * f.h;
   // How far the picture (frame + its rendition's plate / cord) reaches past the artboard.
@@ -65,19 +83,43 @@ export function compositeBleed(input: Pick<CompositeInput, "main" | "assets" | "
 
 export async function renderComposite(input: CompositeInput): Promise<HTMLCanvasElement> {
   const { main, scale } = input;
-  const b = input.bleed ? compositeBleed(input) : { x: 0, y: 0 };
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round((main.width + 2 * b.x) * scale));
-  canvas.height = Math.max(1, Math.round((main.height + 2 * b.y) * scale));
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D không khả dụng");
+  const cut = input.cutToFrame ? printFrame(input) : null;
+  if (cut) {
+    const box = shapeBounds(cut.shape);
+    canvas.width = Math.max(1, Math.round(box.w * scale));
+    canvas.height = Math.max(1, Math.round(box.h * scale));
+    await drawComposite(ctx, input, { x: -box.x, y: -box.y });
+    // Only the khuôn is printed: the piece, minus the parts cut out of it.
+    ctx.save();
+    ctx.setTransform(scale, 0, 0, scale, -box.x * scale, -box.y * scale);
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.beginPath();
+    traceFrame(ctx, cut);
+    ctx.fill("evenodd");
+    ctx.restore();
+    return canvas;
+  }
+  const b = input.bleed ? compositeBleed(input) : { x: 0, y: 0 };
+  canvas.width = Math.max(1, Math.round((main.width + 2 * b.x) * scale));
+  canvas.height = Math.max(1, Math.round((main.height + 2 * b.y) * scale));
   await drawComposite(ctx, input, b);
   return canvas;
 }
 
+/** The khuôn vật liệu the shown version is printed to (lib/material-frame), if the product has one. */
+export function printFrame(input: Pick<CompositeInput, "main" | "assets" | "selection" | "regions">): CtRegion | null {
+  const mainId = selectedMainId(input.selection, input.assets, input.main.id);
+  return frameRegionFor(input.regions.map(normalizeRegion), mainId, input.main.id);
+}
+
 /** `offset`: where the main's box starts on the canvas, main pixels (renderComposite's bleed). */
 export async function drawComposite(ctx: CanvasRenderingContext2D, input: CompositeInput, offset = { x: 0, y: 0 }): Promise<void> {
-  const { main, assets, selection, scale, background } = input;
+  const { main, assets, scale, background } = input;
+  // Linked layers (the back half of a hairstyle) show what their leader shows — resolved here, so every renderer agrees.
+  const selection = resolveLinked(input.regions, input.items, assets, input.selection);
   // A main version (selection[CT_MAIN_KEY]) is drawn into the default main's
   // box, so every zone keeps its place whichever version is showing — unless
   // that version carries its own layout, which moves / hides zones.
@@ -117,8 +159,7 @@ export async function drawComposite(ctx: CanvasRenderingContext2D, input: Compos
   for (const r of below) await drawRegion(ctx, r, items, byId, selection);
   // The version's picture lands in its frame on the artboard (moved / resized / turned in the editor); a rendition
   // on a larger canvas brings its plate / cord around that box.
-  const f = mainFrameFor(input.layouts, mainId, main.width, main.height);
-  const mainPad = (byId.get(imageId) ?? byId.get(mainId))?.meta?.pad;
+  const { f, pad: mainPad } = mainPictureBox(input);
   const px = (mainPad?.x ?? 0) * f.w;
   const py = (mainPad?.y ?? 0) * f.h;
   ctx.save();

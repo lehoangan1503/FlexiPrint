@@ -70,6 +70,7 @@
  *                                       (keep_renditions: its vật liệu versions move to `with` too, to be made again)
  *   GET    library/cliparts/:id/usage    → { usage: CtClipartUsage[] }
  *   GET    library/cliparts/:id/materials → { cliparts } its vật liệu, their đa sắc, vật liệu of its đa sắc
+ *   GET    library/cliparts/:id/frames   → { frames: CtClipartFrame[] } khuôn vật liệu of products showing it
  *   POST   assets/:id/promote            { category_id } — move a product clipart into the library
  *   POST   products/:id/mains            { asset_id } — use a library main as a version
  *   DELETE products/:id/mains/:assetId
@@ -342,6 +343,7 @@ async function dispatchLibrary(req: NextRequest, session: CtSession, path: strin
     if (!id && method === "POST") return lib.uploadClipart(session, await req.formData());
     if (id && sub === "usage" && method === "GET") return lib.getClipartUsage(session, id);
     if (id && sub === "materials" && method === "GET") return lib.getClipartMaterials(session, id);
+    if (id && sub === "frames" && method === "GET") return lib.getClipartFrames(session, id);
     if (id && !sub && method === "PATCH") {
       const body = await readJson<CtUpdateClipartBody>(req);
       return body ? lib.updateClipart(session, id, body) : h.jsonError("Body không hợp lệ", 400);

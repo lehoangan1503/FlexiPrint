@@ -41,6 +41,7 @@ import type {
   CtRefineImagePlan,
   CtRefineSuggestion,
   CtReviewIssue,
+  CtProductShape,
   CtRefRole,
   CtSuggestedPreset,
 } from "../../types";
@@ -70,7 +71,12 @@ The final prompt is assembled from layers, in this order:
   3. SUBJECT LINE — written per clipart later (e.g. "red sedan", "blue pickup").
   4. RULES — appended automatically: framing, size, white background, no text, no shadow, print quality.
 
-Write layers 1 and 2 only, in English — plus MATERIALS when there are any (see below) and the category NAME.
+Write layers 1 and 2 only, in English — plus MATERIALS when there are any (see below), the PRODUCT SHAPE and the category NAME.
+
+PRODUCT SHAPE ("shape") — decide it first, from the editor's note and the product photos; it changes how everything below is written:
+- "alpha": the product is cut along the artwork's own outline (a die-cut acrylic charm / keychain / standee, a sticker, a cut-out pin). The clipart is the object ALONE on an empty background, and its outline is the product's outline.
+- "frame": the product has a FIXED shape of its own whatever is printed on it (a round or heart ceramic ornament, a mug, a framed print, a phone case, a pillow, a pair of printed trousers / pyjamas, a t-shirt all-over print). The clipart is a FULL-BLEED flat picture — the subject with its own background scene filling the whole square edge to edge; the product's shape (and any hole punched in it) is cut from that picture later by the product's khuôn, never drawn by the image model.
+When unsure, the editor's words decide ("tròn", "ornament sứ", "khung", "cái quần" → frame; "cắt theo hình", "die-cut", "acrylic theo viền" → alpha).
 
 NAME: the editor's name when given; otherwise a short name for the category (2–4 words, Title Case, e.g. "Chibi Car").
 
@@ -83,6 +89,7 @@ CATEGORY SPEC (30–70 words):
 - Every clipart of the category is its own origin (a different model of the same kind): describe only what is common; leave model, colour and details to the subject line.
 - NO drawing style, line work, shading or finish (that is the style pack).
 - NO framing, background, size, text or watermark rules (appended automatically).
+- shape "frame": the spec describes the whole picture — the subject AND the background scene behind it (sky, clouds, a rainbow, a pattern…), how it is laid out in the square, and the areas kept for customer content (a name, a photo); still no outline or shape of the product.
 
 STYLE PACK (40–80 words) + a short name (2–4 words, Title Case):
 - Rendering medium and look, read precisely from the references: outline thickness (thin / medium / thick) and colour, shading type (flat cel, soft gradient, airbrushed), palette character, lighting, surface finish (glossy, matte, glitter), level of detail (simple cartoon vs detailed) — never say "high detail" for a simple cartoon.
@@ -94,14 +101,16 @@ MATERIALS (0–3): the physical product the flat clipart is turned into afterwar
 - Each: a short name (2–4 words, the editor's language when the note names it, e.g. "Acrylic trong") and a prompt (40–80 words): only the material's look as a real product photo-cutout — what it is, transparency / colour, thickness, how far it reaches past the artwork, the edge, surface finish and highlights, read from the references — ending with the defects to avoid as plain negatives (e.g. "no haze, no milky tint, no glow, no halo"). No "keep the artwork", background, framing or scene (the pipeline adds those); no details (holes, cords, clips…).
 - The material never goes into the spec or the style pack, and the style pack describes the flat drawing (no glitter / acrylic there when it is the material).
 - A material is reused by many categories and products: only the material's look — never a hole, a cord, a clip or any other part (those are DETAILS).
+- shape "frame": the piece's outline is fixed by the khuôn, so the material is its SURFACE only — glaze / gloss / matte, highlights, the edge's thickness seen from the front — never a plate, border or margin reaching past the picture, never the outline's shape.
 
 ${DETAILS_RULES}
 The flat clipart (spec, style pack) NEVER shows a detail: the flat file goes to the factory as is; details only appear on the material versions. Return [] when there is no finished product to read.
+shape "frame": a hole punched through the piece is part of the khuôn (cut out of the picture before the material is drawn) — not a detail; what hangs from it (a ribbon, a gold cord) still is.
 
 REF ROLES: for each attached image, in order, "product" when it shows the finished physical product (a photo of the acrylic piece, the clip, the cord…), "design" when it shows the artwork / object to draw. Product photos are sent with the material step, design photos with the flat drawing.
 
 Use the reference images to read the style and the object's structure. Follow the editor's note; it may be in Vietnamese. Fix spelling mistakes from the current spec.
-Reply with JSON only, no markdown: {"name": "...", "spec": "...", "style": {"name": "...", "prompt": "..."}, "materials": [{"name": "...", "prompt": "..."}], "details": [{"text": "...", "mode": "always", "label": ""}], "refRoles": ["design", "product"]}`;
+Reply with JSON only, no markdown: {"name": "...", "shape": "alpha", "spec": "...", "style": {"name": "...", "prompt": "..."}, "materials": [{"name": "...", "prompt": "..."}], "details": [{"text": "...", "mode": "always", "label": ""}], "refRoles": ["design", "product"]}`;
 
 /** The analysis pass's draft: everything written new, before the library is checked. */
 interface CategoryDraft {
@@ -111,6 +120,7 @@ interface CategoryDraft {
   materials: Array<{ name: string; prompt: string }>;
   details: CtMaterialSpec[];
   refRoles: CtRefRole[];
+  shape: CtProductShape;
 }
 
 function parseDraft(text: string, imageCount: number, givenName: string): CategoryDraft | null {
@@ -127,7 +137,7 @@ function parseDraft(text: string, imageCount: number, givenName: string): Catego
   const roles = Array.isArray(raw?.refRoles) ? raw.refRoles : [];
   const refRoles = Array.from({ length: imageCount }, (_, i): CtRefRole => (roles[i] === "product" ? "product" : "design"));
   const name = (givenName || str(raw?.name)).slice(0, 120);
-  return spec && styleName && prompt ? { name, spec, style: { name: styleName, prompt }, materials, details: normalizeMaterialSpecs(raw?.details), refRoles } : null;
+  return spec && styleName && prompt ? { name, spec, style: { name: styleName, prompt }, materials, details: normalizeMaterialSpecs(raw?.details), refRoles, shape: raw?.shape === "frame" ? "frame" : "alpha" } : null;
 }
 
 /** Uploaded reference images → data URIs, or an error response. */
@@ -231,13 +241,27 @@ function applyMatch(draft: CategoryDraft, cat: CtLibraryCatalog, m: MatchReply):
     // The library's wording; this category's own mode / label (one category may want it as a version, another always).
     return hit ? { ...d, text: hit.text } : d;
   });
-  return { name: draft.name, spec: draft.spec, style, materials, details, detailSources, refRoles: draft.refRoles, summary: summarize(style, materials, detailSources), review: null };
+  return {
+    name: draft.name,
+    spec: draft.spec,
+    style,
+    materials,
+    details,
+    shape: draft.shape,
+    detailSources,
+    refRoles: draft.refRoles,
+    summary: summarize(style, materials, detailSources, draft.shape),
+    review: null,
+  };
 }
 
-function summarize(style: CtSuggestedPreset, materials: CtSuggestedPreset[], detailSources: Array<string | null>): string {
+function summarize(style: CtSuggestedPreset, materials: CtSuggestedPreset[], detailSources: Array<string | null>, shape: CtProductShape): string {
   const preset = (label: string, p: CtSuggestedPreset) => `${label}: ${p.reuseId ? `dùng lại “${p.name}”` : `tạo mới “${p.name}”`}${p.reason ? ` — ${p.reason}` : ""}`;
   const reused = detailSources.filter(Boolean).length;
   return [
+    shape === "frame"
+      ? "Hình dạng: theo khuôn — sản phẩm hình cố định, clipart là ảnh phẳng full nền; vẽ “Khuôn vật liệu” (K) trong sản phẩm"
+      : "Hình dạng: theo alpha — cắt theo viền clipart",
     preset("Style pack", style),
     ...materials.map((m) => preset("Vật liệu", m)),
     ...(detailSources.length ? [`Chi tiết thành phẩm: ${detailSources.length} chi tiết${reused ? `, ${reused} dùng lại cách viết từ ${[...new Set(detailSources.filter(Boolean))].join(", ")}` : ""}`] : []),
@@ -263,15 +287,17 @@ export function suggestionFromAgent(raw: Record<string, unknown>, catalog: CtLib
   const details = normalizeMaterialSpecs(raw.details);
   const roles = Array.isArray(raw.refRoles) ? raw.refRoles : [];
   const detailSources = details.map(() => null);
+  const shape: CtProductShape = raw.shape === "frame" ? "frame" : "alpha";
   return {
     name: (givenName || str(raw.name)).slice(0, 120),
     spec,
     style,
     materials,
     details,
+    shape,
     detailSources,
     refRoles: Array.from({ length: refCount }, (_, i): CtRefRole => (roles[i] === "product" ? "product" : "design")),
-    summary: str(raw.summary) || summarize(style, materials, detailSources),
+    summary: str(raw.summary) || summarize(style, materials, detailSources, shape),
     review: null,
   };
 }
@@ -336,7 +362,7 @@ async function reviewSuggestion(sg: CtPromptSuggestion, catalog: CtLibraryCatalo
       art: catalog.materials.find((x) => x.id === m.reuseId)?.art === "surface" ? "surface" : "print",
       usedByOthers: usedBy(m.reuseId, catalog.materials),
     })),
-    rules: { details: sg.details, productRefs: [], detailsNote: "", fill: 0.85, anchor: "center" },
+    rules: { details: sg.details, productRefs: [], detailsNote: "", fill: 0.85, anchor: "center", shape: sg.shape },
     photos,
   };
   const r = await reviewCategory(input);
@@ -690,6 +716,7 @@ async function reviewRevision(rev: CtCategoryRevision, cat: CtCategorySnapshot, 
       detailsNote: cat.rules.detailsNote,
       fill: cat.rules.fill,
       anchor: cat.rules.anchor,
+      shape: cat.rules.shape,
     },
   };
   const r = await reviewCategory(input);

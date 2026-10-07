@@ -75,9 +75,10 @@ export function PrintDialog(props: PrintDialogProps) {
     setExporting(true);
     setError(null);
     try {
-      // What is printed is the flat artwork: a material version is how the finished product looks, not ink.
+      // What is printed is the flat artwork: a material version is how the finished product looks, not ink. A product
+      // with a khuôn vật liệu prints only the khuôn (its cut-out parts cleared).
       const shownAssets = displayAssets(assets, "flat");
-      const art = await renderComposite({ main, assets: shownAssets, regions, items, selection, scale: 1, layouts: config.layouts });
+      const art = await renderComposite({ main, assets: shownAssets, regions, items, selection, scale: 1, layouts: config.layouts, cutToFrame: true });
       const designBlob = await canvasToBlob(art, "image/png");
       let mainBlob: Blob | null = null;
       if (material.shape === "main") {
@@ -105,7 +106,7 @@ export function PrintDialog(props: PrintDialogProps) {
     try {
       const base = props.product.name.replace(/[^\w-]+/g, "-") || "product";
       const flat = displayAssets(assets, "flat");
-      const print = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts: config.layouts });
+      const print = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts: config.layouts, cutToFrame: true });
       download(await canvasToBlob(print, "image/png"), `${base}-print.png`);
       const look = displayAssets(assets, "rendition", material.flatIds, mockupVersion === BASE ? "" : mockupVersion);
       const mock = await renderComposite({ main, assets: look, regions, items, selection, scale: 1, layouts: config.layouts, bleed: true });

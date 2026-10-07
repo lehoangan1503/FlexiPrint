@@ -20,6 +20,7 @@ import type {
   CtAsset,
   CtCategoryBody,
   CtCategoryRevision,
+  CtProductShape,
   CtRevisePreset,
   CtClipartCategory,
   CtCategoryRules,
@@ -481,6 +482,7 @@ function CategoryInfo(props: { category: CtClipartCategory; stylePacks: CtPreset
       <div className="space-y-2 pt-2 text-xs">
         {tab === "spec" && (
           <>
+            <p className="text-muted-foreground">Hình dạng: {rules.shape === "frame" ? "theo khuôn (ảnh full nền, sản phẩm cắt theo khuôn)" : "theo alpha (cắt theo viền clipart)"}</p>
             {category.spec ? <p className="whitespace-pre-line">{category.spec}</p> : <p className="text-muted-foreground">Chưa có spec chung.</p>}
             <InfoRefs label="Ảnh mẫu kiểu vẽ" urls={rules.refs} />
           </>
@@ -809,6 +811,7 @@ export function CategoryDialog(props: {
         refs: [...b.rules.refs, ...refs].slice(0, 6),
         productRefs: [...b.rules.productRefs, ...productRefs].slice(0, MAX_PRESET_REFS),
         details: s.details.length ? s.details : b.rules.details,
+        shape: s.shape,
       },
     }));
     if (s.style.reuseId) setRules({ stylePackId: s.style.reuseId });
@@ -1023,6 +1026,19 @@ export function CategoryDialog(props: {
 
         {tab === "spec" && (
           <div className="space-y-3">
+            <CtField
+              label="Hình dạng sản phẩm"
+              hint="Theo khuôn: clipart là ảnh phẳng full nền (không tách nền) — trong sản phẩm vẽ “Khuôn vật liệu” (phím K) để cắt hình + lỗ; vật liệu “theo khuôn” ở bước 3."
+            >
+              <CtSelect<CtProductShape>
+                value={body.rules.shape}
+                onChange={(shape) => setRules({ shape })}
+                options={[
+                  { value: "alpha", label: "Theo alpha — cắt theo viền clipart (acrylic die-cut, sticker…)" },
+                  { value: "frame", label: "Theo khuôn — hình cố định (ornament tròn, ly, cái quần…)" },
+                ]}
+              />
+            </CtField>
             <div className="grid gap-4 md:grid-cols-[1fr_280px]">
               <CtField label="Spec chung (prompt cho cả danh mục)">
                 <CtTextarea

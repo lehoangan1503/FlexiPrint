@@ -27,6 +27,7 @@ export function defaultCategoryRules(): CtCategoryRules {
     anchor: "center",
     background: "auto",
     lockSilhouette: true,
+    shape: "alpha",
     stylePackId: null,
     materialIds: [],
     refs: [],
@@ -63,6 +64,7 @@ export function normalizeCategoryRules(raw: LegacyRules | null | undefined): CtC
     // The background rule left the dialog: every category keeps the model's transparency, else cuts out.
     background: "auto",
     lockSilhouette: typeof r.lockSilhouette === "boolean" ? r.lockSilhouette : base.lockSilhouette,
+    shape: r.shape === "frame" ? "frame" : "alpha",
     stylePackId: typeof r.stylePackId === "string" && r.stylePackId ? r.stylePackId : null,
     materialIds: Array.isArray(r.materialIds) ? idList(r.materialIds) : idList([r.materialId]),
     refs: refList(r.refs),
@@ -160,7 +162,9 @@ export function setMembers<A extends CtRenderAsset>(assets: A[], originId: strin
  * base version ("" = the base).
  */
 export function renditionOf<A extends CtRenderAsset>(assets: A[], assetId: string, version = ""): A | null {
-  const list = renditionsOf(assets, assetId);
+  // One made theo khuôn (cut to this product's khuôn vật liệu — a product's assets only carry its own) wins.
+  const all = renditionsOf(assets, assetId);
+  const list = [...all.filter((a) => a.meta?.frame), ...all.filter((a) => !a.meta?.frame)];
   const of = (v: string) => list.find((a) => (a.meta?.materialVersion ?? "") === v);
   return (version ? of(version) : undefined) ?? of("") ?? list[0] ?? null;
 }
@@ -198,6 +202,9 @@ export function withRenditions<A extends CtRenderAsset>(assets: A[], flatIds: re
       const meta = { ...a.meta };
       delete meta.pad;
       if (r.meta?.pad) meta.pad = r.meta.pad;
+      // Made theo khuôn: drawn over the khuôn's box, not the clipart's frame.
+      delete meta.frame;
+      if (r.meta?.frame) meta.frame = r.meta.frame;
       return { ...a, url: r.url, meta };
     });
 }

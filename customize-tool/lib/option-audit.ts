@@ -6,7 +6,7 @@
 
 import { CT_BASE_OPTION } from "../types";
 import type { CtRegion, CtRenderAsset, CtTemplate } from "../types";
-import { formOrder, mainSubOptions, mainVersions, normalizeRegion, regionGroups, textMode } from "./design";
+import { formOrder, isLinkedLayer, mainSubOptions, mainVersions, normalizeRegion, regionGroups, textMode } from "./design";
 import { onVersion } from "./layout";
 
 export type CtAuditLevel = "ok" | "info" | "warn";
@@ -39,6 +39,7 @@ function fieldLine(r: CtRegion, tpl: CtTemplate): string | null {
   const n = normalizeRegion(r);
   const sub = n.config.options.list.length ? ` + ${n.config.options.label || "option con"} (${n.config.options.list.length + 1} lựa chọn)` : "";
   if (n.kind === "image") {
+    if (isLinkedLayer(n, tpl.regions)) return null;
     const offered = layerOffer(n, tpl);
     return offered >= 2 ? `Chọn ảnh “${n.config.image.label || n.name}” — 1 trong ${offered} (không sửa)` : null;
   }

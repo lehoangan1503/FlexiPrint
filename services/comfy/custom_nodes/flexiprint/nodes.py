@@ -406,7 +406,8 @@ class FPOriginGenerate(io.ComfyNode):
         names, prompts, outs = [], [], []
         # Background rule: a transparent PNG straight from the model when it can make one (FP Cutout keeps it),
         # otherwise white and cut out with BiRefNet.
-        transparent = providers.supports_transparency(model)
+        # A full-bleed category (fixed-shape product) keeps its background: never transparent, never cut out.
+        transparent = providers.supports_transparency(model) and not fpc.full_bleed(context)
 
         async def one(i: int, style_refs: list[bytes]) -> tuple[str, str, np.ndarray]:
             name, subject = _split_named(lines[i])
@@ -537,8 +538,12 @@ class FPRefine(io.ComfyNode):
                 if keep.strip()
                 else "Everything the changes don't touch stays as it is: the object's identity, colours, drawing style, line work, face and viewing angle.\n"
             )
-            + "Whole object visible, centred. Flat, solid pure white (#FFFFFF) background — any gap or opening the changes call for is that same pure white. "
-            "No text, no watermark, no drop shadow."
+            + (
+                "Same full-bleed framing as image 1: the artwork fills the whole frame edge to edge with its background scene. No text, no watermark."
+                if fpc.full_bleed(ctx)
+                else "Whole object visible, centred. Flat, solid pure white (#FFFFFF) background — any gap or opening the changes call for is that same pure white. "
+                "No text, no watermark, no drop shadow."
+            )
         )
         data, used = await providers.edit(model, prompt, imaging.rgba_on_white_png(src), [*extra, *done])
         out = imaging.bytes_to_rgba(data)
@@ -572,6 +577,13 @@ class FPCutout(io.ComfyNode):
 
     @classmethod
     async def execute(cls, images, method: str, normalize: bool, masks=None, context=None) -> io.NodeOutput:
+        if method == "theo danh mục" and fpc.full_bleed(context):
+            # Fixed-shape product: the picture is full-bleed (background included) — cover the canvas, no cut-out.
+            r = fpc.rules(context)
+            w, h = int(r["canvas"]["w"]), int(r["canvas"]["h"])
+            rgbas = [_cover(x, w, h) for x in imaging.tensors_to_rgba(images, None)]
+            image, mask = imaging.rgba_to_tensors(rgbas)
+            return io.NodeOutput(image, mask, ui=_ui(cls, rgbas))
         if method == "theo danh mục":
             # Every category: the model's own transparency when it gave one, else BiRefNet — per image.
             rgbas = imaging.tensors_to_rgba(images, masks)
@@ -656,7 +668,9 @@ class FPVariantSet(io.ComfyNode):
                     " The other image(s) show the look this change should have (material, pattern, colour, finish): copy only that look "
                     "onto the clipart — never their shape, subject, background or scene."
                 )
-            prompt = fpc.compose(ctx, instruction, role="element", include_rules=False) + "\nPure white (#FFFFFF) background."
+            prompt = fpc.compose(ctx, instruction, role="element", include_rules=False) + (
+                "\nSame full-bleed background scene, edge to edge, as the first image." if fpc.full_bleed(ctx) else "\nPure white (#FFFFFF) background."
+            )
             # A locked edit must keep the clipart where it is: align_to + lock_silhouette pull any model's result back.
             use = fpmat.nano_model(model) if how == "ai_edit_locked" else model
             data, used = await providers.edit(use, prompt, src_png, pics[i])
@@ -743,6 +757,12 @@ class FPMaterial(io.ComfyNode):
                     optional=True,
                     tooltip="Chạy thử prompt chưa lưu (JSON {material_prompt?, details?, product_refs?}) — thay prompt preset / chi tiết / ảnh thành phẩm của danh mục; ảnh lưu tên “· thử”",
                 ),
+                io.String.Input(
+                    "frame",
+                    default="",
+                    optional=True,
+                    tooltip="Vật liệu theo khuôn (JSON {productId, regionId, box}): ảnh vào đã cắt theo khuôn (FP Frame Clipart) — giữ y nguyên viền + lỗ; ghi vào meta.frame",
+                ),
                 io.Combo.Input(
                     "canvas",
                     options=["nới rộng (vật liệu quanh hình)", "giữ khung ảnh"],
@@ -786,6 +806,7 @@ class FPMaterial(io.ComfyNode):
         parent_ids: str = "",
         draft: str = "",
         canvas: str = "nới rộng (vật liệu quanh hình)",
+        frame: str = "",
     ) -> io.NodeOutput:
         preset = await _preset("material", fpc.option_id(material))
         if not preset:
@@ -799,11 +820,25 @@ class FPMaterial(io.ComfyNode):
         over = json.loads(draft) if draft.strip() else {}
         if not isinstance(over, dict):
             raise ValueError("draft: cần JSON object")
-        return await cls._v2(images, preset, extra, model, masks, context, names, parent_ids, keep_frame=canvas == "giữ khung ảnh", draft=over)
+        shape = json.loads(frame) if frame.strip() else None
+        if shape is not None and not isinstance(shape, dict):
+            raise ValueError("frame: cần JSON object")
+        return await cls._v2(images, preset, extra, model, masks, context, names, parent_ids, keep_frame=canvas == "giữ khung ảnh", draft=over, frame=shape)
 
     @classmethod
     async def _v2(
-        cls, images, preset: dict, extra: str, model: str, masks, context, names: str, parent_ids: str, keep_frame: bool, draft: dict | None = None
+        cls,
+        images,
+        preset: dict,
+        extra: str,
+        model: str,
+        masks,
+        context,
+        names: str,
+        parent_ids: str,
+        keep_frame: bool,
+        draft: dict | None = None,
+        frame: dict | None = None,
     ) -> io.NodeOutput:
         """Presets with `params.art` (material.py): base version + one per "version" detail, on a padded canvas.
 
@@ -847,7 +882,7 @@ class FPMaterial(io.ComfyNode):
             raise last or providers.ProviderError("Không model nào vẽ được vật liệu")
 
         async def one(src: np.ndarray):
-            return await fpmat.render(call, src, material_text, specs, params["art"], refs, extra, _rgb_png)
+            return await fpmat.render(call, src, material_text, specs, params["art"], refs, extra, _rgb_png, shaped=frame is not None)
 
         results = await providers.gather_limited([one(s) for s in srcs], limit=2)
         name_list, parent_list = _parse_list(names), _parse_list(parent_ids)
@@ -868,6 +903,8 @@ class FPMaterial(io.ComfyNode):
                     meta["pad"] = {"x": round(p / w, 5), "y": round(p / h, 5)}
                 if label:
                     meta["materialVersion"] = label
+                if frame is not None:
+                    meta["frame"] = frame
                 if draft:
                     meta["draft"] = True
                 outs.append(rgba)
@@ -880,6 +917,18 @@ class FPMaterial(io.ComfyNode):
         report = f"{preset['name']} [{', '.join(sorted(used))}]\n" + "\n".join(lines)
         image, mask = imaging.rgba_to_tensors(outs)
         return io.NodeOutput(image, mask, report, json.dumps(metas), json.dumps(out_names), json.dumps(out_parents), ui=_ui(cls, outs, report))
+
+
+def _cover(rgba: np.ndarray, w: int, h: int) -> np.ndarray:
+    """Opaque, scaled to cover w × h and centre-cropped (a full-bleed clipart on the category canvas)."""
+    from PIL import Image
+
+    im = Image.fromarray(rgba).convert("RGB")
+    k = max(w / im.width, h / im.height)
+    im = im.resize((max(w, round(im.width * k)), max(h, round(im.height * k))), Image.LANCZOS)
+    x, y = (im.width - w) // 2, (im.height - h) // 2
+    out = np.asarray(im.crop((x, y, x + w, y + h)))
+    return np.dstack([out, np.full((h, w), 255, np.uint8)])
 
 
 def _rgb_png(a: np.ndarray) -> bytes:
@@ -1044,6 +1093,39 @@ class FPLoadClipart(io.ComfyNode):
             ctx["notes"].append(f"This clipart: {a['spec']}")
         image, mask = imaging.rgba_to_tensors([rgba])
         return io.NodeOutput(image, mask, a["id"], ctx, ui=_ui(cls, [rgba], f"{a['name']} ({a['role']}, {a['width']}×{a['height']})\n{fpc.describe(ctx)}"))
+
+
+class FPFrameClipart(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="FP_FrameClipart",
+            display_name="FP Frame Clipart (cắt theo khuôn)",
+            category=f"{CATEGORY_NODE}/Thư viện",
+            description=(
+                "Cắt clipart theo khuôn vật liệu của 1 sản phẩm (custom layer “Khuôn vật liệu” + vùng cắt bỏ): ảnh ra đúng khung "
+                "khuôn, mọi clipart cùng khuôn ra cùng kích thước — đưa vào FP Material (input frame) để vật liệu giữ y nguyên viền."
+            ),
+            inputs=[
+                io.Image.Input("image"),
+                io.Mask.Input("mask", optional=True),
+                io.String.Input("cut", multiline=True, default="", tooltip="JSON {w, h, art: {x, y, w, h, rotation}, clip: [[x, y]…], cuts: [[[x, y]…]…]} (lib/material-frame.ts frameCut)"),
+            ],
+            outputs=[io.Image.Output(display_name="image"), io.Mask.Output(display_name="mask")],
+        )
+
+    @classmethod
+    def validate_inputs(cls, **kwargs) -> bool:
+        return True
+
+    @classmethod
+    async def execute(cls, image, cut: str, mask=None) -> io.NodeOutput:
+        spec = json.loads(cut) if cut.strip() else None
+        if not isinstance(spec, dict) or not spec.get("clip"):
+            raise ValueError("cut: cần JSON khuôn (w, h, art, clip)")
+        out = [fpmat.frame_cut(src, spec) for src in imaging.tensors_to_rgba(image, mask)]
+        img, msk = imaging.rgba_to_tensors(out)
+        return io.NodeOutput(img, msk, ui=_ui(cls, out, f"khuôn {spec['w']}×{spec['h']}, {len(spec.get('cuts') or [])} vùng cắt"))
 
 
 class FPLoadArtwork(io.ComfyNode):
@@ -1253,6 +1335,7 @@ NODES: list[type[io.ComfyNode]] = [
     FPMockupScene,
     FPMockupEnhance,
     FPLoadClipart,
+    FPFrameClipart,
     FPLoadArtwork,
     FPSaveToLibrary,
     FPSaveMockup,

@@ -27,6 +27,15 @@ const FRAME_PRINT =
 const FRAME_SURFACE =
   "Turn image 1 into a product photo-cutout of this artwork made as the physical product described below. The material " +
   "covers the artwork's own surface, but every shape, line, face and letter stays exactly where it is — same size and same position in the frame.";
+const FRAME_SHAPED =
+  "Turn image 1 into a product photo-cutout of this piece made as the physical product described below. Image 1 is " +
+  "already cut to the product's exact outline: keep that outline exactly — same shape, size and position, every hole " +
+  "or cut-out stays open and where it is, nothing added past the edge. The material covers the piece's whole surface " +
+  "(finish, gloss, light on it), but every shape, colour, line, letter and face of the artwork stays exactly where it is.";
+const FULL_BLEED =
+  "A full-bleed flat artwork filling the whole frame edge to edge: the subject with its own background scene behind it " +
+  "(never a blank, white or transparent background), no outline, border, frame or cut-out shape — the product's shape is " +
+  "cut from it later, so keep the subject and anything important well inside, away from the edges";
 const REQUIRED = "Product details — every one of these MUST be clearly visible in this picture:";
 const NOT_YET =
   "Added later in a separate step, so NOT in this picture: {what}. Leave out only that loose part itself — every required detail above is still drawn.";
@@ -56,7 +65,7 @@ export interface ReviewInput {
   spec: string;
   style: { name: string; prompt: string; usedByOthers: string[] } | null;
   materials: ReviewMaterial[];
-  rules: Pick<CtCategoryRules, "details" | "productRefs" | "detailsNote" | "fill" | "anchor">;
+  rules: Pick<CtCategoryRules, "details" | "productRefs" | "detailsNote" | "fill" | "anchor"> & Partial<Pick<CtCategoryRules, "shape">>;
   /** Product photos not saved yet (data urls, create flow): sent instead of rules.productRefs, never dropped. */
   photos?: string[];
 }
@@ -75,14 +84,18 @@ export function flatPrompt(input: ReviewInput): string {
   const base = input.rules.anchor === "bottom" ? "resting on the bottom edge" : "centred";
   const view = "use the viewing angle described above, the same for every clipart of the set (front view if none is given)";
   const framing =
-    input.usage === "main"
+    input.rules.shape === "frame"
+      ? null
+      : input.usage === "main"
       ? `Show the whole object, ${base}, filling about ${fill}% of the frame; ${view}.`
       : `One single isolated element, ${base}, filling about ${fill}% of the frame; ${view}; no other objects, no scenery.`;
   return [
     input.style ? `Style: ${input.style.prompt}` : "",
     input.spec ? `Kind of object (${input.name}): ${input.spec}` : "",
     "<subject line of one clipart, e.g. \"red sedan\">",
-    `${framing} No text, no watermark, no drop shadow, no floor. Flat, solid pure white (#FFFFFF) background. Crisp clean edges, print quality.`,
+    framing === null
+      ? `${FULL_BLEED}; ${view}. No text, no watermark. Print quality.`
+      : `${framing} No text, no watermark, no drop shadow, no floor. Flat, solid pure white (#FFFFFF) background. Crisp clean edges, print quality.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -92,8 +105,9 @@ export function materialPrompts(input: ReviewInput, m: ReviewMaterial): string[]
   const always = input.rules.details.filter((d) => d.mode === "always");
   const versions = input.rules.details.filter((d) => d.mode === "version");
   const refs = photoCount(input) > 0;
+  // Theo khuôn (a fixed-shape product): the clipart comes in cut to the product's khuôn, its outline kept exactly.
   const base = [
-    m.art === "surface" ? FRAME_SURFACE : FRAME_PRINT,
+    input.rules.shape === "frame" ? FRAME_SHAPED : m.art === "surface" ? FRAME_SURFACE : FRAME_PRINT,
     m.prompt,
     input.style ? `The artwork is drawn in this style (keep it): ${input.style.prompt}` : "",
     always.length ? `${REQUIRED}\n${always.map((d) => `- ${d.text}`).join("\n")}` : "",
@@ -101,7 +115,7 @@ export function materialPrompts(input: ReviewInput, m: ReviewMaterial): string[]
     BLACK_BG,
     refs ? REFS_NOTE : "",
   ].filter(Boolean);
-  const out = [`[${m.key} "${m.name}" — base version, an edit of the flat clipart]\n${base.join("\n")}`];
+  const out = [`[${m.key} "${m.name}" — base version, an edit of the flat clipart${input.rules.shape === "frame" ? " cut to the product's khuôn" : ""}]\n${base.join("\n")}`];
   for (const v of versions) {
     out.push(`[${m.key} "${m.name}" — version "${v.label}", an edit of the base picture]\n${ADD_ONE.replace("{what}", v.text)}${refs ? `\n${REFS_NOTE}` : ""}`);
   }

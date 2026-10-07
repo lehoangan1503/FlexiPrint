@@ -81,7 +81,21 @@ def rules(ctx: Context) -> dict:
     r.setdefault("anchor", "center")
     r.setdefault("background", "auto")
     r.setdefault("lockSilhouette", True)
+    r.setdefault("shape", "alpha")
     return r
+
+
+def full_bleed(ctx: Context | None) -> bool:
+    """A category of fixed-shape products (rules.shape "frame": a round ornament, trousers): its cliparts are flat
+    full-bleed pictures, background included — the product's khuôn vật liệu cuts the shape from them later."""
+    return rules(ctx or empty()).get("shape") == "frame"
+
+
+FULL_BLEED = (
+    "A full-bleed flat artwork filling the whole frame edge to edge: the subject with its own background scene behind it "
+    "(never a blank, white or transparent background), no outline, border, frame or cut-out shape — the product's shape is "
+    "cut from it later, so keep the subject and anything important well inside, away from the edges"
+)
 
 
 def rules_sentence(ctx: Context, role: str, transparent: bool = False) -> str:
@@ -91,6 +105,8 @@ def rules_sentence(ctx: Context, role: str, transparent: bool = False) -> str:
     base = "resting on the bottom edge" if r["anchor"] == "bottom" else "centred"
     # The viewing angle belongs to the category spec / style pack; the rule only asks for one shared angle.
     view = "use the viewing angle described above, the same for every clipart of the set (front view if none is given)"
+    if r.get("shape") == "frame":
+        return f"{FULL_BLEED}; {view}. No text, no watermark. Print quality."
     if role == "main":
         framing = f"Show the whole object, {base}, filling about {fill}% of the frame; {view}."
     else:

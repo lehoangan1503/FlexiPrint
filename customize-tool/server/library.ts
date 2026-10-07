@@ -19,6 +19,7 @@ import type {
   CtCategoryBody,
   CtCategoryHistoryEntry,
   CtClipartCategory,
+  CtClipartFrame,
   CtClipartUsage,
   CtMainLayout,
   CtPreset,
@@ -31,7 +32,10 @@ import type {
   CtUpdateClipartBody,
 } from "../types";
 import { asLayerClipart, asMainOption, asVersion, memberRole, normalizeCategoryRules, originRole } from "../lib/library";
-import { normalizeSubOptions } from "../lib/design";
+import { normalizeRegion, normalizeSubOptions } from "../lib/design";
+import { shapeBounds } from "../lib/geometry";
+import { mainFrameFor, normalizeLayouts } from "../lib/layout";
+import { frameCut, frameOutline, frameRegionFor } from "../lib/material-frame";
 import { normalizeMaterialSpecs } from "../lib/materials";
 import { normalizeMaterialRules } from "../lib/mockup";
 import { isAdmin } from "./ai-styles";
@@ -256,6 +260,8 @@ function materialMeta(src: CtAsset, width: number, height: number): CtAssetMeta 
     ...(m.material ? { material: m.material } : {}),
     ...(m.materialVersion ? { materialVersion: m.materialVersion } : {}),
     ...(m.pad && src.width === width && src.height === height ? { pad: m.pad } : {}),
+    // Made theo khuôn: still that product's, cut to its khuôn (same size = same cut).
+    ...(m.frame && src.width === width && src.height === height ? { frame: m.frame } : {}),
   };
 }
 
@@ -451,6 +457,60 @@ async function subOptionProducts(db: Db, ids: string[]): Promise<Array<Pick<CtPr
 export async function getClipartMaterials(s: CtSession, id: string): Promise<NextResponse> {
   const kids = await descendants(s.supabase, [id]);
   return NextResponse.json({ cliparts: kids.filter((k) => k.role === "rendition") });
+}
+
+/**
+ * GET library/cliparts/:id/frames → the khuôn vật liệu a gốc can be made "theo khuôn" with: every product showing it
+ * (or one of its đa sắc) as a version whose layers have a khuôn — the clipart cut to it, as FP_FrameClipart takes it.
+ */
+export async function getClipartFrames(s: CtSession, id: string): Promise<NextResponse> {
+  const kids = (await descendants(s.supabase, [id])).filter((k) => k.role !== "rendition");
+  const family = [id, ...kids.map((k) => k.id)];
+  const [mains, defaults, subs] = await Promise.all([
+    s.supabase.from(CT_TABLES.productMains).select("product_id,asset_id").in("asset_id", family).returns<Array<{ product_id: string; asset_id: string }>>(),
+    s.supabase.from(CT_TABLES.products).select("id,main_asset_id").in("main_asset_id", family).returns<Array<{ id: string; main_asset_id: string }>>(),
+    subOptionProducts(s.supabase, family),
+  ]);
+  // Product → the version of it the clipart is drawn as (itself, or the version it is a sub-option of).
+  const versionOf = new Map<string, string>();
+  for (const m of mains.data ?? []) versionOf.set(m.product_id, m.asset_id);
+  for (const p of defaults.data ?? []) versionOf.set(p.id, p.main_asset_id);
+  for (const p of subs) {
+    if (versionOf.has(p.id)) continue;
+    const entry = normalizeSubOptions(p.config?.main?.subOptions).find((e) => e.ids.some((x) => family.includes(x)));
+    if (entry) versionOf.set(p.id, entry.mainId);
+  }
+  if (!versionOf.size) return NextResponse.json({ frames: [] });
+  const productIds = [...versionOf.keys()];
+  const [products, regions] = await Promise.all([
+    s.supabase.from(CT_TABLES.products).select("*").in("id", productIds).returns<CtProduct[]>(),
+    s.supabase.from(CT_TABLES.regions).select("*").in("product_id", productIds).returns<CtRegion[]>(),
+  ]);
+  const boards = (products.data ?? []).map((p) => p.main_asset_id).filter((x): x is string => Boolean(x));
+  const { data: boardAssets } = boards.length
+    ? await s.supabase.from(CT_TABLES.assets).select("id,width,height").in("id", boards).returns<Array<{ id: string; width: number; height: number }>>()
+    : { data: [] as Array<{ id: string; width: number; height: number }> };
+  const boardOf = new Map((boardAssets ?? []).map((a) => [a.id, a]));
+  const frames: CtClipartFrame[] = [];
+  for (const p of products.data ?? []) {
+    const versionId = versionOf.get(p.id);
+    const board = p.main_asset_id ? boardOf.get(p.main_asset_id) : undefined;
+    if (!versionId || !board) continue;
+    const own = (regions.data ?? []).filter((r) => r.product_id === p.id).map(normalizeRegion);
+    const frame = frameRegionFor(own, versionId, p.main_asset_id);
+    if (!frame) continue;
+    const art = mainFrameFor(normalizeLayouts(p.config?.layouts), versionId, board.width, board.height);
+    frames.push({
+      productId: p.id,
+      productName: p.name,
+      regionId: frame.id,
+      regionName: frame.name,
+      box: shapeBounds(frame.shape),
+      outline: frameOutline(frame),
+      cut: frameCut(frame, art),
+    });
+  }
+  return NextResponse.json({ frames });
 }
 
 export async function getClipartUsage(s: CtSession, id: string): Promise<NextResponse> {
@@ -756,7 +816,9 @@ export async function loadProductAssets(db: Db, product: CtProduct, items: CtReg
   const lib = await loadLinkedAssets(db, product.id, libIds, product.main_asset_id);
   const list = [...ownList, ...lib.filter((a) => !ownIds.has(a.id))];
   const withOptions = [...list, ...(await loadSubOptions(db, product, new Set(list.map((a) => a.id))))];
-  return [...withOptions, ...(await loadGroupExtras(db, product, regions, new Set(withOptions.map((a) => a.id))))];
+  const all = [...withOptions, ...(await loadGroupExtras(db, product, regions, new Set(withOptions.map((a) => a.id))))];
+  // A vật liệu made theo khuôn belongs to the product whose khuôn it was cut to.
+  return all.filter((a) => !a.meta?.frame || a.meta.frame.productId === product.id);
 }
 
 // ---------------------------------------------------------------------------

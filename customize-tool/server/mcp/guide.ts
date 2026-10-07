@@ -6,6 +6,7 @@
 
 import { DETAILS_RULES, REVISE_SYSTEM, SYSTEM } from "../ai/prompt-writer";
 import { REVIEW_SYSTEM } from "../ai/prompt-review";
+import { LAYER_RULES } from "./layer-rules";
 
 export interface CtMcpResource {
   uri: string;
@@ -30,6 +31,12 @@ this MCP. Everything you read here is live production data.
   - rules.refs — design reference photos (sent with the flat drawing).
   - rules.productRefs — photos of the finished product (sent with every material pass).
   - rules.detailsNote — the editor's own words about the product (their intent).
+  - rules.shape — the PRODUCT SHAPE: "alpha" = cut along the clipart's own outline (die-cut acrylic, sticker; the
+    clipart is the object alone, its material follows its alpha) | "frame" = a fixed-shape product (round ceramic
+    ornament, mug, printed trousers; the clipart is a FULL-BLEED picture with its background, never cut out). For
+    "frame" an editor draws a "Khuôn vật liệu" layer (the outline + cut-out holes) in a product; the print file is
+    cut to it, and a material made "theo khuôn" is the clipart cut to it first — every clipart the same size, the
+    piece keeps exactly that outline. A punched hole is then part of the khuôn, not a detail.
 - CLIPART (ct_assets, library = product_id null): an ORIGIN ("gốc", role main/sub) of a category; its children
   are variants ("đa sắc", recolours) and renditions (material versions, meta.material = the material id,
   meta.materialVersion = the "version" detail's label, e.g. "có dây").
@@ -38,7 +45,8 @@ this MCP. Everything you read here is live production data.
 1. Flat clipart (the file the factory prints): STYLE PACK → CATEGORY SPEC → the clipart's subject line → fixed
    rules (framing, white background, no text). Never shows product details.
 2. Đa sắc: recolour / edit of a finished origin, same silhouette.
-3. Material versions: nano-banana EDITS the flat clipart into a product photo-cutout: MATERIAL prompt + the
+3. Material versions (shape "alpha": of the clipart as it is; "frame": of the clipart cut to a product's khuôn,
+   chosen in step 3): nano-banana EDITS the flat clipart into a product photo-cutout: MATERIAL prompt + the
    "always" DETAILS (base picture) + one extra edit of the base per "version" detail + the product photos.
    Every clipart is edited ALONE — only the wording keeps a set consistent. The base pass is checked for ghosts,
    excess plate and (when a detail names a hole) a missing hole, and redrawn.
@@ -114,4 +122,5 @@ export const CT_MCP_RESOURCES: CtMcpResource[] = [
   { uri: "flexiprint://guide/details-rules", name: "Writing product details", description: "Chi tiết thành phẩm: one entry per part, positions, sizes, modes.", text: () => DETAILS_RULES },
   { uri: "flexiprint://guide/revise-rules", name: "Revising a category from feedback", description: "Which layer causes which problem; merge rules.", text: () => REVISE_SYSTEM },
   { uri: "flexiprint://guide/review-rules", name: "Reviewing assembled prompts", description: "Checklist for conflicts between layers before submitting.", text: () => REVIEW_SYSTEM },
+  { uri: "flexiprint://guide/layer-rules", name: "Layered art — pixel-registration rules", description: "MANDATORY for any design built from swappable parts (character skin / clothes / hair): one master canvas, full-canvas exports, one box per slot, hair back/front split, linked slots.", text: () => LAYER_RULES },
 ];

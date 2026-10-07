@@ -15,6 +15,9 @@ hole, a cord…). What makes it clean and dependable:
   * A detail made as an extra version ("có dây") is an edit of the base picture; only what it changed off the
     plate (joined to the top edge, or in blobs big enough to be a thing) is taken, so the plate and every detail
     of the base stay exactly where they were.
+  * A product with a fixed shape (a round ornament, trousers — "theo khuôn"): the clipart comes in already cut to
+    the product's khuôn (`frame_cut`, holes included) and the piece keeps exactly that outline (`shaped`): the
+    model only gives it the material, every clipart of the khuôn ends up the same size.
 
 Pure numpy / PIL; the model calls are passed in.
 """
@@ -50,6 +53,12 @@ FRAME_PRINT = (
 FRAME_SURFACE = (
     "Turn image 1 into a product photo-cutout of this artwork made as the physical product described below. The material "
     "covers the artwork's own surface, but every shape, line, face and letter stays exactly where it is — same size and same position in the frame."
+)
+FRAME_SHAPED = (
+    "Turn image 1 into a product photo-cutout of this piece made as the physical product described below. Image 1 is "
+    "already cut to the product's exact outline: keep that outline exactly — same shape, size and position, every hole "
+    "or cut-out stays open and where it is, nothing added past the edge. The material covers the piece's whole surface "
+    "(finish, gloss, light on it), but every shape, colour, line, letter and face of the artwork stays exactly where it is."
 )
 BLACK_BG = "Solid pure black (#000000) background, nothing else in the picture."
 REQUIRED = "Product details — every one of these MUST be clearly visible in this picture:\n{what}"
@@ -117,6 +126,32 @@ def parse_specs(raw: object) -> list[Spec]:
 
 
 # ---------------------------------------------------------------- frame
+
+
+def frame_cut(src: np.ndarray, cut: dict) -> np.ndarray:
+    """The clipart cut to a khuôn vật liệu (lib/material-frame.ts frameCut): a w × h canvas, the clipart in its
+    box (turned about its centre), kept only inside the outline and outside the cuts. 4× supersampled edges."""
+    W, H = int(cut["w"]), int(cut["h"])
+    art = cut["art"]
+    aw, ah = max(1, round(float(art["w"]))), max(1, round(float(art["h"])))
+    pic = Image.fromarray(src).resize((aw, ah), Image.LANCZOS)
+    rot = float(art.get("rotation") or 0)
+    if rot:
+        pic = pic.rotate(-rot, resample=Image.BICUBIC, expand=True)
+    cx, cy = float(art["x"]) + float(art["w"]) / 2, float(art["y"]) + float(art["h"]) / 2
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    # A plain paste on the empty canvas copies the pixels as they are (and clips what falls off it).
+    canvas.paste(pic, (round(cx - pic.width / 2), round(cy - pic.height / 2)))
+    k = 4
+    mask = Image.new("L", (W * k, H * k), 0)
+    d = ImageDraw.Draw(mask)
+    d.polygon([(x * k, y * k) for x, y in cut["clip"]], fill=255)
+    for hole in cut.get("cuts") or []:
+        d.polygon([(x * k, y * k) for x, y in hole], fill=0)
+    mask = mask.resize((W, H), Image.LANCZOS)
+    out = np.asarray(canvas).copy()
+    out[..., 3] = (out[..., 3].astype(np.uint16) * np.asarray(mask, np.uint16) // 255).astype(np.uint8)
+    return out
 
 
 def pad_canvas(src: np.ndarray) -> tuple[np.ndarray, int]:
@@ -374,17 +409,19 @@ async def render(
     extra: str,
     png,
     attempts: int = 3,
+    shaped: bool = False,
 ) -> tuple[list[tuple[str, np.ndarray]], int, list[str]]:
     """One clipart → [(version label, RGBA on the padded canvas)], base first ("" label). Returns the padding (px)
-    and report lines."""
+    and report lines. `shaped`: `src` is cut to a khuôn — the piece keeps exactly its outline (alpha) and holes."""
     art, p = pad_canvas(src)
     art_alpha = art[..., 3]
     always = [s for s in specs if s.mode == "always"]
     versions = [s for s in specs if s.mode == "version"]
     # A punched hole is the detail the model most often forgets: a pass without one is drawn again.
-    want_hole = any(HOLE_WORD.search(s.text) for s in always)
+    # Theo khuôn the hole is already cut in the piece.
+    want_hole = not shaped and any(HOLE_WORD.search(s.text) for s in always)
     first = on(art, (0, 0, 0))
-    lines = [FRAME_SURFACE if art_mode == "surface" else FRAME_PRINT, material.strip()]
+    lines = [FRAME_SHAPED if shaped else FRAME_SURFACE if art_mode == "surface" else FRAME_PRINT, material.strip()]
     if always:
         lines.append(REQUIRED.format(what="\n".join(f"- {s.text}" for s in always)))
     if versions:
@@ -402,8 +439,11 @@ async def render(
     for i in range(attempts):
         blk, wht, e = await draw_pair(call, prompt, first, refs, ref_frame, art_alpha, png)
         matte, ghost = suppress_ghost(keep_joined(diff_matte(blk, wht), art_alpha), art_alpha)
-        rgba = lock_art(matte, art, blk if art_mode == "surface" else None)
-        excess = excess_plate(rgba, art_alpha)
+        rgba = lock_art(matte, art, blk if art_mode == "surface" or shaped else None)
+        if shaped:
+            # The khuôn's outline, exactly: nothing past it, its holes open.
+            rgba[..., 3] = art_alpha
+        excess = 0.0 if shaped else excess_plate(rgba, art_alpha)
         hole_ok = not want_hole or has_hole(rgba, art_alpha)
         score = ghost * 1000 + excess * 300 + max(0.0, e - MAX_ALIGN_ERR) + (0 if hole_ok else 50)
         report.append(
@@ -430,7 +470,7 @@ async def render(
         for i in range(max(1, attempts - 1)):
             vb, vw, e = await draw_pair(call, add, edit_from, refs, base.black, fit_mask, png)
             matte, ghost = suppress_ghost(keep_joined(diff_matte(vb, vw), art_alpha), art_alpha, allow)
-            full = lock_art(matte, art, vb if art_mode == "surface" else None)
+            full = lock_art(matte, art, vb if art_mode == "surface" or shaped else None)
             merged = merge_version(base.rgba, full, art_alpha)
             report.append(f"bản “{s.label}” lượt {i + 1}: lệch {e:.1f}, bóng ma {ghost * 100:.2f}%")
             score = ghost * 1000 + max(0.0, e - MAX_ALIGN_ERR)

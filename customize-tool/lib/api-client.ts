@@ -25,6 +25,7 @@ import type {
   CtAssetSource,
   CtCategoryBody,
   CtClipartCategory,
+  CtClipartFrame,
   CtClipartUsage,
   CtMaterialConfig,
   CtPhotoCapabilities,
@@ -197,6 +198,8 @@ export const ctApi = {
   /** Material pictures of a clipart: vật liệu versions, their đa sắc, vật liệu of its đa sắc. */
   clipartMaterials: (id: string) => call<{ cliparts: CtAsset[] }>(`library/cliparts/${id}/materials`).then((r) => r.cliparts),
   clipartUsage: (id: string) => call<{ usage: CtClipartUsage[] }>(`library/cliparts/${id}/usage`).then((r) => r.usage),
+  /** Khuôn vật liệu of the products showing a gốc as a version — to make its vật liệu "theo khuôn". */
+  clipartFrames: (id: string) => call<{ frames: CtClipartFrame[] }>(`library/cliparts/${id}/frames`).then((r) => r.frames),
   /** Move a product clipart (with its versions) into the library. */
   promoteAsset: (id: string, categoryId: string | null) =>
     call<{ assets: CtAsset[] }>(`assets/${id}/promote`, json("POST", { category_id: categoryId })).then((r) => r.assets),

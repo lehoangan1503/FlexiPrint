@@ -25,6 +25,10 @@ Người dùng đang chờ trên trình duyệt. Họ thấy từng dòng `repor
 - **revise** không có `note` = kiểm tra prompt: soát theo `flexiprint://guide/review-rules`, sửa xung đột thật.
 - **create**: viết cả danh mục theo `flexiprint://guide/category-rules`; trước đó `list_style_packs`,
   `list_materials`, `list_product_details` để dùng lại.
+- Quyết **hình dạng sản phẩm** (`shape`) trước tiên, từ lời người dùng + ảnh thành phẩm:
+  `alpha` = cắt theo viền clipart (acrylic die-cut, sticker) → clipart là vật thể đứng riêng;
+  `frame` = sản phẩm hình cố định (ornament sứ tròn, ly, khung tranh, cái quần) → clipart là ảnh phẳng full nền,
+  vật liệu chỉ tả bề mặt (men bóng, phản sáng), lỗ đục thuộc khuôn chứ không phải chi tiết. Không chắc → `ask_user`.
 - Thư viện chỉ có ở bản dùng chung: sửa style pack / vật liệu đang được danh mục khác dùng thì ghi rõ trong "why".
 - Báo `report_progress` ở mỗi bước lớn (một dòng tiếng Việt).
 

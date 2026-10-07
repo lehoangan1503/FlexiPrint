@@ -13,3 +13,6 @@ services/comfy/.comfy/
 
 # agent_ide hand-off secrets (deploy key…) — sent privately, never committed
 integrations/agent-ide/secrets/
+
+# layer-kit working images (big; sources live in R2 per project)
+tools/layer-kit/demo-*/

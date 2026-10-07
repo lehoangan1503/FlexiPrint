@@ -33,6 +33,7 @@ import {
   Printer,
   Rocket,
   Save,
+  Scissors,
   Square,
   Type,
   Undo2,
@@ -41,7 +42,7 @@ import {
 } from "lucide-react";
 import { CT_CONFIG, ctGoogleFontsHref } from "../../config";
 import { CT_BASE_OPTION, CT_MAIN_KEY } from "../../types";
-import type { CtAsset, CtMainFrame, CtMainOptionConfig, CtPackImage, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection, CtStudioRecipe, CtZoneParent, CtRegionKind } from "../../types";
+import type { CtAsset, CtMainFrame, CtMainOptionConfig, CtPackImage, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection, CtShape, CtStudioRecipe, CtZoneParent, CtRegionKind } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import {
   defaultProductConfig,
@@ -68,19 +69,22 @@ import { StorefrontPreview } from "./storefront-preview";
 import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zoneOptionView } from "./use-design";
 import { nearestAspect, PackImageLibrary } from "./pack-image-library";
 import { PrintDialog } from "./print-dialog";
+import { PrintPanel } from "./print-panel";
 import { CLIPART_DRAG, type CtClipartDrag, type CtClipartSetEntry } from "./library-panel";
 import { ClipartPickerDialog } from "./clipart-picker";
 import { CtAiDialog, type CtAiTarget } from "../studio/ai-dialog";
 import { ctConfirm } from "../dialogs";
 import { asLayerClipart, asMainOption, asVersion } from "../../lib/library";
 import { claimSharedLayers, cloneLayers, fitMainFrame, mainFrameFor, versionLayers } from "../../lib/layout";
+import { frameRegionFor, isMaterialFrame } from "../../lib/material-frame";
 
-/** Thiết kế = edit · Xem trước = the real storefront page · Tổ hợp & Mockup = composites + AI mockups. */
-type View = "design" | "preview" | "mockup";
+/** Thiết kế = edit · Xem trước = the real storefront page · File in = the flat print file · Tổ hợp & Mockup = composites + AI mockups. */
+type View = "design" | "preview" | "print" | "mockup";
 
 
 /** Kinds drawn with a frame tool. A custom layer is added at once instead: its frame is the image itself. */
-type DrawKind = "text" | "photo";
+/** "frame": the khuôn vật liệu — a custom layer whose outline is the product's shape (lib/material-frame). */
+type DrawKind = "text" | "photo" | "frame";
 type CenterAxis = "x" | "y" | "xy";
 
 /** localStorage: the "copy layers from version" list was folded for this product. */
@@ -155,6 +159,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   };
   const [tool, setTool] = useState<StageTool>("select");
   const [drawKind, setDrawKind] = useState<DrawKind>("text");
+  /** Drawing a part cut out of this khuôn vật liệu (a hanging hole). */
+  const [cutFor, setCutFor] = useState<string | null>(null);
   /** "C" pressed: waiting for X / Y / C to centre the selected zone. */
   const centerChord = useRef<number>(0);
   const [editTarget, setEditTarget] = useState<EditTarget>("region");
@@ -229,6 +235,17 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const versionApi = versionView(design, shownMainId);
   const ed = zoneOptionView(versionApi, activeZoneOptions(versionApi.state.regions, selection));
   const { regions, items } = ed.state;
+  // The khuôn vật liệu the shown version is cut to: its own, else the default version's.
+  const materialFrame = useMemo(
+    () => (main ? frameRegionFor(design.state.regions.map(normalizeRegion), shownMainId, main.id) : null),
+    [design.state.regions, shownMainId, main],
+  );
+  // Leaving the frame tools drops a khuôn / cut being drawn.
+  useEffect(() => {
+    if (tool !== "select" && tool !== "hand") return;
+    setCutFor(null);
+    setDrawKind((k) => (k === "frame" ? "text" : k));
+  }, [tool]);
   /** Main version id -> its layer count. */
   const layerCounts = useMemo(() => {
     const out: Record<string, number> = {};
@@ -369,6 +386,37 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const startDraw = (kind: DrawKind) => {
     setDrawKind(kind);
     setTool((t) => (t === "rect" || t === "ellipse" || t === "polygon" ? t : "rect"));
+    setEditTarget("region");
+  };
+
+  /**
+   * The shown version's khuôn vật liệu (tool K): drawn with the frame tools (polygon = dots along the outline), it
+   * becomes the version's only khuôn — a custom layer named "Khuôn vật liệu".
+   */
+  const addMaterialFrame = (shape: CtShape) => {
+    if (!product) return;
+    const made = makeRegion(product.id, "image", shape, regions.length);
+    const region: CtRegion = { ...made, name: "Khuôn vật liệu", config: { ...made.config, materialFrame: true } };
+    ed.commit((s) => ({
+      ...s,
+      regions: [...s.regions.map((r) => (isMaterialFrame(r) ? { ...r, config: { ...r.config, materialFrame: false } } : r)), region],
+    }));
+    setSelectedRegionId(region.id);
+    setActiveItemId(null);
+    setDrawKind("text");
+    flash("Đã đặt khuôn vật liệu — file in cắt theo khuôn; tạo vật liệu “theo khuôn” ở Thư viện → Tạo bằng AI → bước 3");
+  };
+
+  /** A part cut out of khuôn `regionId` (a hanging hole). */
+  const addFrameCut = (regionId: string, shape: CtShape) => {
+    ed.commit((s) => updateRegion(s, regionId, (r) => ({ ...r, config: { ...r.config, cuts: [...(r.config.cuts ?? []), shape] } })));
+    setCutFor(null);
+    setSelectedRegionId(regionId);
+  };
+
+  const startFrameCut = (regionId: string, shapeTool: "rect" | "ellipse" | "polygon") => {
+    setCutFor(regionId);
+    setTool(shapeTool);
     setEditTarget("region");
   };
 
@@ -566,6 +614,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       if (k === "l") addCustomLayer();
       else if (k === "t") startDraw("text");
       else if (k === "u") startDraw("photo");
+      else if (k === "k") startDraw("frame");
       else if (k === "v") setTool("select");
       else if (k === "h") setTool("hand");
       else if (k === "r") setTool("rect");
@@ -1207,6 +1256,12 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const kinds: Array<{ id: DrawKind; icon: typeof Square; label: string; keys: string[] }> = [
     { id: "text", icon: Type, label: "Text — khách nhập / chọn chữ · kéo để tạo khung", keys: ["T"] },
     { id: "photo", icon: UserSquare, label: "Ảnh khách — khách upload ảnh · kéo để tạo khung", keys: ["U"] },
+    {
+      id: "frame",
+      icon: Scissors,
+      label: "Khuôn vật liệu — hình dạng sản phẩm (ornament tròn, cái quần…): kéo khung tròn / chữ nhật, hoặc đa giác chấm điểm theo viền. File in + vật liệu “theo khuôn” cắt theo nó",
+      keys: ["K"],
+    },
   ];
   const centers: Array<{ axis: CenterAxis; text: string; label: string; keys: string[] }> = [
     { axis: "x", text: "CX", label: "Canh vào trục X giữa main (dịch lên / xuống)", keys: ["C", "X"] },
@@ -1243,6 +1298,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             [
               ["design", "Thiết kế"],
               ["preview", "Xem trước"],
+              ["print", "File in"],
               ["mockup", "Tổ hợp"],
             ] as Array<[View, string]>
           ).map(([v, label]) => (
@@ -1429,7 +1485,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     selection={selection}
                     tool={tool}
                     onToolChange={setTool}
-                    drawKind={drawKind}
+                    drawKind={drawKind === "frame" ? "image" : drawKind}
                     editTarget={editTarget}
                     onEditTargetChange={(t) => {
                       setEditTarget(t);
@@ -1455,6 +1511,14 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                       if (on) setEditTarget("region");
                     }}
                     onEmptyLayerClick={(regionId) => setLayerLibrary({ regionId })}
+                    materialFrame={materialFrame}
+                    drawInto={
+                      cutFor
+                        ? { label: "Vẽ vùng cắt bỏ (lỗ đục…) trên khuôn — không in, vật liệu để trống", onShape: (shape) => addFrameCut(cutFor, shape) }
+                        : drawKind === "frame"
+                          ? { label: "Vẽ khuôn vật liệu — hình dạng sản phẩm (đa giác P: chấm điểm theo viền)", onShape: addMaterialFrame }
+                          : null
+                    }
                   />
                 ) : (
                   <div
@@ -1478,6 +1542,18 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                 )}
               </div>
             </div>
+          ) : view === "print" && main ? (
+            <PrintPanel
+              product={product}
+              main={main}
+              assets={assets}
+              regions={allRegions}
+              items={allItems}
+              layouts={config.layouts}
+              material={config.material}
+              selection={selection}
+              onOpenSettings={() => setMaterialOpen(true)}
+            />
           ) : view === "preview" ? (
             main ? null : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
           ) : main ? (
@@ -1547,6 +1623,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               onPreviewOption={(regionId, assetId) => setSelection((sel) => ({ ...sel, [regionId]: { kind: "image", assetId } }))}
               onPickLayerImage={(regionId) => setLayerLibrary({ regionId })}
               onAddChild={addChildZone}
+              onDrawCut={startFrameCut}
               onSampleText={(regionId, text) =>
                 setSelection((sel) => {
                   const cur = sel[regionId];

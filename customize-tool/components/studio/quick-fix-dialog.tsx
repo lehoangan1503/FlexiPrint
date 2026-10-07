@@ -23,7 +23,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ImagePlus, Loader2, Palette, Sparkles, Wand2, X } from "lucide-react";
-import type { CtAsset, CtClipartCategory, CtPreset, CtStudioLine } from "../../types";
+import type { CtAsset, CtClipartCategory, CtPreset, CtStudioFrameTarget, CtStudioLine } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { clipartFamily, isMaterialClipart, isMulticolorClipart, normalizeCategoryRules, renditionsOf } from "../../lib/library";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, CtSelect, CtTextarea, cx } from "../ui";
@@ -299,7 +299,7 @@ export function QuickFixDialog({ target, onClose, onDone }: CtQuickFixDialogProp
       }
     }
 
-    // One run per preset: a preset with "version" details makes all its versions of the picture at once.
+    // One run per preset (and khuôn): a preset with "version" details makes all its versions of the picture at once.
     const byMaterial = new Map<string, CtAsset[]>();
     for (const r of materials) {
       const mid = materialOf(r);
@@ -307,14 +307,27 @@ export function QuickFixDialog({ target, onClose, onDone }: CtQuickFixDialogProp
         out.notes.push(`${r.name}: không rõ preset vật liệu — tạo lại ở “Tạo bằng AI” bước 3`);
         continue;
       }
-      byMaterial.set(mid, [...(byMaterial.get(mid) ?? []), r]);
+      const key = `${mid}|${r.meta?.frame?.productId ?? ""}`;
+      byMaterial.set(key, [...(byMaterial.get(key) ?? []), r]);
     }
-    for (const [mid, olds] of byMaterial) {
+    for (const [key, olds] of byMaterial) {
+      const [mid, frameProduct] = key.split("|");
       setStatus(`Render lại vật liệu của ${next.name}…`);
       const base = olds.find((r) => !r.meta?.materialVersion) ?? olds[0];
+      // Made theo khuôn: cut again to that product's khuôn as it is now (a đa sắc: its gốc's).
+      let frame: CtStudioFrameTarget | undefined;
+      if (frameProduct) {
+        const of = async (id: string | null) => (id ? (await ctApi.clipartFrames(id).catch(() => [])).find((f) => f.productId === frameProduct) : undefined);
+        const f = (await of(next.id)) ?? (await of(next.parent_id));
+        if (!f) {
+          out.notes.push(`${base.name}: khuôn của sản phẩm không còn — tạo lại ở “Tạo bằng AI” bước 3`);
+          continue;
+        }
+        frame = { cut: f.cut, meta: { productId: f.productId, regionId: f.regionId, box: f.box } };
+      }
       const runId = await ctApi.studioRun({
         recipe: "material",
-        params: { material_id: mid, targets: [{ clipart_id: next.id, name: base.name }], lock: "preset", edge_px: 0, extra: "", model },
+        params: { material_id: mid, targets: [{ clipart_id: next.id, name: base.name, ...(frame ? { frame } : {}) }], lock: "preset", edge_px: 0, extra: "", model },
       });
       const made = (await waitFor(runId, () => `Render lại vật liệu của ${next.name}…`)).filter((a) => a.role === "rendition" && a.parent_id === next.id);
       out.fresh.push(...made);

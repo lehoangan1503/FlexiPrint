@@ -35,6 +35,7 @@ import { useImageSize } from "./use-image-size";
 import { CLIPART_DRAG, type CtClipartDrag } from "./library-panel";
 import { updateItem, updateRegion } from "./use-design";
 import { mainFrameFor } from "../../lib/layout";
+import { frameSvgPath } from "../../lib/material-frame";
 
 const isTyping = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
@@ -103,6 +104,13 @@ export interface StageProps {
   onSelectMain: (on: boolean) => void;
   /** A click (not a drag) on a custom layer that has no picture yet: pick one (the thư viện ảnh tổ hợp). */
   onEmptyLayerClick?: (regionId: string) => void;
+  /** The khuôn vật liệu the shown version is cut to (lib/material-frame): outside it is dimmed, its cuts hatched. */
+  materialFrame?: CtRegion | null;
+  /**
+   * A shape drawn with the frame tools goes here instead of becoming a new zone (a khuôn vật liệu, or a part cut
+   * out of one); its own label shows while drawing.
+   */
+  drawInto?: { label: string; onShape: (shape: CtShape) => void } | null;
 }
 
 const MIN_ZOOM = 0.02;
@@ -344,7 +352,10 @@ export function Stage(props: StageProps) {
     (raw: CtPoint[]) => {
       // A double-click to close also lands two clicks on the same spot.
       const points = raw.filter((p, i) => i === 0 || Math.hypot(p.x - raw[i - 1].x, p.y - raw[i - 1].y) * zoomRef.current > 3);
-      if (points.length >= 3) {
+      if (points.length >= 3 && props.drawInto) {
+        props.drawInto.onShape({ type: "polygon", points });
+        props.onToolChange("select");
+      } else if (points.length >= 3) {
         const region = makeRegion(props.productId, drawKind, { type: "polygon", points }, regions.length);
         design.commit((s) => ({ ...s, regions: [...s.regions, region] }));
         props.onSelectRegion(region.id);
@@ -579,6 +590,11 @@ export function Stage(props: StageProps) {
         g.shape === "rect"
           ? { type: "rect", x, y, w, h, radius: 0 }
           : { type: "ellipse", cx: x + w / 2, cy: y + h / 2, rx: w / 2, ry: h / 2 };
+      if (props.drawInto) {
+        props.drawInto.onShape(shape);
+        props.onToolChange("select");
+        return;
+      }
       const region = makeRegion(props.productId, drawKind, shape, regions.length);
       design.commit((s) => ({ ...s, regions: [...s.regions, region] }));
       props.onSelectRegion(region.id);
@@ -845,6 +861,26 @@ export function Stage(props: StageProps) {
           viewBox={`0 0 ${main.width} ${main.height}`}
           style={{ pointerEvents: "none" }}
         >
+          {/* Khuôn vật liệu: what is printed / made into the vật liệu — outside it dimmed, its cut-out parts hatched. */}
+          {props.showOverlay && props.materialFrame && (
+            <g pointerEvents="none">
+              <defs>
+                <pattern id="ct-cut-hatch" width={12 * px} height={12 * px} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                  <rect width={12 * px} height={12 * px} fill="rgba(0,0,0,0.55)" />
+                  <line x1={0} y1={0} x2={0} y2={12 * px} stroke="#f43f5e" strokeWidth={4 * px} />
+                </pattern>
+              </defs>
+              <path
+                d={`M${-main.width * 4},${-main.height * 4}h${main.width * 9}v${main.height * 9}h${-main.width * 9}Z${shapeToSvgPath(props.materialFrame.shape)}`}
+                fill="rgba(0,0,0,0.45)"
+                fillRule="evenodd"
+              />
+              {(props.materialFrame.config.cuts ?? []).map((c, i) => (
+                <path key={i} d={shapeToSvgPath(c)} fill="url(#ct-cut-hatch)" stroke="#f43f5e" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+              ))}
+              <path d={frameSvgPath(props.materialFrame)} fill="none" stroke="#f59e0b" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+            </g>
+          )}
           {props.showOverlay &&
             shownRegions.map((r) => {
               const isSel = r.id === selectedRegionId;
@@ -1229,6 +1265,9 @@ export function Stage(props: StageProps) {
         </button>
       </div>
 
+      {props.drawInto && (tool === "rect" || tool === "ellipse" || tool === "polygon") && (
+        <div className="pointer-events-none absolute bottom-14 left-3 rounded bg-amber-600/90 px-2 py-1 text-xs text-white">{props.drawInto.label}</div>
+      )}
       {tool === "polygon" && (
         <div className="pointer-events-none absolute left-3 top-3 rounded bg-black/70 px-2 py-1 text-xs text-white">
           Click để thêm điểm · click điểm đầu / double-click / Enter để đóng · Backspace / Ctrl+Z lùi điểm · Ctrl+Shift+Z tiến lại · Esc huỷ

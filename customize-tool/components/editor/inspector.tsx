@@ -58,7 +58,7 @@ import type {
 import { CT_BASE_OPTION } from "../../types";
 import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, orientedBox, resolvePhotoFrame, shapeBounds } from "../../lib/geometry";
 import { useImageSize } from "./use-image-size";
-import { defaultRegionSelection, formOrder, hasTestPhoto, isValidDate, normalizeRegion, textMode, variantsOf, ZONE_TEXT_STYLE_KEYS, zoneSubtree } from "../../lib/design";
+import { defaultRegionSelection, formOrder, hasTestPhoto, isLinkedLayer, isValidDate, linkMismatches, normalizeRegion, textMode, variantsOf, ZONE_TEXT_STYLE_KEYS, zoneSubtree } from "../../lib/design";
 import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
 import { PhotoGuideDialog } from "./photo-guide-dialog";
 import { aiStyleModel } from "../../lib/ai-style-models";
@@ -115,6 +115,8 @@ export interface InspectorProps {
   onZoneOption: (regionId: string, optionId: string | null) => void;
   /** A child zone for one option of a zone (text / custom layer / photo upload) — shown while that option is. */
   onAddChild: (parent: CtZoneParent, kind: CtRegionKind) => void;
+  /** Draw a part cut out of khuôn vật liệu `regionId` (a hanging hole) with a frame tool. */
+  onDrawCut: (regionId: string, tool: "rect" | "ellipse" | "polygon") => void;
 }
 
 /** "Choose state: Texas" — the option a child zone belongs to. */
@@ -480,6 +482,8 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
           />
         </CtField>
       )}
+
+      {region.kind === "image" && <MaterialFrameProps {...props} region={region} />}
 
       {region.kind === "text" && (
         <div className="space-y-3 border-t pt-3">
@@ -1241,6 +1245,100 @@ function ZoneOptionRow(props: {
 // Object zone: groups of options
 // ---------------------------------------------------------------------------
 
+/**
+ * Khuôn vật liệu (lib/material-frame): this custom layer's outline is the product's shape (a round ornament, a pair
+ * of trousers) — the print file is cut to it, and vật liệu made "theo khuôn" are the clipart cut to it. Its cuts are
+ * parts cut out of the piece (a hanging hole).
+ */
+function MaterialFrameProps({ design, region, onDrawCut }: InspectorProps & { region: CtRegion }) {
+  const on = region.config.materialFrame === true;
+  const cuts = region.config.cuts ?? [];
+  const setOn = (v: boolean) =>
+    design.commit((s) => ({
+      ...s,
+      // One khuôn per version.
+      regions: s.regions.map((r) =>
+        r.id === region.id ? { ...r, config: { ...r.config, materialFrame: v } } : v && r.config.materialFrame ? { ...r, config: { ...r.config, materialFrame: false } } : r,
+      ),
+    }));
+  const removeCut = (i: number) => design.commit((s) => updateRegion(s, region.id, (r) => ({ ...r, config: { ...r.config, cuts: (r.config.cuts ?? []).filter((_, k) => k !== i) } })));
+  return (
+    <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-2">
+      <CtCheckbox
+        checked={on}
+        onChange={setOn}
+        label="Khuôn vật liệu (hình dạng sản phẩm)"
+        hint="Sản phẩm có hình cố định (ornament tròn, cái quần…): file in cắt theo viền layer này; vật liệu “theo khuôn” (Thư viện → Tạo bằng AI → bước 3) = clipart cắt theo khuôn, mọi clipart ra cùng kích thước. Không bật = vật liệu theo alpha của clipart (acrylic cắt theo hình)."
+      />
+      {on && (
+        <>
+          <div className="flex items-center gap-1 text-[11px]">
+            <span className="flex-1 text-muted-foreground">Vùng cắt bỏ (lỗ đục…){cuts.length ? ` (${cuts.length})` : ""}</span>
+            {(["ellipse", "rect", "polygon"] as const).map((t) => {
+              const Icon = SHAPE_ICON[t];
+              return (
+                <CtTooltip key={t} label={t === "polygon" ? "Vẽ vùng cắt đa giác (chấm điểm)" : t === "ellipse" ? "Vẽ lỗ tròn" : "Vẽ vùng cắt chữ nhật"}>
+                  <button className="rounded p-1 text-amber-700 hover:bg-accent dark:text-amber-300" onClick={() => onDrawCut(region.id, t)}>
+                    <Icon className="h-3.5 w-3.5" />
+                  </button>
+                </CtTooltip>
+              );
+            })}
+          </div>
+          {cuts.map((c, i) => {
+            const b = shapeBounds(c);
+            const Icon = SHAPE_ICON[c.type];
+            return (
+              <div key={i} className="flex items-center gap-1.5 text-[11px]">
+                <Icon className="h-3 w-3 text-rose-500" />
+                <span className="flex-1 tabular-nums text-muted-foreground">
+                  {Math.round(b.w)}×{Math.round(b.h)} tại {Math.round(b.x)}, {Math.round(b.y)}
+                </span>
+                <button className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => removeCut(i)} aria-label="Xoá vùng cắt">
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Linked layer (layer-rules §6): the back half of a hairstyle follows the front half's choice by group / option
+ * position. Lists the other image layers of the same version; warns while the two option trees differ.
+ */
+function LinkedLayerField(props: InspectorProps & { region: CtRegion }) {
+  const { design, region, assets } = props;
+  const regions = design.state.regions;
+  const cfg = normalizeRegion(region).config.image;
+  const leaders = regions.filter((r) => r.id !== region.id && r.kind === "image" && r.config.mainId === region.config.mainId && normalizeRegion(r).config.image.follows !== region.id);
+  const set = (follows: string) =>
+    design.commit((s) =>
+      updateRegion(s, region.id, (r) => {
+        const n = normalizeRegion(r);
+        const { follows: _old, ...image } = n.config.image;
+        return { ...n, config: { ...n.config, image: follows ? { ...image, follows } : image } };
+      }),
+    );
+  const issues = linkMismatches(region, regions, design.state.items, assets);
+  if (!leaders.length && !cfg.follows) return null;
+  return (
+    <CtField label="Liên kết theo layer" hint="Tóc 2 lớp: layer tóc SAU theo layer tóc TRƯỚC — cùng nhóm, cùng thứ tự ảnh, khách chỉ chọn 1 lần.">
+      <CtSelect<string>
+        value={cfg.follows ?? ""}
+        onChange={set}
+        options={[{ value: "", label: "Không — khách tự chọn" }, ...leaders.map((r) => ({ value: r.id, label: `Theo “${r.name}”` }))]}
+      />
+      {issues.length > 0 && (
+        <p className="mt-1 text-[11px] leading-snug text-amber-600">Chưa khớp layer gốc: {issues.join(" · ")}</p>
+      )}
+    </CtField>
+  );
+}
+
 function ImageProps(props: InspectorProps & { region: CtRegion }) {
   const { design, region, assets, selection } = props;
   const cfg = region.config.image;
@@ -1253,11 +1351,14 @@ function ImageProps(props: InspectorProps & { region: CtRegion }) {
   const shown = selection[region.id]?.kind === "image" ? (selection[region.id] as { assetId: string | null }).assetId : null;
   const kids = design.state.regions.filter((r) => r.config.parent?.regionId === region.id && r.config.parent.optionId === shown).length;
   const [menu, setMenu] = useState(false);
+  const linked = isLinkedLayer(region, design.state.regions);
 
   return (
     <div className="space-y-3 border-t pt-3">
       <p className="rounded-md bg-sky-500/10 px-2 py-1.5 text-[11px] leading-snug text-sky-700 dark:text-sky-300">
-        {offered >= 2
+        {linked
+          ? "Layer liên kết: khách không chọn — layer này hiện ảnh cùng vị trí (nhóm, thứ tự) với layer nó theo."
+          : offered >= 2
           ? `Khách chọn 1 trong ${offered} ảnh (chỉ chọn, không sửa) — vd. bộ kiểu tóc. Mặc định = card / ảnh viền cam (bấm để đổi).`
           : "1 ảnh = layer cố định (khách không chọn). Thêm ảnh (kéo cả bộ từ tab Thư viện, hoặc bật ảnh ẩn) để khách chọn."}
       </p>
@@ -1265,7 +1366,9 @@ function ImageProps(props: InspectorProps & { region: CtRegion }) {
         <ImageIcon className="h-3.5 w-3.5" /> {items.length ? "Đổi ảnh…" : "Chọn ảnh…"} (thư viện ảnh tổ hợp / upload)
       </CtButton>
 
-      {offered >= 2 && (
+      <LinkedLayerField {...props} region={region} />
+
+      {offered >= 2 && !linked && (
         <>
           <div className="grid grid-cols-[1fr_120px] gap-2">
             <CtField label="Nhãn cho khách">
@@ -1380,7 +1483,7 @@ function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionIte
     >
       <div className="flex items-center gap-1.5">
         <span className="min-w-0 flex-1 truncate text-xs font-medium" title={sub.name}>
-          {sub.name || "(không tên)"}
+          {cfg.groupNames[item.id]?.trim() || sub.name || "(không tên)"}
         </span>
         {isDefault && <span className="shrink-0 rounded bg-orange-500 px-1.5 text-[10px] font-medium leading-4 text-white">Mặc định</span>}
         <CtTooltip label="Chỉnh vị trí / scale / xoay trên canvas" shortcut={["Enter"]}>

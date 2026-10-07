@@ -6,6 +6,7 @@
 import { CT_FONTS } from "../config";
 import { CT_BASE_OPTION, CT_MAIN_KEY } from "../types";
 import type {
+  CtImageConfig,
   CtMainOptionConfig,
   CtMainSubOptions,
   CtMockupEdit,
@@ -82,6 +83,11 @@ export function defaultRegionConfig(kind: CtRegionKind): CtRegionConfig {
   };
 }
 
+function normalizeImageConfig(base: CtImageConfig, cfg: Partial<CtImageConfig> | undefined): CtImageConfig {
+  const { follows, ...rest } = { ...base, ...cfg };
+  return typeof follows === "string" && follows ? { ...rest, follows } : rest;
+}
+
 /** Fill in fields a region saved by an older build may lack. */
 export function normalizeRegion(region: CtRegion): CtRegion {
   const base = defaultRegionConfig(region.kind);
@@ -93,10 +99,14 @@ export function normalizeRegion(region: CtRegion): CtRegion {
       aboveMain: cfg.aboveMain ?? base.aboveMain,
       ...(cfg.mainId ? { mainId: cfg.mainId } : {}),
       ...(cfg.parent && typeof cfg.parent.regionId === "string" && typeof cfg.parent.optionId === "string" ? { parent: { regionId: cfg.parent.regionId, optionId: cfg.parent.optionId } } : {}),
-      image: { ...base.image, ...cfg.image },
+      image: normalizeImageConfig(base.image, cfg.image),
       text: { ...base.text, ...cfg.text },
       photo: normalizePhotoConfig({ ...base.photo, ...cfg.photo }),
       options: normalizeZoneOptions(cfg.options, base.options),
+      ...(region.kind === "image" && cfg.materialFrame === true ? { materialFrame: true } : {}),
+      ...(region.kind === "image" && Array.isArray(cfg.cuts) && cfg.cuts.length
+        ? { cuts: cfg.cuts.filter((s): s is CtShape => Boolean(s) && typeof s === "object" && "type" in s) }
+        : {}),
     },
   };
 }
@@ -459,6 +469,68 @@ export function optionInGroup(groups: CtChoiceGroup[], groupIndex: number, curre
 }
 
 // ---------------------------------------------------------------------------
+// Linked layers (config.image.follows)
+// ---------------------------------------------------------------------------
+
+/** The layer a linked layer follows, when it is an image layer of the product (never itself). */
+export function linkedLeader(region: CtRegion, regions: CtRegion[]): CtRegion | null {
+  const id = region.kind === "image" ? normalizeRegion(region).config.image.follows : undefined;
+  if (!id || id === region.id) return null;
+  return regions.find((r) => r.id === id && r.kind === "image") ?? null;
+}
+
+/** A layer that shows what another layer shows: never offered to the customer. */
+export function isLinkedLayer(region: CtRegion, regions: CtRegion[]): boolean {
+  return linkedLeader(region, regions) !== null;
+}
+
+/**
+ * The selection with every linked layer set to the option at its leader's group / option position (a chain is
+ * followed; a loop stops). Every renderer resolves this before drawing, so the editor, print file, mockups and
+ * storefront always agree.
+ */
+export function resolveLinked<A extends CtRenderAsset>(regions: CtRegion[], items: CtRegionItem[], assets: A[], selection: CtSelection): CtSelection {
+  const linked = regions.filter((r) => isLinkedLayer(r, regions));
+  if (!linked.length) return selection;
+  const out: CtSelection = { ...selection };
+  const done = new Set<string>();
+  const resolve = (r: CtRegion, depth: number): void => {
+    if (done.has(r.id) || depth > regions.length) return;
+    const leader = linkedLeader(r, regions);
+    if (!leader) return;
+    if (isLinkedLayer(leader, regions)) resolve(leader, depth + 1);
+    const lead = out[leader.id];
+    const at = locateOption(regionGroups(leader, items, assets), lead?.kind === "image" ? lead.assetId : null);
+    const groups = regionGroups(r, items, assets);
+    const g = groups[at.group];
+    out[r.id] = { kind: "image", assetId: g ? g.options[Math.min(at.option, g.options.length - 1)].id : null };
+    done.add(r.id);
+  };
+  for (const r of linked) resolve(r, 0);
+  return out;
+}
+
+/**
+ * Where a linked layer's options do not mirror its leader's (layer-rules §6, §10): group names, group counts and
+ * option counts must match. Empty = in step.
+ */
+export function linkMismatches<A extends CtRenderAsset>(region: CtRegion, regions: CtRegion[], items: CtRegionItem[], assets: A[]): string[] {
+  const leader = linkedLeader(region, regions);
+  if (!leader) return [];
+  const mine = regionGroups(region, items, assets);
+  const theirs = regionGroups(leader, items, assets);
+  const out: string[] = [];
+  if (mine.length !== theirs.length) out.push(`${mine.length} nhóm, layer gốc có ${theirs.length}`);
+  theirs.forEach((g, i) => {
+    const m = mine[i];
+    if (!m) return;
+    if (m.name.trim().toLowerCase() !== g.name.trim().toLowerCase()) out.push(`nhóm ${i + 1}: "${m.name}" ≠ "${g.name}"`);
+    if (m.options.length !== g.options.length) out.push(`nhóm "${g.name}": ${m.options.length} lựa chọn, layer gốc có ${g.options.length}`);
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Selections
 // ---------------------------------------------------------------------------
 
@@ -472,7 +544,7 @@ export function defaultSelection(
   for (const region of regions) {
     sel[region.id] = defaultRegionSelection(region, items, assets);
   }
-  return sel;
+  return resolveLinked(regions, items, assets, sel);
 }
 
 export function defaultRegionSelection(region: CtRegion, items: CtRegionItem[], assets: CtRenderAsset[]): CtRegionSelection {
@@ -537,7 +609,7 @@ export function enumerateCombinations(
   for (const mainId of mainIds) {
     let combos: CtSelection[] = [mains.length > 1 ? { ...base, [CT_MAIN_KEY]: { kind: "main", assetId: mainId } } : { ...base }];
     const room = limit - out.length;
-    for (const region of regions.filter((r) => r.kind === "image" && (mainId === null || onVersion(r, mainId)))) {
+    for (const region of regions.filter((r) => r.kind === "image" && !isLinkedLayer(r, regions) && (mainId === null || onVersion(r, mainId)))) {
       const choices = regionChoices(region, items, assets);
       if (!choices.length) continue;
       const next: CtSelection[] = [];
@@ -550,7 +622,7 @@ export function enumerateCombinations(
       }
       combos = next;
     }
-    out.push(...combos.slice(0, room));
+    out.push(...combos.slice(0, room).map((c) => resolveLinked(regions, items, assets, c)));
     if (out.length >= limit) break;
   }
   return out;
@@ -568,12 +640,12 @@ export function randomSelection(
   const pick = <T>(list: T[]): T => list[Math.floor(Math.random() * list.length)];
   if (mains.length > 1) sel[CT_MAIN_KEY] = { kind: "main", assetId: pick(mains).id };
   const mainId = shownMain(sel, defaultMainId);
-  for (const region of regions.filter((r) => r.kind === "image" && (mainId === null || onVersion(r, mainId)))) {
+  for (const region of regions.filter((r) => r.kind === "image" && !isLinkedLayer(r, regions) && (mainId === null || onVersion(r, mainId)))) {
     const choices = regionChoices(region, items, assets);
     if (choices.length === 0) continue;
     sel[region.id] = { kind: "image", assetId: pick(choices).asset.id };
   }
-  return sel;
+  return resolveLinked(regions, items, assets, sel);
 }
 
 /** Google Fonts families a set of regions needs. */

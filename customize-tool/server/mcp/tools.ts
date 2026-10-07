@@ -177,6 +177,7 @@ const categoryTools: CtMcpTool[] = [
           const m = cat.materials.find((x) => x.id === id);
           return m ? { id: m.id, name: m.name, art: m.art, prompt: m.prompt, alsoUsedBy: others(m.usedBy), updatedAt: m.updatedAt } : { id, missing: true };
         }),
+        shape: c.rules.shape,
         details: c.rules.details,
         detailsNote: c.rules.detailsNote,
         designRefs: c.rules.refs,

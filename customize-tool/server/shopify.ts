@@ -93,7 +93,7 @@ function userErrors(list: UserError[] | undefined): void {
 // ---------------------------------------------------------------------------
 
 const PRODUCT_FIELDS = `
-  id title handle status descriptionHtml vendor productType tags
+  id title handle status descriptionHtml vendor productType tags onlineStoreUrl onlineStorePreviewUrl
   options { name values }
   variantsCount { count }
   featuredMedia { preview { image { url } } }
@@ -111,6 +111,8 @@ interface ProductNode {
   vendor: string;
   productType: string;
   tags: string[];
+  onlineStoreUrl: string | null;
+  onlineStorePreviewUrl: string | null;
   options: Array<{ name: string; values: string[] }>;
   variantsCount: { count: number } | null;
   featuredMedia: { preview: { image: { url: string } | null } | null } | null;
@@ -129,6 +131,7 @@ function summary(p: ProductNode): CtShopifyProductSummary {
     vendor: p.vendor,
     productType: p.productType,
     tags: p.tags,
+    storeUrl: p.onlineStoreUrl ?? p.onlineStorePreviewUrl ?? null,
     options: p.options,
     variantsCount: p.variantsCount?.count ?? 0,
     imageUrl: p.featuredMedia?.preview?.image?.url ?? null,

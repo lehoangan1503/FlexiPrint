@@ -2031,6 +2031,8 @@ export interface CtShopifyProductSummary {
   vendor: string;
   productType: string;
   tags: string[];
+  /** Its page on the store: the live url once published, until then Shopify's preview url. */
+  storeUrl: string | null;
   options: Array<{ name: string; values: string[] }>;
   variantsCount: number;
   imageUrl: string | null;

@@ -224,6 +224,11 @@ export function DeployPage({ productId }: { productId: string }) {
                 {linked ? (
                   <>
                     <div className="truncate font-medium">{linked.title}</div>
+                    {linked.storeUrl && (
+                      <a href={linked.storeUrl} target="_blank" rel="noreferrer" className="block truncate text-xs text-sky-500 hover:underline">
+                        {linked.storeUrl}
+                      </a>
+                    )}
                     <div className="text-[11px] text-muted-foreground">
                       {target ? "Sẽ deploy lên sản phẩm này" : "Đã liên kết"} · {linked.status.toLowerCase()} · {linked.variantsCount} variant · /{linked.handle}
                     </div>

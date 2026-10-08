@@ -413,6 +413,6 @@ export const charApi = {
   buildLayers: (id: string) => call<{ project: CtCharProject }>(`char/projects/${id}/layers`, json("POST", {})).then((r) => r.project),
   approveLayers: (id: string, approved: boolean) => call<{ project: CtCharProject }>(`char/projects/${id}/layers/approve`, json("POST", { approved })).then((r) => r.project),
   /** The cut reviewed on the master (server/char/cut.ts): step "matte" (the backdrop) or "plan" (layer regions). */
-  cut: (id: string, step: "matte" | "plan", action?: "mask" | "region" | "revert" | "approve", body: Record<string, unknown> = {}) =>
+  cut: (id: string, step: "matte" | "plan", action?: "fix" | "region" | "revert" | "approve", body: Record<string, unknown> = {}) =>
     call<{ project: CtCharProject }>(`char/projects/${id}/${step}${action ? `/${action}` : ""}`, json("POST", body)).then((r) => r.project),
 };

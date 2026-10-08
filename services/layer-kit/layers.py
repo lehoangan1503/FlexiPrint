@@ -116,77 +116,169 @@ def background_of(rgb: np.ndarray) -> tuple[np.ndarray, float]:
     return bg.astype(np.float32), max(0.012, min(noise, 0.06))
 
 
-def matte_white(white: np.ndarray, coarse: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Alpha + un-mixed colours of a picture on a known flat backdrop. The segmentation (`coarse`, BiRefNet) only says
-    roughly where the subject is; the edge is solved from the pixels themselves at full size:
-      - backdrop pockets: pure-backdrop, flat spots inside the silhouette's outer fringe that are walled by drawn
-        pixels (gaps between hair strands) are cut out. Light parts of the art are kept: they are shaded or textured,
-        sit deeper than the fringe, or are walled by light pixels (white fur, shoes, eye highlights);
-      - edge: each pixel = a·F + (1−a)·backdrop, F = the colour of the solid pixels next to it → a solved per pixel,
-        then the colour is un-mixed (no white or grey halo)."""
-    H, W = coarse.shape
-    bg, noise = background_of(white)
-    ink = np.clip((bg[None, None] - white).max(2), 0, 1)              # how far from the backdrop (darker)
-    ink = np.maximum(ink, np.abs(white - bg).max(2) * 0.5)            # (colours brighter than the backdrop too)
-    fg = coarse > 0.5
-    tau = noise * 1.5 + 0.01
-    flat = cv2.GaussianBlur(ink, (0, 0), 1.0) < tau
+def ink_of(rgb: np.ndarray, bg: np.ndarray) -> np.ndarray:
+    """The least alpha that explains each pixel as some colour laid over the backdrop (colour-to-alpha): 0 = backdrop."""
+    lo = np.clip((bg - rgb) / np.maximum(bg, 1e-3), 0, 1)
+    hi = np.clip((rgb - bg) / np.maximum(1 - bg, 1e-3), 0, 1)
+    return np.maximum(lo, hi).max(2)
 
-    # Backdrop pockets inside the silhouette.
-    fringe_d = max(6, round(max(H, W) * 0.025))
-    dist_in = cv2.distanceTransform(fg.astype(np.uint8), cv2.DIST_L2, 5)
-    pockets = np.zeros_like(fg)
-    lab, n = ndi.label(flat & fg)
+
+def backdrop_of(native: np.ndarray, coarse: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Where the paper shows, decided on the picture as the image model drew it (before the upscale, whose paper is
+    no longer flat). Paper is 254–255 there; even white hair is cream, ≥ ~8 levels darker. The segmentation
+    (`coarse`, BiRefNet) only votes on the ambiguous bits — it never draws the edge.
+      - outside: paper connected to the picture's border;
+      - gaps: enclosed paper (between curls, under an arm). One is cut when BiRefNet calls it backdrop and it is near
+        the outside or walled only by light paint, or when it sits within a few px of the outside and is walled
+        only by light paint (a light strand). A pure-white highlight, teeth, the inside of a glass stay: deeper, or
+        walled by a dark outline;
+      - tinted paper: near-white pixels (grain, a paper tint in a tight gap) reached from either, where BiRefNet
+        calls it backdrop.
+    → (outside, gaps, tinted) masks at the native size."""
+    H, W = native.shape[:2]
+    bg, noise = background_of(native)
+    ink = ink_of(native, bg)
+    eight = np.ones((3, 3))
+    lab, n = ndi.label(ink <= noise + 0.004, structure=eight)
+    border = np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))
+    border = border[border > 0]
+    outside = np.isin(lab, border)
+    gaps = np.zeros_like(outside)
     if n:
         idx = np.arange(1, n + 1)
-        deep = ndi.maximum(dist_in, lab, idx)
-        area = ndi.sum(np.ones_like(dist_in), lab, idx)
-        ring = cv2.dilate((lab > 0).astype(np.uint8), kernel(3)).astype(bool) & ~(lab > 0)
-        ring_lab = ndi.grey_dilation(lab, footprint=kernel(3).astype(bool))
-        ring_ink = ndi.mean(ink, np.where(ring, ring_lab, 0), idx)
-        keep = (deep <= fringe_d) & (area >= 6) & (ring_ink > 0.18)
-        pockets = np.isin(lab, idx[keep])
+        near = ndi.minimum(cv2.distanceTransform((~outside).astype(np.uint8), cv2.DIST_L2, 5), lab, idx)
+        seg = ndi.mean(coarse, lab, idx)
+        # walled only by light paint = still connected to the border through pixels lighter than an outline
+        lw, _ = ndi.label(ink <= 0.36, structure=eight)
+        lb = np.unique(np.concatenate([lw[0], lw[-1], lw[:, 0], lw[:, -1]]))
+        light = ndi.maximum(np.isin(lw, lb[lb > 0]), lab, idx) > 0
+        fringe = max(6, round(max(H, W) * 0.025))
+        tight = max(4, round(max(H, W) * 0.006))
+        cut = ~np.isin(idx, border) & (((seg < 0.5) & ((near <= fringe) | light)) | ((near <= tight) & light))
+        gaps = np.isin(lab, idx[cut])
+    back = outside | gaps
+    tinted = ndi.binary_propagation(back, mask=((ink <= 0.04) & (coarse < 0.5)) | ((ink <= 0.07) & (coarse < 0.1))) & ~back
+    return outside, gaps, tinted
 
-    # Solid pixels: inside the silhouette, clearly drawn, not a pocket.
-    core = cv2.erode(fg.astype(np.uint8), kernel(3)).astype(bool) & ~cv2.dilate(pockets.astype(np.uint8), kernel(2)).astype(bool)
-    solid = core & (ink > 0.12)
-    F = _fill(white, solid.astype(np.float32))
 
-    # Edge band: around the silhouette's outline and around every pocket.
-    band = (cv2.dilate(fg.astype(np.uint8), kernel(6)).astype(bool) & ~cv2.erode(fg.astype(np.uint8), kernel(3)).astype(bool)) | cv2.dilate(pockets.astype(np.uint8), kernel(3)).astype(bool)
+def matte_white(native: np.ndarray, white: np.ndarray, coarse: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Alpha + un-mixed colours of a picture on a known flat backdrop, at the size of `white` (the print upscale of
+    `native`, or `native` itself). Where the paper is comes from backdrop_of; the edge is solved from the pixels:
+      - paper → 0; everything more than a few px from the paper → 1 (white paint inside the art stays opaque);
+      - edge: colour-to-alpha (watercolour = paint over paper), raised to a·F + (1−a)·backdrop where F, the colour of
+        the solid pixels next to it, is known — never on pixels within the paper's grain (upscale noise would turn
+        into faint dots of the neighbour's colour);
+      - strand tips past the segmentation are kept: anything drawn that is not paper has alpha;
+      - then the colour is un-mixed (no white or grey halo)."""
+    Hn, Wn = native.shape[:2]
+    h, w = white.shape[:2]
+    k = w / Wn
+    outside_n, gaps_n, tinted_n = backdrop_of(native, coarse)
+
+    def to_size(m: np.ndarray) -> np.ndarray:
+        return cv2.resize(m.astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR) > 0.5 if (h, w) != (Hn, Wn) else m
+
+    outside, gaps, tinted = to_size(outside_n), to_size(gaps_n), to_size(tinted_n)
+    back = outside | gaps
+    outside_seg = to_size(coarse < 0.5)
+    bg, noise = background_of(white)
+    ink = ink_of(white, bg)
+
+    # Edge band: a few px around the paper outside, 1 px around gaps and tinted paper (their walls are often a light
+    # strand that must stay opaque).
+    band = cv2.dilate(outside.astype(np.uint8), kernel(max(2, round(3 * k)))).astype(bool)
+    band |= cv2.dilate((gaps | tinted).astype(np.uint8), kernel(max(1, round(k)))).astype(bool)
+    solid = ~band & ~tinted
+    F = _fill(white, (solid & (ink > 0.05)).astype(np.float32))
+
+    # Paper grain beside the art is ≤ ~16/255: below that there is nothing drawn where BiRefNet says backdrop.
+    floor = np.where(outside_seg, max(noise, 0.065), noise)
+    a_c2a = np.clip((ink - floor) / (1 - floor), 0, 1)
     d = F - bg[None, None]
     den = (d * d).sum(2)
-    a_solve = ((white - bg[None, None]) * d).sum(2) / (den + 1e-6)
-    a_solve = np.clip((a_solve - noise) / (1 - noise), 0, 1)
-    # Light colours (F close to the backdrop) cannot be solved: keep the segmentation there.
-    usable = den > 0.02
-    alpha = np.where(fg, 1.0, 0.0).astype(np.float32)
-    alpha = np.where(band, np.where(usable, a_solve, np.clip(coarse, 0, 1)), alpha)
-    alpha[pockets] = 0
-    alpha[(ink < tau) & ~fg] = 0
-    # Specks: tiny islands left in the backdrop.
+    a_solve = np.clip(((white - bg[None, None]) * d).sum(2) / (den + 1e-6), 0, 1)
+    a_edge = np.where((den > 0.004) & (a_c2a > 0) & ~tinted, np.maximum(a_c2a, a_solve), a_c2a)
+    alpha = np.where(solid, 1.0, a_edge).astype(np.float32)
+    alpha[cv2.erode(back.astype(np.uint8), kernel(1)).astype(bool)] = 0
+    # Specks and faint grain: islands left in the backdrop that are tiny or never more than faint.
     isl, m = ndi.label(alpha > 0.02)
     if m:
-        sizes = ndi.sum(np.ones_like(alpha), isl, range(1, m + 1))
-        alpha[np.isin(isl, [i + 1 for i, s in enumerate(sizes) if s < 12])] = 0
-    alpha = alpha.astype(np.float32)
+        idx = np.arange(1, m + 1)
+        drop = (ndi.sum(np.ones_like(alpha), isl, idx) < 12 * k * k) | (ndi.maximum(alpha, isl, idx) < 0.12)
+        alpha[np.isin(isl, idx[drop])] = 0
 
     # Colours: un-mixed from the backdrop where the edge is thin; the neighbours' colour where it is almost gone.
     safe = np.maximum(alpha, 1e-3)[..., None]
     unmixed = np.clip((white - (1 - alpha[..., None]) * bg[None, None]) / safe, 0, 1)
-    k = np.clip((alpha - 0.15) / 0.5, 0, 1)[..., None]
-    col = np.where(band[..., None], unmixed * k + F * (1 - k), white)
-    col = np.where(alpha[..., None] > 0, col, white)
+    t = np.clip((alpha - 0.15) / 0.5, 0, 1)[..., None]
+    col = np.where((~solid)[..., None], unmixed * t + F * (1 - t), white)
+    col = np.where(alpha[..., None] > 0, col, 1.0)
     return alpha, np.clip(col, 0, 1).astype(np.float32)
 
 
-def cut_of(white: np.ndarray, coarse: np.ndarray) -> np.ndarray:
-    """RGBA of a picture on its white backdrop: segmentation alpha (any size — a uniform scale of the same canvas)
-    refined at full size by matte_white."""
-    h, w = white.shape[:2]
+def cut_of(native: np.ndarray, white: np.ndarray, coarse: np.ndarray) -> np.ndarray:
+    """RGBA of a picture on its white backdrop at the size of `white` (`native` or its print upscale): the paper is
+    found on `native`, the segmentation alpha (any size — a uniform scale of the same canvas) only votes."""
+    h, w = native.shape[:2]
     c = cv2.resize(coarse, (w, h), interpolation=cv2.INTER_LINEAR) if coarse.shape != (h, w) else coarse
-    a, col = matte_white(white, np.clip(c, 0, 1))
+    a, col = matte_white(native, white, np.clip(c, 0, 1))
     return np.dstack([col, a])
+
+
+def erase_at(white: np.ndarray, alpha: np.ndarray, points: list[tuple[float, float]]) -> tuple[np.ndarray, list[int]]:
+    """Backdrop left over at the points the editor marked ("Sửa nền": a click on each bit that is not clean), on the
+    matte at print size (`white` = its colours on white, `alpha` = its alpha now). Around each point, within a
+    small radius only:
+      - a stray bit (an island of alpha that does not reach past the radius) goes whole;
+      - otherwise the paper there: from the lightest pixel next to the point, the pixels connected to it that are
+        about as light (≤ its ink + 5 %, ≤ 12 %) go; a 2 px rim around them keeps only what is drawn
+        (colour-to-alpha), so no white edge is left.
+    → (alpha, pixels removed per point)."""
+    H, W = alpha.shape
+    out = alpha.copy()
+    R = max(24, round(max(H, W) * 0.02))
+    seed_r = max(3, R // 8)
+    clear = out <= 0.02
+    bg = np.median(white[clear], 0) if clear.sum() > 100 else np.ones(3, np.float32)
+    eight = np.ones((3, 3))
+    removed: list[int] = []
+    for px, py in points:
+        x, y = int(round(px)), int(round(py))
+        if not (0 <= x < W and 0 <= y < H):
+            removed.append(0)
+            continue
+        x0, y0, x1, y1 = max(0, x - R), max(0, y - R), min(W, x + R + 1), min(H, y + R + 1)
+        a = out[y0:y1, x0:x1]
+        cx, cy = x - x0, y - y0
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        disc = (xx - x) ** 2 + (yy - y) ** 2 <= R * R
+        near = (xx - x) ** 2 + (yy - y) ** 2 <= seed_r * seed_r
+        # A stray bit: the island under (or next to) the click, wholly inside the radius.
+        isl, _ = ndi.label(a > 0.02, structure=eight)
+        ids = np.unique(isl[near & (isl > 0)])
+        stray = [i for i in ids if not (isl == i)[~disc].any()]
+        if stray:
+            gone = np.isin(isl, stray)
+        else:
+            ink = ink_of(white[y0:y1, x0:x1], bg)
+            cand = near & (a > 0.02)
+            if not cand.any():
+                removed.append(0)
+                continue
+            lightest = np.where(cand, ink, 9).argmin()
+            s = float(ink.flat[lightest])
+            if s > 0.2:  # nothing light next to the click: drawn pixels, leave them
+                removed.append(0)
+                continue
+            t = min(0.12, s + 0.05)
+            lab, _ = ndi.label((ink <= t) & disc, structure=eight)
+            gone = lab == lab.flat[lightest]
+            rim = cv2.dilate(gone.astype(np.uint8), kernel(2)).astype(bool) & ~gone & disc
+            a[rim] = np.minimum(a[rim], np.clip((ink[rim] - t) / (1 - t), 0, 1))
+        n = int((gone & (a > 0.02)).sum())
+        a[gone] = 0
+        removed.append(n)
+    return out, removed
 
 
 def align(ref: np.ndarray, img: np.ndarray) -> dict:

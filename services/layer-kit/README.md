@@ -24,7 +24,10 @@ What `/build` does (layers.py):
 - **Photo zones**: magenta edit → polygon.
 - Checks: registration, masks kept, front ⊆ back, back + body + front = master.
 
-Matting (alpha of the master, the base and each shape edit) is bg-remover (`BG_REMOVER_URL`); only its alpha is used,
-the colours are un-mixed from the white background at full size.
+Matting (alpha of the master, the base and each shape edit) is pixel keying on the white paper, no paid API
+(`layers.backdrop_of` / `matte_white`): the paper is found on the picture as the model drew it (before the print
+upscale — paper is 254–255 there, white hair is cream): paper reachable from the border, plus enclosed gaps
+between strands. bg-remover (`BG_REMOVER_URL`, BiRefNet) only votes on the ambiguous gaps; it never draws the edge,
+so strand tips it misses are kept. The edge is colour-to-alpha at print size, colours un-mixed from the paper.
 
 Local: `./run-local.sh` (needs bg-remover on :7001). Docker: `docker compose up -d --build layer-kit`.

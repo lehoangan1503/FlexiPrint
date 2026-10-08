@@ -2,8 +2,8 @@
 
 /**
  * Step 3 of a bộ nhân vật, reviewed on the master (server/char/cut.ts):
- *   Nền        the master without its backdrop — fixed by hand (MaskEditor "matte"), approved
- *   Phác thảo  every layer's region highlighted on its picture — fixed by hand (MaskEditor "region"), approved
+ *   Nền        the master without its backdrop — leftovers removed at points marked on it (MatteFix), approved
+ *   Phác thảo  every layer's region highlighted on its picture — fixed by hand (MaskEditor), approved
  *   File cuối  the files cut from both, checked automatically (stacked = master?), looked over, approved, ZIP
  */
 
@@ -15,6 +15,7 @@ import { zip } from "../../lib/zip";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
 import type { CharCtx } from "./char-project";
 import { MaskEditor } from "./mask-editor";
+import { MatteFix } from "./matte-fix";
 import { LayerFiles, Thumb } from "./layer-files";
 
 export type CutEdit = { kind: "matte" } | { kind: "piece"; key: string } | null;
@@ -79,7 +80,7 @@ export function MatteSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void }) {
             Tách nền master {done && <Status ok={!!m?.approved}>{m?.approved ? "Đã duyệt" : "Chờ duyệt"}</Status>}
           </h3>
           <p className="text-xs text-muted-foreground">
-            Master được vẽ trên nền trắng. Bước này phóng to master ×2 để in (Real-ESRGAN) rồi tách nền: AI tìm dáng nhân vật, viền tóc / khe giữa các sợi được tính lại từ chính điểm ảnh. Bạn xem, sửa chỗ sai (xoá thừa, giữ lại phần bị xoá nhầm), rồi duyệt — mọi file layer sau này dùng chung đường viền này.
+            Master được vẽ trên nền trắng. Bước này phóng to master ×2 để in (Real-ESRGAN) rồi tách nền theo màu giấy trắng (chạy trên máy, miễn phí, không gọi API trả phí): nền và khe giữa các sợi tóc được tìm từ chính điểm ảnh, model BiRefNet (miễn phí, chạy local) chỉ giúp phân xử các khe khó. Bạn xem, chỗ nào nền còn sót thì bấm Sửa nền và chấm vào đó để xoá, rồi duyệt — mọi file layer sau này dùng chung đường viền này.
           </p>
         </div>
         {editable && (
@@ -436,18 +437,14 @@ export function CutEditor(ctx: CharCtx & { edit: CutEdit; onClose: () => void })
   if (!edit || !m?.alpha) return null;
   if (edit.kind === "matte")
     return (
-      <MaskEditor
-        key="matte"
-        title="Sửa nền master"
-        hint="Xoá = thành nền trong suốt · Giữ lại = phần của nhân vật. Đũa thần bấm vào mảng trắng còn sót giữa các sợi tóc; Mảng bấm vào mảnh rời để xoá cả mảnh."
-        mode="matte"
+      <MatteFix
         width={m.width}
         height={m.height}
         colourUrl={m.colourUrl}
-        maskUrl={m.alpha.url}
+        alphaUrl={m.alpha.url}
         canRevert={m.alpha.history.length > 0}
         readOnly={!ctx.editable}
-        onSave={async (png) => ctx.setProject(await charApi.cut(project.id, "matte", "mask", { mask: png }))}
+        onFix={async (points) => ctx.setProject(await charApi.cut(project.id, "matte", "fix", { points }))}
         onRevert={async () => ctx.setProject(await charApi.cut(project.id, "matte", "revert"))}
         onClose={ctx.onClose}
       />
@@ -461,7 +458,6 @@ export function CutEditor(ctx: CharCtx & { edit: CutEdit; onClose: () => void })
       key={pc.key}
       title={`Sửa vùng: ${pc.label}`}
       hint={`Trên ảnh “${pic.label}”. Thêm = thuộc lớp này, Bớt = không thuộc. Tô rộng ra nền cũng được — file chỉ lấy phần có nhân vật.`}
-      mode="region"
       tint={pieceColour(plan, pc.key)}
       width={plan.width}
       height={plan.height}

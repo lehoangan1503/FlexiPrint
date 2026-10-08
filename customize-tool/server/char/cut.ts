@@ -4,8 +4,8 @@
  *
  *   POST char/projects/:id/matte                    → { project } the master at print size without its backdrop
  *                                                     (layer-kit /matte, background job; redo = start again)
- *   POST char/projects/:id/matte/mask {mask}        → { project } the alpha fixed by hand (PNG data URL: white,
- *                                                     alpha = the mask); un-approves
+ *   POST char/projects/:id/matte/fix {points}       → { project } "Sửa nền": backdrop left over at the points marked
+ *                                                     on the page is removed (layer-kit /matte/fix); un-approves
  *   POST char/projects/:id/matte/revert             → { project } back to the previous alpha
  *   POST char/projects/:id/matte/approve {approved} → { project }
  *   POST char/projects/:id/plan                     → { project } every layer's region on its picture (layer-kit
@@ -26,7 +26,7 @@ import type { CtCharCutState, CtCharImage, CtCharLayerCheck, CtCharMask, CtCharM
 import type { CtSession } from "../supabase";
 import { ctRemove } from "../storage";
 import { saveCharRaw } from "./files";
-import { kitFile, kitForget, kitJob } from "./kit";
+import { kitFile, kitForget, kitJob, kitPost } from "./kit";
 import { kitPlanInput, latestEdits } from "./layers";
 import { cutPaths, jobDb, jsonError, loadImages, loadProject, maskPaths, projectRow, type Db } from "./projects";
 
@@ -127,11 +127,31 @@ function doneMatte(p: CtCharProject): CtCharMatte & { alpha: CtCharMask } {
   return m as CtCharMatte & { alpha: CtCharMask };
 }
 
-export async function saveMatteMask(db: Db, userId: string, p: CtCharProject, body: unknown): Promise<CtCharProject> {
+interface MattePoint {
+  x: number;
+  y: number;
+}
+
+/** The points marked on the page (matte pixels), checked. */
+function pointsOf(body: unknown, m: CtCharMatte): MattePoint[] {
+  const raw = (body as { points?: unknown } | null)?.points;
+  if (!Array.isArray(raw) || raw.length === 0) throw new Error("Chưa chấm điểm nào");
+  if (raw.length > 300) throw new Error("Tối đa 300 điểm mỗi lần");
+  return raw.map((v) => {
+    const pt = v as Partial<MattePoint> | null;
+    const x = Number(pt?.x);
+    const y = Number(pt?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= m.width || y >= m.height) throw new Error("Điểm nằm ngoài ảnh");
+    return { x, y };
+  });
+}
+
+export async function fixMatte(db: Db, userId: string, p: CtCharProject, body: unknown): Promise<CtCharProject> {
   const m = doneMatte(p);
-  const data = dataUrlPng((body as { mask?: unknown } | null)?.mask);
-  if (!data) throw new Error("Thiếu mặt nạ (PNG)");
-  const { mask, drop } = await pushVersion(userId, p.id, m.alpha, data);
+  const points = pointsOf(body, m);
+  const r = await kitPost<{ alpha: string; removed: number[] }>("/matte/fix", { colour: m.colourUrl, alpha: m.alpha.url, points }, 180_000);
+  if (!r.removed.some((n) => n > 0)) throw new Error("Quanh các điểm đã chấm không còn chỗ nền nào để xoá — chấm đúng vào mảng trắng / mảnh còn sót");
+  const { mask, drop } = await pushVersion(userId, p.id, m.alpha, Buffer.from(r.alpha, "base64"));
   const project = await saveCut(db, p.id, { ...cutState(p), matte: { ...m, alpha: mask, approved: false } });
   await ctRemove(drop);
   return project;
@@ -274,7 +294,7 @@ async function own(s: CtSession, id: string): Promise<CtCharProject | NextRespon
 
 const approvedOf = (body: unknown) => (body as { approved?: unknown } | null)?.approved !== false;
 
-/** POST char/projects/:id/matte[/mask|/revert|/approve] and …/plan[/region|/revert|/approve] */
+/** POST char/projects/:id/matte[/fix|/revert|/approve] and …/plan[/region|/revert|/approve] */
 export async function cutRoute(s: CtSession, id: string, step: "matte" | "plan", action: string | undefined, body: unknown): Promise<NextResponse> {
   const p = await own(s, id);
   if (p instanceof NextResponse) return p;
@@ -283,7 +303,7 @@ export async function cutRoute(s: CtSession, id: string, step: "matte" | "plan",
     let project: CtCharProject;
     if (step === "matte") {
       if (!action) project = await startMatte(db, s.user.id, p);
-      else if (action === "mask") project = await saveMatteMask(db, s.user.id, p, body);
+      else if (action === "fix") project = await fixMatte(db, s.user.id, p, body);
       else if (action === "revert") project = await revertMatte(db, p);
       else if (action === "approve") project = await saveCut(db, id, { ...cutState(p), matte: { ...doneMatte(p), approved: approvedOf(body) } });
       else return jsonError("Not found", 404);

@@ -5,6 +5,8 @@ bg-remover; the print upscale is Real-ESRGAN on CPU (upscale.py). Three jobs, ea
 
     POST /matte   {"master"} → {"job"}          the master at print size without its backdrop
                   result {"width","height","factor","files": {"colour","alpha"}}
+    POST /matte/fix {"colour","alpha","points"} → {"alpha": base64, "removed"}   (no job: a few seconds)
+                  "Sửa nền": backdrop left over at the points marked on the page is removed (layers.erase_at)
     POST /plan    PlanBody → {"job"}            every layer's region on its picture (edits registered, upscaled)
                   result {"width","height","pictures":[…],"pieces":[…],"checks","align"}
     POST /cut     CutBody → {"job"}             the files: region × subject alpha (+ recolours, back / front)
@@ -41,12 +43,12 @@ from PIL import Image
 from pydantic import BaseModel
 
 import upscale
-from layers import (Option, Slot, Zone, claim_orphans, clean, cut, cut_of, keep_of, kernel, magenta, mix, on_white, region_body, region_shape,
+from layers import (Option, Slot, Zone, claim_orphans, clean, cut, cut_of, erase_at, keep_of, kernel, magenta, mix, on_white, region_body, region_shape,
                     region_zone, regions_colour, register)
 
 BG = os.getenv("BG_REMOVER_URL", "http://127.0.0.1:7001").rstrip("/")
 TOKEN = os.getenv("LAYER_TOKEN", "")
-MAX_SIDE = 2048  # segmentation runs on a downscaled copy; the edge is solved at full size (layers.matte_white)
+MAX_SIDE = 2048  # segmentation runs on a downscaled copy; it only votes — the paper is found on the pixels (layers.backdrop_of)
 PRINT_SIDE = int(os.getenv("PRINT_SIDE", "3072"))  # long side wanted for print (≈ 300 dpi at 26 cm)
 
 log = logging.getLogger("layer-kit")
@@ -249,7 +251,7 @@ def _matte(body: MatteBody, out_dir: str) -> dict:
     coarse = matte(work)
     factor = print_factor(w, h)
     up = upscale.upscale2(work) if factor > 1 else work
-    rgba = cut_of(up, coarse)
+    rgba = cut_of(work, up, coarse)
     log.info("matte %d×%d ×%.0f in %.1fs", w, h, factor, time.time() - t0)
     return {
         "width": up.shape[1],
@@ -263,6 +265,36 @@ def _matte(body: MatteBody, out_dir: str) -> dict:
 async def start_matte(body: MatteBody, authorization: str | None = Header(default=None)) -> dict:
     auth(authorization)
     return _start(_matte, body)
+
+
+class MattePoint(BaseModel):
+    x: float
+    y: float
+
+
+class MatteFixBody(BaseModel):
+    colour: str            # /matte colours (print size)
+    alpha: str             # the alpha now
+    points: list[MattePoint]
+
+
+@app.post("/matte/fix")
+def fix_matte(body: MatteFixBody, authorization: str | None = Header(default=None)) -> dict:
+    """"Sửa nền": backdrop left over at the marked points is removed (layers.erase_at) — a few seconds, no job."""
+    auth(authorization)
+    if not body.points or len(body.points) > 300:
+        raise HTTPException(400, "1–300 điểm")
+    t0 = time.time()
+    a = read_mask(fetch(body.alpha))
+    col = rgba_of(fetch(body.colour))[..., :3]
+    if col.shape[:2] != a.shape:
+        raise HTTPException(400, "colour / alpha không cùng cỡ")
+    out, removed = erase_at(on_white(col, a), a, [(p.x, p.y) for p in body.points])
+    h, w = out.shape
+    rgba = np.full((h, w, 4), 255, np.uint8)
+    rgba[..., 3] = (np.clip(out, 0, 1) * 255).round().astype(np.uint8)
+    log.info("matte fix %d points in %.1fs", len(body.points), time.time() - t0)
+    return {"alpha": png_b64(rgba), "removed": removed}
 
 
 # ---- 2. plan ------------------------------------------------------------------------------------------------
@@ -355,7 +387,7 @@ def _plan(body: PlanBody, out_dir: str) -> dict:
         base_n, aligns["base"] = register(master_n, fit(rgb_on_white(fetch(body.base)), W, H))
         by_url[body.base] = aligns["base"]
         base_up = up(base_n)
-        own = cut_of(base_up, matte(base_n))
+        own = cut_of(base_n, base_up, matte(base_n))
         keep = to_size(keep_of(base_n, master_n))
         base_a = mix(keep, a_m, own[..., 3])
         base_col = mix(keep, col_m, own[..., :3])
@@ -406,7 +438,7 @@ def _plan(body: PlanBody, out_dir: str) -> dict:
                 continue
             e_n = edit(o.url, base_n, f"{s.label}: {o.name}")
             e_up = up(e_n)
-            own = cut_of(e_up, matte(e_n))
+            own = cut_of(e_n, e_up, matte(e_n))
             keep = to_size(keep_of(e_n, base_n))
             e_a = mix(keep, base_a, own[..., 3])
             pid = f"opt.{s.key}.{i}"

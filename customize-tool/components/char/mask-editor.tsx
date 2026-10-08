@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Full-screen mask editor of the cut (server/char/cut.ts): the master's backdrop (mode "matte") or one layer's
- * region on its picture (mode "region"). The mask is a canvas the size of the picture (white, alpha = the mask)
+ * Full-screen editor of one layer's region on its picture (the cut, server/char/cut.ts). The master's backdrop has
+ * its own point editor (matte-fix.tsx). The mask is a canvas the size of the picture (white, alpha = the mask)
  * and every tool adds to it or takes from it:
  *   Cọ       brush (size, hardness) — a click is a dot
  *   Vùng     lasso: draw round an area, it is filled
@@ -19,7 +19,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Brush, Eye, Hand, Lasso, Loader2, Minus, Plus, Redo2, Save, Sparkles, Undo2, Wand2, X, History } from "lucide-react";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
 
-export type MaskEditorMode = "matte" | "region";
 type Tool = "brush" | "lasso" | "wand" | "island" | "hand";
 type Op = "add" | "remove";
 type View = "result" | "overlay";
@@ -47,10 +46,9 @@ export interface MaskEditorProps {
   colourUrl: string;
   /** The mask now (PNG: white, alpha = the mask). */
   maskUrl: string;
-  /** region mode: the picture's subject alpha — the result view shows region × subject (what the file will be). */
+  /** The picture's subject alpha — the result view shows region × subject (what the file will be). */
   subjectUrl?: string | null;
-  mode: MaskEditorMode;
-  /** region mode: highlight colour. */
+  /** Highlight colour. */
   tint?: string;
   /** Other regions on the same picture, shown faintly for context. */
   others?: Array<{ url: string; color: string; label: string }>;
@@ -89,7 +87,7 @@ const TOOLS: Array<{ id: Tool; label: string; key: string; icon: typeof Brush; t
 ];
 
 export function MaskEditor(props: MaskEditorProps) {
-  const { width: W, height: H, mode } = props;
+  const { width: W, height: H } = props;
   const tint = props.tint ?? "#f97316";
   const wrap = useRef<HTMLDivElement | null>(null);
   const view = useRef<HTMLCanvasElement | null>(null);
@@ -111,14 +109,14 @@ export function MaskEditor(props: MaskEditorProps) {
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>("brush");
-  const [op, setOp] = useState<Op>(mode === "matte" ? "remove" : "add");
+  const [op, setOp] = useState<Op>("add");
   const [alt, setAlt] = useState(false);
   const [space, setSpace] = useState(false);
   const [size, setSize] = useState(40);
   const [hard, setHard] = useState(0.8);
   const [tol, setTol] = useState(18);
   const [contiguous, setContiguous] = useState(true);
-  const [viewMode, setViewMode] = useState<View>(mode === "matte" ? "result" : "overlay");
+  const [viewMode, setViewMode] = useState<View>("overlay");
   const [ghost, setGhost] = useState(true);
   const [showOthers, setShowOthers] = useState(true);
   const [z, setZ] = useState({ s: 0.2, ox: 0, oy: 0 });
@@ -178,20 +176,13 @@ export function MaskEditor(props: MaskEditorProps) {
     g.globalCompositeOperation = "source-over";
     g.globalAlpha = 1;
     g.clearRect(0, 0, W, H);
-    const tinted = (src: CanvasImageSource, color: string, alpha: number, inverse = false) => {
+    const tinted = (src: CanvasImageSource, color: string, alpha: number) => {
       t.globalCompositeOperation = "source-over";
       t.clearRect(0, 0, W, H);
-      if (inverse) {
-        t.fillStyle = color;
-        t.fillRect(0, 0, W, H);
-        t.globalCompositeOperation = "destination-out";
-        t.drawImage(src, 0, 0, W, H);
-      } else {
-        t.drawImage(src, 0, 0, W, H);
-        t.globalCompositeOperation = "source-in";
-        t.fillStyle = color;
-        t.fillRect(0, 0, W, H);
-      }
+      t.drawImage(src, 0, 0, W, H);
+      t.globalCompositeOperation = "source-in";
+      t.fillStyle = color;
+      t.fillRect(0, 0, W, H);
       t.globalCompositeOperation = "source-over";
       g.globalAlpha = alpha;
       g.drawImage(st.tmp, 0, 0);
@@ -213,13 +204,8 @@ export function MaskEditor(props: MaskEditorProps) {
       g.drawImage(st.tmp, 0, 0);
     } else {
       g.drawImage(st.colour, 0, 0, W, H);
-      if (mode === "matte") {
-        // What is cut away shows red.
-        tinted(st.mask, "#ef4444", 0.5, true);
-      } else {
-        if (showOthers) for (const o of st.others) tinted(o.img, o.color, 0.28);
-        tinted(st.mask, tint, 0.55);
-      }
+      if (showOthers) for (const o of st.others) tinted(o.img, o.color, 0.28);
+      tinted(st.mask, tint, 0.55);
     }
     const s = stroke.current;
     if (s && s.lasso.length > 1) {
@@ -233,7 +219,7 @@ export function MaskEditor(props: MaskEditorProps) {
       g.stroke();
       g.restore();
     }
-  }, [W, H, viewMode, ghost, showOthers, mode, tint, z.s, effOp]);
+  }, [W, H, viewMode, ghost, showOthers, tint, z.s, effOp]);
 
   const schedule = useCallback(() => {
     if (frame.current) return;
@@ -614,11 +600,11 @@ export function MaskEditor(props: MaskEditorProps) {
               <div className="flex rounded-md border p-0.5" title="X để đổi, giữ Alt để dùng tạm cái kia">
                 <button onClick={() => setOp("add")} className={cx("flex items-center gap-1 rounded px-2 py-1 text-xs", effOp === "add" ? "bg-emerald-600 text-white" : "hover:bg-accent")}>
                   <Plus className="h-3.5 w-3.5" />
-                  {mode === "matte" ? "Giữ lại" : "Thêm vào lớp"}
+                  Thêm vào lớp
                 </button>
                 <button onClick={() => setOp("remove")} className={cx("flex items-center gap-1 rounded px-2 py-1 text-xs", effOp === "remove" ? "bg-red-600 text-white" : "hover:bg-accent")}>
                   <Minus className="h-3.5 w-3.5" />
-                  {mode === "matte" ? "Xoá (thành nền)" : "Bớt khỏi lớp"}
+                  Bớt khỏi lớp
                 </button>
               </div>
             )}
@@ -662,8 +648,8 @@ export function MaskEditor(props: MaskEditorProps) {
           <button onClick={() => setViewMode("result")} className={cx("rounded px-2 py-1", viewMode === "result" ? "bg-foreground text-background" : "hover:bg-accent")} title="Xem kết quả cắt trên nền ô cờ">
             Kết quả
           </button>
-          <button onClick={() => setViewMode("overlay")} className={cx("rounded px-2 py-1", viewMode === "overlay" ? "bg-foreground text-background" : "hover:bg-accent")} title={mode === "matte" ? "Ảnh gốc, phần bị xoá tô đỏ" : "Ảnh gốc, vùng của lớp tô màu"}>
-            {mode === "matte" ? "Tô đỏ phần xoá" : "Tô màu vùng"}
+          <button onClick={() => setViewMode("overlay")} className={cx("rounded px-2 py-1", viewMode === "overlay" ? "bg-foreground text-background" : "hover:bg-accent")} title="Ảnh gốc, vùng của lớp tô màu">
+            Tô màu vùng
           </button>
         </div>
         {viewMode === "result" ? (
@@ -672,7 +658,6 @@ export function MaskEditor(props: MaskEditorProps) {
             <Eye className="h-3.5 w-3.5" /> Ảnh mờ phía sau
           </label>
         ) : (
-          mode === "region" &&
           (props.others?.length ?? 0) > 0 && (
             <label className="flex items-center gap-1 text-xs">
               <input type="checkbox" checked={showOthers} onChange={(e) => setShowOthers(e.target.checked)} />

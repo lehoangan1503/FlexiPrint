@@ -73,8 +73,12 @@ export function CharProjectView({ projectId, currentUserId }: { projectId: strin
     void reload();
   }, [reload]);
 
-  // Pictures being made: poll.
-  const running = images.some((im) => im.status === "running") || project?.layers?.status === "building";
+  // Pictures / cut jobs being made: poll.
+  const running =
+    images.some((im) => im.status === "running") ||
+    project?.layers?.status === "building" ||
+    project?.cut?.matte?.status === "running" ||
+    project?.cut?.plan?.status === "running";
   useEffect(() => {
     if (!running) return;
     const t = setInterval(() => void reload(), 3000);

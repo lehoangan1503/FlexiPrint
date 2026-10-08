@@ -15,7 +15,7 @@
 import { CT_TABLES } from "../../config";
 import type { CtAgentTask, CtAgentTaskProgress, CtCharImage, CtCharProject, CtCharTaskResult } from "../../types";
 import { REF_USE_INFO, masterPrompt } from "../../lib/char-brief";
-import { planEdits } from "../../lib/char-plan";
+import { KEEP, planEdits } from "../../lib/char-plan";
 import { latestEditsOf } from "../../lib/char-images";
 import { imageModelLabel } from "../../lib/image-models";
 import type { CtServiceClient } from "../supabase";
@@ -63,8 +63,8 @@ const EDITS_INSTRUCTIONS = [
   ...COMMON,
   "STEP edits — the in-place edits the layer cutter needs (\"edits\" lists every one: role, what it is for, the source it is made from, a starting prompt, and the current result if any). The server decides WHICH edits exist; you write HOW each is asked.",
   "Roles: work = the approved master itself (no prompt) · base = every \"shape\" part removed (bald heads, no hats) · part:<slot> = a shape part painted magenta on the master · mask:<slot> = a colour/texture part painted magenta on the base · texture:<slot>:<option> / shape:<slot>:<option> = another material / another shape added on the base · zone:<zone> = a customer-photo zone painted magenta on the base.",
-  "1. For each edit write a prompt that changes EXACTLY one thing on the named subject (say which one: \"the second character from the left, the girl in the green sweater\") and ends with the keep-everything sentence of the starting prompt. Magenta edits: solid flat pure magenta #FF00FF over ALL of the part (sleeves, cuffs, the part under hands too), nothing else, no outline change. Base: hair removed completely — a smooth bald scalp, ears visible, nothing else changed (clothes, faces, poses stay). Shape options: the new hairstyle / hat in the same art style, sitting naturally on the bald head of the base, same colour as the master's unless given.",
-  "2. char_run_edits(task_id, prompts: {role: prompt}) — base first when it is missing (everything on the base is made from it; redoing base redoes them), then the rest in one call. → char_wait → view_image the results (a few at a time).",
+  "1. For each edit write a prompt that changes EXACTLY one thing on the named subject (say which one: \"the second character from the left, the girl in the green sweater\") WITHOUT the keep-everything sentence (\"keepSentence\"): the server appends it to every edit prompt. Magenta edits: solid flat pure magenta #FF00FF over ALL of the part (sleeves, cuffs, the part under hands too), nothing else, no outline change. Base: hair removed completely — a smooth bald scalp, ears visible, nothing else changed (clothes, faces, poses stay). Shape options: the new hairstyle / hat in the same art style, sitting naturally on the bald head of the base, same colour as the master's unless given.",
+  "2. char_run_edits(task_id, prompts: {role: prompt}, roles: [...]) — base first when it is missing (everything on the base is made from it; redoing base redoes them), then the rest in one call. \"roles\" runs a role with its starting prompt (get_task shows one example per kind, \"startingPromptExamples\"); give a prompt only where you want a different one. → char_wait → view_image the results (a few at a time).",
   "3. Check each against its purpose: the magenta covers the whole part and only it; the base has no hair left and nothing else changed; shapes look right and match the style; nothing moved. Wrong → a better prompt and char_run_edits for that role again (at most ~3 tries per role).",
   "4. submit_result(task_id, {summary: Vietnamese — what you ran, what you redid and why, what is still off; image_ids: the final edits}). The editor then cuts the layers (layer-kit) and sees the registration checks.",
 ].join("\n");
@@ -96,6 +96,22 @@ function picture(im: CtCharImage, numbers?: Map<string, number>) {
   };
 }
 
+/** The brief for the edits step: no option / colour ids (the roles carry them), no reference list (references). */
+function compactBrief(b: CtCharProject["brief"]) {
+  const { refs: _refs, ...rest } = b;
+  return {
+    ...rest,
+    subjects: b.subjects.map((sub) => ({
+      ...sub,
+      slots: sub.slots.map((sl) => ({ ...sl, options: sl.options.map((o) => ({ name: o.name, value: o.value })), colors: sl.colors.map((x) => ({ name: x.name, value: x.value })) })),
+    })),
+  };
+}
+
+/** An edit prompt without the keep-everything sentence (the server adds it: withKeep). */
+const withoutKeep = (prompt: string) => prompt.replace(KEEP, "").trim();
+const withKeep = (prompt: string) => (prompt.includes(KEEP.trim()) ? prompt : prompt.replace(/\.?\s*$/, ".") + KEEP);
+
 /** get_task of a char task. */
 export async function charTaskView(db: CtServiceClient, task: CtAgentTask): Promise<unknown> {
   const c = task.input.char!;
@@ -124,7 +140,8 @@ export async function charTaskView(db: CtServiceClient, task: CtAgentTask): Prom
       name: p.name,
       status: p.status,
       approvedMasterId: p.master_id,
-      brief: p.brief,
+      // edits: the brief without the option / colour ids (they are in the roles) — get_task must stay small
+      brief: c.step === "edits" ? compactBrief(p.brief) : p.brief,
       layers: p.layers ? { status: p.layers.status, error: p.layers.error, checks: p.layers.checks.filter((x) => !x.ok) } : null,
     },
     // The editor's reference pictures, each with what it is for and their own words about it.
@@ -135,7 +152,11 @@ export async function charTaskView(db: CtServiceClient, task: CtAgentTask): Prom
       })
       .filter(Boolean),
     blankProduct: images.find((im) => im.id === p.brief.product.blankId && im.status === "done")?.url ?? null,
-    masters: masters.map((m) => ({ ...picture(m, numbers), approved: m.id === p.master_id })),
+    // The edits step works on the approved master only (get_task must stay small: the agent's tool output is capped).
+    masters:
+      c.step === "edits"
+        ? masters.filter((m) => m.id === p.master_id).map((m) => ({ id: m.id, number: numbers.get(m.id), url: m.url, width: m.width, height: m.height, approved: true }))
+        : masters.map((m) => ({ ...picture(m, numbers), approved: m.id === p.master_id })),
     earlier: (before ?? []).map((t) => ({
       at: t.created_at,
       step: t.input.char?.step,
@@ -152,10 +173,29 @@ export async function charTaskView(db: CtServiceClient, task: CtAgentTask): Prom
   }
   if (c.step === "master") out.assembledPrompt = masterPrompt(p.brief);
   if (c.step === "edits") {
+    // Compact: 40+ edits on a big brief. The keep sentence is given once; a made edit carries its prompt only when
+    // it is not the starting one.
+    out.keepSentence = KEEP.trim();
     out.edits = planEdits(p.brief).map((e) => {
       const im = latest.get(e.role);
-      return { role: e.role, label: e.label, source: e.source, startingPrompt: e.prompt, ...(c.roles.length && !c.roles.includes(e.role) ? { notAsked: true } : {}), current: im ? picture(im) : null };
+      const current = im
+        ? {
+            id: im.id,
+            status: im.status,
+            url: im.url,
+            ...(im.prompt && withoutKeep(im.prompt) !== withoutKeep(e.prompt) ? { prompt: clip(withoutKeep(im.prompt), 600) } : {}),
+            ...(im.meta.align ? { align: im.meta.align } : {}),
+            ...(im.error ? { error: clip(im.error, 300) } : {}),
+          }
+        : null;
+      return { role: e.role, label: e.label, source: e.source, ...(c.roles.length && !c.roles.includes(e.role) ? { notAsked: true } : {}), current };
     });
+    // One starting prompt per kind of edit (base, part, shape, mask, texture, zone): the others follow the same
+    // pattern; char_run_edits with "roles" runs any role with its own starting prompt.
+    const seen = new Set<string>();
+    out.startingPromptExamples = planEdits(p.brief)
+      .filter((e) => e.prompt && !seen.has(e.role.split(":")[0]) && seen.add(e.role.split(":")[0]))
+      .map((e) => ({ role: e.role, prompt: withoutKeep(e.prompt) }));
     if (c.roles.length) out.what = `Only these roles were asked: ${c.roles.join(", ")}.`;
   }
   return out;
@@ -280,7 +320,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const prompts: Record<string, string> = {};
       for (const [role, v] of Object.entries(record(args.prompts))) {
         if (!plan.some((e) => e.role === role)) throw new Error(`Unknown role "${role}" — use the roles of get_task "edits"`);
-        if (role !== "work" && str(v).trim()) prompts[role] = clip(str(v), 8000);
+        if (role !== "work" && str(v).trim()) prompts[role] = withKeep(clip(str(v), 7600));
       }
       const extra = (Array.isArray(args.roles) ? args.roles : []).map(str).filter((r) => plan.some((e) => e.role === r));
       const roles = [...new Set([...Object.keys(prompts), ...extra])];

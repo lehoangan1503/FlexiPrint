@@ -20,6 +20,8 @@ services:
       CT_FACE_DETECT_URL: http://face-detect:7004
       # ComfyUI studio for the editor's AI dialog (server/studio.ts, recipes).
       CT_COMFY_URL: http://comfy:8188
+      # v2 bộ nhân vật: layer sets cut from one master (services/layer-kit).
+      CT_LAYER_KIT_URL: http://layer-kit:7005
     # Server-side Supabase calls go to the public URL; resolve it to the host's nginx
     # directly instead of hair-pinning through the public IP.
     extra_hosts:
@@ -27,7 +29,7 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     restart: unless-stopped
-    depends_on: [photo-style, material-render, face-detect]
+    depends_on: [photo-style, material-render, face-detect, layer-kit]
 
   photo-style:
     build: ./services/photo-style
@@ -38,6 +40,18 @@ services:
     build: ./services/face-detect
     restart: unless-stopped
     command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7004", "--workers", "2"]
+
+  # v2 bộ nhân vật — cuts pixel-registered layer sets from one AI master + its in-place edits (OpenCV, no model;
+  # matting goes to bg-remover). One build at a time, a few GB of RAM while it runs.
+  layer-kit:
+    build: ./services/layer-kit
+    restart: unless-stopped
+    environment:
+      BG_REMOVER_URL: http://bg-remover:7001
+    # It downloads the project's files from the app's public /files/ URLs: resolve the domain to the host's nginx.
+    extra_hosts:
+      - "${APP_DOMAIN:-flexiprint.next.lc}:host-gateway"
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7005", "--workers", "1"]
 
   material-render:
     build: ./services/material-render

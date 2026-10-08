@@ -23,6 +23,8 @@ import { CT_MCP_WRITE_TOOLS } from "./write-tools";
 import sharp from "sharp";
 import { drawPackImage, mirrorPackImage, touchCollection } from "../pack-images";
 import { packBases } from "../../lib/file-name";
+import { CT_MCP_CHAR_TOOLS, charTaskView, submitCharResult } from "./char-tools";
+import { TASK_ARG, json, liveStatus, loadTask, openQuestion, openTask, patchTask } from "./task-common";
 
 export type CtMcpCaller = "agent" | "studio" | "user";
 
@@ -72,7 +74,7 @@ async function findCategory(db: LibraryDb, ref: unknown): Promise<CategoryRow> {
   return { ...data, rules: normalizeCategoryRules(data.rules) };
 }
 
-const json = (v: unknown): CtMcpOutput => ({ json: v });
+
 
 // ---------------------------------------------------------------------------
 // Library
@@ -509,38 +511,6 @@ async function unfinishedRuns(ctx: CtMcpContext, task: CtAgentTask): Promise<CtA
 // Tasks from the web app (migration 011)
 // ---------------------------------------------------------------------------
 
-async function loadTask(ctx: CtMcpContext, id: unknown): Promise<{ db: CtServiceClient; task: CtAgentTask }> {
-  const db = ctx.service;
-  if (!db) throw new Error("Tasks need the agent token");
-  const key = str(id);
-  if (!UUID.test(key)) throw new Error("task_id is not a valid id");
-  const { data, error } = await db.from(CT_TABLES.agentTasks).select("*").eq("id", key).maybeSingle<CtAgentTask>();
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("No such task");
-  return { db, task: data };
-}
-
-function openTask(task: CtAgentTask): void {
-  if (task.status !== "pending" && task.status !== "running" && task.status !== "waiting") throw new Error(`Task is ${task.status} — nothing more to do`);
-}
-
-/** The task's open question (asked, not answered yet), if any. */
-function openQuestion(task: CtAgentTask): CtAgentQuestion | null {
-  return (task.questions ?? []).find((q) => !q.answer) ?? null;
-}
-
-/** "running", or "waiting" while a question of the agent's is unanswered. */
-function liveStatus(task: CtAgentTask): "running" | "waiting" {
-  return openQuestion(task) ? "waiting" : "running";
-}
-
-async function patchTask(db: CtServiceClient, id: string, patch: Partial<CtAgentTask>): Promise<void> {
-  const { error } = await db.from(CT_TABLES.agentTasks).update(patch).eq("id", id);
-  if (error) throw new Error(error.message);
-}
-
-const TASK_ARG = { task_id: { type: "string", description: "The task id from the message." } };
-
 /**
  * The revise result as agents tend to write it — the assemble_prompts draft shapes ("spec": "…", "details": […],
  * "materials": [{id, prompt}]) — turned into the reviser's plan shape that buildRevision reads.
@@ -709,7 +679,7 @@ const taskTools: CtMcpTool[] = [
   {
     name: "get_task",
     description:
-      "A task the editor sent from the web app. kind content: the Shopify title + description of a product (follow its \"instructions\"). kind pack_image: photos for the tổ hợp photo library — general description, references, bases (photos to keep editing, each with its own note that outranks the description for that photo), and \"instructions\" to follow. kind create | revise: the category as their dialog has it (maybe unsaved), their note, the numbered result images (#1…) they looked at, new reference photos. Read flexiprint://guide/task-results for what to submit.",
+      "A task the editor sent from the web app. kind content: the Shopify title + description of a product (follow its \"instructions\"). kind char: a step of a v2 bộ nhân vật (brainstorm | master | edits — the brief, its pictures, the planned edits and \"instructions\"; work with the char_* tools). kind pack_image: photos for the tổ hợp photo library — general description, references, bases (photos to keep editing, each with its own note that outranks the description for that photo), and \"instructions\" to follow. kind create | revise: the category as their dialog has it (maybe unsaved), their note, the numbered result images (#1…) they looked at, new reference photos. Read flexiprint://guide/task-results for what to submit.",
     inputSchema: { type: "object", properties: TASK_ARG, required: ["task_id"] },
     callers: AGENT,
     run: async (ctx, args) => {
@@ -717,6 +687,7 @@ const taskTools: CtMcpTool[] = [
       openTask(task);
       if (task.status === "pending") await patchTask(db, task.id, { status: "running" });
       const { input } = task;
+      if (task.kind === "char") return json(await charTaskView(db, task));
       if (task.kind === "content") {
         const c = input.content;
         const { data: before } = c
@@ -904,6 +875,11 @@ const taskTools: CtMcpTool[] = [
       const raw = record(typeof args.result === "string" ? JSON.parse(args.result) : args.result);
       const summary = clip(str(raw.summary), 3000);
       if (!summary) throw new Error('Result needs "summary" (Vietnamese): what you did, which test images you made and what they showed, what is still uncertain — see flexiprint://guide/task-results');
+      if (task.kind === "char") {
+        const result = await submitCharResult(db, task, raw, summary);
+        await patchTask(db, task.id, { status: "done", result, finished_at: new Date().toISOString() });
+        return json({ ok: true, message: "Đã gửi — người dùng thấy ngay trên trang bộ nhân vật." });
+      }
       if (task.kind === "content") {
         const title = clip(str(raw.title), 255).trim();
         const descriptionHtml = clip(str(raw.description_html) || str(raw.descriptionHtml), 20000).trim();
@@ -972,4 +948,4 @@ const taskTools: CtMcpTool[] = [
   },
 ];
 
-export const CT_MCP_TOOLS: CtMcpTool[] = [...categoryTools, ...libraryTools, ...packImageTools, ...packTools, ...promptTools, ...studioTools, ...taskTools, ...CT_MCP_WRITE_TOOLS];
+export const CT_MCP_TOOLS: CtMcpTool[] = [...categoryTools, ...libraryTools, ...packImageTools, ...packTools, ...promptTools, ...studioTools, ...taskTools, ...CT_MCP_CHAR_TOOLS, ...CT_MCP_WRITE_TOOLS];

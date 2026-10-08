@@ -18,6 +18,8 @@ import { CustomizeEditor } from "../components/editor/editor";
 import { DeployPage } from "../components/deploy/deploy-page";
 import { LibraryManager } from "../components/library/library-manager";
 import { StudioFrame } from "../components/studio/studio-frame";
+import { CharList } from "../components/char/char-list";
+import { CharProjectView } from "../components/char/char-project";
 
 export async function CustomizeListPage() {
   const session = await ctSession();
@@ -63,4 +65,17 @@ export async function CustomizeStudioPage() {
   const session = await ctSession();
   if (!session) redirect(CT_CONFIG.loginPath);
   return <StudioFrame />;
+}
+
+export async function CharListPage() {
+  const session = await ctSession();
+  if (!session) redirect(CT_CONFIG.loginPath);
+  return <CharList currentUserId={session.user.id} />;
+}
+
+export async function CharProjectPage({ params }: { params: Promise<{ id: string }> }) {
+  const session = await ctSession();
+  if (!session) redirect(CT_CONFIG.loginPath);
+  const { id } = await params;
+  return <CharProjectView projectId={id} currentUserId={session.user.id} />;
 }

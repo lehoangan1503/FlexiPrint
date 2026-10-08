@@ -101,6 +101,7 @@
  *   POST   studio/refs                   multipart file → { name }  — reference photo for the origin recipe
  *   GET    studio/auth                   nginx auth_request (cookie, no session) → 204 | 401
  *   *      internal/*                    node pack API, Bearer CT_COMFY_TOKEN (docker network only)
+ *   *      char/projects/*               v2 bộ nhân vật (brief → master → layers → products), server/char/projects.ts
  */
 
 import type { NextRequest } from "next/server";
@@ -123,6 +124,7 @@ import * as st from "./ai-styles";
 import * as lib from "./library";
 import * as studio from "./studio";
 import * as packs from "./mockup-packs";
+import { dispatchChar } from "./char/router";
 import * as packImages from "./pack-images";
 import * as prices from "./price-tables";
 import * as settings from "./settings";
@@ -199,6 +201,7 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
     return h.jsonError("Not found", 404);
   }
   if (head === "library") return dispatchLibrary(req, session, path);
+  if (head === "char") return dispatchChar(req, session, path);
   if (head === "studio") {
     if (id === "session" && method === "POST") return studio.studioSession(session);
     if (id === "models" && method === "GET") return studio.studioModels();

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Library, Printer } from "lucide-react";
+import { Library, Printer, Sparkles } from "lucide-react";
 import type { UserProfile } from "@/types/auth";
 import { UserDropdown } from "@/components/user-dropdown";
 import { FirstLoginDialog } from "@/components/first-login-dialog";
@@ -21,6 +21,11 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
           <Printer className="h-5 w-5 text-primary" />
           <h1 className="text-lg font-semibold">FlexiPrint</h1>
           <div className="ml-auto flex items-center gap-2">
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/v2">
+                <Sparkles className="h-4 w-4" /> Bộ nhân vật v2
+              </Link>
+            </Button>
             <Button variant="ghost" size="sm" asChild>
               <Link href="/library">
                 <Library className="h-4 w-4" /> Thư viện

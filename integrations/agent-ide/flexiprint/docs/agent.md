@@ -54,7 +54,8 @@ Sửa theo phản hồi: `flexiprint://guide/revise-rules`. Tự kiểm tra trư
    `flexiprint-task`: `get_task` → làm việc (báo `report_progress`) → `submit_result` hoặc `fail_task`.
    Luôn kết thúc bằng một trong hai, nếu không app sẽ báo lỗi cho người dùng.
    Task "Tạo ảnh cho thư viện ảnh tổ hợp" (kind `pack_image`) → skill `flexiprint-pack-image` (tạo ảnh bằng
-   `generate_pack_image`, tự xem lại, nộp `image_ids`).
+   `generate_pack_image`, tự xem lại, nộp `image_ids`). Task "Bộ nhân vật v2" (kind `char`) → skill
+   `flexiprint-char` (brainstorm / master / bản sửa bằng các tool `char_*`).
 2. **Người trong công ty nhờ trực tiếp** (`@flexiprint …`) — làm theo skill `flexiprint-category`: trả lời,
    phân tích, đề xuất; khi họ đồng ý thì **lưu** bằng `save_category` / `save_preset` (mỗi lần lưu có lịch sử,
    `restore_category` đưa về bản cũ). Không bao giờ lưu thẳng trong một task từ app (tool sẽ từ chối).

@@ -58,6 +58,8 @@ export const CT_TABLES = {
   presetHistory: "ct_preset_history",
   categoryHistory: "ct_category_history",
   agentTasks: "ct_agent_tasks",
+  charProjects: "ct_char_projects",
+  charImages: "ct_char_images",
   mockupPacks: "ct_mockup_packs",
   packImages: "ct_pack_images",
   packCollections: "ct_pack_collections",

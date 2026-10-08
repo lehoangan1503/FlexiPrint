@@ -70,9 +70,17 @@ export async function listProducts(s: CtSession, search: string): Promise<NextRe
     .order("updated_at", { ascending: false })
     .limit(200);
   if (search) q = q.ilike("name", `%${search}%`);
-  const { data, error } = await q.returns<CtProductListRow[]>();
+  const { data, error } = await q.returns<Omit<CtProductListRow, "mockup_url">[]>();
   if (error) return jsonError(error.message, 500);
-  return NextResponse.json({ products: data ?? [] });
+  // The card shows the product as it is sold: its first mockup (oldest = the straight-on one).
+  const ids = (data ?? []).map((p) => p.id);
+  const { data: mockups } = ids.length
+    ? await s.supabase.from(CT_TABLES.assets).select("product_id, url").in("product_id", ids).eq("role", "mockup").order("created_at").returns<Array<{ product_id: string; url: string }>>()
+    : { data: [] };
+  const first = new Map<string, string>();
+  for (const m of mockups ?? []) if (!first.has(m.product_id)) first.set(m.product_id, m.url);
+  const products: CtProductListRow[] = (data ?? []).map((p) => ({ ...p, mockup_url: first.get(p.id) ?? null }));
+  return NextResponse.json({ products });
 }
 
 export async function createProduct(s: CtSession, body: CtCreateProductBody): Promise<NextResponse> {

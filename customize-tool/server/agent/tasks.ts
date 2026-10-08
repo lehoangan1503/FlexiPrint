@@ -24,7 +24,7 @@
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
 import { defaultCategoryRules, normalizeCategoryRules } from "../../lib/library";
-import type { CtAgentQuestion, CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress, CtPackImage, CtPackImageAspect, CtPackImageBase } from "../../types";
+import type { CtAgentQuestion, CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress, CtCharTaskStep, CtPackImage, CtPackImageAspect, CtPackImageBase } from "../../types";
 import { packBases } from "../../lib/file-name";
 import { isOwnUploadUrl } from "../library";
 import type { CtSession } from "../supabase";
@@ -159,6 +159,34 @@ function parseInput(raw: unknown): CtAgentTaskInput | null {
   };
 }
 
+const CHAR_STEPS: CtCharTaskStep[] = ["brainstorm", "master", "edits"];
+
+/** A step of a bộ nhân vật (v2): the project, the step, what the editor wants. */
+function parseCharInput(raw: unknown): CtAgentTaskInput | null {
+  const o = record(raw);
+  const c = record(o.char);
+  if (!UUID.test(str(c.projectId)) || !CHAR_STEPS.includes(str(c.step) as CtCharTaskStep)) return null;
+  return {
+    category: { id: null, name: "", spec: "", rules: defaultCategoryRules() },
+    note: "",
+    images: [],
+    refUrls: [],
+    char: {
+      projectId: str(c.projectId),
+      step: str(c.step) as CtCharTaskStep,
+      request: clip(str(c.request), 4000),
+      imageId: UUID.test(str(c.imageId)) ? str(c.imageId) : null,
+      roles: (Array.isArray(c.roles) ? c.roles : []).map(str).filter(Boolean).slice(0, 60),
+    },
+  };
+}
+
+const CHAR_STEP_TEXT: Record<CtCharTaskStep, string> = {
+  brainstorm: "Brainstorm 3 hướng brief",
+  master: "Viết prompt master, tạo và tự duyệt master",
+  edits: "Viết prompt các bản sửa tại chỗ, chạy và kiểm tra",
+};
+
 /** The turn's message: short — the agent reads the task itself over the MCP. */
 function turnPrompt(task: CtAgentTask): string {
   if (task.kind === "content") {
@@ -167,6 +195,16 @@ function turnPrompt(task: CtAgentTask): string {
       `[FlexiPrint task ${task.id}] Viết content Shopify (title + description) cho sản phẩm "${clip(c?.productName ?? "", 120)}".`,
       c?.request ? `Người dùng muốn: ${clip(c.request, 800)}` : "",
       `Gọi mcp__flexiprint__get_task với task_id "${task.id}" (có sản phẩm, option khách, ảnh, các lần viết trước và "instructions"), viết, rồi kết thúc bằng mcp__flexiprint__submit_result {summary, title, description_html} hoặc fail_task.`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (task.kind === "char") {
+    const c = task.input.char;
+    return [
+      `[FlexiPrint task ${task.id}] Bộ nhân vật v2 — ${c ? CHAR_STEP_TEXT[c.step] : ""}${c?.imageId ? ` (sửa master ${c.imageId})` : ""}.`,
+      c?.request ? `Người dùng muốn: ${clip(c.request, 800)}` : "",
+      `Làm theo skill flexiprint-char (nếu chưa có thì theo "instructions" trong get_task): gọi mcp__flexiprint__get_task với task_id "${task.id}" (có brief, ảnh, các bước trước và quy tắc layer), làm việc bằng các tool char_*, xem lại từng ảnh bằng view_image, rồi kết thúc bằng mcp__flexiprint__submit_result hoặc fail_task.`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -204,8 +242,8 @@ export async function createAgentTask(s: CtSession, body: unknown): Promise<Next
   const cfg = kernelConfig();
   if (!cfg) return jsonError("Chưa cấu hình agent (AGENT_IDE_URL, AGENT_IDE_TOKEN)", 501);
   const b = record(body);
-  const kind: CtAgentTaskKind | null = b.kind === "create" || b.kind === "revise" || b.kind === "pack_image" || b.kind === "content" ? b.kind : null;
-  const input = kind === "pack_image" ? parsePackInput(b.input) : kind === "content" ? parseContentInput(b.input) : parseInput(b.input);
+  const kind: CtAgentTaskKind | null = b.kind === "create" || b.kind === "revise" || b.kind === "pack_image" || b.kind === "content" || b.kind === "char" ? b.kind : null;
+  const input = kind === "pack_image" ? parsePackInput(b.input) : kind === "content" ? parseContentInput(b.input) : kind === "char" ? parseCharInput(b.input) : parseInput(b.input);
   if (!kind || !input) return jsonError("Task không hợp lệ", 400);
   if (kind === "create" && !input.note && !input.refUrls.length && !input.category.name) return jsonError("Nhập tên, ghi chú hoặc thả ảnh tham khảo", 400);
   if (kind === "pack_image" && !input.pack?.description && !input.pack?.bases?.some((b) => b.note)) return jsonError("Mô tả ảnh cần tạo, hoặc viết yêu cầu cho ảnh cần chỉnh", 400);
@@ -222,7 +260,21 @@ export async function createAgentTask(s: CtSession, body: unknown): Promise<Next
   const bases = packBases(input.pack);
   const collectionId = kind === "pack_image" ? (input.pack?.collectionId ?? null) : null;
   const contentOf = kind === "content" ? (input.content?.productId ?? null) : null;
-  if (contentOf) {
+  const charOf = kind === "char" ? (input.char?.projectId ?? null) : null;
+  if (charOf) {
+    // A bộ nhân vật is one conversation: brainstorm → master → edits continue the same session.
+    const { data: last } = await s.supabase
+      .from(CT_TABLES.agentTasks)
+      .select("agent_session_id")
+      .eq("kind", "char")
+      .eq("input->char->>projectId", charOf)
+      .neq("agent_session_id", "")
+      .neq("id", task.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<Pick<CtAgentTask, "agent_session_id">>();
+    sessionId = last?.agent_session_id ?? "";
+  } else if (contentOf) {
     // A product's content requests are one conversation: its latest session goes on.
     const { data: last } = await s.supabase
       .from(CT_TABLES.agentTasks)
@@ -297,9 +349,10 @@ interface KernelJob {
 /** GET ai/agent-tasks?kind= — the editor's own latest tasks of a kind. */
 export async function listAgentTasks(s: CtSession, kind: string | null, collection: string | null = null): Promise<NextResponse> {
   let q = s.supabase.from(CT_TABLES.agentTasks).select("*").order("created_at", { ascending: false }).limit(collection ? 200 : 30);
-  if (kind === "create" || kind === "revise" || kind === "pack_image" || kind === "content") q = q.eq("kind", kind);
-  // A product's content history (anyone working on the product); everything else: the editor's own.
+  if (kind === "create" || kind === "revise" || kind === "pack_image" || kind === "content" || kind === "char") q = q.eq("kind", kind);
+  // A product's content history / a bộ nhân vật's tasks (anyone working on it); everything else: the editor's own.
   if (kind === "content" && collection && UUID.test(collection)) q = q.eq("input->content->>productId", collection);
+  else if (kind === "char" && collection && UUID.test(collection)) q = q.eq("input->char->>projectId", collection);
   else {
     q = q.eq("user_id", s.user.id);
     if (collection && UUID.test(collection)) q = q.eq("input->pack->>collectionId", collection);

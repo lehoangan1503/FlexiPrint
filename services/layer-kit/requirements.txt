@@ -1,0 +1,10 @@
+opencv-python-headless>=4.10,<5
+numpy>=2,<3
+scipy>=1.14,<2
+pillow>=11,<13
+requests>=2.32,<3
+fastapi>=0.128,<0.129
+uvicorn[standard]>=0.40,<0.41
+# Print upscale (upscale.py). The Dockerfile installs the CPU-only torch wheel first.
+torch>=2.5
+spandrel>=0.4,<1

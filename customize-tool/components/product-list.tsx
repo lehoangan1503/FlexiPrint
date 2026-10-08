@@ -109,15 +109,15 @@ export function CustomizeProductList({ tabs, currentUserId }: { tabs?: React.Rea
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {products.map((p) => {
-            const thumb = p.thumbnail_url ?? p.main_asset?.url ?? null;
+            const thumb = p.mockup_url ?? p.thumbnail_url ?? p.main_asset?.url ?? null;
             const mine = !currentUserId || p.user_id === currentUserId;
             return (
               <div key={p.id} className="group overflow-hidden rounded-xl border bg-card">
                 <Link href={`${CT_CONFIG.basePath}/${p.id}`} className="block aspect-square" style={CHECKER_STYLE}>
                   {thumb ? (
-                    <img src={thumb} alt={p.name} className="h-full w-full object-contain p-2" loading="lazy" />
+                    <img src={thumb} alt={p.name} className={p.mockup_url ? "h-full w-full object-cover" : "h-full w-full object-contain p-2"} loading="lazy" />
                   ) : (
-                    <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Chưa có main object</div>
+                    <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Chưa có mockup</div>
                   )}
                 </Link>
                 <div className="flex items-center gap-2 p-2.5">

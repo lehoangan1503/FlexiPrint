@@ -155,7 +155,7 @@ function cpaSize(aspect: string): { size: string; ratio: number } {
 }
 
 /** The company image API (OpenAI-compatible, like services/comfy providers._cpa): references go as data URIs. */
-async function drawCpa(model: string, prompt: string, refs: string[], aspect: string): Promise<{ data: Buffer; mime: string }> {
+async function drawCpa(model: string, prompt: string, refs: string[], aspect: string, fit: "crop" | "pad" = "crop"): Promise<{ data: Buffer; mime: string }> {
   const key = process.env.CPA_API_KEY;
   if (!key) throw new Error("Chưa cấu hình CPA_API_KEY");
   const base = (process.env.CPA_BASE_URL || "https://cpa.next.lc/v1").replace(/\/+$/, "");
@@ -181,11 +181,20 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
   }
   const b64 = json.data?.[0]?.b64_json;
   if (!b64) throw new Error("cpa không trả ảnh");
-  // Cropped (centre) to the exact aspect the frame wants.
+  // Cropped (centre) to the exact aspect the frame wants — or, for a picture nothing may be cut from (a master
+  // character sheet on white), padded with white to it.
   const img = sharp(Buffer.from(b64, "base64"));
   const meta = await img.metadata();
   const W = meta.width ?? 1024;
   const H = meta.height ?? 1024;
+  if (fit === "pad") {
+    const w = Math.max(W, Math.round(H * ratio));
+    const h = Math.max(H, Math.round(W / ratio));
+    const left = Math.floor((w - W) / 2);
+    const top = Math.floor((h - H) / 2);
+    const data = await img.extend({ left, right: w - W - left, top, bottom: h - H - top, background: "#ffffff" }).png().toBuffer();
+    return { data, mime: "image/png" };
+  }
   const w = Math.min(W, Math.round(H * ratio));
   const h = Math.min(H, Math.round(W / ratio));
   const data = await img.extract({ left: Math.floor((W - w) / 2), top: Math.floor((H - h) / 2), width: w, height: h }).png().toBuffer();
@@ -193,8 +202,8 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
 }
 
 /** One photo with `model` (a lib/image-models id: "cpa:<model>" or "fal:<endpoint>/edit"). */
-async function drawImage(model: string, prompt: string, refs: string[], aspect: string): Promise<{ data: Buffer; mime: string }> {
-  if (model.startsWith("cpa:")) return drawCpa(model.slice(4), prompt, refs, aspect);
+export async function drawImage(model: string, prompt: string, refs: string[], aspect: string, fit: "crop" | "pad" = "crop"): Promise<{ data: Buffer; mime: string }> {
+  if (model.startsWith("cpa:")) return drawCpa(model.slice(4), prompt, refs, aspect, fit);
   return drawFal(model.replace(/^fal:/, "").replace(/\/edit$/, ""), prompt, refs, aspect);
 }
 
@@ -202,7 +211,8 @@ async function drawFal(model: string, prompt: string, refs: string[], aspect: st
   const key = process.env.FAL_KEY;
   if (!key) throw new Error("Chưa cấu hình FAL_KEY");
   const endpoint = refs.length ? `${model}/edit` : model;
-  const input: Record<string, unknown> = { prompt, num_images: 1, aspect_ratio: aspect, output_format: "png", ...(refs.length ? { image_urls: refs } : {}) };
+  // "auto" (an in-place edit): the model keeps the input picture's own size and framing.
+  const input: Record<string, unknown> = { prompt, num_images: 1, ...(aspect === "auto" ? {} : { aspect_ratio: aspect }), output_format: "png", ...(refs.length ? { image_urls: refs } : {}) };
   if (model === "fal-ai/nano-banana-2") input.resolution = "2K";
   const res = await fetch(`https://fal.run/${endpoint}`, {
     method: "POST",

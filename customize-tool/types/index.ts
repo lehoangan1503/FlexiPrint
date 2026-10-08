@@ -446,6 +446,8 @@ export interface CtAssetMeta {
   swatch?: string;
   /** Asset this one was derived from by an editor tool (e.g. background removal). */
   derivedFrom?: string;
+  /** Copied from a bộ nhân vật layer file (ct_char_images id): replaced when that file is fixed. */
+  charLayerId?: string;
   note?: string;
   /** Renditions: the material preset it was rendered with. */
   material?: string;
@@ -726,6 +728,8 @@ export interface CtProduct {
 
 export interface CtProductListRow extends CtProduct {
   main_asset: Pick<CtAsset, "url" | "width" | "height"> | null;
+  /** The product's first mockup (the card shows it before the main object). */
+  mockup_url: string | null;
 }
 
 export interface CtGeneration {
@@ -1756,7 +1760,8 @@ export interface CtCategoryHistoryEntry {
 /** "create" → CtPromptSuggestion; "revise" → CtCategoryRevision (an empty note = review only). */
 /** pack_image = "Tạo ảnh với AI" of the thư viện ảnh tổ hợp (input.pack, result CtPackImageResult). */
 /** content = "Tạo content với FlexiPrint" of the Deploy page (input.content, result CtContentResult). */
-export type CtAgentTaskKind = "create" | "revise" | "pack_image" | "content";
+/** char = a step of a v2 bộ nhân vật (input.char, result CtCharTaskResult — types/char.ts). */
+export type CtAgentTaskKind = "create" | "revise" | "pack_image" | "content" | "char";
 
 /** waiting = the agent asked the editor something (ask_user) and ended its turn until they answer. */
 export type CtAgentTaskStatus = "pending" | "running" | "waiting" | "done" | "failed" | "cancelled";
@@ -1815,6 +1820,8 @@ export interface CtAgentTaskInput {
   pack?: CtPackImageTaskInput;
   /** content: the product to write the Shopify title + description for. */
   content?: CtContentTaskInput;
+  /** char: the bộ nhân vật and the step the agent does for it. */
+  char?: CtCharTaskInput;
 }
 
 /**
@@ -1884,7 +1891,7 @@ export interface CtAgentTask {
   progress: CtAgentTaskProgress[];
   runs: CtAgentTaskRun[];
   questions: CtAgentQuestion[];
-  result: CtPromptSuggestion | CtCategoryRevision | CtPackImageResult | CtContentResult | null;
+  result: CtPromptSuggestion | CtCategoryRevision | CtPackImageResult | CtContentResult | CtCharTaskResult | null;
   error: string;
   agent_job_id: string;
   agent_session_id: string;
@@ -2121,3 +2128,6 @@ export interface CtShopifyInfo {
   product: CtShopifyProductSummary | null;
   error?: string;
 }
+
+import type { CtCharTaskInput, CtCharTaskResult } from "./char";
+export * from "./char";

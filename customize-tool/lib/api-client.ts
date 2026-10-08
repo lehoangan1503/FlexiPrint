@@ -57,6 +57,10 @@ import type {
   CtUpdateAssetBody,
   CtUpdateClipartBody,
   CtUpdateProductBody,
+  CtCharBrief,
+  CtCharIdeaRound,
+  CtCharImage,
+  CtCharProject,
 } from "../types";
 
 export interface CtUploadClipartOpts {
@@ -379,4 +383,36 @@ export const ctApi = {
   },
   studioDraft: (body: CtStudioRunBody) => call<{ draft_id: string }>("studio/drafts", json("POST", body)).then((r) => r.draft_id),
 
+};
+
+/** v2 bộ nhân vật (server/char/projects.ts). */
+export const charApi = {
+  list: () => call<{ projects: CtCharProject[]; thumbs: Record<string, string> }>("char/projects"),
+  create: (body: { name: string; brief?: CtCharBrief }) => call<{ project: CtCharProject }>("char/projects", json("POST", body)).then((r) => r.project),
+  get: (id: string) => call<{ project: CtCharProject; images: CtCharImage[] }>(`char/projects/${id}`),
+  update: (id: string, body: { name?: string; brief?: CtCharBrief }) => call<{ project: CtCharProject }>(`char/projects/${id}`, json("PATCH", body)).then((r) => r.project),
+  remove: (id: string) => call<{ ok: true }>(`char/projects/${id}`, { method: "DELETE" }),
+  upload: (id: string, file: File, kind: "ref" | "blank") => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("kind", kind);
+    return call<{ image: CtCharImage }>(`char/projects/${id}/files`, { method: "POST", body: form }).then((r) => r.image);
+  },
+  masters: (id: string, body: { prompt?: string; count?: number; aspect?: string }) => call<{ images: CtCharImage[] }>(`char/projects/${id}/masters`, json("POST", body)).then((r) => r.images),
+  refine: (id: string, imageId: string, note: string) => call<{ image: CtCharImage }>(`char/projects/${id}/masters/${imageId}/refine`, json("POST", { note })).then((r) => r.image),
+  approve: (id: string, imageId: string | null) => call<{ project: CtCharProject }>(`char/projects/${id}/approve`, json("POST", { imageId })).then((r) => r.project),
+  /** Make the planned edits still missing (or `roles` again). */
+  edits: (id: string, roles?: string[]) => call<{ images: CtCharImage[] }>(`char/projects/${id}/edits`, json("POST", roles ? { roles } : {})).then((r) => r.images),
+  createProduct: (id: string, name: string) => call<{ productId: string }>(`char/projects/${id}/products`, json("POST", { name })).then((r) => r.productId),
+  mockups: (id: string, productId: string, print: Blob) => {
+    const form = new FormData();
+    form.append("productId", productId);
+    form.append("print", print, "print.png");
+    return call<{ images: CtCharImage[] }>(`char/projects/${id}/mockups`, { method: "POST", body: form }).then((r) => r.images);
+  },
+  buildLayers: (id: string) => call<{ project: CtCharProject }>(`char/projects/${id}/layers`, json("POST", {})).then((r) => r.project),
+  approveLayers: (id: string, approved: boolean) => call<{ project: CtCharProject }>(`char/projects/${id}/layers/approve`, json("POST", { approved })).then((r) => r.project),
+  /** The cut reviewed on the master (server/char/cut.ts): step "matte" (the backdrop) or "plan" (layer regions). */
+  cut: (id: string, step: "matte" | "plan", action?: "mask" | "region" | "revert" | "approve", body: Record<string, unknown> = {}) =>
+    call<{ project: CtCharProject }>(`char/projects/${id}/${step}${action ? `/${action}` : ""}`, json("POST", body)).then((r) => r.project),
 };

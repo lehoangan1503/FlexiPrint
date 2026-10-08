@@ -16,3 +16,4 @@ integrations/agent-ide/secrets/
 
 # layer-kit working images (big; sources live in R2 per project)
 tools/layer-kit/demo-*/
+backups/

@@ -327,6 +327,8 @@ export interface CtCharPiece {
   /** CtCharPicture id. */
   picture: string;
   region: CtCharMask;
+  /** What the region was found from (source pictures + matte): same again → a hand-fixed region is kept on a re-plan. */
+  sig?: string;
 }
 
 export interface CtCharPlan {

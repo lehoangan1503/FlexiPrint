@@ -427,19 +427,53 @@ def regions_colour(base: np.ndarray, base_a: np.ndarray, masks: dict[str, tuple[
             de = np.sqrt(((lab - med) ** 2).sum(2))
             near = cv2.dilate(core.astype(np.uint8), kernel(10)).astype(bool) & (de < 10)
         part = clean(((core & ~others) | (grown & ~skin & ~others) | (near & ~others)) & (base_a > 0.02), open_r=1, close_r=2, min_px=200)
+        part = fill_small_holes(part, 2500)
         kept = float(part.sum()) / max(1.0, float(core.sum()))
         checks.append({"name": f"Vùng {label}", "ok": kept > 0.8, "detail": f"{int(part.sum()):,} px ({kept * 100:.0f}% phần AI tô)", "piece": key})
         out[key] = soft(part, grow=2, blur=0.7)
     return out, checks
 
 
+def fill_small_holes(m: np.ndarray, max_px: int) -> np.ndarray:
+    """Holes inside the region smaller than max_px are filled (a pixel threshold leaves pin-holes in flat fills).
+    A big hole (a face ringed by hair) stays: it is not part of the region."""
+    inv = ~m
+    lab, n = ndi.label(inv)
+    if not n:
+        return m
+    sizes = ndi.sum(inv, lab, range(1, n + 1))
+    outer = set(np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]])).tolist())
+    fill = [i + 1 for i, s in enumerate(sizes) if s <= max_px and (i + 1) not in outer]
+    return m | np.isin(lab, fill) if fill else m
+
+
+def tidy(part: np.ndarray, allow: np.ndarray, sigma: float, close_r: int = 7, max_hole: int = 2500) -> np.ndarray:
+    """A thresholded region made clean: small holes filled, narrow gaps closed, the edge smoothed (blur + re-threshold).
+    What closing / smoothing ADDS is limited to `allow` (pixels that really belong to the part); what the region
+    already had is kept, except for the smoothing's own rounding of its edge."""
+    m = part.astype(bool)
+    if not m.any():
+        return m
+    m = fill_small_holes(m, max_hole)
+    closed = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_CLOSE, kernel(close_r)).astype(bool)
+    m = m | (closed & allow)
+    if sigma > 0:
+        m = (cv2.GaussianBlur(m.astype(np.float32), (0, 0), sigma) > 0.5) & (m | allow)
+    return m
+
+
 def region_shape(white: np.ndarray, cut_a: np.ndarray, base: np.ndarray, base_a: np.ndarray, region: np.ndarray | None, hairlike: bool) -> np.ndarray:
     """A shape option's part: what differs from the base (inside `region` when the master's parts are split
     between slots). Hair: only the hair's own colours; on the body only pixels that look more like the part than
     like the base there (bangs over a forehead yes, a re-drawn ear or outline no)."""
-    changed = (np.abs(white - base).max(2) > 0.12) & (cut_a > 0.3)
+    diff = np.abs(white - base).max(2)
+    changed = (diff > 0.12) & (cut_a > 0.3)
+    # Where closing / smoothing may ADD pixels: inside the picture's subject, and on the body only where the picture
+    # really differs from the base (a looser test than `changed`) — never plain skin.
+    allow = (cut_a > 0.3) & ((base_a < 0.5) | (diff > 0.04))
     if region is not None:
         changed &= region
+        allow &= region
     if hairlike:
         lab = to_lab(white)
         base_lab = to_lab(base)
@@ -447,11 +481,15 @@ def region_shape(white: np.ndarray, cut_a: np.ndarray, base: np.ndarray, base_a:
         if ref.sum() > 400:
             ha, hb = np.median(lab[..., 1][ref]), np.median(lab[..., 2][ref])
             hl = np.median(lab[..., 0][ref])
-            changed &= np.hypot(lab[..., 1] - ha, lab[..., 2] - hb) < 26
+            hair_hue = np.hypot(lab[..., 1] - ha, lab[..., 2] - hb) < 26
             d_part = np.sqrt(((lab[..., 0] - hl) * 0.5) ** 2 + (lab[..., 1] - ha) ** 2 + (lab[..., 2] - hb) ** 2)
             d_base = np.sqrt(((lab[..., 0] - base_lab[..., 0]) * 0.5) ** 2 + (lab[..., 1] - base_lab[..., 1]) ** 2 + (lab[..., 2] - base_lab[..., 2]) ** 2)
-            changed &= (base_a < 0.5) | (d_part < d_base)
+            hair_like = hair_hue & ((base_a < 0.5) | (d_part < d_base))
+            changed &= hair_like
+            allow &= hair_like  # smoothing may not pull skin into a hair file (recolouring would tint it)
     part = clean(changed, open_r=2, close_r=5, min_px=1500)
+    # Pixel-threshold leftovers: pin-holes, notched edges. Hair keeps its strands (light smoothing only).
+    part = clean(tidy(part, allow, sigma=1.0 if hairlike else 2.2), open_r=0, close_r=0, min_px=1500)
     return soft(part, grow=1, blur=1.2)
 
 
@@ -470,7 +508,17 @@ def claim_orphans(regions: list[np.ndarray], subject_a: np.ndarray, base_a: np.n
     dists = [cv2.distanceTransform((~(r > 0.5)).astype(np.uint8), cv2.DIST_L2, 5) for r in regions]
     d = np.stack(dists)
     near = d.argmin(0)
-    ok = orphan & (d.min(0) <= max_d)
+    near_d = d.min(0)
+    ok = orphan & (near_d <= max_d)
+    # Loose bits: a dot floating off the figure (AI noise) is not a part of any region. Only pieces that touch a
+    # region (≤ 3 px) or are sizeable (≥ 400 px: a strand, a curl) are taken.
+    lab_o, n_o = ndi.label(ok)
+    if n_o:
+        sizes = ndi.sum(ok, lab_o, range(1, n_o + 1))
+        touch = ndi.minimum(near_d, lab_o, range(1, n_o + 1))
+        drop = [i + 1 for i in range(n_o) if sizes[i] < 400 and touch[i] > 3]
+        if drop:
+            ok &= ~np.isin(lab_o, drop)
     out = []
     for i, r in enumerate(regions):
         add = ok & (near == i)

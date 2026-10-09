@@ -8,9 +8,11 @@
  *                                                     on the page is removed (layer-kit /matte/fix); un-approves
  *   POST char/projects/:id/matte/revert             → { project } back to the previous alpha
  *   POST char/projects/:id/matte/approve {approved} → { project }
- *   POST char/projects/:id/plan                     → { project } every layer's region on its picture (layer-kit
+ *   POST char/projects/:id/plan {auto?}             → { project } every layer's region on its picture (layer-kit
  *                                                     /plan: edits registered + upscaled, regions found) — needs the
- *                                                     matte approved and every planned edit made
+ *                                                     matte approved and every planned edit made; hand-fixed regions
+ *                                                     of unchanged pictures are kept (piece.sig). auto: then approves
+ *                                                     the plan and cuts the files (no products made yet)
  *   POST char/projects/:id/plan/region {key, mask}  → { project } one region fixed by hand; un-approves
  *   POST char/projects/:id/plan/revert {key}        → { project }
  *   POST char/projects/:id/plan/approve {approved}  → { project }
@@ -27,7 +29,7 @@ import type { CtSession } from "../supabase";
 import { ctRemove } from "../storage";
 import { saveCharRaw } from "./files";
 import { kitFile, kitForget, kitJob, kitPost } from "./kit";
-import { kitPlanInput, latestEdits } from "./layers";
+import { kitPlanInput, latestEdits, startBuild } from "./layers";
 import { cutPaths, jobDb, jsonError, loadImages, loadProject, maskPaths, projectRow, type Db } from "./projects";
 
 const HISTORY = 5;
@@ -176,7 +178,37 @@ interface KitPlan {
   align: Record<string, { dx: number; dy: number; unchanged: number; before: number; residual: number; max: number }>;
 }
 
-export async function startPlan(db: Db, userId: string, p: CtCharProject): Promise<CtCharProject> {
+interface PlanInputSlot {
+  key: string;
+  mode: string;
+  mask: string | null;
+  options: Array<{ url: string | null }>;
+}
+
+/**
+ * What each region is found from: the picture(s) it is looked for on + the matte. The same again after a re-plan
+ * means the region would come out the same — so a hand-fixed one is kept (an editor's fix is not thrown away because
+ * ONE other option was redone).
+ */
+function pieceSigs(input: { base: string | null; slots: unknown[]; zones: unknown[] }, masterUrl: string, alphaUrl: string): (key: string) => string {
+  const slots = input.slots as PlanInputSlot[];
+  const zones = input.zones as Array<{ id: string; mask: string | null }>;
+  const base = input.base ?? masterUrl;
+  return (key: string) => {
+    if (key === "body") return [base, alphaUrl].join("|");
+    if (key.startsWith("zone:")) return [zones.find((z) => z.id === key.slice(5))?.mask ?? "", base, alphaUrl].join("|");
+    const hash = key.lastIndexOf("#");
+    const slot = slots.find((x) => x.key === (hash < 0 ? key : key.slice(0, hash)));
+    if (!slot) return "";
+    if (hash < 0) return [slot.mask ?? "", ...slot.options.map((o) => o.url ?? ""), base, alphaUrl].join("|");
+    const i = Number(key.slice(hash + 1));
+    return [i === 0 ? masterUrl : (slot.options[i]?.url ?? ""), slot.mask ?? "", base, alphaUrl].join("|");
+  };
+}
+
+/** `auto`: when the plan is done, approve it and cut the files too (one button for the whole bộ custom) — unless
+ * products are already made from the old files (the editor cuts again himself, with the warning). */
+export async function startPlan(db: Db, userId: string, p: CtCharProject, auto = false): Promise<CtCharProject> {
   const m = doneMatte(p);
   if (!m.approved) throw new Error("Duyệt phần tách nền trước");
   if (p.cut?.plan?.status === "running") throw new Error("Đang phác thảo");
@@ -189,13 +221,15 @@ export async function startPlan(db: Db, userId: string, p: CtCharProject): Promi
   const old = p.cut?.plan ?? null;
   const running: CtCharPlan = { status: "running", error: "", width: old?.width ?? 0, height: old?.height ?? 0, pictures: old?.pictures ?? [], pieces: old?.pieces ?? [], checks: [], approved: false, at: new Date().toISOString() };
   const project = await saveCut(db, p.id, { ...cutState(p), plan: running });
-  void runPlan(db, userId, p.id, { source: master.url, colour: m.colourUrl, alpha: m.alpha.url, ...input.plan }, old);
+  const sigOf = pieceSigs(input.plan, master.url, m.alpha.url);
+  void runPlan(db, userId, p.id, { source: master.url, colour: m.colourUrl, alpha: m.alpha.url, ...input.plan }, old, sigOf, auto && !p.product_ids.length);
   return project;
 }
 
-async function runPlan(db: Db, userId: string, projectId: string, body: Record<string, unknown>, old: CtCharPlan | null): Promise<void> {
+async function runPlan(db: Db, userId: string, projectId: string, body: Record<string, unknown>, old: CtCharPlan | null, sigOf: (key: string) => string, thenCut: boolean): Promise<void> {
   let job = "";
   const saved: string[] = [];
+  const carried = new Set<string>();
   try {
     const r = await kitJob<KitPlan>("/plan", body);
     job = r.job;
@@ -224,8 +258,17 @@ async function runPlan(db: Db, userId: string, projectId: string, body: Record<s
     const pieces: Array<CtCharPiece | null> = r.result.pieces.map(() => null);
     await pool(r.result.pieces.map((_, i) => i), 6, async (i) => {
       const pc = r.result.pieces[i];
+      const sig = sigOf(pc.key);
+      const prev = old?.pieces.find((x) => x.key === pc.key);
+      const head = { key: pc.key, slot: pc.slot, kind: pc.kind, label: pc.label, option: pc.option, index: pc.index, picture: pc.picture, sig };
+      // A hand-fixed region of a picture that did not change stays as the editor left it.
+      if (prev?.region.edited && sig && prev.sig === sig) {
+        carried.add(pc.key);
+        pieces[i] = { ...head, region: prev.region };
+        return;
+      }
       const region = await store(pc.region);
-      if (region) pieces[i] = { key: pc.key, slot: pc.slot, kind: pc.kind, label: pc.label, option: pc.option, index: pc.index, picture: pc.picture, region: { url: region.url, path: region.path, edited: false, history: [] } };
+      if (region) pieces[i] = { ...head, region: { url: region.url, path: region.path, edited: false, history: [] } };
     });
     // The plan measures every edit on the model's own canvas: keep that number on the edit.
     const { data: edits } = await db.from(CT_TABLES.charImages).select("id, url, meta").eq("project_id", projectId).eq("kind", "edit").returns<Array<Pick<CtCharImage, "id" | "url" | "meta">>>();
@@ -235,8 +278,22 @@ async function runPlan(db: Db, userId: string, projectId: string, body: Record<s
     }
     const plan: CtCharPlan = { status: "done", error: "", width: r.result.width, height: r.result.height, pictures: pictures.filter((x): x is CtCharPicture => !!x), pieces: pieces.filter((x): x is CtCharPiece => !!x), checks: r.result.checks, approved: false, at: new Date().toISOString() };
     const p = await fresh(db, projectId);
-    await saveCut(db, projectId, { ...cutState(p), plan });
-    if (old) await ctRemove(cutPaths({ matte: null, plan: old }));
+    // One button: the plan is stored approved and the cut starts in the SAME write, so the page (which polls only
+    // while something runs) never sees a finished plan with nothing running. A cut that cannot start leaves the
+    // plan done and unapproved, with the reason — the editor cuts from the page.
+    let next: CtCharProject | null = null;
+    let note = "";
+    if (thenCut) {
+      try {
+        const cut = { ...cutState(p), plan: { ...plan, approved: true } };
+        next = await startBuild(db, userId, { ...p, cut }, cut);
+      } catch (e) {
+        note = `Chưa tự cắt được: ${(e instanceof Error ? e.message : String(e)).slice(0, 500)}`;
+      }
+    }
+    if (!next) await saveCut(db, projectId, { ...cutState(p), plan: { ...plan, error: note } });
+    // The plan is stored: from here nothing may fail it (the old files going is housekeeping only).
+    if (old) await ctRemove(cutPaths({ matte: null, plan: { ...old, pieces: old.pieces.filter((x) => !carried.has(x.key)) } })).catch((e: Error) => console.warn("[ct] char plan cleanup", e.message));
   } catch (e) {
     await ctRemove(saved);
     const p = await fresh(db, projectId).catch(() => null);
@@ -308,7 +365,7 @@ export async function cutRoute(s: CtSession, id: string, step: "matte" | "plan",
       else if (action === "approve") project = await saveCut(db, id, { ...cutState(p), matte: { ...doneMatte(p), approved: approvedOf(body) } });
       else return jsonError("Not found", 404);
     } else {
-      if (!action) project = await startPlan(db, s.user.id, p);
+      if (!action) project = await startPlan(db, s.user.id, p, (body as { auto?: unknown } | null)?.auto === true);
       else if (action === "region") project = await savePieceMask(db, s.user.id, p, body);
       else if (action === "revert") project = await revertPiece(db, p, body);
       else if (action === "approve") project = await saveCut(db, id, { ...cutState(p), plan: { ...donePlan(p), approved: approvedOf(body) } });

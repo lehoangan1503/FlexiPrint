@@ -31,11 +31,20 @@ const KINDS: Array<{ value: CtCharSubjectKind; label: string }> = [
   { value: "object", label: "Vật" },
 ];
 
-export function BriefPanel(ctx: CharCtx) {
+export function BriefPanel(all: CharCtx) {
+  // The edits, the plan and the layers hang on the brief's ids: with a master approved the brief is read-only
+  // (the server refuses a changed brief too).
+  const locked = !!all.project.master_id;
+  const ctx: CharCtx = locked ? { ...all, editable: false } : all;
   return (
     <div className="grid min-h-0 gap-0 lg:grid-cols-[400px_1fr]">
       <IdeaColumn {...ctx} />
       <div className="min-w-0 space-y-6 p-6">
+        {locked && (
+          <p className="rounded-md bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+            Master đã duyệt — brief bị khoá, chỉ xem. Muốn đổi brief: về bước Master, bỏ duyệt master (các bản sửa theo brief cũ sẽ không còn khớp).
+          </p>
+        )}
         <BriefForm {...ctx} />
       </div>
     </div>

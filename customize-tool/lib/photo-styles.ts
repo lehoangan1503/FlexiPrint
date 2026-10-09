@@ -6,7 +6,6 @@
  *   Free  (CT_PHOTO_STYLES, family "free")  no AI cost
  *     engine "none"    the photo as uploaded
  *     engine "local"   a canvas filter in the browser (lib/photo-process.ts)
- *     engine "server"  the photo-style microservice (OpenCV, ~1 s)
  *   Face  (CT_PHOTO_STYLES, family "face")  no AI cost
  *     the server cuts the photo out, services/face-detect keeps only the head
  *     (no neck / body), the browser applies `filter`. The 5 are a fixed set:
@@ -36,7 +35,6 @@ export interface CtPhotoStyleDef {
 
 export const CT_PHOTO_STYLES: CtPhotoStyleDef[] = [
   { id: "original", label: "Real photo", hint: "Giữ nguyên ảnh khách", engine: "none", family: "free" },
-  { id: "oil", label: "Oil painting", hint: "Sơn dầu nét nhỏ, giữ màu gốc (service photo-style, OpenCV)", engine: "server", family: "free" },
   { id: "pixel", label: "Pixel art", hint: "Pixel art giữ màu gốc — lọc ngay trên trình duyệt", engine: "local", family: "free" },
   { id: "face", label: "Real face", hint: "Cắt khuôn mặt, giữ màu gốc", engine: "server", family: "face" },
   { id: "face_bw", label: "Black & white", hint: "Cắt khuôn mặt + đen trắng", engine: "server", family: "face", filter: "bw" },

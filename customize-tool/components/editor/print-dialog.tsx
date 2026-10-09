@@ -6,7 +6,7 @@
  *
  *   Vật liệu    acrylic / ceramic / metal / wood — outline, size, border,
  *               thickness. Only production facts: how a material LOOKS is
- *               AI-rendered in the studio (ComfyUI) into clipart renditions.
+ *               the clipart renditions uploaded in /library.
  *   Hiển thị    the product is drawn with the flat cliparts, or their renditions
  *               (one of their material versions: "có dây"…).
  *   Gửi xưởng   print.png — the current selection FLAT, full resolution (what is

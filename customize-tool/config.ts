@@ -65,6 +65,7 @@ export const CT_TABLES = {
   packCollections: "ct_pack_collections",
   priceTables: "ct_price_tables",
   settings: "ct_settings",
+  printTemplates: "ct_print_templates",
 } as const;
 
 /** Fonts offered for text regions (Google Fonts families). */

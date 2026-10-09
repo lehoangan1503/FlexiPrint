@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * One tổ hợp scene, rendered live by lib/mockup.ts, with a move / resize /
- * rotate frame on the selected layer (editor "Tổ hợp", Thiết kế → Nền).
+ * One mockup scene, rendered live by lib/mockup.ts, with a move / resize /
+ * rotate frame on the selected layer (editor "Mockups", Thiết kế → Nền).
  *
  *   drag inside a layer   inside the selection = move it, even under the
  *                         layers on top; elsewhere select the topmost one

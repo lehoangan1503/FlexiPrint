@@ -31,7 +31,7 @@ import type {
   CtUpdateProductBody,
 } from "../types";
 import { normalizeProductConfig, normalizeRegion, normalizeSamples } from "../lib/design";
-import { ctServiceClient, type CtSession } from "./supabase";
+import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctLibraryPath, ctPublicUploadPath, ctRemove, ctStoragePath, ctUpload } from "./storage";
 import { buildTemplate } from "../lib/template";
 import { readImageInfo } from "./image-size";
@@ -439,7 +439,9 @@ export async function publicUpload(productId: string, form: FormData): Promise<N
   const file = form.get("file");
   if (!(file instanceof Blob)) return publicError("Thiếu file", 400);
   if (file.size > CT_CONFIG.publicUploadBytes) return publicError(`File quá lớn (tối đa ${Math.round(CT_CONFIG.publicUploadBytes / 1048576)}MB)`, 413);
-  const kind = form.get("kind") === "preview" ? "preview" : "photo";
+  // preview: the cart's flattened picture · print: the full-size print file (khuôn in products) · photo: a customer photo.
+  const k = form.get("kind");
+  const kind = k === "preview" || k === "print" ? k : "photo";
   const data = Buffer.from(await file.arrayBuffer());
   const info = readImageInfo(data);
   if (!info) return publicError("File không phải ảnh PNG/JPEG/WebP hợp lệ", 400);
@@ -610,7 +612,7 @@ export function photoCapabilitiesResponse(): NextResponse {
 // Assets
 // ---------------------------------------------------------------------------
 
-interface InsertAssetArgs {
+export interface InsertAssetArgs {
   productId: string;
   role: CtAssetRole;
   parentId: string | null;
@@ -620,14 +622,19 @@ interface InsertAssetArgs {
   meta: CtAssetMeta;
 }
 
-async function insertAsset(s: CtSession, a: InsertAssetArgs): Promise<CtAsset> {
+export async function insertAsset(s: CtSession, a: InsertAssetArgs): Promise<CtAsset> {
+  return insertAssetAs(s.supabase, s.user.id, a);
+}
+
+/** insertAsset for a caller without a session (the @flexiprint MCP writes with the service key for `userId`). */
+export async function insertAssetAs(db: CtSession["supabase"] | CtServiceClient, userId: string, a: InsertAssetArgs): Promise<CtAsset> {
   const info = readImageInfo(a.data);
   if (!info) throw new Error("File không phải ảnh PNG/JPEG/WebP hợp lệ");
-  const path = ctStoragePath(s.user.id, a.productId, a.role, info.mime);
+  const path = ctStoragePath(userId, a.productId, a.role, info.mime);
   const url = await ctUpload(path, a.data, info.mime);
 
   // New items go to the end of their list.
-  let countQuery = s.supabase
+  let countQuery = db
     .from(CT_TABLES.assets)
     .select("id", { count: "exact", head: true })
     .eq("product_id", a.productId)
@@ -635,10 +642,10 @@ async function insertAsset(s: CtSession, a: InsertAssetArgs): Promise<CtAsset> {
   if (a.parentId) countQuery = countQuery.eq("parent_id", a.parentId);
   const { count } = await countQuery;
 
-  const { data, error } = await s.supabase
+  const { data, error } = await db
     .from(CT_TABLES.assets)
     .insert({
-      user_id: s.user.id,
+      user_id: userId,
       product_id: a.productId,
       role: a.role,
       parent_id: a.role === "variant" ? a.parentId : null,

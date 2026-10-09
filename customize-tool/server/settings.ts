@@ -1,6 +1,6 @@
 /**
  * Team-wide settings (migration 020). Today: the image model every AI picture is made with — picked on the home
- * page, applied server-side to every studio run (web app and @flexiprint alike) and to the ảnh tổ hợp library.
+ * page, applied server-side to every image run (the v2 bộ nhân vật, web app and @flexiprint alike).
  *
  *   GET settings/image-model            → { model, models }
  *   PUT settings/image-model { model }  → { model, models }

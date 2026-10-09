@@ -74,6 +74,11 @@ export function ideaRoundFrom(raw: Record<string, unknown>, p: CtCharProject, re
     const o = (x && typeof x === "object" ? x : {}) as Record<string, unknown>;
     const brief = parseCharBrief(o.brief);
     brief.product.blankId = p.brief.product.blankId;
+    // The piece the editor chose stays (its layout sentence goes into every direction's master).
+    if (p.brief.product.templateId) {
+      brief.product.templateId = p.brief.product.templateId;
+      brief.product.layout = brief.product.layout || p.brief.product.layout;
+    }
     brief.refs = p.brief.refs;
     if (!brief.idea) brief.idea = p.brief.idea || request;
     return { id: crypto.randomUUID(), title: typeof o.title === "string" ? o.title.slice(0, 200) : "Hướng", why: typeof o.why === "string" ? o.why.slice(0, 600) : "", brief };

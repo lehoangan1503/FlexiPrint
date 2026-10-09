@@ -131,6 +131,6 @@ export function auditOptions(tpl: CtTemplate): CtOptionAudit {
   const fixedCount = versions.reduce((n, v) => n + v.layers, 0);
   if (picks) lines.push({ level: "ok", text: `${picks} custom layer cho khách chọn ảnh (chỉ chọn, không sửa); swatch là clipart gốc, canvas hiện bản vật liệu.` });
   if (fixedCount) lines.push({ level: "ok", text: `${fixedCount} custom layer 1 ảnh — vẽ cố định.` });
-  if (tpl.config.mockupEdit) lines.push({ level: "ok", text: "Mockup edit: khách chỉnh thiết kế ngay trên tổ hợp đã chọn." });
+  if (tpl.config.mockupEdit) lines.push({ level: "ok", text: "Mockup edit: khách chỉnh thiết kế ngay trên mockup đã chọn." });
   return { versions, lines };
 }

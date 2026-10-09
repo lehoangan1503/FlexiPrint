@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Library → Bộ tổ hợp: the named sets of mockup scenes saved from a product's
- * "Tổ hợp" tab (types CtMockupPack). They are made and used in the editor;
+ * Library → Bộ mockup: the named sets of mockup scenes saved from a product's
+ * "Mockups" tab (types CtMockupPack). They are made and used in the editor;
  * here they are only listed, renamed and deleted.
  */
 
@@ -26,7 +26,7 @@ export function PacksTab() {
   useEffect(load, [load]);
 
   const rename = async (p: CtMockupPack) => {
-    const name = await ctPrompt({ title: "Đổi tên bộ tổ hợp", defaultValue: p.name, confirmLabel: "Lưu" });
+    const name = await ctPrompt({ title: "Đổi tên bộ mockup", defaultValue: p.name, confirmLabel: "Lưu" });
     if (!name?.trim() || name.trim() === p.name) return;
     try {
       const saved = await ctApi.updatePack(p.id, { name: name.trim(), notes: p.notes, slides: p.slides, thumbnail_url: p.thumbnail_url });
@@ -48,9 +48,9 @@ export function PacksTab() {
 
   return (
     <div className="flex-1 overflow-y-auto p-4">
-      <h2 className="text-sm font-semibold">Bộ tổ hợp</h2>
+      <h2 className="text-sm font-semibold">Bộ mockup</h2>
       <p className="mb-3 text-xs text-muted-foreground">
-        Tạo trong editor sản phẩm → tab Tổ hợp: làm vài tổ hợp (nền, image frame, kéo version vào, chữ), tick chúng rồi “Lưu làm template”. Sản phẩm cùng loại chỉ cần “Dùng template” — version và thiết kế của nó tự vào đúng các frame.
+        Tạo trong editor sản phẩm → tab Mockups: làm vài mockup (nền, image frame, kéo version vào, chữ), tick chúng rồi “Lưu làm template”. Sản phẩm cùng loại chỉ cần “Dùng template” — version và thiết kế của nó tự vào đúng các frame.
       </p>
       {error && <p className="mb-2 text-xs text-destructive">{error}</p>}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
@@ -61,7 +61,7 @@ export function PacksTab() {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{p.name}</p>
                 <p className="truncate text-[11px] text-muted-foreground">
-                  {p.slides.length} tổ hợp · {p.slides.map((s) => s.name).join(", ")}
+                  {p.slides.length} mockup · {p.slides.map((s) => s.name).join(", ")}
                 </p>
               </div>
               {p.can_edit && (

@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * The category dialog's AI is the editor's own agent — @flexiprint on agent_ide, which sees the whole system
- * through flexiprint-mcp (server/agent/tasks.ts, server/mcp). The dialog sends a task and waits for it; the
- * result comes back in the built-in LLM's shape, so the rest of the dialog (tick, apply) does not change.
+ * The editor's own agent — @flexiprint on agent_ide, which sees the system through flexiprint-mcp
+ * (server/agent/tasks.ts, server/mcp). Used by the deploy page's content writer and the v2 bộ nhân vật: a task is
+ * sent and followed until it ends.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -30,7 +30,7 @@ export function useAgentStatus() {
 
 /** "@flexiprint ●" — who the dialog sends the work to, and whether it is online. */
 export function AgentBadge({ status }: { status: CtAgentStatus | null }) {
-  const title = !status ? "Đang kiểm tra agent…" : !status.configured ? "Chưa cấu hình agent @flexiprint" : status.online ? "Agent trên agent_ide: xem toàn hệ thống, có thể tạo ảnh thử rồi mới đề xuất" : `Agent chưa trả lời: ${status.error || "offline"}`;
+  const title = !status ? "Đang kiểm tra agent…" : !status.configured ? "Chưa cấu hình agent @flexiprint" : status.online ? "Agent trên agent_ide: xem toàn hệ thống" : `Agent chưa trả lời: ${status.error || "offline"}`;
   return (
     <span title={title} className="inline-flex items-center gap-1 rounded-md border bg-muted/50 px-2 py-0.5 text-[11px]">
       <Bot className="h-3 w-3" /> @{status?.name || "flexiprint"}
@@ -85,11 +85,6 @@ export function useAgentTask() {
   return { task, finished, run, answer, cancel: () => (stop.current = true) };
 }
 
-/** Every image the agent's test runs made during a task, newest last. */
-export function taskImages(task: CtAgentTask | null): string[] {
-  return [...new Set((task?.progress ?? []).flatMap((l) => l.images ?? []))];
-}
-
 function Thumbs({ urls, size = "h-16 w-16" }: { urls: string[]; size?: string }) {
   return (
     <div className="mt-1 flex flex-wrap gap-1">
@@ -113,7 +108,6 @@ const KIND_STYLE: Record<NonNullable<CtAgentTaskProgress["kind"]>, string> = {
 /** What the agent is doing, live — every line of the task, its test images, and its question when it asks one. */
 export function AgentProgress({ task, onCancel, onAnswer }: { task: CtAgentTask; onCancel: () => void; onAnswer: (questionId: string, choices: string[], text: string) => Promise<void> }) {
   const lines: CtAgentTaskProgress[] = task.progress ?? [];
-  const runningRuns = (task.runs ?? []).filter((r) => !r.finished_at).length;
   const asked = task.status === "waiting" ? (task.questions ?? []).find((q) => !q.answer) ?? null : null;
   const end = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -148,7 +142,6 @@ export function AgentProgress({ task, onCancel, onAnswer }: { task: CtAgentTask;
         )}
         <div ref={end} />
       </div>
-      {runningRuns > 0 && <p className="text-muted-foreground">Đang chờ {runningRuns} lượt tạo ảnh — agent chỉ nộp kết quả khi ảnh xong.</p>}
       {asked && <QuestionBox key={asked.id} question={asked} onAnswer={(c, t) => onAnswer(asked.id, c, t)} />}
     </div>
   );
@@ -202,25 +195,6 @@ function QuestionBox({ question, onAnswer }: { question: CtAgentQuestion; onAnsw
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Gửi trả lời
         </CtButton>
       </div>
-    </div>
-  );
-}
-
-/** The agent's closing summary and the test images it made, shown above its plan. */
-export function AgentSummary({ summary, images }: { summary: string; images: string[] }) {
-  if (!summary && !images.length) return null;
-  return (
-    <div className="rounded-md border border-violet-500/30 bg-violet-500/5 p-2 text-xs leading-relaxed">
-      <p className="mb-0.5 flex items-center gap-1 font-medium">
-        <Bot className="h-3.5 w-3.5" /> @flexiprint tổng kết
-      </p>
-      {summary && <p className="whitespace-pre-line">{summary}</p>}
-      {images.length > 0 && (
-        <>
-          <p className="mt-1 text-[11px] text-muted-foreground">Ảnh thử agent đã tạo (đã lưu trong thư viện, tên “· thử” khi chạy bằng prompt nháp):</p>
-          <Thumbs urls={images} size="h-20 w-20" />
-        </>
-      )}
     </div>
   );
 }

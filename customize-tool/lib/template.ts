@@ -109,6 +109,10 @@ export function buildTemplate(args: {
       layouts,
       material: config.material,
       mockupEdit: config.mockupEdit,
+      // The storefront renders the print file at add-to-cart (sheet, sizes, cut line) and picks the photo per option.
+      print: config.print,
+      mockupsByOption: config.mockupsByOption,
+      zoneMockups: config.zoneMockups,
     },
     // Swatches (main versions, layer options) show the flat clipart; the design is drawn with its material.
     assets: Array.from(used.values()).map((a) => renderAsset(a, flatUrl.get(a.id))),

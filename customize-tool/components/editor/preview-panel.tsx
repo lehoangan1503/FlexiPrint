@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * "Tổ hợp": make the product's mockups by hand, Photoshop-style — a stack of
+ * "Mockups": make the product's mockups by hand, Photoshop-style — a stack of
  * independent frames.
  *
  *   toolbar  what can go in: the main versions — each the FINISHED artwork,
@@ -18,15 +18,13 @@
  *   right    the frames, top first: drag to restack, eye, delete; the
  *            selected frame's settings (size typed in, …) or, with none
  *            selected, the edit frame's size.
- *   bottom   "Lưu tổ hợp" saves the picture + its scene (meta.scene) as a
+ *   bottom   "Lưu mockup" saves the picture + its scene (meta.scene) as a
  *            product mockup, numbered #1, #2… Pick some → "Lưu làm template"
  *            (a named set in the library); another product of the kind →
  *            "Dùng template": its own versions + design go in the frames.
- *            "Tăng chất lượng với AI" remakes them photoreal (enhance-dialog).
  *
- * A frame needs the material of every clipart it shows ("Tạo vật liệu").
- * Designs whose custom parts reach outside the main can get an AI material
- * of the whole artwork instead ("Vật liệu AI cho artwork").
+ * A frame needs the material (vật liệu) version of every clipart it shows —
+ * uploaded by hand in /library ("Upload vật liệu" on the clipart gốc).
  * (The customer-facing page is the "Xem trước" tab, storefront-preview.tsx.)
  */
 
@@ -60,7 +58,6 @@ import {
   Plus,
   Redo2,
   Save,
-  Sparkles,
   Trash2,
   Type,
   Undo2,
@@ -88,17 +85,15 @@ import type {
   CtSelection,
 } from "../../types";
 import { normalizeRegion } from "../../lib/design";
-import { canvasToBlob, renderComposite } from "../../lib/compositor";
+import { canvasToBlob } from "../../lib/compositor";
 import { renditionOf } from "../../lib/library";
 import { CT_GRADIENTS } from "../../lib/gradients";
 import {
   fillCss,
   frameArt,
-  frameMain,
   framePicture,
   frameRules,
   frameMissing,
-  frameSelection,
   gradientCss,
   LAYER_LABEL,
   cropFull,
@@ -121,14 +116,13 @@ import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtNumber, CtSele
 import { ctConfirm, ctPrompt } from "../dialogs";
 import { canCrop, PackCanvas, type CtPackTool } from "../mockup/pack-canvas";
 import { newId } from "../../lib/geometry";
-import { EnhanceDialog, type EnhanceItem } from "./enhance-dialog";
-import { nearestAspect, PackImageLibrary } from "./pack-image-library";
+import { PackImageLibrary } from "./pack-image-library";
 
 /** dataTransfer type of a main version dragged from the strip. */
 const VERSION_DRAG = "application/x-ct-version";
 /** dataTransfer type of a layer row being restacked. */
 const LAYER_DRAG = "application/x-ct-layer";
-/** Longest side a saved tổ hợp is rendered at. */
+/** Longest side a saved mockup is rendered at. */
 const SAVE_MAX_SIDE = 3000;
 
 const TOOL_KEYS: Record<string, CtPackTool> = {
@@ -175,18 +169,25 @@ export interface PreviewPanelProps {
   items: CtRegionItem[];
   /** The design's own content (Thiết kế tab) — every product frame draws it. */
   samples: CtSelection;
-  /** Save flat artworks (composites) — the AI artwork material starts from one. */
-  onSaveComposites: (blobs: Array<{ blob: Blob; selection: CtSelection }>) => Promise<CtAsset[]>;
-  /** New product assets (mockups, AI artwork materials). */
+  /** New product assets (mockups). */
   onAdded: (assets: CtAsset[]) => void;
-  /** Open the AI material recipe for these cliparts (one family). */
-  onCreateMaterial: (cliparts: CtAsset[]) => void;
   /** Delete without asking (the panel asks first). */
   onDelete: (a: CtAsset) => Promise<void>;
-  /** The tổ hợp the storefront edits on (config.mockupEdit), and setting it (null = none). */
+  /** The mockup the storefront edits on (config.mockupEdit), and setting it (null = none). */
   mockupEdit: CtMockupEdit | null;
   onMockupEdit: (m: CtMockupEdit | null) => void;
   flash: (msg: string) => void;
+}
+
+/** Wall-clock ms for folding quick repeats into one undo step — only read in event handlers. */
+function clockMs(): number {
+  return Date.now();
+}
+
+/** A saved mockup and its "#n" in the list. */
+interface NumberedMockup {
+  asset: CtAsset;
+  number: number;
 }
 
 /** The box at another aspect (w / h): same area, same centre. */
@@ -297,7 +298,6 @@ export function PreviewPanel(props: PreviewPanelProps) {
   const [presets, setPresets] = useState<CtPreset[]>([]);
   const [packs, setPacks] = useState<CtMockupPack[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
-  const [enhanceOpen, setEnhanceOpen] = useState(false);
 
   useEffect(() => {
     ctApi
@@ -312,7 +312,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
 
   // ---------------------------------------------------------------- scene + history
   const draft = drafts.get(props.productId);
-  const [hist, setHist] = useState<SceneHistory>(() => ({ past: [], scene: draft?.scene ?? newSlide("Tổ hợp 1"), future: [] }));
+  const [hist, setHist] = useState<SceneHistory>(() => ({ past: [], scene: draft?.scene ?? newSlide("Mockup 1"), future: [] }));
   const { scene, past, future } = hist;
   /** The history as of the last change, for handlers that run after an await or several in one tick. */
   const histRef = useRef(hist);
@@ -342,7 +342,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
       if (next !== h.scene) setHistory({ ...h, scene: next });
       return;
     }
-    const now = Date.now();
+    const now = clockMs();
     const folds = !!merge && lastMerge.current?.key === merge && now - lastMerge.current.at < 800 && h.past.length > 0;
     lastMerge.current = merge ? { key: merge, at: now } : null;
     // Folded back to where the step started (a toggle clicked twice): the step is gone.
@@ -614,13 +614,9 @@ export function PreviewPanel(props: PreviewPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [framesKey, ctx]);
 
-  const createMaterial = (list: CtAsset[]) => {
-    const own = list.find((a) => a.product_id !== null);
-    if (own) return props.flash(`“${own.name}” là clipart riêng của sản phẩm — đưa vào thư viện trước rồi tạo vật liệu`);
-    const origin = (a: CtAsset) => a.parent_id ?? a.id;
-    const first = list[0];
-    if (first) props.onCreateMaterial(list.filter((a) => origin(a) === origin(first)));
-  };
+  /** Vật liệu versions are uploaded by hand in /library: say which cliparts still lack one. */
+  const materialHint = (list: CtAsset[]) =>
+    `Chưa có vật liệu: ${list.map((m) => m.name || "clipart").join(", ")} — vào Thư viện, bấm “Upload vật liệu” trên clipart gốc để thêm bản vật liệu.`;
 
   /** `pictureId`: one of the version's material pictures; null = its default material. */
   const addFrame = (versionId: string, at: { x: number; y: number } | null, pictureId: string | null = null) => {
@@ -719,13 +715,13 @@ export function PreviewPanel(props: PreviewPanelProps) {
 
   // ---------------------------------------------------------------- mockup edit
   /**
-   * One saved tổ hợp becomes the customer's editing canvas on the storefront: its scene, every product frame
+   * One saved mockup becomes the customer's editing canvas on the storefront: its scene, every product frame
    * showing the live design. Its frames keep box / shadow / cord; the material rules give the hanger.
    */
-  /** The mockup edit made from a saved tổ hợp, or null when it has no scene. */
+  /** The mockup edit made from a saved mockup, or null when it has no scene. */
   const mockupEditOf = (m: CtAsset | undefined): CtMockupEdit | null => {
     if (!m?.meta.scene) return null;
-    // Hanger + vật liệu version from the frames as the tổ hợp drew them (their picked "có dây" picture), before the
+    // Hanger + vật liệu version from the frames as the mockup drew them (their picked "có dây" picture), before the
     // scene is made product-neutral.
     const original = normalizeSlide(m.meta.scene);
     const frames: CtMockupEdit["frames"] = {};
@@ -743,9 +739,9 @@ export function PreviewPanel(props: PreviewPanelProps) {
     const next = mockupEditOf(saved.find((a) => a.id === id));
     props.onMockupEdit(next);
     if (!next) return setEye(false);
-    props.flash("Mockup edit: khách sẽ chỉnh thiết kế trên tổ hợp này — nhớ Lưu thiết kế");
+    props.flash("Mockup edit: khách sẽ chỉnh thiết kế trên mockup này — nhớ Lưu thiết kế");
   };
-  // A mockup edit picked before it kept the vật liệu version: taken again from its tổ hợp once the frames' pictures
+  // A mockup edit picked before it kept the vật liệu version: taken again from its mockup once the frames' pictures
   // are loaded (then Lưu thiết kế + Deploy).
   useEffect(() => {
     const cur = props.mockupEdit;
@@ -756,7 +752,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.mockupEdit, saved, ctx]);
   /**
-   * 👁: the chosen tổ hợp as the storefront opens it — the same scene and product, the customer's photo zones
+   * 👁: the chosen mockup as the storefront opens it — the same scene and product, the customer's photo zones
    * empty (the sample photo, e.g. the cat, is taken out).
    */
   const [eye, setEye] = useState(false);
@@ -782,8 +778,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
     };
   }, [eye, eyeScene, ctx]);
   const savedScenes = saved.filter((m) => m.meta.scene);
-  /** "#n" of a saved tổ hợp: its place in the list. */
-  const numbered: EnhanceItem[] = saved.map((asset, i) => ({
+  /** "#n" of a saved mockup: its place in the list. */
+  const numbered: NumberedMockup[] = saved.map((asset, i) => ({
     asset,
     number: i + 1,
   }));
@@ -795,16 +791,16 @@ export function PreviewPanel(props: PreviewPanelProps) {
   };
 
   const saveScene = async () => {
-    if (missing.length) return setError("Còn clipart chưa có vật liệu — tạo vật liệu trước khi lưu");
+    if (missing.length) return setError(materialHint(missing));
     if (!scene.layers.some((l) => !l.hidden)) return setError("Vùng edit đang trống");
-    setBusy("Đang lưu tổ hợp…");
+    setBusy("Đang lưu mockup…");
     setError(null);
     try {
       const old = openedId ? saved.find((m) => m.id === openedId) : undefined;
       const replace =
         old &&
-        (await ctConfirm({ title: `Ghi đè “${old.name}”?`, message: "Không = lưu thành tổ hợp mới.", confirmLabel: "Ghi đè", cancelLabel: "Lưu mới" }));
-      const name = replace && old ? old.name : `Tổ hợp ${saved.length + 1}`;
+        (await ctConfirm({ title: `Ghi đè “${old.name}”?`, message: "Không = lưu thành mockup mới.", confirmLabel: "Ghi đè", cancelLabel: "Lưu mới" }));
+      const name = replace && old ? old.name : `Mockup ${saved.length + 1}`;
       const blob = await renderScene(scene, arts);
       const asset = await ctApi.uploadAsset(props.productId, blob, { role: "mockup", name, meta: { scene: { ...scene, name } } });
       if (replace && old) await props.onDelete(old);
@@ -833,14 +829,14 @@ export function PreviewPanel(props: PreviewPanelProps) {
     if (
       dirty &&
       !(await ctConfirm({
-        title: "Bỏ tổ hợp đang làm?",
-        message: "Có thay đổi chưa lưu. Bấm “Lưu tổ hợp” trước nếu muốn giữ.",
-        confirmLabel: "Mở tổ hợp mới",
+        title: "Bỏ mockup đang làm?",
+        message: "Có thay đổi chưa lưu. Bấm “Lưu mockup” trước nếu muốn giữ.",
+        confirmLabel: "Mở mockup mới",
         cancelLabel: "Ở lại",
       }))
     )
       return;
-    commit(newSlide(`Tổ hợp ${saved.length + 1}`, scene.width, scene.height));
+    commit(newSlide(`Mockup ${saved.length + 1}`, scene.width, scene.height));
     setOpenedId(null);
     setLayerId(null);
   };
@@ -855,12 +851,12 @@ export function PreviewPanel(props: PreviewPanelProps) {
     URL.revokeObjectURL(url);
   };
 
-  /** The ticked tổ hợp (none ticked = all of them) as a template other products reuse. */
+  /** The ticked mockups (none ticked = all of them) as a template other products reuse. */
   const saveTemplate = async () => {
     const list = picked.length ? savedScenes.filter((m) => picked.includes(m.id)) : savedScenes;
-    if (!list.length) return setError("Chưa có tổ hợp nào để lưu làm template");
+    if (!list.length) return setError("Chưa có mockup nào để lưu làm template");
     const name = await ctPrompt({
-      title: `Lưu template (${list.length} tổ hợp)`,
+      title: `Lưu template (${list.length} mockup)`,
       message: "Sản phẩm khác cùng loại chọn “Dùng template” — version và thiết kế của nó tự vào đúng các frame.",
       label: "Tên template",
       placeholder: "vd. Ornament acrylic · Christmas",
@@ -892,12 +888,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
     const scenes = pack.slides.map((s) => sceneForProduct(normalizeSlide(s)));
     const lacking = new Map<string, CtAsset>();
     for (const s of scenes) for (const l of s.layers) if (l.type === "frame") for (const m of frameMissing(l, ctx)) lacking.set(m.id, m);
-    if (lacking.size) {
-      setError(`Template cần vật liệu cho: ${[...lacking.values()].map((m) => m.name).join(", ")}`);
-      createMaterial([...lacking.values()]);
-      return;
-    }
-    if (!(await ctConfirm({ title: `Dùng template “${pack.name}”?`, message: `Tạo ${scenes.length} tổ hợp với các version + thiết kế của sản phẩm này.`, confirmLabel: "Tạo" }))) return;
+    if (lacking.size) return setError(`Template cần vật liệu. ${materialHint([...lacking.values()])}`);
+    if (!(await ctConfirm({ title: `Dùng template “${pack.name}”?`, message: `Tạo ${scenes.length} mockup với các version + thiết kế của sản phẩm này.`, confirmLabel: "Tạo" }))) return;
     const created: CtAsset[] = [];
     try {
       for (const [i, s] of scenes.entries()) {
@@ -905,64 +897,11 @@ export function PreviewPanel(props: PreviewPanelProps) {
         const blob = await renderScene(s, await sceneArts(s, ctx));
         created.push(await ctApi.uploadAsset(props.productId, blob, { role: "mockup", name: s.name, meta: { scene: s } }));
       }
-      props.flash(`Đã tạo ${created.length} tổ hợp từ template “${pack.name}”`);
+      props.flash(`Đã tạo ${created.length} mockup từ template “${pack.name}”`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Render thất bại");
     } finally {
       props.onAdded(created);
-      setBusy(null);
-    }
-  };
-
-  /** AI material of the whole artwork (custom parts outside the main get the material too). */
-  const aiMaterial = async (f: CtPackFrameLayer) => {
-    const v = frameMain(f, ctx);
-    const materialId = renditionOf(assets, v.id)?.meta.material;
-    if (!materialId) return setError("Version này chưa có vật liệu — tạo vật liệu cho nó trước (để biết dùng vật liệu nào)");
-    setBusy("Lưu artwork phẳng…");
-    setError(null);
-    try {
-      const sel = frameSelection(f, ctx);
-      const canvas = await renderComposite({
-        main,
-        assets,
-        regions,
-        items,
-        selection: sel,
-        scale: 1,
-        layouts,
-      });
-      const [artwork] = await props.onSaveComposites([{ blob: await canvasToBlob(canvas, "image/png"), selection: sel }]);
-      if (!artwork) throw new Error("Không lưu được artwork");
-      setBusy("AI đang tạo vật liệu cho artwork…");
-      const runId = await ctApi.studioRun({
-        recipe: "artwork_material",
-        params: {
-          artwork_id: artwork.id,
-          material_id: materialId,
-          edge_px: 0,
-          extra: "",
-          model: "",
-          name: `${f.name} · vật liệu AI`,
-        },
-      });
-      for (;;) {
-        await new Promise((r) => window.setTimeout(r, 2500));
-        const st = await ctApi.studioRunStatus(runId);
-        if (st.status === "error") throw new Error(st.error ?? "AI lỗi");
-        if (st.status === "done") {
-          props.onAdded(st.assets);
-          patchLayer(f.id, {
-            artworkId: artwork.id,
-          } as Partial<CtPackFrameLayer>);
-          props.flash("Đã có vật liệu AI cho artwork — frame dùng bản này");
-          break;
-        }
-        setBusy(st.status === "queued" ? `AI: đang chờ${st.position ? ` (#${st.position})` : ""}…` : `AI: ${st.node ?? "đang chạy"}…`);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "AI thất bại");
-    } finally {
       setBusy(null);
     }
   };
@@ -985,9 +924,9 @@ export function PreviewPanel(props: PreviewPanelProps) {
 
   return (
     <div className="grid h-full grid-cols-[72px_1fr_320px] overflow-hidden">
-      {/* Saved tổ hợp, like the Version column: click = open it, + = a new blank one */}
+      {/* Saved mockups, like the Version column: click = open it, + = a new blank one */}
       <div className="flex min-h-0 flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden border-r bg-background p-1.5">
-        <span className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Tổ hợp</span>
+        <span className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Mockup</span>
         {numbered
           .filter(({ asset: m }) => m.meta.scene)
           .map(({ asset: m, number }) => (
@@ -1008,7 +947,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
             <div className="h-14 w-14 shrink-0 rounded-md border border-dashed bg-muted/40 ring-2 ring-sky-500" />
           </CtTooltip>
         )}
-        <CtTooltip label="Tổ hợp mới: mở 1 vùng edit trống (cùng kích thước)" side="right">
+        <CtTooltip label="Mockup mới: mở 1 vùng edit trống (cùng kích thước)" side="right">
           <button
             type="button"
             onClick={() => void newScene()}
@@ -1044,7 +983,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
             </CtTooltip>
           ))}
           <span className="mx-1 h-6 w-px bg-border" />
-          <CtTooltip label="Ảnh (nền, tay cầm, sticker…) từ thư viện ảnh tổ hợp — tải lên hoặc tạo bằng AI; mặc định phủ kín khung edit">
+          <CtTooltip label="Ảnh (nền, tay cầm, sticker…) từ thư viện ảnh mockup — chọn hoặc tải lên; mặc định phủ kín khung edit">
             <CtButton size="sm" onClick={addImageFrame} disabled={!!busy}>
               <ImagePlus className="h-3.5 w-3.5" /> Image frame
             </CtButton>
@@ -1144,7 +1083,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
           />
           {scene.layers.length === 0 && (
             <div className="pointer-events-none absolute inset-x-0 top-6 text-center text-xs text-muted-foreground">
-              Kéo các version ở trên vào (artwork đã có nội dung thiết kế) — thêm Nền, Image frame, Chữ → Lưu tổ hợp.
+              Kéo các version ở trên vào (artwork đã có nội dung thiết kế) — thêm Nền, Image frame, Chữ → Lưu mockup.
             </div>
           )}
         </div>
@@ -1152,22 +1091,23 @@ export function PreviewPanel(props: PreviewPanelProps) {
         {missing.length > 0 && (
           <div className="flex shrink-0 flex-wrap items-center gap-2 border-t bg-amber-500/10 px-3 py-2 text-xs">
             <span>
-              Chưa có vật liệu: <b>{missing.map((m) => m.name || "clipart").join(", ")}</b> — mockup luôn dùng bản vật liệu.
+              Chưa có vật liệu: <b>{missing.map((m) => m.name || "clipart").join(", ")}</b> — mockup luôn dùng bản vật liệu. Upload bản vật liệu trong Thư viện (nút “Upload vật liệu” trên
+              clipart gốc).
             </span>
-            <CtButton size="sm" onClick={() => createMaterial(missing)}>
-              <Sparkles className="h-3.5 w-3.5" /> Tạo vật liệu
-            </CtButton>
+            <a href="/library" target="_blank" rel="noreferrer" className="rounded-md border bg-background px-2 py-1 font-medium hover:bg-accent">
+              Mở Thư viện
+            </a>
           </div>
         )}
 
-        {/* Saved tổ hợp + templates + AI */}
+        {/* Saved mockups + templates */}
         <div className="shrink-0 border-t bg-background p-3">
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold">Tổ hợp đã lưu ({saved.length})</span>
+            <span className="text-xs font-semibold">Mockup đã lưu ({saved.length})</span>
             <span className="text-[11px] text-muted-foreground">Click để mở lại · tick để chọn</span>
             <span className="ml-auto flex items-center gap-1.5">
               {/* Templates ("Lưu làm template" / "Dùng template") are hidden for now. */}
-              <CtTooltip label="Mockup edit: khách chỉnh thiết kế ngay trên tổ hợp này (giữ y nguyên tổ hợp, vùng ảnh upload để trống)">
+              <CtTooltip label="Mockup edit: khách chỉnh thiết kế ngay trên mockup này (giữ y nguyên mockup, vùng ảnh upload để trống)">
                 <span className="text-xs font-medium">Mockup edit</span>
               </CtTooltip>
               <CtSelect
@@ -1176,7 +1116,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
                 onChange={chooseMockupEdit}
                 options={[{ value: "__none", label: "Không dùng" }, ...numbered.filter((n) => n.asset.meta.scene).map((n) => ({ value: n.asset.id, label: `#${n.number} ${n.asset.name}` }))]}
               />
-              <CtTooltip label={eye ? "Tắt xem trước" : "Xem trước mockup edit: tổ hợp y nguyên, vùng ảnh khách upload để trống"}>
+              <CtTooltip label={eye ? "Tắt xem trước" : "Xem trước mockup edit: mockup y nguyên, vùng ảnh khách upload để trống"}>
                 <span>
                   <CtButton size="icon" variant={eye ? "primary" : "ghost"} disabled={!mockupEdit} onClick={() => setEye((v) => !v)}>
                     {eye ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
@@ -1227,23 +1167,14 @@ export function PreviewPanel(props: PreviewPanelProps) {
                 </div>
               );
             })}
-            {saved.length === 0 && <p className="py-6 text-xs text-muted-foreground">Chưa có — làm xong vùng edit thì bấm “Lưu tổ hợp”.</p>}
+            {saved.length === 0 && <p className="py-6 text-xs text-muted-foreground">Chưa có — làm xong vùng edit thì bấm “Lưu mockup”.</p>}
           </div>
           {eye && eyeUrl && (
             <div className="mt-2 flex items-start gap-3 rounded-md border p-2">
               <img src={eyeUrl} alt="" className="max-h-64 rounded border" style={CHECKER_STYLE} />
               <p className="text-[11px] leading-snug text-muted-foreground">
-                Mockup edit trên store: y nguyên tổ hợp này (cùng vật liệu, dây treo), chỉ có vùng ảnh khách upload để trống. Khách đổi option, nhập chữ, upload ảnh là thấy ngay trên tổ hợp. Ảnh tổ hợp gốc (có ảnh mẫu) vẫn dùng làm ảnh sản phẩm. Pack nhiều thiết kế: mỗi khung hiện 1 thiết kế.
+                Mockup edit trên store: y nguyên mockup này (cùng vật liệu, dây treo), chỉ có vùng ảnh khách upload để trống. Khách đổi option, nhập chữ, upload ảnh là thấy ngay trên mockup. Ảnh mockup gốc (có ảnh mẫu) vẫn dùng làm ảnh sản phẩm. Pack nhiều thiết kế: mỗi khung hiện 1 thiết kế.
               </p>
-            </div>
-          )}
-          {saved.length > 0 && (
-            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-dashed px-3 py-2">
-              <span className="text-xs text-muted-foreground">Chưa hài lòng về chất lượng?</span>
-              <CtButton size="sm" variant="primary" onClick={() => setEnhanceOpen(true)}>
-                <Sparkles className="h-3.5 w-3.5" /> Tăng chất lượng với AI tạo ảnh
-              </CtButton>
-              <span className="text-[11px] text-muted-foreground">AI làm lại từng tổ hợp thành ảnh thật, lấy các tổ hợp khác (#1, #2…) làm tham khảo.</span>
             </div>
           )}
         </div>
@@ -1353,7 +1284,6 @@ export function PreviewPanel(props: PreviewPanelProps) {
               onFrameToImage={(l) => void frameToImage(l)}
               onFit={(l, fit) => void setFit(l, fit)}
               materials={materials}
-              onAiMaterial={(f) => void aiMaterial(f)}
             />
           ) : (
             <SceneSettings scene={scene} onRename={(name) => commit({ ...scene, name })} onResize={(w, h) => commit(resizeSlide(scene, w, h))} />
@@ -1365,7 +1295,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
             <Download className="h-3.5 w-3.5" /> Tải ảnh
           </CtButton>
           <CtButton variant="primary" className="w-full justify-center" onClick={() => void saveScene()} disabled={busy !== null || !scene.layers.length || missing.length > 0}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Lưu tổ hợp
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Lưu mockup
           </CtButton>
           {busy && <p className="text-[11px] text-muted-foreground">{busy}</p>}
           {error && <p className="text-[11px] text-destructive">{error}</p>}
@@ -1373,16 +1303,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
       </div>
 
       {/* Mounted per opening, so it starts fresh each time. */}
-      {libraryFor && <PackImageLibrary open onOpenChange={(o) => !o && setLibraryFor(null)} onPick={usePhoto} aspect={nearestAspect(scene.width, scene.height)} />}
-      <EnhanceDialog
-        open={enhanceOpen}
-        onOpenChange={setEnhanceOpen}
-        productId={props.productId}
-        items={numbered}
-        initial={picked.length ? picked : savedScenes.map((m) => m.id)}
-        onAdded={props.onAdded}
-        flash={props.flash}
-      />
+      {libraryFor && <PackImageLibrary open onOpenChange={(o) => !o && setLibraryFor(null)} onPick={usePhoto} />}
     </div>
   );
 }
@@ -1395,7 +1316,7 @@ function SceneSettings({ scene, onRename, onResize }: { scene: CtPackSlide; onRe
   return (
     <>
       <p className="text-xs font-semibold">Khung edit</p>
-      <CtField label="Tên tổ hợp">
+      <CtField label="Tên mockup">
         <CtInput key={scene.id} defaultValue={scene.name} onBlur={(e) => e.target.value.trim() && e.target.value !== scene.name && onRename(e.target.value.trim())} />
       </CtField>
       <div className="grid grid-cols-2 gap-2">
@@ -1432,7 +1353,6 @@ interface LayerSettingsProps {
   onFit: (l: CtPackImageLayer, fit: CtPackImageLayer["fit"]) => void;
   /** Material pictures of each version, by version id. */
   materials: Record<string, CtAsset[]>;
-  onAiMaterial: (f: CtPackFrameLayer) => void;
 }
 
 function LayerSettings(p: LayerSettingsProps) {
@@ -1624,18 +1544,10 @@ function LayerSettings(p: LayerSettingsProps) {
               </CtField>
             </div>
           )}
-          {layer.artworkId && renditionOf(p.assets, layer.artworkId) ? (
+          {layer.artworkId && renditionOf(p.assets, layer.artworkId) && (
             <CtButton size="sm" variant="ghost" className="w-full justify-center" onClick={() => p.onPatch({ artworkId: null } as Partial<CtPackFrameLayer>)}>
-              Đang dùng vật liệu AI · bỏ
+              Đang dùng vật liệu của cả artwork · bỏ
             </CtButton>
-          ) : (
-            <CtTooltip label="Khi phần custom vượt ra ngoài main: AI làm vật liệu cho cả artwork để viền / độ dày ôm đúng hình">
-              <span className="block">
-                <CtButton size="sm" className="w-full justify-center" onClick={() => p.onAiMaterial(layer)} disabled={p.busy}>
-                  <Sparkles className="h-3.5 w-3.5" /> Vật liệu AI cho artwork
-                </CtButton>
-              </span>
-            </CtTooltip>
           )}
           <p className="text-[11px] text-muted-foreground">Nội dung (chữ, ảnh, option) lấy từ tab Thiết kế — sửa ở đó, frame tự đổi theo.</p>
         </>

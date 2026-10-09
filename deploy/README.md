@@ -64,23 +64,15 @@ certbot --nginx -d flexiprint.next.lc -d flexiprint-api.next.lc --redirect --agr
 
 `client_max_body_size 500m` everywhere; `/api/` streams request bodies (no buffering) with 600 s timeouts.
 
-**Studio (ComfyUI, `services/comfy`)** runs under `/comfy/` on the same domain, with no extra DNS or
-certificate:
+The ComfyUI studio (`/comfy/`) and the photo-style service were removed: if an older server still has
+`/etc/nginx/conf.d/flexiprint-comfy-map.conf`, `/etc/nginx/snippets/flexiprint-comfy.locations` and the `include` of it in
+the 443 server block, delete them, `nginx -t && systemctl reload nginx`, then `docker compose up -d --remove-orphans`
+(drops the `comfy` / `photo-style` containers; `docker volume rm flexiprint_comfy-user flexiprint_comfy-output
+flexiprint_comfy-input` frees their volumes). `CT_COMFY_TOKEN`, `CT_STUDIO_SECRET`, `CT_STUDIO_URL`, `CT_STUDIO_USER_ID`
+and `CT_PHOTO_STYLE_URL` can go from `.env`.
 
-```bash
-cp deploy/nginx/flexiprint-comfy-map.conf /etc/nginx/conf.d/
-cp deploy/nginx/flexiprint-comfy.locations /etc/nginx/snippets/
-# in /etc/nginx/sites-available/flexiprint, inside the 443 server block, above `location / {`:
-#     include /etc/nginx/snippets/flexiprint-comfy.locations;
-nginx -t && systemctl reload nginx
-```
-
-- **App `.env`:**
-  - `CT_COMFY_TOKEN`, `CT_STUDIO_SECRET`: random, `openssl rand -hex 32`
-  - `CPA_API_KEY` (team image API) and `FAL_KEY`
-  - The editor's "Tạo bằng AI" can use the same API: `OPENAI_BASE_URL=https://cpa.next.lc/v1`,
-    `OPENAI_API_KEY=$CPA_API_KEY`, `OPENAI_EDITS_JSON=1`
-- **Memory:** ComfyUI needs about 450 MB idle (container limit 1.2 GB).
+- **App `.env`:** `CPA_API_KEY` (team image API) and/or `FAL_KEY` for the v2 bộ nhân vật, customer-photo AI styles
+  and the cut-out fallback.
 - **Health check:** `docker stats --no-stream`.
 
 ## 4. Cron

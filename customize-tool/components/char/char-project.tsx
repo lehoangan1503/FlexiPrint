@@ -62,7 +62,7 @@ export function CharProjectView({ projectId, currentUserId }: { projectId: strin
       setImages(r.images);
       if (first.current) {
         first.current = false;
-        setStep(r.project.status === "brief" ? (r.images.some((im) => im.kind === "master") ? "master" : "brief") : r.project.status === "master" ? "layers" : r.project.status === "layers" ? "layers" : "product");
+        setStep(r.project.status === "brief" ? (r.images.some((im) => im.kind === "master" && !im.role.startsWith("idea:")) ? "master" : "brief") : r.project.status === "master" ? "layers" : r.project.status === "layers" ? "layers" : "product");
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không tải được");

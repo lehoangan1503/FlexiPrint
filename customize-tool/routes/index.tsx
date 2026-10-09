@@ -17,7 +17,7 @@ import { CustomizeProductList } from "../components/product-list";
 import { CustomizeEditor } from "../components/editor/editor";
 import { DeployPage } from "../components/deploy/deploy-page";
 import { LibraryManager } from "../components/library/library-manager";
-import { StudioFrame } from "../components/studio/studio-frame";
+import { PrintTemplatesPage } from "../components/print/print-templates";
 import { CharList } from "../components/char/char-list";
 import { CharProjectView } from "../components/char/char-project";
 
@@ -55,16 +55,17 @@ export async function CustomizeDeployPage({ params }: { params: Promise<{ id: st
   return <DeployPage productId={id} />;
 }
 
+/** Khuôn in: the pieces products are printed on (components/print). */
+export async function CustomizePrintTemplatesPage() {
+  const session = await ctSession();
+  if (!session) redirect(CT_CONFIG.loginPath);
+  return <PrintTemplatesPage />;
+}
+
 export async function CustomizeLibraryPage() {
   const session = await ctSession();
   if (!session) redirect(CT_CONFIG.loginPath);
   return <LibraryManager />;
-}
-
-export async function CustomizeStudioPage() {
-  const session = await ctSession();
-  if (!session) redirect(CT_CONFIG.loginPath);
-  return <StudioFrame />;
 }
 
 export async function CharListPage() {

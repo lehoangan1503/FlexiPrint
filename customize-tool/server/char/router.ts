@@ -8,7 +8,7 @@ import { approveCharLayers, buildCharLayers, startEdits } from "./layers";
 import { cutRoute } from "./cut";
 import { createCharProduct } from "./product";
 import { makeCharMockups } from "./mockups";
-import { approveMaster, createCharProject, deleteCharProject, generateMasters, getCharProject, jsonError, listCharProjects, refineMaster, updateCharProject, uploadCharFile } from "./projects";
+import { adoptMaster, approveMaster, createCharProject, deleteCharProject, generateMasters, getCharProject, jsonError, listCharProjects, refineMaster, updateCharProject, uploadCharFile } from "./projects";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -40,6 +40,7 @@ export async function dispatchChar(req: NextRequest, s: CtSession, path: string[
   if (action === "files" && !sub) return uploadCharFile(s, id, await req.formData());
   if (action === "masters" && !sub) return generateMasters(s, id, await json(req));
   if (action === "masters" && sub && UUID.test(sub) && subAction === "refine") return refineMaster(s, id, sub, await json(req));
+  if (action === "masters" && sub && UUID.test(sub) && subAction === "adopt") return adoptMaster(s, id, sub);
   if (action === "approve" && !sub) return approveMaster(s, id, await json(req));
   if (action === "edits" && !sub) return startEdits(s, id, await json(req));
   if (action === "layers" && !sub) return buildCharLayers(s, id, await json(req));

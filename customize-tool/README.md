@@ -1,6 +1,6 @@
 # Customize Tool (2D)
 
-Tool dựng sản phẩm custom 2D kiểu Customily / Teeinblue: **main object** + các **vùng custom** + **sub object** có nhiều **version**. Có tạo asset bằng AI, xuất tổ hợp và tạo mockup AI (nhiều sản phẩm trong 1 ảnh).
+Tool dựng sản phẩm custom 2D kiểu Customily / Teeinblue: **main object** + các **vùng custom** + **sub object** có nhiều **version**. Clipart, đa sắc, vật liệu và ảnh mockup đều upload tay (công cụ tạo / sửa ảnh bằng AI của v1 đã bỏ); mockup dựng tay ở tab **Mockups**.
 
 Toàn bộ code nằm trong folder này. Host site chỉ có 3 file shim 1 dòng và 1 tab trên dashboard.
 
@@ -66,7 +66,6 @@ Tab dashboard: `src/app/dashboard/dashboard-client.tsx` → `view === "customize
    Key YEScale hiện tại không có model ảnh nên không dùng được cho phần này.
    Ảnh khách (vùng "Ảnh khách" → Xử lý ảnh khách):
    ```
-   CT_PHOTO_STYLE_URL=http://127.0.0.1:7002 # microservice services/photo-style — style vẽ bằng OpenCV, không AI, ~1 giây
    CT_BG_REMOVER_URL=http://127.0.0.1:7001  # microservice tự host services/bg-remover (rembg + BiRefNet) — miễn phí, khuyên dùng
    CT_MATERIAL_URL=http://127.0.0.1:7003    # services/material-render — file in + đường cắt laser (nút "Xuất file in" trong dialog Vật liệu & file in)
    # CT_BG_REMOVER_TOKEN=...     # nếu service đặt BG_TOKEN
@@ -76,13 +75,13 @@ Tab dashboard: `src/app/dashboard/dashboard-client.tsx` → `view === "customize
    # CT_PHOTO_AI_MODEL=...
    ```
    **Model tạo ảnh AI (trang Home)**: ô chọn cạnh "Tạo sản phẩm custom" — áp cho cả team (`ct_settings`, chạy
-   `migrations/020_settings.sql`): mọi lượt studio (clipart gốc / đa sắc / vật liệu / sửa — cả của @flexiprint) và
-   ảnh tổ hợp dùng model này; hỏng / hết credit thì tự thử model kế (`FP_FALLBACK_MODELS`). Mặc định
+   `migrations/020_settings.sql`): mọi ảnh AI của bộ nhân vật v2 (cả của @flexiprint) dùng model này; hỏng / hết
+   credit thì tự thử model kế. Mặc định
    `cpa:gpt-image-2.5` (API ảnh công ty, `CPA_API_KEY`); Nano Banana 2 / Nano Banana chạy trên fal (`FAL_KEY`).
    Danh sách: `lib/image-models.ts`. Style ảnh khách (AI tạo ảnh bên dưới) vẫn dùng model riêng của từng style.
 
    Style ảnh khách có 2 tab trong inspector:
-   - **Free**: Real photo · Oil painting (service photo-style) · Pixel art (lọc trên trình duyệt).
+   - **Free**: Real photo · Pixel art (lọc trên trình duyệt).
    - **AI tạo ảnh**: thư viện style chung `ct_ai_styles` (chạy `migrations/003_ai_photo_styles.sql`), mỗi style = prompt + model fal.ai + params, chạy bằng `FAL_KEY`.
      Mặc định `fal-ai/nano-banana/edit` (Gemini 2.5, $0.039/lượt, giống store đối thủ; lỗi/bị Google tắt thì server tự chạy lại bằng `fal-ai/nano-banana-2/edit` $0.08). Ai cũng xem/tạo; chỉ người tạo sửa/xoá style của mình; admin / superadmin sửa được tất cả.
      Vùng ảnh lưu style dạng `ai:<uuid>`; template publish chỉ chứa tên style — prompt/model không bao giờ ra storefront.
@@ -122,8 +121,8 @@ ct_products ─┬─ main_asset_id ──► ct_assets(main)
     - `mode` origin_set/variant_set
     - `spec` + `rules`: canvas, fill, anchor, nền, `lockSilhouette`, trục biến thể, style pack
   - `ct_product_mains`: main version lấy từ thư viện.
-  - `ct_presets`: style pack / vật liệu / scene.
-  - Role `rendition` = bản vật liệu AI.
+  - `ct_presets`: vật liệu (đặt tên cho bản vật liệu, luật dây treo cho mockup); style pack / scene cũ còn trong bảng.
+  - Role `rendition` = bản vật liệu (upload tay: “Upload vật liệu” trên clipart gốc ở `/library`).
   - Clipart đang được sản phẩm dùng thì không xoá được.
 - `ct_templates` (002): snapshot bất biến theo version, ghi bởi **Publish**; storefront đọc bản mới nhất.
 - Xoá product thì cascade toàn bộ. File trên Storage được API xoá trước.
@@ -148,7 +147,7 @@ ct_products ─┬─ main_asset_id ──► ct_assets(main)
 2. **Vùng custom**: vẽ bằng R (rect), O (ellipse), P (polygon, chấm điểm). Loại vùng:
    - **Custom layer** (tool L): thiết kế cố định của mình, **không phải option của khách** — store vẽ đúng ảnh đang chọn
      trong editor (`template.picks`), không hiện picker, không vào giỏ. Giống image frame: L (hoặc bấm vào 1 custom
-     layer trống) mở **thư viện ảnh tổ hợp** (tải ảnh mới / AI / chọn ảnh) → ảnh thành layer; kéo clipart từ tab
+     layer trống) mở **thư viện ảnh mockup** (tải ảnh mới / chọn ảnh) → ảnh thành layer; kéo clipart từ tab
      Thư viện vẫn như cũ. Inspector → "Đổi ảnh…".
    - Text / Ảnh khách = **option của khách**. Mỗi vùng có thể có **option con** (như "Thêm option" của version):
      khách chọn thêm 1 hàng (Choose color: Gold / Silver…). Option con của text đổi chữ (font, cỡ, màu, viền, uốn
@@ -174,13 +173,36 @@ ct_products ─┬─ main_asset_id ──► ct_assets(main)
 6. Tab **Xem trước**: đúng trang sản phẩm khách thấy trên Shopify — markup của `main-product.liquid`, CSS của theme và
    cùng class `Customizer` với storefront, chạy trên bản thiết kế hiện tại (kể cả chưa lưu). Vùng / option mới hiện ngay,
    không reset lựa chọn đang thử. Không sửa gì ở đây. Add to cart hiện danh sách line-item properties sẽ vào giỏ (không upload).
-   Tab **Tổ hợp & Mockup**: **Lưu tổ hợp** (1 / N random / N tổ hợp). Chọn nhiều tổ hợp rồi bấm **Tạo mockup AI**. Ảnh tổ hợp đi thẳng vào AI, không cần tải về.
+   Tab **Mockups**: dựng mockup tay (nền, image frame, version, chữ) → **Lưu mockup**; cần bản vật liệu của mọi clipart trong khung.
 
 7. **Deploy sản phẩm** (header) → trang `/products/:id/deploy`: chọn / tạo **bảng giá**, tên + mô tả + ảnh, rồi 1 nút
    deploy thẳng lên Shopify (template + sản phẩm + variants có giá). Xem mục Shopify bên dưới.
 
 Phím tắt (hover nút để thấy): V · H/Space · R · O · P · Enter · Esc · ⌘Z/⇧⌘Z · ⌘S · ⌘D · Delete · mũi tên (Shift = 10px).
 Với polygon: double-click cạnh để thêm điểm, Alt+click đỉnh để xoá điểm.
+
+## Khuôn in, artwork, mockup theo option (migration 024)
+
+Khuôn in (`/templates`, bảng `ct_print_templates`, `types/print.ts`, `lib/print-template.ts`) = phôi, không phải thiết kế:
+cỡ file in (px / mm / dpi), đường cắt, tràn lề, **safe zone**, phần cắt bỏ (lỗ treo), **vùng có tên** (ống quần, cạp…),
+**cỡ** (S…4XL, mỗi cỡ một tờ; vùng co giãn theo tờ). Ba loại: `flat` (ornament, tile, poster), `cut` (cắt theo viền
+artwork), `panels` (quần áo in toàn thân). Mẫu có sẵn được thêm lần đầu mở trang.
+
+- **Tạo sản phẩm từ khuôn** (`server/print-products.ts`): canvas = tờ in trong suốt, đường cắt + lỗ = khuôn vật liệu
+  (file in cắt theo nó), `config.print` = bản sao khuôn. Editor vẽ safe zone / vùng chồng lên, báo layer ngoài safe zone.
+- **Layer phủ vùng** (`config.fill`): một ảnh phủ kín (nền) hoặc hoa văn lặp (`tile` px) trong một vùng của khuôn; mỗi
+  cỡ vẽ vào vùng của cỡ đó (`lib/compositor.ts` `size`). **Chỉ in** (`config.printOnly`): có trong file in, không vẽ lên ảnh
+  mockup (nền mà ảnh sản phẩm đã có sẵn).
+- **Mockups tab**: ảnh mockup theo từng lựa chọn của layer chỉ in (`config.mockupsByOption` — storefront đổi ảnh khi khách
+  đổi nền, đặt phần còn lại của thiết kế lên ô) và **mockup tô vùng** cho quần áo (`config.zoneMockups`, `lib/zone-mockup.ts`:
+  tô hoa văn khách chọn vào từng vùng trên ảnh + nhân lại nếp vải, không uốn file in).
+- **Add to cart**: storefront dựng file in đủ cỡ (đúng cỡ khách chọn trên Shopify nếu khuôn có cỡ) → `_ct_print`.
+- **File in tab**: chọn cỡ; "Lưu artwork vào thư viện" = clipart gốc tag `artwork` (meta.artwork: product, lựa chọn).
+- **MCP** (`server/mcp/print-tools.ts`): `list_print_templates`, `get_print_template`, `create_artwork_product`,
+  `set_artwork_layers`, `check_artwork`, `render_artwork` (ảnh server-side bằng sharp để agent tự xem) — agent xếp clipart
+  thư viện theo toạ độ tờ in, không vẽ ảnh AI.
+- **v2**: brief chọn khuôn in → câu bố cục (`layoutHint`) vào prompt master; sản phẩm của bộ nhân vật dựng trên khuôn,
+  nhân vật + chữ nằm trong safe zone.
 
 ## Vật liệu (acrylic, sứ, nhôm, gỗ)
 
@@ -189,10 +211,9 @@ Vật liệu tách làm 2 phần:
 1. **Phôi vật lý**: dialog *Vật liệu & file in* (`print-dialog.tsx`, `config.material`) gồm loại phôi, viền cắt
    (`contour` = theo hình + `borderMm`, `main` = phôi là main object), `widthMm`, `thicknessMm`. Phần này chỉ
    dùng cho file in.
-2. **Bề ngoài vật liệu**: do AI vẽ, **không mô phỏng bằng canvas** nữa (đã bỏ `lib/material-render.ts`).
-   - Preset `material` trong `ct_presets` (acrylic trong/trắng, glitter, gỗ, nhôm, gốm) + node **FP Material**
-     trong Studio (ComfyUI) render từng clipart thành **rendition**.
-   - Rendition giữ đúng silhouette và kích thước: ép lại alpha gốc (khi bật `lockSilhouette`).
+2. **Bề ngoài vật liệu**: ảnh **rendition** upload tay cho từng clipart (`/library` → “Upload vật liệu”, chọn preset
+   `material` để đặt tên + phiên bản như “có dây”), **không mô phỏng bằng canvas**.
+   - Rendition nên cùng kích thước / vị trí với clipart gốc để thay vào đúng chỗ.
    - `config.material.display = "rendition"`: template publish vẽ rendition thay cho clipart phẳng
      (`lib/library.ts withRenditions`). Clipart chưa có rendition thì vẫn hiện bản phẳng.
    - File in luôn dùng art phẳng.
@@ -278,13 +299,13 @@ Upload chỉ nhận sản phẩm đã publish, ảnh PNG/JPEG/WebP ≤ 15MB; ch�
 
 ## Chưa làm (bước sau)
 
-- Version main bằng ComfyUI (hiện: upload hoặc AI).
 - Rate limit / dọn rác cho upload public (ảnh khách của giỏ bị bỏ dở; cache ảnh đã có TTL 24h).
 - Tự xuất file in khi có đơn (webhook Shopify → `_ct_selection` → render → material-render). Hiện: nút trong editor.
 - Chạy generation dạng job nền (hiện là request đồng bộ, tối đa ~120s).
 
 ## AI là plugin
 
-Không có `GEMINI_API_KEY` / `OPENAI_API_KEY` thì tool chạy thuần upload, mọi nút AI (Tạo bằng AI, Version AI, Tạo mockup AI, tab Tham chiếu) tự ẩn. Thêm key rồi restart là bật.
+Phần dựng sản phẩm v1 chạy thuần upload. AI còn lại: style AI cho ảnh khách (`FAL_KEY`), tách nền dự phòng
+(`GEMINI_API_KEY` / `OPENAI_API_KEY`), content Shopify và bộ nhân vật v2 (@flexiprint, model ảnh của team).
 
-Toàn bộ phần AI nằm ở `server/ai/` và `components/editor/generate-dialog.tsx`. Thêm provider mới = thêm 1 object vào `PROVIDERS` trong `server/ai/providers.ts`.
+Phần AI phía server nằm ở `server/ai/` (`photo.ts`, `fal-style.ts`, `providers.ts`) và `server/pack-images.ts` (`drawImage`, dùng cho v2).

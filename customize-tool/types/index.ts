@@ -150,14 +150,13 @@ export type CtTextFormat = "text" | "date";
 
 /**
  * Free (no-AI) photo styles. "original" keeps the photo; "pixel" is a local
- * canvas filter; "oil" runs on the photo-style microservice (OpenCV).
- * lib/photo-styles.ts has the catalog.
+ * canvas filter. lib/photo-styles.ts has the catalog.
  */
-export type CtPhotoStyleId = "original" | "oil" | "pixel" | "face" | "face_bw" | "face_sepia" | "face_vivid" | "face_warm";
+export type CtPhotoStyleId = "original" | "pixel" | "face" | "face_bw" | "face_sepia" | "face_vivid" | "face_warm";
 
 /**
  * Which kind of styles a photo zone offers — the inspector's tabs. Families never mix:
- *   free  no-AI filters ("original", "oil", "pixel"), customer picks
+ *   free  no-AI filters ("original", "pixel"), customer picks
  *   ai    exactly one AI style
  *   face  face-detect crop + colour filter ("face*"), customer picks
  */
@@ -358,6 +357,27 @@ export interface CtRegionConfig {
   materialFrame?: boolean;
   /** Khuôn vật liệu: parts cut out of the piece (a hanging hole), artboard px. */
   cuts?: CtShape[];
+  /**
+   * Image layer that FILLS its outline instead of placing a picture in it (types/print.ts): a pattern repeated over
+   * a pair of trousers' legs, a background covering the whole piece. `zone`: the khuôn in zone it follows — each
+   * size of the piece draws it in that size's zone.
+   */
+  fill?: CtFillConfig;
+  /**
+   * Drawn in the print file only, never on the product photo (mockup): the background the photo already shows —
+   * each of its options shows its own mockup (CtProductConfig.mockupsByOption).
+   */
+  printOnly?: boolean;
+}
+
+/** How a fill layer covers its outline. */
+export interface CtFillConfig {
+  /** tile: the picture repeated, `tile` px wide · cover: one picture covering the outline (cropped). */
+  mode: "tile" | "cover";
+  /** Tile width in canvas px (tile mode). */
+  tile: number;
+  /** The khuôn in zone this layer fills (types/print.ts CtPrintZone.id). */
+  zone?: string;
 }
 
 /**
@@ -440,6 +460,10 @@ export interface CtAsset {
 }
 
 export interface CtAssetMeta {
+  /** A product's canvas made from a khuôn in (server/print-products.ts): a transparent sheet. */
+  printSheet?: boolean;
+  /** A library artwork (saved from a product): what it was made of, to open / reuse it. */
+  artwork?: { productId: string; selection: CtSelection; templateId: string | null };
   /** For composites: which variant/text was chosen per region. */
   selection?: CtSelection;
   /** Colour shown when the option group uses the "swatch" display. */
@@ -509,19 +533,6 @@ export interface CtFrameCut {
   art: CtMainFrame;
   clip: [number, number][];
   cuts: [number, number][][];
-}
-
-/** A product's khuôn vật liệu a library clipart can be made "theo khuôn" with (step 3 of Tạo bằng AI). */
-export interface CtClipartFrame {
-  productId: string;
-  productName: string;
-  regionId: string;
-  regionName: string;
-  /** The khuôn's box on the artboard (artboard px). */
-  box: CtBounds;
-  /** The outline (for a thumbnail), in box-relative 0..1 coordinates. */
-  outline: [number, number][];
-  cut: CtFrameCut;
 }
 
 export interface CtAssetVariantLine {
@@ -616,8 +627,8 @@ export interface CtMainFrame {
 /**
  * The physical product the design is printed on (lib/materials.ts) — drives
  * the print files (services/material-render: print.png, white ink, cut.svg).
- * The LOOK of a material is AI-rendered (ComfyUI studio → renditions), not
- * simulated here.
+ * The LOOK of a material is a rendition picture of each clipart (uploaded in
+ * /library), not simulated here.
  *   none            flat artwork, as designed
  *   acrylic_white   cut acrylic with a white backing (car visor clip, standee)
  *   acrylic_clear   clear acrylic — the scene shows through the plate border
@@ -683,6 +694,34 @@ export interface CtProductConfig {
   samples: CtSelection;
   /** "Mockup edit" (Tổ hợp tab): the storefront canvas shows this scene with the live design in its product frames. */
   mockupEdit: CtMockupEdit | null;
+  /** The khuôn in the product was made on (a copy, types/print.ts); null = a product drawn on its own picture. */
+  print: CtProductPrint | null;
+  /**
+   * The product photo per option of a print-only layer (a background colour): layer id → option asset id → scene.
+   * The storefront shows that photo with the design (minus print-only layers) placed on it.
+   */
+  mockupsByOption: Record<string, Record<string, CtProductScene>>;
+  /** Product photos that recolour named zones (clothes): see CtZoneMockup. */
+  zoneMockups: CtZoneMockup[];
+}
+
+/**
+ * A product photo whose named zones are repainted with what the customer picks (trousers on a table): each zone of
+ * the khuôn in has its outline on the photo; a fill layer's pattern is drawn into it and the photo's own light and
+ * folds are multiplied back over it (lib/zone-mockup.ts). No flat print file is bent onto the photo.
+ */
+export interface CtZoneMockup {
+  id: string;
+  name: string;
+  url: string;
+  width: number;
+  height: number;
+  /** khuôn zone id → its outline on the photo (photo px). */
+  zones: Record<string, CtShape>;
+  /** Pattern tile width on the photo, px (how big the print looks on it). */
+  tile: number;
+  /** How strongly the photo's shading shows through (0–1). */
+  shading: number;
 }
 
 /**
@@ -1056,8 +1095,6 @@ export interface CtCategoryBody {
   spec: string;
   rules: CtCategoryRules;
   sort_order?: number;
-  /** The "Cập nhật bằng AI" round this save applies (ct_category_history) — linked in the save's history row. */
-  revision_id?: string | null;
 }
 
 export interface CtUpdateClipartBody {
@@ -1147,148 +1184,6 @@ export interface CtPreset {
   created_at: string;
   updated_at: string;
   can_edit?: boolean;
-}
-
-/**
- * A style pack / material the category assistant wants: an existing preset of the library when one fits
- * (reuseId — nothing is created), otherwise a new one (name + prompt).
- */
-export interface CtSuggestedPreset {
-  name: string;
-  prompt: string;
-  /** An existing preset that fits — pick it instead of creating a new one. */
-  reuseId: string | null;
-  /** Why it was reused / why nothing in the library fits (Vietnamese, short). */
-  reason: string;
-}
-
-/**
- * POST ai/prompt-suggest: a whole category from a note + reference images — name, spec, and the style pack,
- * materials and product details, reused from the library when they fit (server/ai/library-tools.ts).
- */
-export interface CtPromptSuggestion {
-  name: string;
-  spec: string;
-  style: CtSuggestedPreset;
-  /** Materials read from the references / asked for in the note (acrylic, glitter…); empty when none. */
-  materials: CtSuggestedPreset[];
-  /** Chi tiết thành phẩm read from the references / the note (hole, cord, clip…); empty when none. */
-  details: CtMaterialSpec[];
-  /** Die-cut along the clipart (alpha) or a fixed-shape product cut by a khuôn (frame) — read from the note / photos. */
-  shape: CtProductShape;
-  /** Per detail: the category whose wording it reuses, or null when written new. */
-  detailSources: Array<string | null>;
-  /** What was reused and what is new, for the editor (Vietnamese). */
-  summary: string;
-  /** Per reference image (same order as sent): "design" shows the artwork to draw, "product" the finished physical product. */
-  refRoles: CtRefRole[];
-  /** The review of the drafted prompts; its fixes are already in spec / style / materials / details. */
-  review: CtPromptReview | null;
-}
-
-export type CtRefRole = "design" | "product";
-
-/** POST ai/details-suggest: a category's chi tiết thành phẩm read from a description + photos of the product. */
-export interface CtDetailsSuggestion {
-  details: CtMaterialSpec[];
-}
-
-/** POST ai/preset-prompt: a style pack / material prompt written from a description + reference images. */
-export interface CtPresetPromptSuggestion {
-  name: string;
-  prompt: string;
-  /** Material: what becomes of the artwork. (`specs`: older analyses — details are the category's now.) */
-  specs?: CtMaterialSpec[];
-  art?: CtMaterialArt;
-  /** The analysis as recorded (absent when the history table is missing). */
-  history?: CtPresetHistoryEntry;
-}
-
-/** POST ai/refine-suggest: the editor's feedback on generated cliparts, turned into an edit + optional spec / style rewrites. */
-export interface CtRefineSuggestion {
-  /** Vietnamese: what will change / stay and why (shown to the editor). */
-  summary: string;
-  /** English: everything the request doesn't touch, which FP Refine must keep exactly. */
-  keep: string;
-  /**
-   * English instruction FP Refine applies to EVERY selected clipart: the shared change, written as the end
-   * state each one must have (one that already has it keeps it) — never naming a single image.
-   */
-  edit: string;
-  /** Per selected image (same order as sent): its own fixes and its own description. */
-  images: CtRefineImagePlan[];
-  /** Full rewritten category spec, or null when the request isn't category-wide. */
-  spec: string | null;
-  /** Full rewritten style-pack prompt, or null when the drawing style is fine. */
-  style: string | null;
-}
-
-/** One clipart in a refine plan. */
-export interface CtRefineImagePlan {
-  name: string;
-  /** English: fixes for THIS clipart only (what the editor said about it, or what it needs to reach the shared end state); "" = none. */
-  edit: string;
-  /** English: this clipart's own identity (model, colour scheme, livery, distinctive parts) — saved as its spec. */
-  spec: string;
-}
-
-export interface CtRefineSuggestBody {
-  fix: string;
-  /** Generated cliparts the feedback is about, in the dialog's order: a copy with its number (#1…) drawn on, name, own spec (may be empty). */
-  images: Array<{ image: Blob; name: string; spec: string }>;
-  /** Photos of the part to change (e.g. the helmet wanted), or cliparts of the set that came out right. */
-  refs: Blob[];
-  /** Per ref: the clipart's name when it is a clipart of this set, "" for a photo. */
-  refNames: string[];
-  category: { name: string; usage: CtCategoryUsage; mode: CtCategoryMode; spec: string } | null;
-  style: { name: string; prompt: string } | null;
-  updateSpec: boolean;
-  updateStyle: boolean;
-}
-
-export interface CtPresetBody {
-  kind: CtPresetKind;
-  name: string;
-  prompt: string;
-  reference_asset_ids: string[];
-  params: CtPresetParams;
-  sort_order?: number;
-  /** Create: analyses made in the dialog before the preset existed — linked to it (ct_preset_history). */
-  history_ids?: string[];
-}
-
-export type CtPresetHistoryEvent = "analysis" | "save";
-
-/** What an analysis wrote, or what a save stored. */
-export interface CtPresetHistoryResult {
-  name: string;
-  prompt: string;
-  specs?: CtMaterialSpec[];
-  art?: CtMaterialArt;
-  /** Save: the preset's params as stored. */
-  params?: CtPresetParams;
-}
-
-/**
- * One step of how a style pack / material came to be (migration 008): an AI analysis of the editor's
- * description + photos, or a save. Context for people and agents working on the preset later.
- */
-export interface CtPresetHistoryEntry {
-  id: string;
-  preset_id: string | null;
-  user_id: string | null;
-  kind: "style_pack" | "material";
-  event: CtPresetHistoryEvent;
-  /** The editor's description at that point. */
-  note: string;
-  /** The reference photos it was made from (public urls). */
-  ref_urls: string[];
-  /** Analysis: the name / prompt it started from. */
-  input: { name?: string; prompt?: string };
-  result: CtPresetHistoryResult;
-  /** Analysis: the LLM that wrote it. */
-  model: string;
-  created_at: string;
 }
 
 /** GET library/cliparts */
@@ -1453,8 +1348,6 @@ export interface CtAiProviderInfo {
 export interface CtPhotoCapabilities {
   /** An AI provider is configured. */
   ai: boolean;
-  /** The photo-style microservice is configured (CT_PHOTO_STYLE_URL). */
-  styleService: boolean;
   /** Subject cut-out works (FAL_KEY matting, or the AI fallback). */
   cutout: boolean;
   /** AI styles can run (FAL_KEY is set). */
@@ -1468,262 +1361,8 @@ export interface CtApiError {
 }
 
 // ---------------------------------------------------------------------------
-// AI dialog → ComfyUI recipes (server/studio.ts, services/comfy/.../recipes.py)
+// Category history (migration 010): saves (older rows also hold AI revisions)
 // ---------------------------------------------------------------------------
-
-/** The four standard AI jobs. Main vs element comes from the category's usage. */
-export type CtStudioRecipe = "origin" | "variant" | "material" | "mockup";
-
-/** One line of a set: "name: text" in the studio nodes. */
-export interface CtStudioLine {
-  name: string;
-  /** origin: what to draw · variant: "#hex" / CSS colour (recolour) or a change for the AI. */
-  text: string;
-  /** Variant lines: recolor = pixel recolour, no AI, free · ai = AI edit. Omitted = `method`. */
-  mode?: "recolor" | "ai";
-  /** Origin lines: photos of the object to draw (POST studio/refs → ComfyUI input names). */
-  refs?: string[];
-  /** Variant lines: the member this line remakes (its origin was fixed) — saved as the new one's meta.derivedFrom. */
-  replaces?: string;
-}
-
-/** Per-run overrides of the category rules; 0 / omitted = the category's value. */
-export interface CtStudioRulesOverride {
-  canvas_w?: number;
-  canvas_h?: number;
-  fill?: number;
-  anchor?: CtCategoryAnchor;
-}
-
-/** "category" = the category's background rule (cutout → BiRefNet, transparent → keep alpha, none → no cut-out). */
-export type CtStudioCutout = "category" | "white" | "birefnet" | "keep";
-export type CtStudioVariantMethod = "auto" | "recolor" | "ai_edit_locked" | "ai_edit";
-export type CtStudioLock = "preset" | "on" | "off";
-
-export interface CtStudioOriginParams {
-  category_id: string;
-  /** null = the category's default style pack. */
-  style_pack_id: string | null;
-  /** Material look in the same generation: null = the category's default, "none" = flat, else a material preset id. */
-  material_id: string | null;
-  /** Extra material notes for this run (added to the chosen / default material). */
-  material_extra: string;
-  /** One rendition of every new origin per material preset (FP Material on the flat clipart). */
-  material_ids?: string[];
-  note: string;
-  subjects: CtStudioLine[];
-  model: string;
-  chain_reference: boolean;
-  cutout: CtStudioCutout;
-  rules: CtStudioRulesOverride;
-  tags: string[];
-}
-
-/** Edit cliparts already made: change only what `instruction` says (FP Refine), save as new origins. */
-export interface CtStudioRefineParams {
-  /**
-   * edit: this clipart's own fixes on top of `instruction`; spec: its own description (kept, saved as its spec);
-   * parent_id: a set member (variant / colour version) — the edit is saved as a member of that origin;
-   * materials: material presets to render the edited clipart in again (its category's materials).
-   */
-  targets: Array<{ clipart_id: string; name: string; edit?: string; spec?: string; parent_id?: string | null; materials?: string[] }>;
-  /** Material look: omitted / null = each clipart's category default, "none" = flat, else a material preset id. */
-  material_id?: string | null;
-  /** Extra material notes for this edit. */
-  material_extra?: string;
-  /** English edit instruction (from POST ai/refine-suggest, editable). */
-  instruction: string;
-  /** English keep-list: what must stay exactly the same. */
-  keep: string;
-  /** Photos of the part to change (POST studio/refs → ComfyUI input names). */
-  refs: string[];
-  model: string;
-  cutout: CtStudioCutout;
-}
-
-/** Free fixes (FP Adjust, no AI): recolour and / or mirror cliparts, each saved back in its place. */
-export interface CtStudioAdjustParams {
-  /** renditions: its material versions, given the same fix and saved as the new one's (material = their preset). */
-  targets: Array<{
-    clipart_id: string;
-    name: string;
-    spec?: string;
-    parent_id?: string | null;
-    renditions?: Array<{ id: string; name: string; material: string | null }>;
-    /** Older single-rendition form. */
-    rendition_id?: string | null;
-    rendition_name?: string;
-    material?: string | null;
-  }>;
-  /** "#rrggbb" — "" keeps the colour. */
-  recolor: string;
-  flip: boolean;
-}
-
-export interface CtStudioVariantParams {
-  clipart_id: string;
-  /** Several origins, the same lines for each (one run). Absent = clipart_id only. */
-  clipart_ids?: string[];
-  variants: CtStudioLine[];
-  method: CtStudioVariantMethod;
-  /** AI lines re-apply the origin's alpha (same outline pixel for pixel). */
-  lock_silhouette: boolean;
-  model: string;
-}
-
-export interface CtStudioMaterialParams {
-  material_id: string;
-  /** `frame`: made "theo khuôn" — the clipart cut to a product's khuôn vật liệu before the material is drawn. */
-  targets: Array<{ clipart_id: string; name: string; frame?: CtStudioFrameTarget }>;
-  lock: CtStudioLock;
-  edge_px: number;
-  extra: string;
-  model: string;
-}
-
-export interface CtStudioFrameTarget {
-  cut: CtFrameCut;
-  meta: CtRenditionFrame;
-}
-
-export interface CtStudioMockupParams {
-  artwork_id: string;
-  material_id: string | null;
-  edge_px: number;
-  scene_id: string;
-  extra: string;
-  model: string;
-  name: string;
-}
-
-/** A saved artwork → its AI material version (product rendition of the composite): the material follows the whole outline. */
-export interface CtStudioArtworkMaterialParams {
-  artwork_id: string;
-  material_id: string;
-  edge_px: number;
-  extra: string;
-  model: string;
-  name: string;
-}
-
-/** One tổ hợp to remake, by its number in the set ("#2"). */
-export interface CtStudioEnhanceItem {
-  number: number;
-  /** studio/refs name of its picture. */
-  ref: string;
-  /** Name of the new mockup. */
-  name: string;
-  /** Instructions for this one only. */
-  prompt: string;
-}
-
-/** Tổ hợp → "Tăng chất lượng với AI": each item is re-rendered photoreal, the other pictures ride along as references. */
-export interface CtStudioMockupEnhanceParams {
-  product_id: string;
-  model: string;
-  /** Instructions for every item. */
-  prompt: string;
-  items: CtStudioEnhanceItem[];
-  /** Every picture the prompts may point at ("#n"), items included. */
-  refs: Array<{ number: number; ref: string }>;
-}
-
-export type CtStudioRunBody =
-  | { recipe: "origin"; params: CtStudioOriginParams }
-  | { recipe: "refine"; params: CtStudioRefineParams }
-  | { recipe: "adjust"; params: CtStudioAdjustParams }
-  | { recipe: "variant"; params: CtStudioVariantParams }
-  | { recipe: "material"; params: CtStudioMaterialParams }
-  | { recipe: "mockup"; params: CtStudioMockupParams }
-  | { recipe: "artwork_material"; params: CtStudioArtworkMaterialParams }
-  | { recipe: "mockup_enhance"; params: CtStudioMockupEnhanceParams };
-
-export type CtStudioRunState = "queued" | "running" | "done" | "error";
-
-/** GET studio/runs/:id */
-export interface CtStudioRunStatus {
-  status: CtStudioRunState;
-  /** Place in ComfyUI's queue while queued. */
-  position?: number;
-  /** FP node running now (FP_OriginGenerate…). */
-  node?: string | null;
-  error?: string;
-  /** What the run saved so far: library cliparts, or product mockups. */
-  assets: CtAsset[];
-}
-
-// ---------------------------------------------------------------------------
-// Category revision ("Cập nhật bằng AI") + history (migration 010)
-// ---------------------------------------------------------------------------
-
-/**
- * What the revision does with a style pack / material: keep it, switch to another one of the library,
- * edit its prompt, add a new one, or (materials) drop it from the category.
- */
-export type CtReviseAction = "keep" | "switch" | "edit" | "new" | "remove";
-
-export interface CtRevisePreset {
-  action: CtReviseAction;
-  /** The preset the category uses now (null: an addition). */
-  currentId: string | null;
-  /** "switch": the library preset to use instead. */
-  targetId: string | null;
-  /** The resulting name / full prompt (keep / remove: the current one). */
-  name: string;
-  prompt: string;
-  /** The current prompt, for the diff ("" for an addition). */
-  before: string;
-  /** Vietnamese: why. */
-  why: string;
-  /** Other categories using the current preset — an edit changes them too. */
-  usedByOthers: string[];
-}
-
-/** What a new reference photo of the revision is kept as. */
-export type CtReviseRefRole = "design" | "product" | "none";
-
-/** POST ai/category-revise: the editor's feedback (+ numbered results, photos) → what to change in the category. */
-export interface CtCategoryRevision {
-  /** Vietnamese: what is wrong, on which images, and which layer causes it. */
-  diagnosis: string;
-  /** @flexiprint only — Vietnamese: what it did (tests run, what they showed, what is left uncertain). */
-  summary?: string;
-  /** Full merged spec, or null to keep it. */
-  spec: { text: string; why: string } | null;
-  style: CtRevisePreset;
-  materials: CtRevisePreset[];
-  /** The full new details list, or null to keep it. */
-  details: { list: CtMaterialSpec[]; why: string } | null;
-  /** Per new reference photo (same order as sent). */
-  refRoles: CtReviseRefRole[];
-  /** Its ct_category_history row (null without migration 010). */
-  historyId: string | null;
-  /** The review of the prompts as they will be after this revision (server/ai/prompt-review.ts); its fixes are already folded in. */
-  review: CtPromptReview | null;
-}
-
-export type CtReviewLayer = "spec" | "style" | "material" | "details" | "productRefs";
-
-/** One problem the prompt review found in the assembled prompts. */
-export interface CtReviewIssue {
-  layer: CtReviewLayer;
-  /** Material handle / photo number, or "". */
-  target: string;
-  severity: "high" | "low";
-  /** Vietnamese. */
-  problem: string;
-  fix: string;
-  /** The review changed that layer (the change is in the plan). */
-  fixed: boolean;
-}
-
-/** The final check of a category's prompts, assembled the way the image models receive them. */
-export interface CtPromptReview {
-  issues: CtReviewIssue[];
-  /** Product photos that contradict the details — removed from rules.productRefs when applied. */
-  dropProductRefs: string[];
-  model: string;
-}
 
 export type CtCategoryHistoryEvent = "revise" | "save";
 
@@ -1747,21 +1386,20 @@ export interface CtCategoryHistoryEntry {
   image_urls: string[];
   /** Revise: the category before. Save: { revision_id }. */
   input: Partial<CtCategorySnapshot> & { revision_id?: string | null };
-  /** Revise: the AI's plan (CtCategoryRevision). Save: the saved category (CtCategorySnapshot). */
-  result: CtCategoryRevision | CtCategorySnapshot;
+  /** Save: the saved category. Revise (older rows): the AI's plan as it was then. */
+  result: CtCategorySnapshot | Record<string, unknown>;
   model: string;
   created_at: string;
 }
 
 // ---------------------------------------------------------------------------
-// Agent tasks (migration 011): the category dialog's AI work done by the @flexiprint agent on agent_ide
+// Agent tasks (migration 011): work done by the @flexiprint agent on agent_ide
 // ---------------------------------------------------------------------------
 
-/** "create" → CtPromptSuggestion; "revise" → CtCategoryRevision (an empty note = review only). */
-/** pack_image = "Tạo ảnh với AI" of the thư viện ảnh tổ hợp (input.pack, result CtPackImageResult). */
 /** content = "Tạo content với FlexiPrint" of the Deploy page (input.content, result CtContentResult). */
 /** char = a step of a v2 bộ nhân vật (input.char, result CtCharTaskResult — types/char.ts). */
-export type CtAgentTaskKind = "create" | "revise" | "pack_image" | "content" | "char";
+/** (Older rows may hold the removed kinds create / revise / pack_image; they are no longer listed or run.) */
+export type CtAgentTaskKind = "content" | "char";
 
 /** waiting = the agent asked the editor something (ask_user) and ended its turn until they answer. */
 export type CtAgentTaskStatus = "pending" | "running" | "waiting" | "done" | "failed" | "cancelled";
@@ -1769,9 +1407,9 @@ export type CtAgentTaskStatus = "pending" | "running" | "waiting" | "done" | "fa
 export interface CtAgentTaskProgress {
   at: string;
   text: string;
-  /** Images to show with the line (a studio run's results). */
+  /** Images to show with the line. */
   images?: string[];
-  /** note = the agent's own line (report_progress); run = a studio run started / finished; question / answer = ask_user. */
+  /** note = the agent's own line (report_progress); run = an image made; question / answer = ask_user. */
   kind?: "note" | "run" | "question" | "answer";
 }
 
@@ -1794,30 +1432,25 @@ export interface CtAgentQuestion {
   answer: { choices: string[]; text: string; at: string } | null;
 }
 
-/** A studio run the agent started for a task (migration 013). */
+/** A studio run an agent task started (migration 013; the studio is gone — older rows only). */
 export interface CtAgentTaskRun {
   run_id: string;
   recipe: string;
-  /** What it makes, for the editor ("vật liệu: police car"). */
+  /** What it made, for the editor ("vật liệu: police car"). */
   label: string;
-  status: CtStudioRunState;
+  status: "queued" | "running" | "done" | "error";
   started_at: string;
   finished_at: string | null;
   asset_ids: string[];
   error: string;
 }
 
-/** What the dialog hands over — the same things it sends the built-in LLM, as urls. */
+/** What a task hands over. The category fields are left over from the removed category tasks (sent empty). */
 export interface CtAgentTaskInput {
-  /** The category as the dialog has it (saved or not). Create: name / spec typed so far. */
   category: CtCategorySnapshot & { id: string | null };
   note: string;
-  /** Result images the editor looked at, numbered #1… in this order. */
   images: Array<{ url: string; label: string }>;
-  /** Reference photos the editor added (uploaded first). */
   refUrls: string[];
-  /** pack_image: what to make (the category fields are then empty). */
-  pack?: CtPackImageTaskInput;
   /** content: the product to write the Shopify title + description for. */
   content?: CtContentTaskInput;
   /** char: the bộ nhân vật and the step the agent does for it. */
@@ -1849,38 +1482,6 @@ export interface CtContentResult {
   descriptionHtml: string;
 }
 
-/**
- * A photo sent back to keep editing ("Chỉnh tiếp"), with the editor's request for THAT photo. The note outranks the
- * general description for its photo and applies to nothing else; the agent must answer every one (submit_result
- * refuses a result without an edit of each photo that has a note).
- */
-export interface CtPackImageBase {
-  id: string;
-  url: string;
-  name: string;
-  note: string;
-}
-
-/** A pack_image task's request. */
-export interface CtPackImageTaskInput {
-  /** The general request (may be empty when every photo sent back has its own note). */
-  description: string;
-  aspect: CtPackImageAspect;
-  /** Photos to keep editing, each with its own note. */
-  bases?: CtPackImageBase[];
-  /** The bộ ảnh it belongs to (migration 017): its requests are one conversation with the agent. */
-  collectionId?: string | null;
-  /** LEGACY (tasks before several photos): the one photo to keep editing — read through packBases(). */
-  baseId: string | null;
-  baseUrl: string;
-}
-
-/** What @flexiprint hands back for a pack_image task: the photos it kept (ct_pack_images ids). */
-export interface CtPackImageResult {
-  summary: string;
-  imageIds: string[];
-}
-
 export interface CtAgentTask {
   id: string;
   user_id: string | null;
@@ -1891,7 +1492,7 @@ export interface CtAgentTask {
   progress: CtAgentTaskProgress[];
   runs: CtAgentTaskRun[];
   questions: CtAgentQuestion[];
-  result: CtPromptSuggestion | CtCategoryRevision | CtPackImageResult | CtContentResult | CtCharTaskResult | null;
+  result: CtContentResult | CtCharTaskResult | null;
   error: string;
   agent_job_id: string;
   agent_session_id: string;
@@ -1909,13 +1510,9 @@ export interface CtAgentStatus {
   error: string;
 }
 
-/** Aspect ratios "Tạo ảnh với AI" offers (thư viện ảnh tổ hợp). */
-export type CtPackImageAspect = "1:1" | "4:5" | "3:4" | "2:3" | "4:3" | "3:2" | "16:9" | "9:16";
-
 /**
- * A photo of the thư viện ảnh tổ hợp (ct_pack_images, migration 015): uploaded, or made by AI from the editor's
- * description + reference photos — FlexiPrint writes the prompt, the image model draws it. An AI row is also the
- * history entry of that generation (running → done | failed).
+ * A photo of the thư viện ảnh mockup (ct_pack_images, migration 015): uploaded by hand. Older rows were made by AI
+ * (source "ai": description, prompt, refs… kept as they are).
  */
 export interface CtPackImage {
   id: string;
@@ -1947,15 +1544,6 @@ export interface CtPackImage {
   listed: boolean;
   /** The bộ ảnh it was made in. */
   collection_id: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-/** A bộ ảnh of the thư viện ảnh tổ hợp (ct_pack_collections, migration 017): a named AI conversation. */
-export interface CtPackCollection {
-  id: string;
-  user_id: string | null;
-  name: string;
   created_at: string;
   updated_at: string;
 }
@@ -2130,4 +1718,6 @@ export interface CtShopifyInfo {
 }
 
 import type { CtCharTaskInput, CtCharTaskResult } from "./char";
+import type { CtProductPrint } from "./print";
 export * from "./char";
+export * from "./print";

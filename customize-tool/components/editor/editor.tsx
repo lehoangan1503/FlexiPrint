@@ -42,7 +42,7 @@ import {
 } from "lucide-react";
 import { CT_CONFIG, ctGoogleFontsHref } from "../../config";
 import { CT_BASE_OPTION, CT_MAIN_KEY } from "../../types";
-import type { CtAsset, CtMainFrame, CtMainOptionConfig, CtPackImage, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection, CtShape, CtStudioRecipe, CtZoneParent, CtRegionKind } from "../../types";
+import type { CtAsset, CtMainFrame, CtMainOptionConfig, CtPackImage, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection, CtShape, CtZoneParent, CtRegionKind } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import {
   defaultProductConfig,
@@ -63,22 +63,22 @@ import { CHECKER_STYLE, CtAutoWidthInput, CtButton, CtTooltip, CtTooltipProvider
 import { Stage, type EditTarget, type StageTool } from "./stage";
 import { Inspector } from "./inspector";
 import { AssetPanel } from "./asset-panel";
+import { PrintMockups } from "../print/print-mockups";
 import { PreviewPanel } from "./preview-panel";
 import { SceneDialog } from "./scene-dialog";
 import { StorefrontPreview } from "./storefront-preview";
 import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zoneOptionView } from "./use-design";
-import { nearestAspect, PackImageLibrary } from "./pack-image-library";
+import { PackImageLibrary } from "./pack-image-library";
 import { PrintDialog } from "./print-dialog";
 import { PrintPanel } from "./print-panel";
 import { CLIPART_DRAG, type CtClipartDrag, type CtClipartSetEntry } from "./library-panel";
 import { ClipartPickerDialog } from "./clipart-picker";
-import { CtAiDialog, type CtAiTarget } from "../studio/ai-dialog";
 import { ctConfirm } from "../dialogs";
 import { asLayerClipart, asMainOption, asVersion } from "../../lib/library";
 import { claimSharedLayers, cloneLayers, fitMainFrame, mainFrameFor, versionLayers } from "../../lib/layout";
 import { frameRegionFor, isMaterialFrame } from "../../lib/material-frame";
 
-/** Thiết kế = edit · Xem trước = the real storefront page · File in = the flat print file · Tổ hợp & Mockup = composites + AI mockups. */
+/** Thiết kế = edit · Xem trước = the real storefront page · File in = the flat print file · Mockups = hand-made product mockups. */
 type View = "design" | "preview" | "print" | "mockup";
 
 
@@ -141,7 +141,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const [nameDraft, setNameDraft] = useState("");
   const router = useRouter();
   /**
-   * The thư viện ảnh tổ hợp is open for a custom layer: `regionId` null = a new layer (tool L), else that layer's
+   * The thư viện ảnh mockup is open for a custom layer: `regionId` null = a new layer (tool L), else that layer's
    * picture (an empty layer clicked, or "Đổi ảnh").
    */
   const [layerLibrary, setLayerLibrary] = useState<{ regionId: string | null } | null>(null);
@@ -172,9 +172,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
 
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  /** Tổ hợp → "tạo bản vật liệu" (components/studio/ai-dialog.tsx) and a bump that reloads the Thư viện tab. */
-  const [ai, setAi] = useState<CtAiTarget | null>(null);
-  const [libraryVersion, setLibraryVersion] = useState(0);
   /** The "copy layers from version" list (right column) is folded for this product. */
   const [copyPanelOff, setCopyPanelOff] = useState(false);
   /** "Thêm option": pick sub-options of this version among its own clipart set. */
@@ -300,7 +297,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
 
   // ---------------------------------------------------------------- design samples (config.samples)
   // What the designer chose / typed / uploaded in every version's layers is kept on the product (never published),
-  // so the Tổ hợp frames draw the finished artwork. Test photos are blob: URLs here — stored once on the way out.
+  // so the Mockups frames draw the finished artwork. Test photos are blob: URLs here — stored once on the way out.
   const samplesLoaded = useRef(false);
   const savedSamples = useRef<{ json: string; samples: CtSelection }>({ json: "{}", samples: {} });
   const samplesJob = useRef<Promise<void>>(Promise.resolve());
@@ -404,7 +401,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     setSelectedRegionId(region.id);
     setActiveItemId(null);
     setDrawKind("text");
-    flash("Đã đặt khuôn vật liệu — file in cắt theo khuôn; tạo vật liệu “theo khuôn” ở Thư viện → Tạo bằng AI → bước 3");
+    flash("Đã đặt khuôn vật liệu — file in cắt theo khuôn; bản vật liệu “theo khuôn” upload ở Thư viện → Upload vật liệu");
   };
 
   /** A part cut out of khuôn `regionId` (a hanging hole). */
@@ -421,7 +418,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   };
 
   /**
-   * Custom layer (tool L) — like an image frame: pick its picture in the thư viện ảnh tổ hợp (upload a new one
+   * Custom layer (tool L) — like an image frame: pick its picture in the thư viện ảnh mockup (upload a new one
    * there, or AI); the layer is made around it, centred. A library clipart can be dragged onto the canvas instead.
    */
   const addCustomLayer = () => {
@@ -480,7 +477,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     router.push(`${CT_CONFIG.basePath}/${product.id}/deploy`);
   };
 
-  /** A photo of the thư viện ảnh tổ hợp becomes this product's picture (a sub asset) in a custom layer. */
+  /** A photo of the thư viện ảnh mockup becomes this product's picture (a sub asset) in a custom layer. */
   const applyLayerImage = async (img: CtPackImage) => {
     const target = layerLibrary;
     setLayerLibrary(null);
@@ -696,20 +693,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
 
   const setScene = (scene: CtProductScene) => ed.commit((s) => ({ ...s, config: { ...s.config, scene } }));
 
-  /** Mockup pack view: open the material recipe on the cliparts a mockup still lacks (one family). */
-  const createMaterialFor = (cliparts: CtAsset[]) => {
-    const first = cliparts[0];
-    if (!first) return;
-    const originId = first.parent_id ?? first.id;
-    const origin = assets.find((a) => a.id === originId) ?? first;
-    setAi({
-      recipe: "material",
-      clipart: origin,
-      family: assets.filter((a) => a.id === originId || a.parent_id === originId),
-      targetIds: cliparts.map((c) => c.id),
-    });
-  };
-
   /** Mockups are deleted without the usage checks of removeAsset (the panel asks first). */
   const deleteMockup = async (asset: CtAsset) => {
     try {
@@ -721,17 +704,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   };
 
   const setMainConfig = (patch: Partial<CtMainOptionConfig>) => ed.commit((s) => ({ ...s, config: { ...s.config, main: { ...s.config.main, ...patch } } }));
-
-  /** Members / renditions of cliparts this product uses join its bundle at once; mockups too. */
-  const onAiSaved = (saved: CtAsset[], recipe: CtStudioRecipe) => {
-    setLibraryVersion((v) => v + 1);
-    flash(`AI: đã lưu ${saved.length} ảnh${recipe === "mockup" ? " vào sản phẩm" : " vào thư viện"}`);
-    setAssets((list) => {
-      const have = new Set(list.map((a) => a.id));
-      const join = saved.filter((a) => !have.has(a.id) && (recipe === "mockup" || (a.parent_id !== null && have.has(a.parent_id))));
-      return join.length ? [...list, ...join] : list;
-    });
-  };
 
   /** A library clipart is never deleted from here: the product just stops using it. */
   const unlinkLibraryAsset = async (asset: CtAsset) => {
@@ -753,45 +725,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     } catch (e) {
       flash(e instanceof Error ? e.message : "Gỡ thất bại");
     }
-  };
-
-  /**
-   * A library clipart this product may use was replaced by its edited version (refine / "Sửa nhanh" → "Thay bản
-   * cũ"). The server already re-pointed the saved product; the open design follows, so the next save keeps it.
-   */
-  const swapLibraryAsset = (old: CtAsset, next: CtAsset) => {
-    if (!assets.some((a) => a.id === old.id)) return;
-    // Its material versions were drawn from the old art and are gone; its set members now belong to the new one.
-    setAssets((list) =>
-      list
-        .filter((a) => !(a.parent_id === old.id && a.role === "rendition"))
-        .map((a) => (a.id === old.id ? next : a.parent_id === old.id ? { ...a, parent_id: next.id } : a)),
-    );
-    design.commit((s) => {
-      const layouts = { ...s.config.layouts };
-      if (layouts[old.id]) {
-        layouts[next.id] = layouts[old.id];
-        delete layouts[old.id];
-      }
-      return {
-        ...s,
-        items: s.items.map((i) => (i.asset_id === old.id ? { ...i, asset_id: next.id } : i)),
-        regions: s.regions.map((r) => {
-          const hidden = r.config?.image?.hiddenAssetIds;
-          let out = hidden?.includes(old.id) ? { ...r, config: { ...r.config, image: { ...r.config.image, hiddenAssetIds: hidden.map((x) => (x === old.id ? next.id : x)) } } } : r;
-          // A layer of the replaced main version follows it.
-          if (out.config?.mainId === old.id) out = { ...out, config: { ...out.config, mainId: next.id } };
-          return out;
-        }),
-        config: { ...s.config, layouts },
-      };
-    });
-    if (product?.main_asset_id === old.id) setProduct({ ...product, main_asset_id: next.id, thumbnail_url: next.url });
-    setSelection((sel) => {
-      const out: CtSelection = {};
-      for (const [k, v] of Object.entries(sel)) out[k] = (v.kind === "image" || v.kind === "main") && v.assetId === old.id ? { ...v, assetId: next.id } : v;
-      return out;
-    });
   };
 
   /** A main version leaves the product: its own layers go with it. */
@@ -1188,26 +1121,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     }
   };
 
-  const saveComposites = async (list: Array<{ blob: Blob; selection: CtSelection }>): Promise<CtAsset[]> => {
-    if (!product) return [];
-    const created: CtAsset[] = [];
-    try {
-      for (const [i, c] of list.entries()) {
-        // Customer photo blob: URLs mean nothing outside this tab.
-        const sel: CtSelection = {};
-        for (const [k, v] of Object.entries(c.selection)) sel[k] = v.kind === "photo" ? { ...v, url: null } : v;
-        created.push(
-          await ctApi.uploadAsset(product.id, c.blob, { role: "composite", name: `Tổ hợp ${assets.filter((a) => a.role === "composite").length + i + 1}`, meta: { selection: sel } }),
-        );
-      }
-      setAssets((a) => [...a, ...created]);
-    } catch (e) {
-      setAssets((a) => [...a, ...created]);
-      flash(e instanceof Error ? e.message : "Lưu artwork thất bại");
-    }
-    return created;
-  };
-
   const renameProduct = async (name: string) => {
     if (!product) return;
     const clean = name.trim();
@@ -1299,7 +1212,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               ["design", "Thiết kế"],
               ["preview", "Xem trước"],
               ["print", "File in"],
-              ["mockup", "Tổ hợp"],
+              ["mockup", "Mockups"],
             ] as Array<[View, string]>
           ).map(([v, label]) => (
             <button
@@ -1352,7 +1265,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           <AssetPanel
             assets={assets}
             mainAssetId={product.main_asset_id}
-            libraryVersion={libraryVersion}
             onDelete={removeAsset}
             onSetMain={setMain}
             onRename={rename}
@@ -1512,6 +1424,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     }}
                     onEmptyLayerClick={(regionId) => setLayerLibrary({ regionId })}
                     materialFrame={materialFrame}
+                    printSpec={config.print?.spec ?? null}
                     drawInto={
                       cutFor
                         ? { label: "Vẽ vùng cắt bỏ (lỗ đục…) trên khuôn — không in, vật liệu để trống", onShape: (shape) => addFrameCut(cutFor, shape) }
@@ -1553,10 +1466,22 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               material={config.material}
               selection={selection}
               onOpenSettings={() => setMaterialOpen(true)}
+              print={config.print}
             />
           ) : view === "preview" ? (
             main ? null : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
           ) : main ? (
+            <div className="flex h-full min-h-0 flex-col">
+            <PrintMockups
+              config={config}
+              regions={allRegions}
+              items={allItems}
+              assets={assets}
+              selection={selection}
+              design={{ width: main.width, height: main.height }}
+              onConfig={(patch) => design.commit((st) => ({ ...st, config: { ...st.config, ...patch } }))}
+            />
+            <div className="min-h-0 flex-1">
             <PreviewPanel
               productId={product.id}
               main={main}
@@ -1566,14 +1491,14 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               regions={allRegions}
               items={allItems}
               samples={selection}
-              onSaveComposites={saveComposites}
               onAdded={(created) => setAssets((a) => [...a, ...created.filter((c) => !a.some((x) => x.id === c.id))])}
-              onCreateMaterial={createMaterialFor}
               onDelete={deleteMockup}
               flash={flash}
               mockupEdit={config.mockupEdit}
               onMockupEdit={(mockupEdit) => design.commit((s) => ({ ...s, config: { ...s.config, mockupEdit } }))}
             />
+            </div>
+            </div>
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
           )}
@@ -1624,6 +1549,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               onPickLayerImage={(regionId) => setLayerLibrary({ regionId })}
               onAddChild={addChildZone}
               onDrawCut={startFrameCut}
+              print={config.print}
               onSampleText={(regionId, text) =>
                 setSelection((sel) => {
                   const cur = sel[regionId];
@@ -1683,7 +1609,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         )}
       </div>
 
-      <CtAiDialog target={ai} onClose={() => setAi(null)} onSaved={onAiSaved} onReplaced={swapLibraryAsset} />
       <ClipartPickerDialog
         version={optionsFor}
         disabledIds={new Set([...mains.map((m) => m.id), ...config.main.subOptions.flatMap((e) => e.ids), ...allItems.map((i) => i.asset_id)])}
@@ -1712,7 +1637,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           open
           onOpenChange={(o) => !o && setLayerLibrary(null)}
           onPick={(img) => void applyLayerImage(img)}
-          aspect={nearestAspect(main.width, main.height)}
         />
       )}
     </div>

@@ -7,8 +7,8 @@
  * 3a and 3b are independent (the edits can run while the backdrop is reviewed).
  */
 
-import { useMemo, useState } from "react";
-import { Bot, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Bot, CheckCircle2, ChevronLeft, ChevronRight, Loader2, RefreshCw } from "lucide-react";
 import type { CtCharImage } from "../../types";
 import { planEdits } from "../../lib/char-plan";
 import { latestEditsOf } from "../../lib/char-images";
@@ -83,12 +83,26 @@ function EditsSection(ctx: CharCtx) {
   const plan = useMemo(() => planEdits(project.brief), [project.brief]);
   const latest = latestEditsOf(images);
   const [request, setRequest] = useState("");
-  const [zoom, setZoom] = useState<CtCharImage | null>(null);
+  const [zoomRole, setZoomRole] = useState<string | null>(null);
   const done = plan.filter((e) => latest.get(e.role)?.status === "done").length;
   const missing = plan.length - done;
   const running = plan.some((e) => latest.get(e.role)?.status === "running");
   const busy = ctx.agent.busy;
   const working = ctx.agent.task?.input.char?.step === "edits";
+  // The viewer steps through the finished edits in the grid's order (‹ › or the arrow keys).
+  const viewable = plan.map((e) => latest.get(e.role)).filter((im): im is CtCharImage => im?.status === "done");
+  const at = viewable.findIndex((im) => im.role === zoomRole);
+  const zoom = at >= 0 ? viewable[at] : null;
+  const step = (d: number) => viewable.length && setZoomRole(viewable[(at + d + viewable.length) % viewable.length].role);
+  useEffect(() => {
+    if (!zoom) return;
+    const kd = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") step(-1);
+      if (e.key === "ArrowRight") step(1);
+    };
+    window.addEventListener("keydown", kd);
+    return () => window.removeEventListener("keydown", kd);
+  });
 
   /** @flexiprint writes the prompts, runs them and checks the results (roles: only those; none = what is missing). */
   const run = async (roles?: string[]) => {
@@ -123,7 +137,7 @@ function EditsSection(ctx: CharCtx) {
           const d = im ? shift(im) : null;
           return (
             <div key={e.role} className="overflow-hidden rounded-lg border">
-              <button className="block aspect-square w-full bg-white" disabled={im?.status !== "done"} onClick={() => im && setZoom(im)}>
+              <button className="block aspect-square w-full bg-white" disabled={im?.status !== "done"} onClick={() => im && setZoomRole(im.role)}>
                 {im?.status === "done" ? (
                   // eslint-disable-next-line @next/next/no-img-element -- our R2 WebP preview
                   <img src={im.thumb_url || im.url} alt={e.label} className="h-full w-full object-contain" />
@@ -172,11 +186,23 @@ function EditsSection(ctx: CharCtx) {
           );
         })}
       </div>
-      <CtModal open={!!zoom} onOpenChange={(o) => !o && setZoom(null)} title={zoom?.note || zoom?.role || ""} wide>
+      <CtModal open={!!zoom} onOpenChange={(o) => !o && setZoomRole(null)} title={zoom ? `${zoom.note || zoom.role} · ${at + 1}/${viewable.length}` : ""} wide>
         {zoom && (
           <div className="space-y-2">
-            {/* eslint-disable-next-line @next/next/no-img-element -- the original */}
-            <img src={zoom.url} alt="edit" className="mx-auto max-h-[70vh] w-auto object-contain" style={CHECKER_STYLE} />
+            <div className="relative">
+              {/* eslint-disable-next-line @next/next/no-img-element -- the original */}
+              <img src={zoom.url} alt="edit" className="mx-auto max-h-[70vh] w-auto object-contain" style={CHECKER_STYLE} />
+              {viewable.length > 1 && (
+                <>
+                  <button className="absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-background/80 p-2 shadow hover:bg-background" onClick={() => step(-1)} title="Ảnh trước (←)">
+                    <ChevronLeft className="h-6 w-6" />
+                  </button>
+                  <button className="absolute right-1 top-1/2 -translate-y-1/2 rounded-full bg-background/80 p-2 shadow hover:bg-background" onClick={() => step(1)} title="Ảnh sau (→)">
+                    <ChevronRight className="h-6 w-6" />
+                  </button>
+                </>
+              )}
+            </div>
             {zoom.prompt && <pre className="whitespace-pre-wrap rounded bg-muted/50 p-2 text-[11px]">{zoom.prompt}</pre>}
           </div>
         )}

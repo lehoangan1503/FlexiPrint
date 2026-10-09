@@ -8,6 +8,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   CornerDownRight,
   ArrowDown,
   ArrowUp,
@@ -31,6 +32,8 @@ import {
   HelpCircle,
 } from "lucide-react";
 import { CT_FONTS } from "../../config";
+import type { CtProductPrint } from "../../types/print";
+import { fillShape, LayerPrintSection, outsideSafe } from "../print/layer-print-section";
 import type {
   CtAsset,
   CtTextFormat,
@@ -58,7 +61,7 @@ import type {
 import { CT_BASE_OPTION } from "../../types";
 import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, orientedBox, resolvePhotoFrame, shapeBounds } from "../../lib/geometry";
 import { useImageSize } from "./use-image-size";
-import { defaultRegionSelection, formOrder, hasTestPhoto, isLinkedLayer, isValidDate, linkMismatches, normalizeRegion, textMode, variantsOf, ZONE_TEXT_STYLE_KEYS, zoneSubtree } from "../../lib/design";
+import { defaultRegionSelection, formOrder, hasTestPhoto, isLinkedLayer, isValidDate, linkMismatches, makeRegion, normalizeRegion, textMode, variantsOf, ZONE_TEXT_STYLE_KEYS, zoneSubtree } from "../../lib/design";
 import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
 import { PhotoGuideDialog } from "./photo-guide-dialog";
 import { aiStyleModel } from "../../lib/ai-style-models";
@@ -97,7 +100,7 @@ export interface InspectorProps {
   onToggleOverlay: () => void;
   /** Show an option on the canvas. */
   onPreviewOption: (regionId: string, assetId: string) => void;
-  /** The text a text zone shows on the canvas (and in the Tổ hợp samples). */
+  /** The text a text zone shows on the canvas (and in the Mockups samples). */
   onSampleText: (regionId: string, text: string) => void;
   onSetSwatch: (asset: CtAsset, color: string) => void;
   /** Customer-photo zones: try a local photo on the canvas (not saved). */
@@ -109,7 +112,7 @@ export interface InspectorProps {
   mainSelected: boolean;
   onSelectMain: () => void;
   onMainFrame: (f: CtMainFrame) => void;
-  /** A custom layer's picture from the thư viện ảnh tổ hợp (upload / AI / pick), replacing what it holds. */
+  /** A custom layer's picture from the thư viện ảnh mockup (upload / pick), replacing what it holds. */
   onPickLayerImage: (regionId: string) => void;
   /** Show (and edit) a text / photo zone as one of its sub-options; null = its own look. */
   onZoneOption: (regionId: string, optionId: string | null) => void;
@@ -117,6 +120,8 @@ export interface InspectorProps {
   onAddChild: (parent: CtZoneParent, kind: CtRegionKind) => void;
   /** Draw a part cut out of khuôn vật liệu `regionId` (a hanging hole) with a frame tool. */
   onDrawCut: (regionId: string, tool: "rect" | "ellipse" | "polygon") => void;
+  /** The khuôn in the product is made on: placement / fill / print-only per layer, the safe zone check. */
+  print?: CtProductPrint | null;
 }
 
 /** "Choose state: Texas" — the option a child zone belongs to. */
@@ -171,6 +176,28 @@ export function Inspector(props: InspectorProps) {
       return { ...s, regions: list.map((r, k) => ({ ...r, sort_order: k })) };
     });
 
+  /** A new fill layer on the khuôn in: a background covering the piece, or a pattern in its first zone. */
+  const addFill = (mode: "cover" | "tile") => {
+    const print = props.print;
+    if (!print) return;
+    const zone = mode === "tile" ? print.spec.zones[0]?.id : undefined;
+    const base = makeRegion(regions[0]?.product_id ?? "", "image", fillShape(print, zone), regions.length);
+    const mainId = regions.find((r) => r.config.mainId)?.config.mainId;
+    const r: CtRegion = {
+      ...base,
+      name: mode === "cover" ? "Nền" : `Hoa văn ${print.spec.zones[0]?.name ?? ""}`.trim(),
+      config: { ...base.config, ...(mainId ? { mainId } : {}), aboveMain: true, fill: { mode, tile: Math.round(print.spec.width / 6), ...(zone ? { zone } : {}) } },
+    };
+    // A background goes under everything; a pattern on top of the other fills.
+    design.commit((st) => {
+      const list = [...st.regions].sort((a, b) => a.sort_order - b.sort_order);
+      const at = mode === "cover" ? list.findIndex((x) => !x.config.materialFrame) : list.length;
+      list.splice(at < 0 ? list.length : at, 0, r);
+      return { ...st, regions: list.map((x, k) => ({ ...x, sort_order: k })) };
+    });
+    props.onSelectRegion(r.id);
+  };
+
   const remove = (id: string) => {
     // Its child zones go with it.
     const gone = zoneSubtree(regions, id);
@@ -195,6 +222,16 @@ export function Inspector(props: InspectorProps) {
           </button>
         </CtTooltip>
       </div>
+      {props.print && (
+        <div className="flex flex-wrap gap-1 border-b px-2 py-1.5">
+          <button className="rounded border px-2 py-0.5 text-[11px] hover:bg-accent" title="Layer phủ kín cả miếng (nền) — chọn ảnh nền ở bên dưới" onClick={() => addFill("cover")}>
+            + Nền phủ
+          </button>
+          <button className="rounded border px-2 py-0.5 text-[11px] hover:bg-accent" title="Layer hoa văn lặp trong một vùng của khuôn (quần áo)" onClick={() => addFill("tile")}>
+            + Hoa văn vùng
+          </button>
+        </div>
+      )}
       <div className="max-h-[32%] overflow-y-auto border-b">
         {ordered.length === 0 && (
           <p className="px-3 py-4 text-xs text-muted-foreground">Chưa có vùng nào. Chọn công cụ R / O / P rồi vẽ lên version.</p>
@@ -262,6 +299,13 @@ export function Inspector(props: InspectorProps) {
               ) : (
                 <span className="flex-1 truncate" onDoubleClick={(e) => { e.stopPropagation(); setRenaming(r.id); }}>
                   {r.name}
+                  {outsideSafe(props.print ?? null, r) && (
+                    <span title="Ngoài safe zone — có thể bị cắt khi in">
+                      <AlertTriangle className="ml-1 inline h-3 w-3 text-amber-500" />
+                    </span>
+                  )}
+                  {r.config.fill && <span className="ml-1 text-[10px] text-muted-foreground">{r.config.fill.mode === "tile" ? "hoa văn" : "phủ"}</span>}
+                  {r.config.printOnly && <span className="ml-1 text-[10px] text-muted-foreground">chỉ in</span>}
                 </span>
               )}
               {renaming !== r.id && (
@@ -460,6 +504,7 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
           </CtField>
         ))}
       </div>
+      {props.print && <LayerPrintSection region={region} print={props.print} onChange={(next) => set(() => next)} />}
       {region.kind === "photo" && region.config.photo.frame.enabled && (
         <ZoneTiltField
           region={region}
@@ -741,7 +786,6 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
   };
 
   const warn = [
-    caps && styles.includes("oil") && !caps.styleService && !caps.ai ? "Oil painting cần service photo-style (CT_PHOTO_STYLE_URL) hoặc GEMINI_API_KEY / OPENAI_API_KEY." : "",
     caps && styles.some(isAiStyleRef) && !caps.aiStyles ? "Style AI cần FAL_KEY trên server." : "",
     caps && cfg.photo.cutout && !caps.cutout ? "Tách nền cần CT_BG_REMOVER_URL, FAL_KEY hoặc 1 AI provider." : "",
     caps && tab === "face" && !caps.faceDetect ? "Face cần service face-detect (CT_FACE_DETECT_URL)." : "",
@@ -1268,7 +1312,7 @@ function MaterialFrameProps({ design, region, onDrawCut }: InspectorProps & { re
         checked={on}
         onChange={setOn}
         label="Khuôn vật liệu (hình dạng sản phẩm)"
-        hint="Sản phẩm có hình cố định (ornament tròn, cái quần…): file in cắt theo viền layer này; vật liệu “theo khuôn” (Thư viện → Tạo bằng AI → bước 3) = clipart cắt theo khuôn, mọi clipart ra cùng kích thước. Không bật = vật liệu theo alpha của clipart (acrylic cắt theo hình)."
+        hint="Sản phẩm có hình cố định (ornament tròn, cái quần…): file in cắt theo viền layer này; bản vật liệu “theo khuôn” = clipart cắt theo khuôn (upload ở Thư viện → “Upload vật liệu”), mọi clipart cùng kích thước. Không bật = vật liệu theo alpha của clipart (acrylic cắt theo hình)."
       />
       {on && (
         <>
@@ -1363,7 +1407,7 @@ function ImageProps(props: InspectorProps & { region: CtRegion }) {
           : "1 ảnh = layer cố định (khách không chọn). Thêm ảnh (kéo cả bộ từ tab Thư viện, hoặc bật ảnh ẩn) để khách chọn."}
       </p>
       <CtButton size="sm" className="w-full" onClick={() => props.onPickLayerImage(region.id)}>
-        <ImageIcon className="h-3.5 w-3.5" /> {items.length ? "Đổi ảnh…" : "Chọn ảnh…"} (thư viện ảnh tổ hợp / upload)
+        <ImageIcon className="h-3.5 w-3.5" /> {items.length ? "Đổi ảnh…" : "Chọn ảnh…"} (thư viện ảnh mockup / upload)
       </CtButton>
 
       <LinkedLayerField {...props} region={region} />

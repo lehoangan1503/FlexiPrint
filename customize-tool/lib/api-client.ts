@@ -5,16 +5,11 @@
 import { CT_CONFIG } from "../config";
 import type { CtImageModel } from "./image-models";
 import type {
-  CtCategoryHistoryEntry,
-  CtPackCollection,
   CtPackImage,
-  CtPackImageAspect,
   CtAgentStatus,
   CtAgentTask,
   CtAgentTaskInput,
   CtAgentTaskKind,
-  CtCategoryRevision,
-  CtCategorySnapshot,
   CtAiProviderInfo,
   CtAiStyle,
   CtAiStyleBody,
@@ -25,21 +20,13 @@ import type {
   CtAssetSource,
   CtCategoryBody,
   CtClipartCategory,
-  CtClipartFrame,
   CtClipartUsage,
   CtMaterialConfig,
   CtPhotoCapabilities,
   CtMockupPack,
   CtMockupPackBody,
   CtPreset,
-  CtPresetBody,
   CtPresetKind,
-  CtDetailsSuggestion,
-  CtPresetHistoryEntry,
-  CtPresetPromptSuggestion,
-  CtPromptSuggestion,
-  CtRefineSuggestBody,
-  CtRefineSuggestion,
   CtDeployBody,
   CtDeployResponse,
   CtPriceTable,
@@ -52,8 +39,6 @@ import type {
   CtProductListRow,
   CtPublishResponse,
   CtSaveDesignBody,
-  CtStudioRunBody,
-  CtStudioRunStatus,
   CtUpdateAssetBody,
   CtUpdateClipartBody,
   CtUpdateProductBody,
@@ -202,8 +187,6 @@ export const ctApi = {
   /** Material pictures of a clipart: vật liệu versions, their đa sắc, vật liệu of its đa sắc. */
   clipartMaterials: (id: string) => call<{ cliparts: CtAsset[] }>(`library/cliparts/${id}/materials`).then((r) => r.cliparts),
   clipartUsage: (id: string) => call<{ usage: CtClipartUsage[] }>(`library/cliparts/${id}/usage`).then((r) => r.usage),
-  /** Khuôn vật liệu of the products showing a gốc as a version — to make its vật liệu "theo khuôn". */
-  clipartFrames: (id: string) => call<{ frames: CtClipartFrame[] }>(`library/cliparts/${id}/frames`).then((r) => r.frames),
   /** Move a product clipart (with its versions) into the library. */
   promoteAsset: (id: string, categoryId: string | null) =>
     call<{ assets: CtAsset[] }>(`assets/${id}/promote`, json("POST", { category_id: categoryId })).then((r) => r.assets),
@@ -215,11 +198,10 @@ export const ctApi = {
   createPack: (body: CtMockupPackBody) => call<{ pack: CtMockupPack }>("library/packs", json("POST", body)).then((r) => r.pack),
   updatePack: (id: string, body: CtMockupPackBody) => call<{ pack: CtMockupPack }>(`library/packs/${id}`, json("PATCH", body)).then((r) => r.pack),
   deletePack: (id: string) => call<void>(`library/packs/${id}`, { method: "DELETE" }),
-  /** Thư viện ảnh tổ hợp: newest first; scope "mine" = my uploads, "ai" = AI-made (with history). */
-  listPackImages: (scope: "all" | "mine" | "ai" = "all", q = "", collection: string | null = null) => {
+  /** Thư viện ảnh mockup: newest first; scope "mine" = my uploads. */
+  listPackImages: (scope: "all" | "mine" = "all", q = "") => {
     const params = new URLSearchParams({ scope });
     if (q) params.set("q", q);
-    if (collection) params.set("collection", collection);
     return call<{ images: CtPackImage[] }>(`library/pack-images?${params}`).then((r) => r.images);
   },
   getPackImage: (id: string) => call<{ image: CtPackImage }>(`library/pack-images/${id}`).then((r) => r.image),
@@ -230,35 +212,7 @@ export const ctApi = {
     form.append("name", name);
     return call<{ image: CtPackImage }>("library/pack-images", { method: "POST", body: form }).then((r) => r.image);
   },
-  /**
-   * Starts a direct generation (status "running"): poll getPackImage. `refs` = library urls, `files` = new reference
-   * photos; `prompt` = drawn as written (else a one-shot LLM writes it); `parentId` = the photo it edits (sent first).
-   */
-  generatePackImage: (body: {
-    description: string;
-    aspect: CtPackImageAspect;
-    refs: string[];
-    files: Blob[];
-    prompt?: string;
-    parentId?: string | null;
-    transparent?: boolean;
-    collectionId?: string | null;
-  }) => {
-    const form = new FormData();
-    form.append("description", body.description);
-    form.append("aspect", body.aspect);
-    form.append("refs", JSON.stringify(body.refs));
-    if (body.prompt) form.append("prompt", body.prompt);
-    if (body.parentId) form.append("parent_id", body.parentId);
-    if (body.transparent) form.append("transparent", "1");
-    if (body.collectionId) form.append("collection_id", body.collectionId);
-    for (const f of body.files) form.append("ref", f);
-    return call<{ image: CtPackImage }>("library/pack-images/generate", { method: "POST", body: form }).then((r) => r.image);
-  },
   deletePackImage: (id: string) => call<void>(`library/pack-images/${id}`, { method: "DELETE" }),
-  listPackCollections: () => call<{ collections: CtPackCollection[] }>("library/pack-collections").then((r) => r.collections),
-  createPackCollection: (name: string) => call<{ collection: CtPackCollection }>("library/pack-collections", json("POST", { name })).then((r) => r.collection),
-  renamePackCollection: (id: string, name: string) => call<{ collection: CtPackCollection }>(`library/pack-collections/${id}`, json("PATCH", { name })).then((r) => r.collection),
   /** A background / overlay / slot sample picture for a pack. */
   uploadPackImage: (file: Blob) => {
     const form = new FormData();
@@ -267,57 +221,9 @@ export const ctApi = {
   },
 
   listPresets: (kind?: CtPresetKind) => call<{ presets: CtPreset[]; admin: boolean }>(`presets${kind ? `?kind=${kind}` : ""}`),
-  createPreset: (body: CtPresetBody) => call<{ preset: CtPreset }>("presets", json("POST", body)).then((r) => r.preset),
-  updatePreset: (id: string, body: CtPresetBody) => call<{ preset: CtPreset }>(`presets/${id}`, json("PATCH", body)).then((r) => r.preset),
-  deletePreset: (id: string) => call<void>(`presets/${id}`, { method: "DELETE" }),
-  /** A style pack's / material's analyses and saves, newest first (migration 008). */
-  presetHistory: (id: string) => call<{ history: CtPresetHistoryEntry[] }>(`presets/${id}/history`).then((r) => r.history),
-  /** A preset's reference photo → its public url (kept in params.refs). */
-  uploadPresetRef: (file: Blob) => {
-    const form = new FormData();
-    form.append("file", file, "ref.png");
-    return call<{ url: string }>("presets/refs", { method: "POST", body: form }).then((r) => r.url);
-  },
-  /**
-   * Category dialog "Tạo bằng AI": name, spec, style pack, materials and details from a note / reference images,
-   * reusing the library's presets when they fit (server/ai/prompt-writer.ts).
-   */
-  suggestCategoryPrompts: (body: { name: string; spec: string; note: string; images: Blob[] }) => {
-    const form = new FormData();
-    form.append("name", body.name);
-    form.append("spec", body.spec);
-    form.append("note", body.note);
-    body.images.forEach((b, i) => form.append("file", b, `ref-${i}.jpg`));
-    return call<CtPromptSuggestion>("ai/prompt-suggest", { method: "POST", body: form });
-  },
-  /**
-   * Category dialog "Cập nhật bằng AI": what the editor dislikes (+ the numbered results, new photos uploaded
-   * first) → what to change in spec / style pack / materials / details (server/ai/prompt-writer.ts).
-   */
-  suggestCategoryRevision: (body: { category: CtCategorySnapshot & { id: string | null }; note: string; images: Array<{ image: Blob; label: string; url: string }>; refUrls: string[] }) => {
-    const form = new FormData();
-    form.append("category", JSON.stringify(body.category));
-    form.append("note", body.note);
-    body.images.forEach((im, i) => {
-      form.append("image_file", im.image, `result-${i + 1}.jpg`);
-      form.append("image_label", im.label);
-      form.append("image_url", im.url);
-    });
-    body.refUrls.forEach((u) => form.append("ref_url", u));
-    return call<CtCategoryRevision>("ai/category-revise", { method: "POST", body: form });
-  },
-  /**
-   * Category dialog "Kiểm tra prompt": the category's prompts read together as the image models get them →
-   * conflicts found + their fixes as an ordinary plan (server/ai/prompt-review.ts).
-   */
-  reviewCategory: (category: CtCategorySnapshot & { id: string | null }) => {
-    const form = new FormData();
-    form.append("category", JSON.stringify(category));
-    return call<CtCategoryRevision>("ai/category-review", { method: "POST", body: form });
-  },
   /** Is the @flexiprint agent (agent_ide) configured and answering — server/agent/tasks.ts. */
   agentStatus: () => call<CtAgentStatus>("ai/agent-status"),
-  /** Hand the dialog's AI work to the agent instead of the built-in LLM (migration 011). */
+  /** Hand work to the @flexiprint agent (kind content | char, migration 011). */
   createAgentTask: (body: { kind: CtAgentTaskKind; input: CtAgentTaskInput }) => call<CtAgentTask>("ai/agent-tasks", json("POST", body)),
   agentTask: (id: string) => call<CtAgentTask>(`ai/agent-tasks/${id}`),
   /** The editor's latest agent tasks of a kind, newest first. */
@@ -326,62 +232,6 @@ export const ctApi = {
   cancelAgentTask: (id: string) => call<CtAgentTask>(`ai/agent-tasks/${id}/cancel`, { method: "POST" }),
   /** Answer the agent's question (ask_user): it continues the task with it. */
   answerAgentTask: (id: string, body: { question_id: string; choices: string[]; text: string }) => call<CtAgentTask>(`ai/agent-tasks/${id}/answer`, json("POST", body)),
-  /** A category's AI revisions and saves, newest first (migration 010). */
-  categoryHistory: (id: string) => call<{ history: CtCategoryHistoryEntry[] }>(`library/categories/${id}/history`).then((r) => r.history),
-  /** Category dialog "Chi tiết thành phẩm": the product's details from a description + photos (uploaded first). */
-  suggestDetails: (body: { name: string; spec: string; note: string; refUrls: string[] }) => {
-    const form = new FormData();
-    form.append("name", body.name);
-    form.append("spec", body.spec);
-    form.append("note", body.note);
-    body.refUrls.forEach((u) => form.append("ref_url", u));
-    return call<CtDetailsSuggestion>("ai/details-suggest", { method: "POST", body: form });
-  },
-  /** Style pack / material dialog "Tạo prompt bằng AI": description + reference images → name + prompt. */
-  suggestPresetPrompt: (body: { kind: "style_pack" | "material"; presetId: string | null; name: string; note: string; prompt: string; images: Blob[]; savedRefs: string[] }) => {
-    const form = new FormData();
-    form.append("kind", body.kind);
-    if (body.presetId) form.append("preset_id", body.presetId);
-    form.append("name", body.name);
-    form.append("note", body.note);
-    form.append("prompt", body.prompt);
-    body.savedRefs.forEach((u) => form.append("ref_url", u));
-    body.images.forEach((b, i) => form.append("file", b, `ref-${i}.jpg`));
-    return call<CtPresetPromptSuggestion>("ai/preset-prompt", { method: "POST", body: form });
-  },
-  /** AI dialog "Chỉnh sửa": feedback on generated cliparts → edit instruction + optional spec / style rewrite. */
-  suggestRefine: (body: CtRefineSuggestBody) => {
-    const form = new FormData();
-    form.append("fix", body.fix);
-    // Parallel lists: the n-th url, name and spec are the same clipart.
-    body.images.forEach((im, i) => {
-      form.append("image_file", im.image, `clipart-${i + 1}.jpg`);
-      form.append("image_name", im.name);
-      form.append("image_spec", im.spec);
-    });
-    body.refs.forEach((b, i) => {
-      form.append("file", b, `ref-${i}.jpg`);
-      form.append("ref_name", body.refNames[i] ?? "");
-    });
-    form.append("category", JSON.stringify(body.category));
-    form.append("style", JSON.stringify(body.style));
-    if (body.updateSpec) form.append("update_spec", "1");
-    if (body.updateStyle) form.append("update_style", "1");
-    return call<CtRefineSuggestion>("ai/refine-suggest", { method: "POST", body: form });
-  },
-
-  /** Sets the fp_studio cookie the studio's nginx gate checks. */
-  studioSession: () => call<{ url: string }>("studio/session", { method: "POST" }),
-  /** AI dialog: the recipes run by ComfyUI (server/studio.ts). */
-  studioModels: () => call<{ models: string[] }>("studio/models").then((r) => r.models),
-  studioRun: (body: CtStudioRunBody) => call<{ run_id: string }>("studio/runs", json("POST", body)).then((r) => r.run_id),
-  studioRunStatus: (runId: string) => call<CtStudioRunStatus>(`studio/runs/${runId}`),
-  studioUploadRef: (file: File) => {
-    const form = new FormData();
-    form.append("file", file);
-    return call<{ name: string }>("studio/refs", { method: "POST", body: form }).then((r) => r.name);
-  },
-  studioDraft: (body: CtStudioRunBody) => call<{ draft_id: string }>("studio/drafts", json("POST", body)).then((r) => r.draft_id),
 
 };
 
@@ -390,6 +240,8 @@ export const charApi = {
   list: () => call<{ projects: CtCharProject[]; thumbs: Record<string, string> }>("char/projects"),
   create: (body: { name: string; brief?: CtCharBrief }) => call<{ project: CtCharProject }>("char/projects", json("POST", body)).then((r) => r.project),
   get: (id: string) => call<{ project: CtCharProject; images: CtCharImage[] }>(`char/projects/${id}`),
+  /** An idea's preview picture becomes a master candidate (the editor took that direction). */
+  adoptMaster: (id: string, imageId: string) => call<{ image: CtCharImage }>(`char/projects/${id}/masters/${imageId}/adopt`, json("POST", {})).then((r) => r.image),
   update: (id: string, body: { name?: string; brief?: CtCharBrief }) => call<{ project: CtCharProject }>(`char/projects/${id}`, json("PATCH", body)).then((r) => r.project),
   remove: (id: string) => call<{ ok: true }>(`char/projects/${id}`, { method: "DELETE" }),
   upload: (id: string, file: File, kind: "ref" | "blank") => {

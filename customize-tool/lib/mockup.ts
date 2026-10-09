@@ -1,5 +1,5 @@
 /**
- * Tổ hợp (hand-made mockups) and the product scene — data helpers + the
+ * Mockups (hand-made, the editor's "Mockups" tab) and the product scene — data helpers + the
  * canvas renderer (types: CtPackSlide, CtMockupPack, CtProductScene).
  *
  * A tổ hợp is a scene: a stack of frames — background fills (colour or
@@ -243,13 +243,13 @@ export function normalizeSlide(raw: Partial<CtPackSlide>): CtPackSlide {
   // The old scene-wide colour is a background frame now.
   const legacy = str(raw.background);
   if (legacy) layers.unshift({ ...newLayer("fill", width, height), color: legacy } as CtPackFillLayer);
-  return { id: str(raw.id) || newId(), name: str(raw.name, "Tổ hợp").slice(0, 120), width, height, background: "", layers };
+  return { id: str(raw.id) || newId(), name: str(raw.name, "Mockup").slice(0, 120), width, height, background: "", layers };
 }
 
 /** Clean a set body (server and editor share it). */
 export function normalizePackBody(raw: Partial<CtMockupPackBody>): CtMockupPackBody {
   return {
-    name: str(raw.name).trim().slice(0, 120) || "Bộ tổ hợp",
+    name: str(raw.name).trim().slice(0, 120) || "Bộ mockup",
     notes: str(raw.notes).slice(0, 4000),
     slides: (Array.isArray(raw.slides) ? raw.slides : []).slice(0, 40).map(normalizeSlide),
     thumbnail_url: typeof raw.thumbnail_url === "string" && raw.thumbnail_url ? raw.thumbnail_url : null,
@@ -264,7 +264,7 @@ export function normalizePack(raw: CtMockupPack): CtMockupPack {
 // New things
 // ---------------------------------------------------------------------------
 
-export function newSlide(name = "Tổ hợp", width = 2000, height = 2000): CtPackSlide {
+export function newSlide(name = "Mockup", width = 2000, height = 2000): CtPackSlide {
   return { id: newId(), name, width, height, background: "", layers: [] };
 }
 

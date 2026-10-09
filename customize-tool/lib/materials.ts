@@ -4,8 +4,8 @@
  * files, services/material-render) share it.
  *
  * Only production facts live here (outline, border, thickness, white ink).
- * How a material LOOKS is AI-rendered from a prompt preset (ct_presets kind
- * "material", ComfyUI studio) into clipart renditions — no canvas simulation.
+ * How a material LOOKS is a rendition picture of each clipart (uploaded in
+ * /library, named by a ct_presets "material" preset) — no canvas simulation.
  */
 
 import type { CtMaterialConfig, CtMaterialId, CtMaterialShape, CtMaterialSpec, CtMaterialSpecMode } from "../types";

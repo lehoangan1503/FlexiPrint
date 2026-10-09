@@ -1,6 +1,6 @@
 /**
  * The global clipart library (migration 006): categories, library cliparts,
- * prompt presets, main versions a product picks from the library, and the
+ * material presets (read-only: they name vật liệu versions), main versions a product picks from the library, and the
  * shared "which assets does this product render" loader.
  *
  * Rules (RLS enforces the same; the checks here only produce readable errors):
@@ -19,12 +19,9 @@ import type {
   CtCategoryBody,
   CtCategoryHistoryEntry,
   CtClipartCategory,
-  CtClipartFrame,
   CtClipartUsage,
   CtMainLayout,
   CtPreset,
-  CtPresetBody,
-  CtPresetHistoryEntry,
   CtPresetKind,
   CtProduct,
   CtRegion,
@@ -32,12 +29,7 @@ import type {
   CtUpdateClipartBody,
 } from "../types";
 import { asLayerClipart, asMainOption, asVersion, memberRole, normalizeCategoryRules, originRole } from "../lib/library";
-import { normalizeRegion, normalizeSubOptions } from "../lib/design";
-import { shapeBounds } from "../lib/geometry";
-import { mainFrameFor, normalizeLayouts } from "../lib/layout";
-import { frameCut, frameOutline, frameRegionFor } from "../lib/material-frame";
-import { normalizeMaterialSpecs } from "../lib/materials";
-import { normalizeMaterialRules } from "../lib/mockup";
+import { normalizeSubOptions } from "../lib/design";
 import { isAdmin } from "./ai-styles";
 import { readImageInfo } from "./image-size";
 import { r2PublicUrl } from "./r2";
@@ -118,7 +110,7 @@ export async function createCategory(s: CtSession, body: CtCategoryBody): Promis
     .single<CategoryRow>();
   if (error) return jsonError(missingMigration(error.message), 500);
   const category: CtClipartCategory = { ...data, rules: normalizeCategoryRules(data.rules), count: 0, can_edit: true };
-  await recordCategorySave(s, category, body.revision_id ?? null);
+  await recordCategorySave(s, category);
   return NextResponse.json({ category }, { status: 201 });
 }
 
@@ -130,18 +122,18 @@ export async function updateCategory(s: CtSession, id: string, body: CtCategoryB
   if (error) return jsonError(missingMigration(error.message), 500);
   if (!data) return jsonError("Không có quyền sửa danh mục này", 403);
   const category: CtClipartCategory = { ...data, rules: normalizeCategoryRules(data.rules), can_edit: true };
-  await recordCategorySave(s, category, body.revision_id ?? null);
+  await recordCategorySave(s, category);
   return NextResponse.json({ category });
 }
 
 // ---------------------------------------------------------------------------
-// Category history (migration 010): AI revisions + saves
+// Category history (migration 010): every save (earlier rows also hold AI revisions)
 // ---------------------------------------------------------------------------
 
 type CategoryHistoryInsert = Omit<CtCategoryHistoryEntry, "id" | "user_id" | "created_at">;
 
 /** One history row. Never fails the caller: without migration 010 the history just isn't kept. */
-export async function recordCategoryHistory(s: CtSession, row: CategoryHistoryInsert): Promise<CtCategoryHistoryEntry | null> {
+async function recordCategoryHistory(s: CtSession, row: CategoryHistoryInsert): Promise<CtCategoryHistoryEntry | null> {
   const { data, error } = await s.supabase
     .from(CT_TABLES.categoryHistory)
     .insert({ ...row, user_id: s.user.id })
@@ -154,34 +146,17 @@ export async function recordCategoryHistory(s: CtSession, row: CategoryHistoryIn
   return data;
 }
 
-async function recordCategorySave(s: CtSession, c: CtClipartCategory, revisionId: string | null): Promise<void> {
+async function recordCategorySave(s: CtSession, c: CtClipartCategory): Promise<void> {
   await recordCategoryHistory(s, {
     category_id: c.id,
     event: "save",
     note: "",
     ref_urls: [],
     image_urls: [],
-    input: revisionId && /^[0-9a-f-]{36}$/i.test(revisionId) ? { revision_id: revisionId } : {},
+    input: {},
     result: { name: c.name, spec: c.spec, rules: c.rules },
     model: "",
   });
-}
-
-/** GET library/categories/:id/history → { history } newest first. */
-export async function listCategoryHistory(s: CtSession, id: string): Promise<NextResponse> {
-  const { data, error } = await s.supabase
-    .from(CT_TABLES.categoryHistory)
-    .select("*")
-    .eq("category_id", id)
-    .order("created_at", { ascending: false })
-    .limit(100)
-    .returns<CtCategoryHistoryEntry[]>();
-  if (error) {
-    return /ct_category_history/.test(error.message) && /does not exist|schema cache|Could not find/i.test(error.message)
-      ? jsonError(`Thiếu migration: chạy supabase/migrations/010_category_history.sql (${error.message})`, 500)
-      : jsonError(error.message, 500);
-  }
-  return NextResponse.json({ history: data ?? [] });
 }
 
 export async function deleteCategory(s: CtSession, id: string): Promise<NextResponse> {
@@ -269,7 +244,7 @@ function materialMeta(src: CtAsset, width: number, height: number): CtAssetMeta 
  * Store one library clipart. The role follows the structure: an origin gets
  * the category's usage (main / sub), a set member its parent's member role,
  * a rendition "rendition" — so does a đa sắc of a rendition, and an edit of
- * one (meta.derivedFrom = a rendition). Shared by the upload and the studio.
+ * one (meta.derivedFrom = a rendition).
  */
 export async function insertClipart(db: Db, userId: string, a: InsertClipartArgs): Promise<CtAsset> {
   const info = readImageInfo(a.data);
@@ -281,8 +256,7 @@ export async function insertClipart(db: Db, userId: string, a: InsertClipartArgs
   let parent = a.parentId ? await libraryRow(db, a.parentId) : null;
   if (a.parentId && !parent) throw new Error("Clipart cha không nằm trong thư viện");
   // An edit / recolour of a vật liệu version (or of its đa sắc) stays one: saved next to the one it fixes, same
-  // material — the studio saves an edited clipart as an origin / member. Not when the studio named a vật liệu
-  // parent itself (a đa sắc made again from a new material version).
+  // material. Not when the upload named a vật liệu parent itself.
   const derived = !a.rendition && typeof a.meta?.derivedFrom === "string" ? await libraryRow(db, a.meta.derivedFrom) : null;
   const fromMaterial = derived !== null && derived.role === "rendition" && derived.parent_id !== null && parent?.role !== "rendition";
   if (fromMaterial && derived?.parent_id) {
@@ -457,60 +431,6 @@ async function subOptionProducts(db: Db, ids: string[]): Promise<Array<Pick<CtPr
 export async function getClipartMaterials(s: CtSession, id: string): Promise<NextResponse> {
   const kids = await descendants(s.supabase, [id]);
   return NextResponse.json({ cliparts: kids.filter((k) => k.role === "rendition") });
-}
-
-/**
- * GET library/cliparts/:id/frames → the khuôn vật liệu a gốc can be made "theo khuôn" with: every product showing it
- * (or one of its đa sắc) as a version whose layers have a khuôn — the clipart cut to it, as FP_FrameClipart takes it.
- */
-export async function getClipartFrames(s: CtSession, id: string): Promise<NextResponse> {
-  const kids = (await descendants(s.supabase, [id])).filter((k) => k.role !== "rendition");
-  const family = [id, ...kids.map((k) => k.id)];
-  const [mains, defaults, subs] = await Promise.all([
-    s.supabase.from(CT_TABLES.productMains).select("product_id,asset_id").in("asset_id", family).returns<Array<{ product_id: string; asset_id: string }>>(),
-    s.supabase.from(CT_TABLES.products).select("id,main_asset_id").in("main_asset_id", family).returns<Array<{ id: string; main_asset_id: string }>>(),
-    subOptionProducts(s.supabase, family),
-  ]);
-  // Product → the version of it the clipart is drawn as (itself, or the version it is a sub-option of).
-  const versionOf = new Map<string, string>();
-  for (const m of mains.data ?? []) versionOf.set(m.product_id, m.asset_id);
-  for (const p of defaults.data ?? []) versionOf.set(p.id, p.main_asset_id);
-  for (const p of subs) {
-    if (versionOf.has(p.id)) continue;
-    const entry = normalizeSubOptions(p.config?.main?.subOptions).find((e) => e.ids.some((x) => family.includes(x)));
-    if (entry) versionOf.set(p.id, entry.mainId);
-  }
-  if (!versionOf.size) return NextResponse.json({ frames: [] });
-  const productIds = [...versionOf.keys()];
-  const [products, regions] = await Promise.all([
-    s.supabase.from(CT_TABLES.products).select("*").in("id", productIds).returns<CtProduct[]>(),
-    s.supabase.from(CT_TABLES.regions).select("*").in("product_id", productIds).returns<CtRegion[]>(),
-  ]);
-  const boards = (products.data ?? []).map((p) => p.main_asset_id).filter((x): x is string => Boolean(x));
-  const { data: boardAssets } = boards.length
-    ? await s.supabase.from(CT_TABLES.assets).select("id,width,height").in("id", boards).returns<Array<{ id: string; width: number; height: number }>>()
-    : { data: [] as Array<{ id: string; width: number; height: number }> };
-  const boardOf = new Map((boardAssets ?? []).map((a) => [a.id, a]));
-  const frames: CtClipartFrame[] = [];
-  for (const p of products.data ?? []) {
-    const versionId = versionOf.get(p.id);
-    const board = p.main_asset_id ? boardOf.get(p.main_asset_id) : undefined;
-    if (!versionId || !board) continue;
-    const own = (regions.data ?? []).filter((r) => r.product_id === p.id).map(normalizeRegion);
-    const frame = frameRegionFor(own, versionId, p.main_asset_id);
-    if (!frame) continue;
-    const art = mainFrameFor(normalizeLayouts(p.config?.layouts), versionId, board.width, board.height);
-    frames.push({
-      productId: p.id,
-      productName: p.name,
-      regionId: frame.id,
-      regionName: frame.name,
-      box: shapeBounds(frame.shape),
-      outline: frameOutline(frame),
-      cut: frameCut(frame, art),
-    });
-  }
-  return NextResponse.json({ frames });
 }
 
 export async function getClipartUsage(s: CtSession, id: string): Promise<NextResponse> {
@@ -827,53 +747,9 @@ export async function loadProductAssets(db: Db, product: CtProduct, items: CtReg
 
 type PresetRow = Omit<CtPreset, "can_edit">;
 
-export function cleanPreset(body: CtPresetBody): CtPresetBody | string {
-  const name = (body.name ?? "").trim();
-  const prompt = (body.prompt ?? "").trim();
-  if (!PRESET_KINDS.includes(body.kind)) return "Loại preset không hợp lệ";
-  if (!name || name.length > 80) return "Tên preset 1–80 ký tự";
-  if (!prompt || prompt.length > 6000) return "Prompt 1–6000 ký tự";
-  return {
-    kind: body.kind,
-    name,
-    prompt,
-    reference_asset_ids: Array.isArray(body.reference_asset_ids) ? body.reference_asset_ids.slice(0, 8) : [],
-    params: {
-      ...(typeof body.params?.lockSilhouette === "boolean" ? { lockSilhouette: body.params.lockSilhouette } : {}),
-      ...(body.kind === "material" && body.params?.rules ? { rules: normalizeMaterialRules(body.params.rules) } : {}),
-      ...(typeof body.params?.model === "string" && body.params.model ? { model: body.params.model } : {}),
-      ...(body.kind === "material" && (body.params?.art === "print" || body.params?.art === "surface") ? { art: body.params.art } : {}),
-      ...(body.kind === "material" && Array.isArray(body.params?.specs) ? { specs: normalizeMaterialSpecs(body.params.specs) } : {}),
-      ...(Array.isArray(body.params?.refs) ? { refs: body.params.refs.filter(isOwnUploadUrl).slice(0, MAX_PRESET_REFS) } : {}),
-      ...(typeof body.params?.note === "string" && body.params.note.trim() ? { note: body.params.note.trim().slice(0, 4000) } : {}),
-    },
-    ...(typeof body.sort_order === "number" ? { sort_order: body.sort_order } : {}),
-  };
-}
-
-const MAX_PRESET_REFS = 6;
-const MAX_REF_BYTES = 8 * 1024 * 1024;
-const REF_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
-
-/** A preset's reference photo must be one of ours (uploaded below): the studio downloads it. */
+/** A url of a file in our own storage (R2). */
 export function isOwnUploadUrl(u: unknown): u is string {
   return typeof u === "string" && u.startsWith(r2PublicUrl(""));
-}
-
-/** POST presets/refs — multipart file: a reference photo for a preset (the image model gets it with the artwork) → { url }. */
-export async function uploadPresetRef(s: CtSession, form: FormData): Promise<NextResponse> {
-  const file = form.get("file");
-  if (!(file instanceof Blob) || file.size === 0) return jsonError("Thiếu ảnh", 400);
-  if (file.size > MAX_REF_BYTES) return jsonError("Ảnh tối đa 8 MB", 400);
-  const ext = REF_TYPES[file.type];
-  if (!ext) return jsonError("Ảnh PNG, JPG hoặc WebP", 400);
-  const path = `${s.user.id}/${CT_CONFIG.storagePrefix}/presets/${crypto.randomUUID()}.${ext}`;
-  try {
-    const url = await ctUpload(path, Buffer.from(await file.arrayBuffer()), file.type);
-    return NextResponse.json({ url }, { status: 201 });
-  } catch (e) {
-    return jsonError(e instanceof Error ? e.message : "Upload thất bại", 500);
-  }
 }
 
 export async function listPresets(s: CtSession, kind: string | null): Promise<NextResponse> {
@@ -884,89 +760,4 @@ export async function listPresets(s: CtSession, kind: string | null): Promise<Ne
   const admin = await isAdmin(s);
   const presets: CtPreset[] = (data ?? []).map((p) => ({ ...p, can_edit: admin || p.user_id === s.user.id }));
   return NextResponse.json({ presets, admin });
-}
-
-export async function createPreset(s: CtSession, body: CtPresetBody): Promise<NextResponse> {
-  const clean = cleanPreset(body);
-  if (typeof clean === "string") return jsonError(clean, 400);
-  const { data, error } = await s.supabase.from(CT_TABLES.presets).insert({ ...clean, user_id: s.user.id }).select("*").single<PresetRow>();
-  if (error) return jsonError(missingMigration(error.message), 500);
-  const ids = (body.history_ids ?? []).filter((x): x is string => typeof x === "string").slice(0, 50);
-  if (ids.length) {
-    // The analyses made before the preset existed: the editor's own, not linked yet.
-    const { error: linkError } = await s.supabase.from(CT_TABLES.presetHistory).update({ preset_id: data.id }).in("id", ids).is("preset_id", null).eq("user_id", s.user.id);
-    if (linkError) console.warn("[ct] preset history link:", linkError.message);
-  }
-  await recordPresetSave(s, data);
-  const preset: CtPreset = { ...data, can_edit: true };
-  return NextResponse.json({ preset }, { status: 201 });
-}
-
-export async function updatePreset(s: CtSession, id: string, body: CtPresetBody): Promise<NextResponse> {
-  const clean = cleanPreset(body);
-  if (typeof clean === "string") return jsonError(clean, 400);
-  const { data, error } = await s.supabase.from(CT_TABLES.presets).update(clean).eq("id", id).select("*").maybeSingle<PresetRow>();
-  if (error) return jsonError(error.message, 500);
-  if (!data) return jsonError("Chỉ người tạo hoặc admin mới được sửa preset", 403);
-  await recordPresetSave(s, data);
-  const preset: CtPreset = { ...data, can_edit: true };
-  return NextResponse.json({ preset });
-}
-
-// ---------------------------------------------------------------------------
-// Preset history (migration 008): analyses + saves of style packs / materials
-// ---------------------------------------------------------------------------
-
-type PresetHistoryInsert = Omit<CtPresetHistoryEntry, "id" | "user_id" | "created_at">;
-
-/** One history row. Never fails the caller: without migration 008 the history just isn't kept. */
-export async function recordPresetHistory(s: CtSession, row: PresetHistoryInsert): Promise<CtPresetHistoryEntry | null> {
-  const { data, error } = await s.supabase
-    .from(CT_TABLES.presetHistory)
-    .insert({ ...row, user_id: s.user.id })
-    .select("*")
-    .single<CtPresetHistoryEntry>();
-  if (error) {
-    console.warn("[ct] preset history:", error.message);
-    return null;
-  }
-  return data;
-}
-
-async function recordPresetSave(s: CtSession, p: PresetRow): Promise<void> {
-  if (p.kind === "scene") return;
-  await recordPresetHistory(s, {
-    preset_id: p.id,
-    kind: p.kind,
-    event: "save",
-    note: p.params.note ?? "",
-    ref_urls: p.params.refs ?? [],
-    input: {},
-    result: { name: p.name, prompt: p.prompt, params: p.params },
-    model: "",
-  });
-}
-
-/** GET presets/:id/history → { history } newest first. */
-export async function listPresetHistory(s: CtSession, id: string): Promise<NextResponse> {
-  const { data, error } = await s.supabase
-    .from(CT_TABLES.presetHistory)
-    .select("*")
-    .eq("preset_id", id)
-    .order("created_at", { ascending: false })
-    .limit(100)
-    .returns<CtPresetHistoryEntry[]>();
-  if (error) {
-    return /ct_preset_history/.test(error.message) && /does not exist|schema cache|Could not find/i.test(error.message)
-      ? jsonError(`Thiếu migration: chạy supabase/migrations/008_preset_history.sql (${error.message})`, 500)
-      : jsonError(error.message, 500);
-  }
-  return NextResponse.json({ history: data ?? [] });
-}
-
-export async function deletePreset(s: CtSession, id: string): Promise<NextResponse> {
-  const { error, count } = await s.supabase.from(CT_TABLES.presets).delete({ count: "exact" }).eq("id", id);
-  if (error) return jsonError(error.message, 500);
-  if (!count) return jsonError("Chỉ người tạo hoặc admin mới được xoá preset", 403);
-  return new NextResponse(null, { status: 204 });
 }

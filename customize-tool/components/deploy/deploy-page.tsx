@@ -320,9 +320,9 @@ export function DeployPage({ productId }: { productId: string }) {
           </Card>
 
           {/* Images */}
-          <Card title={`Ảnh sản phẩm (${media.length})`} hint="Tổ hợp đã lưu của sản phẩm (tab Tổ hợp), theo thứ tự chọn — ảnh 1 là ảnh chính. Bỏ chọn hết = giữ nguyên ảnh đang có trên Shopify.">
+          <Card title={`Ảnh sản phẩm (${media.length})`} hint="Mockup đã lưu của sản phẩm (tab Mockups), theo thứ tự chọn — ảnh 1 là ảnh chính. Bỏ chọn hết = giữ nguyên ảnh đang có trên Shopify.">
             {pictures.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Chưa có tổ hợp / mockup — tạo ở tab Tổ hợp & Mockup trong editor. Không có ảnh, trang sản phẩm mở thẳng thiết kế live.</p>
+              <p className="text-xs text-muted-foreground">Chưa có mockup — tạo ở tab Mockups trong editor. Không có ảnh, trang sản phẩm mở thẳng thiết kế live.</p>
             ) : (
               <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
                 {pictures.map((a) => (

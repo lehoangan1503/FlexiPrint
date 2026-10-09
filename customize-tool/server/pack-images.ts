@@ -1,50 +1,36 @@
 /**
- * Thư viện ảnh tổ hợp (ct_pack_images, migrations 015–016) — the photos tổ hợp Image frames use, kept so editors
- * reuse them and the @flexiprint agent finds them (MCP list_pack_images) before searching the web or generating more.
+ * Thư viện ảnh mockup (ct_pack_images, migrations 015–016) — the photos the Mockups tab's Image frames use, uploaded
+ * by hand and kept so editors reuse them.
  *
- *   GET    library/pack-images?q=&scope=all|mine|ai&limit=   → { images } newest first (listed ones)
+ *   GET    library/pack-images?q=&scope=all|mine&limit=   → { images } newest first (listed ones)
  *   POST   library/pack-images            multipart file, name → { image }  (saved as <name>_<timestamp>.<ext>)
- *   POST   library/pack-images/generate   multipart description, aspect, refs (urls JSON), ref files, prompt?,
- *                                         parent_id?, transparent? → { image } status "running", then "done" /
- *                                         "failed" — poll GET …/:id. With `prompt` (the editor edited one) it is
- *                                         drawn as written; without, a one-shot LLM writes it (used only when
- *                                         @flexiprint is unreachable — the dialog sends requests to the agent,
- *                                         server/agent/tasks.ts kind pack_image). parent_id = the photo it edits.
  *   GET    library/pack-images/:id        → { image }
  *   DELETE library/pack-images/:id        owner or admin (RLS)
- *   GET    library/pack-collections       → { collections } the editor's bộ ảnh (migration 017)
- *   POST   library/pack-collections       {name} → { collection }
- *   PATCH  library/pack-collections/:id   {name}
  *
- * drawPackImage draws one photo (Nano Banana 2, references; a layer is drawn on chroma green and keyed out) — the
- * agent's MCP tool generate_pack_image and the direct path share it.
+ * drawImage (one picture from the team's image model) lives here too: the v2 bộ nhân vật draws its masters with it
+ * (server/char/projects.ts).
  *
- * Env: FAL_KEY (prompt LLM + fal image models), CPA_API_KEY / CPA_BASE_URL (company image API).
+ * Env: FAL_KEY (fal image models), CPA_API_KEY / CPA_BASE_URL (company image API).
  */
 
 import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
-import type { CtPackCollection, CtPackImage, CtPackImageAspect } from "../types";
+import type { CtPackImage } from "../types";
 import { fileStem, IMAGE_EXT } from "../lib/file-name";
-import { askLlm, jsonObject, readSavedRefs, str } from "./ai/llm";
+import { str } from "./ai/llm";
 import sharp from "sharp";
 import { readImageInfo } from "./image-size";
-import { isOwnUploadUrl } from "./library";
-import { ctServiceClient, type CtSession } from "./supabase";
+import type { CtSession } from "./supabase";
 import { ctRemove, ctUpload } from "./storage";
-import { currentImageModel } from "./settings";
-import { CT_IMAGE_MODELS } from "../lib/image-models";
 
 const MAX_BYTES = 25 * 1024 * 1024;
-const MAX_REFS = 6;
-const ASPECTS: CtPackImageAspect[] = ["1:1", "4:5", "3:4", "2:3", "4:3", "3:2", "16:9", "9:16"];
 
 function jsonError(message: string, status: number): NextResponse {
   return NextResponse.json({ error: message }, { status });
 }
 
-function storageKey(userId: string, stem: string, mime: string, folder = "pack-library"): string {
-  return `${userId}/${CT_CONFIG.storagePrefix}/${folder}/${stem}_${Date.now()}.${IMAGE_EXT[mime] ?? "png"}`;
+function storageKey(userId: string, stem: string, mime: string): string {
+  return `${userId}/${CT_CONFIG.storagePrefix}/pack-library/${stem}_${Date.now()}.${IMAGE_EXT[mime] ?? "png"}`;
 }
 
 function row(raw: CtPackImage): CtPackImage {
@@ -59,7 +45,6 @@ export async function listPackImages(s: CtSession, params: URLSearchParams): Pro
   const collection = params.get("collection");
   if (collection && /^[0-9a-f-]{36}$/i.test(collection)) q = q.eq("collection_id", collection);
   if (scope === "mine") q = q.eq("user_id", s.user.id).eq("source", "upload");
-  if (scope === "ai") q = q.eq("source", "ai");
   const words = (params.get("q") ?? "").trim();
   if (words) {
     const like = `%${words.replace(/[%_,()]/g, " ")}%`;
@@ -120,22 +105,8 @@ export async function deletePackImage(s: CtSession, id: string): Promise<NextRes
 }
 
 // ---------------------------------------------------------------------------
-// Tạo ảnh với AI
+// One picture from an image model (v2 bộ nhân vật masters)
 // ---------------------------------------------------------------------------
-
-const PROMPT_SYSTEM = `You write image-generation prompts for FlexiPrint's "tổ hợp" editor, where editors compose product mockups by hand: they need photos such as backgrounds and scenes (a Christmas tree with bokeh, a desk, a car interior), hands holding something, props and textures, which product pictures are later placed on top of.
-
-You get the editor's request (often Vietnamese) and possibly reference photos, numbered in the order given.
-
-Write ONE prompt in English for an image model (Gemini image / Nano Banana) that:
-- describes the photo concretely: subject, setting, materials, lighting (direction, softness, colour temperature), camera (angle, lens, depth of field), composition and mood — photorealistic unless the request says otherwise;
-- says exactly what to take from each reference ("Reference image 1: …") — its subject, its style, its colours or its layout — as the request implies; references are not copied wholesale unless asked;
-- keeps clear, uncluttered space where a product will go when the photo is a background or scene (say where: centre, lower third…);
-- has no text, logos, watermarks or borders unless the request asks for them;
-- never adds a product the request did not ask for.
-- when the request has "Yêu cầu riêng cho ảnh này (ưu tiên)", that wins over "Yêu cầu chung" wherever they disagree; Reference image 1 is then the photo being edited — keep everything the request does not ask to change (pose, framing, skin, lighting).
-
-Answer with JSON only: {"name": "<short file-friendly name, ≤ 40 characters, in the request's language>", "prompt": "<the prompt>"}`;
 
 interface FalImageResponse {
   images?: Array<{ url?: string; content_type?: string }>;
@@ -235,230 +206,4 @@ async function drawFal(model: string, prompt: string, refs: string[], aspect: st
   const file = await fetch(out.url, { signal: AbortSignal.timeout(60_000) });
   if (!file.ok) throw new Error(`fal.ai output ${file.status}`);
   return { data: Buffer.from(await file.arrayBuffer()), mime: file.headers.get("content-type")?.split(";")[0] ?? out.content_type ?? "image/png" };
-}
-
-type Db = CtSession["supabase"] | NonNullable<ReturnType<typeof ctServiceClient>>;
-
-/**
- * A layer is drawn on chroma green and keyed out here. A matting model (rembg / BiRefNet) looks for one salient
- * object and drops what it is unsure of — a thumb entering from the corner lost its skin and kept only the nail.
- */
-const LAYER_BACKDROP =
-  " Shot against a perfectly uniform, flat pure chroma-key green (#00FF00) background that fills the whole frame: evenly lit, no gradient, no shadow on the background, no green reflections or green tint on the subject, nothing green in the subject. Nothing else in frame.";
-
-/** Key the green backdrop out → PNG with alpha: soft edge, the backdrop's colour taken out of the edge, no spill. */
-async function chromaKey(input: Buffer): Promise<{ data: Buffer; mime: string }> {
-  const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const { width: w, height: h } = info;
-  // The backdrop: the median colour of the border pixels.
-  const border: number[] = [];
-  for (let x = 0; x < w; x += 4) border.push((0 * w + x) * 4, ((h - 1) * w + x) * 4);
-  for (let y = 0; y < h; y += 4) border.push((y * w) * 4, (y * w + w - 1) * 4);
-  const median = (c: number) => {
-    const v = border.map((i) => data[i + c]).sort((a, b) => a - b);
-    return v[Math.floor(v.length / 2)] ?? 0;
-  };
-  const K = [median(0), median(1), median(2)];
-  const key = Math.max(60, K[1] - Math.max(K[0], K[2]));
-  const lo = key * 0.18;
-  const hi = key * 0.6;
-  for (let i = 0; i < data.length; i += 4) {
-    let r = data[i];
-    let g = data[i + 1];
-    let b = data[i + 2];
-    const e = g - Math.max(r, b);
-    if (e <= lo) continue;
-    // Opaque below lo, clear above hi, soft between.
-    const a = e >= hi ? 0 : 1 - (e - lo) / (hi - lo);
-    data[i + 3] = Math.round(data[i + 3] * a);
-    if (a <= 0) continue;
-    // An edge pixel is subject + backdrop mixed: take the backdrop out, then cap what green is left.
-    r = (r - (1 - a) * K[0]) / a;
-    g = (g - (1 - a) * K[1]) / a;
-    b = (b - (1 - a) * K[2]) / a;
-    data[i] = Math.max(0, Math.min(255, Math.round(r)));
-    data[i + 2] = Math.max(0, Math.min(255, Math.round(b)));
-    data[i + 1] = Math.max(0, Math.min(255, Math.round(Math.min(g, Math.max(r, b)))));
-  }
-  const out = await sharp(data, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
-  return { data: out, mime: "image/png" };
-}
-
-export interface PackImageDraw {
-  name: string;
-  prompt: string;
-  /** Reference photo urls (our storage), in order: "Reference image 1" is the first. */
-  refs: string[];
-  aspect: string;
-  /** Cut the background out (a layer). */
-  transparent: boolean;
-}
-
-/**
- * Draw one photo → its file, uploaded (cut out when `transparent`): the team's image model (home page), then the
- * others in list order if it fails.
- */
-export async function drawPackImage(userId: string, d: PackImageDraw): Promise<Pick<CtPackImage, "url" | "storage_path" | "mime" | "width" | "height" | "model">> {
-  const prompt = d.transparent ? d.prompt + LAYER_BACKDROP : d.prompt;
-  let lastError: unknown = null;
-  const picked = await currentImageModel();
-  for (const model of [picked, ...CT_IMAGE_MODELS.map((m) => m.id).filter((m) => m !== picked)]) {
-    try {
-      let out = await drawImage(model, prompt, d.refs, d.aspect);
-      if (d.transparent) out = await chromaKey(out.data);
-      const info = readImageInfo(out.data);
-      const mime = info?.mime ?? out.mime;
-      const path = storageKey(userId, fileStem(d.name), mime);
-      const url = await ctUpload(path, out.data, mime);
-      return { url, storage_path: path, mime, width: info?.width ?? null, height: info?.height ?? null, model };
-    } catch (e) {
-      lastError = e;
-      console.warn(`[ct] pack image "${d.name}": ${model} failed — ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("Tạo ảnh thất bại");
-}
-
-/**
- * The other hand: a photo flipped left ↔ right, pixel for pixel. Image models asked to "mirror" a reference hand it
- * back unflipped (a "right hand" that was the left one again), so the flip is never the model's job.
- */
-export async function mirrorPackImage(userId: string, name: string, url: string): Promise<Pick<CtPackImage, "url" | "storage_path" | "mime" | "width" | "height" | "model">> {
-  if (!isOwnUploadUrl(url)) throw new Error("Not a FlexiPrint image url");
-  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-  if (!res.ok) throw new Error(`${url}: ${res.status}`);
-  const src = sharp(Buffer.from(await res.arrayBuffer()));
-  const meta = await src.metadata();
-  const jpeg = meta.format === "jpeg" && !meta.hasAlpha;
-  const data = await (jpeg ? src.flop().jpeg({ quality: 95 }) : src.flop().png()).toBuffer();
-  const mime = jpeg ? "image/jpeg" : "image/png";
-  const path = storageKey(userId, fileStem(name), mime);
-  const out = await ctUpload(path, data, mime);
-  return { url: out, storage_path: path, mime, width: meta.width ?? null, height: meta.height ?? null, model: "mirror" };
-}
-
-/** The fallback prompt writer (one LLM call) — only when the agent can't be reached. */
-async function writePrompt(description: string, refs: string[], aspect: string): Promise<{ name: string; prompt: string }> {
-  const seen = await readSavedRefs(refs);
-  const reply = await askLlm(PROMPT_SYSTEM, `Editor's request:\n${description}\n\nAspect ratio: ${aspect}\nReference photos attached: ${seen.length}`, seen);
-  if (typeof reply !== "string") throw new Error("Không viết được prompt (LLM lỗi)");
-  const parsed = jsonObject(reply);
-  const prompt = str(parsed?.prompt).trim() || reply.trim();
-  if (!prompt) throw new Error("LLM không trả prompt");
-  return { name: str(parsed?.name).trim().slice(0, 200), prompt };
-}
-
-/** The direct generation, after the request has answered: prompt (given or written) → photo → row done / failed. */
-async function runGeneration(db: Db, userId: string, image: CtPackImage, given: string): Promise<void> {
-  const update = (patch: Partial<CtPackImage>) => db.from(CT_TABLES.packImages).update(patch).eq("id", image.id);
-  try {
-    let { name, prompt } = image;
-    if (!given) {
-      const w = await writePrompt(image.description, image.refs, image.aspect);
-      prompt = w.prompt;
-      name = w.name || name;
-      await update({ prompt, name });
-    }
-    const file = await drawPackImage(userId, { name, prompt, refs: image.refs, aspect: image.aspect, transparent: image.transparent });
-    await update({ ...file, status: "done", error: "" });
-  } catch (e) {
-    await update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 1000) });
-  }
-}
-
-/** POST library/pack-images/generate */
-export async function generatePackImage(s: CtSession, form: FormData): Promise<NextResponse> {
-  if (!process.env.FAL_KEY) return jsonError("Chưa cấu hình FAL_KEY", 501);
-  const description = str(form.get("description")).trim().slice(0, 4000);
-  const given = str(form.get("prompt")).trim().slice(0, 8000);
-  if (!description && !given) return jsonError("Mô tả ảnh cần tạo", 400);
-  const aspectRaw = str(form.get("aspect"));
-  const aspect = ASPECTS.includes(aspectRaw as CtPackImageAspect) ? aspectRaw : "1:1";
-  const transparent = str(form.get("transparent")) === "1";
-  const collectionId = /^[0-9a-f-]{36}$/i.test(str(form.get("collection_id"))) ? str(form.get("collection_id")) : null;
-
-  // The photo it edits goes first ("Reference image 1").
-  const parentId = str(form.get("parent_id"));
-  let parent: CtPackImage | null = null;
-  if (parentId) {
-    const { data } = await s.supabase.from(CT_TABLES.packImages).select("*").eq("id", parentId).maybeSingle<CtPackImage>();
-    if (!data?.url) return jsonError("Không tìm thấy ảnh gốc để chỉnh", 404);
-    parent = data;
-  }
-  // References: photos already in our storage (library picks), plus files uploaded with the request.
-  let refs: string[] = parent?.url ? [parent.url] : [];
-  try {
-    const listed = JSON.parse(str(form.get("refs")) || "[]") as unknown;
-    if (Array.isArray(listed)) refs.push(...listed.filter(isOwnUploadUrl));
-  } catch {
-    return jsonError("refs không hợp lệ", 400);
-  }
-  for (const f of form.getAll("ref")) {
-    if (refs.length >= MAX_REFS) break;
-    const file = await readUpload(f);
-    if (typeof file === "string") return jsonError(file, 400);
-    try {
-      refs.push(await ctUpload(storageKey(s.user.id, "ref", file.mime, "pack-library/refs"), file.data, file.mime));
-    } catch (e) {
-      return jsonError(e instanceof Error ? e.message : "Upload ảnh tham khảo thất bại", 500);
-    }
-  }
-  refs = [...new Set(refs)].slice(0, MAX_REFS);
-
-  const { data, error } = await s.supabase
-    .from(CT_TABLES.packImages)
-    .insert({
-      user_id: s.user.id,
-      name: (parent?.name ?? description).slice(0, 60) || "Ảnh AI",
-      source: "ai",
-      status: "running",
-      description: description || parent?.description || "",
-      prompt: given,
-      refs,
-      aspect,
-      transparent,
-      parent_id: parent?.id ?? null,
-      collection_id: collectionId ?? parent?.collection_id ?? null,
-    })
-    .select("*")
-    .single<CtPackImage>();
-  if (error || !data) return jsonError(error?.message ?? "Lưu thất bại", 500);
-  if (data.collection_id) await touchCollection(s.supabase, data.collection_id);
-  // Runs on after the answer; the dialog polls the row. The service client outlives the user's request.
-  void runGeneration(ctServiceClient() ?? s.supabase, s.user.id, row(data), given);
-  return NextResponse.json({ image: row(data) }, { status: 202 });
-}
-
-// ---------------------------------------------------------------------------
-// Bộ ảnh
-// ---------------------------------------------------------------------------
-
-/** A bộ moves to the top of the list when something happens in it. */
-export async function touchCollection(db: Db, id: string): Promise<void> {
-  await db.from(CT_TABLES.packCollections).update({ updated_at: new Date().toISOString() }).eq("id", id);
-}
-
-/** GET library/pack-collections — the editor's own, latest activity first. */
-export async function listPackCollections(s: CtSession): Promise<NextResponse> {
-  const { data, error } = await s.supabase.from(CT_TABLES.packCollections).select("*").eq("user_id", s.user.id).order("updated_at", { ascending: false }).limit(200).returns<CtPackCollection[]>();
-  if (error) return jsonError(error.message, 500);
-  return NextResponse.json({ collections: data ?? [] });
-}
-
-/** POST library/pack-collections */
-export async function createPackCollection(s: CtSession, body: unknown): Promise<NextResponse> {
-  const name = str((body as { name?: unknown } | null)?.name).trim().slice(0, 120);
-  if (!name) return jsonError("Đặt tên cho bộ ảnh", 400);
-  const { data, error } = await s.supabase.from(CT_TABLES.packCollections).insert({ user_id: s.user.id, name }).select("*").single<CtPackCollection>();
-  if (error || !data) return jsonError(error?.message ?? "Không tạo được bộ ảnh", 500);
-  return NextResponse.json({ collection: data }, { status: 201 });
-}
-
-/** PATCH library/pack-collections/:id */
-export async function renamePackCollection(s: CtSession, id: string, body: unknown): Promise<NextResponse> {
-  const name = str((body as { name?: unknown } | null)?.name).trim().slice(0, 120);
-  if (!name) return jsonError("Đặt tên cho bộ ảnh", 400);
-  const { data, error } = await s.supabase.from(CT_TABLES.packCollections).update({ name }).eq("id", id).select("*").maybeSingle<CtPackCollection>();
-  if (error) return jsonError(error.message, 500);
-  return data ? NextResponse.json({ collection: data }) : jsonError("Không đổi được tên bộ ảnh này", 403);
 }

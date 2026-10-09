@@ -2,7 +2,7 @@
 
 /**
  * Home page: the image model the whole team's AI pictures are made with (server/settings.ts). Changing it applies
- * to the next run everywhere — studio clipart / đa sắc / vật liệu / sửa, ảnh tổ hợp, @flexiprint's runs.
+ * to the next run everywhere — the v2 bộ nhân vật and @flexiprint's runs.
  */
 
 import { useEffect, useState } from "react";

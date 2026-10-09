@@ -7,8 +7,8 @@ metal, wood) and print files with a laser cut path.
 - **App**: Next.js 16 (standalone) — editor, dashboard, admin, public storefront API.
 - **Auth + DB**: self-hosted Supabase (Postgres, GoTrue, PostgREST), schema `flexiprint`.
 - **Files**: Cloudflare R2 (private bucket), served by the app at `/files/*` behind an nginx cache.
-- **Services** (`services/`, Python, no AI): `bg-remover` (BiRefNet cut-out), `photo-style` (OpenCV styles),
-  `material-render` (print files + cut SVG).
+- **Services** (`services/`, Python, no AI): `bg-remover` (BiRefNet cut-out), `face-detect` (face crops),
+  `material-render` (print files + cut SVG), `layer-kit` (v2 layer sets).
 - **Storefront**: `customize-tool/shopify/` — theme section + `ct-customizer.js` (Shopify store `giftself-2`).
 
 ## Layout

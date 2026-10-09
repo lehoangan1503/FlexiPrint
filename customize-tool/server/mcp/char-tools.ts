@@ -22,7 +22,7 @@ import type { CtServiceClient } from "../supabase";
 import { currentImageModel } from "../settings";
 import { clip, record, str } from "../ai/llm";
 import { CHAR_BRIEF_RULES, ideaRoundFrom } from "../char/brainstorm";
-import { KEEP_REFINE, drawMasters, loadImages, loadProject, projectRow, refineMasterImage } from "../char/projects";
+import { KEEP_REFINE, drawIdeaPreviews, drawMasters, loadImages, loadProject, projectRow, refineMasterImage } from "../char/projects";
 import { runEditRoles } from "../char/layers";
 import { TASK_ARG, json, liveStatus, loadTask, openTask, patchTask } from "./task-common";
 import type { CtMcpContext, CtMcpTool } from "./tools";
@@ -45,7 +45,8 @@ const BRAINSTORM_INSTRUCTIONS = [
   "STEP brainstorm — turn the editor's idea into briefs. The brief rules and the result format are in \"briefRules\" (follow them exactly: English option names, slot modes, poses that keep parts separable).",
   "1. Read the idea, the request, the brief so far, the earlier rounds and steps; view_image every reference and the blank product. The briefs you write must follow what the references show and their notes (style sentence from the style references, subjects described as the character / outfit references show them, scene from the pose ones) — and say in each idea's \"why\" which reference it follows. A reference you cannot tell what to take from → ask_user.",
   "2. Only when something decides everything and you cannot guess it (the product, the cast), ask_user once with options. Otherwise go on.",
-  "3. submit_result(task_id, {summary, questions, ideas: [exactly 3 × {title, why, brief}]}) — the page shows them as directions the editor can take.",
+  "The piece: brief.product.templateId / layout (a khuôn in — list_print_templates) when the editor picked one; keep them in every idea and compose for its safe zone (a round ornament: everyone inside the centred circle, the top centre clear for the hole). None picked and the product is clear → set templateId + layout from list_print_templates yourself.",
+  "3. submit_result(task_id, {summary, questions, ideas: [exactly 3 × {title, why, brief}]}) — the page shows them as directions the editor can take, each with a master the server draws from its brief (so every brief must be complete enough to draw).",
 ].join("\n");
 
 const MASTER_INSTRUCTIONS = [
@@ -221,6 +222,8 @@ export async function submitCharResult(db: CtServiceClient, task: CtAgentTask, r
     const round = ideaRoundFrom(raw, p, c.request);
     const { error } = await db.from(CT_TABLES.charProjects).update({ ideas: [...p.ideas, round].slice(-10) }).eq("id", p.id);
     if (error) throw new Error(error.message);
+    // Each direction drawn once, so the editor sees it before choosing (a failed picture never fails the round).
+    if (task.user_id) await drawIdeaPreviews(db, task.user_id, p, round).catch((e: Error) => console.warn("[ct] idea previews", e.message));
     return { step: c.step, summary, roundId: round.id };
   }
   if (c.step === "master") {

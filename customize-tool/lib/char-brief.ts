@@ -139,6 +139,8 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
       widthMm: num(p.widthMm),
       heightMm: num(p.heightMm),
       blankId: uuidOrNull(p.blankId),
+      templateId: uuidOrNull(p.templateId),
+      layout: s(p.layout, 600),
     },
     style: s(o.style, 1000),
     refs: arr(o.refs)
@@ -235,6 +237,7 @@ export function masterPrompt(brief: CtCharBrief): string {
     lines.push(`${head}${sub.description.replace(/\.$/, "")}${looks.length ? `; ${looks.join("; ")}` : ""}.`);
   });
   if (brief.scene) lines.push(`Arrangement: ${brief.scene.replace(/\.$/, "")}.`);
+  if (brief.product.layout) lines.push(`On the product: ${brief.product.layout.replace(/\.$/, "")}.`);
   for (const z of brief.photoZones) lines.push(`${z.where}: an empty plain light-grey area with a clean edge (a photo goes there later).`);
   lines.push(
     brief.subjects.length > 1

@@ -1,36 +1,24 @@
 "use client";
 
 /**
- * Thư viện ảnh tổ hợp — where a tổ hợp Image frame gets its photo (server/pack-images.ts).
+ * Thư viện ảnh mockup — where a Mockups Image frame (or a custom layer) gets its photo (server/pack-images.ts).
  *
  *   "Tải lên ảnh mới": pick a file, rename it, "Tải lên" → saved to the library as <name>_<timestamp>.<ext> and
- *   used right away. Tabs Tất cả / Ảnh bạn tải lên / Ảnh AI, search by name; click a photo to use it.
- *   "Tạo ảnh với AI" opens the full-window studio (pack-ai-studio.tsx: bộ ảnh, chat with @flexiprint);
+ *   used right away. Tabs Tất cả / Ảnh bạn tải lên, search by name; click a photo to use it.
  *
- * Everything saved here can be reused in later edits and by the @flexiprint agent (MCP list_pack_images).
+ * Everything saved here can be reused in later edits.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Loader2, Search, Sparkles, Trash2, Upload, X } from "lucide-react";
-import type { CtPackImage, CtPackImageAspect } from "../../types";
+import { Check, Loader2, Search, Trash2, Upload, X } from "lucide-react";
+import type { CtPackImage } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { fileStem, IMAGE_EXT } from "../../lib/file-name";
 import { CHECKER_STYLE, CtButton, CtInput, CtModal, cx } from "../ui";
 import { ctConfirm } from "../dialogs";
 import { toUploadable } from "./scene-dialog";
-import { PACK_ASPECTS, PackAiStudio } from "./pack-ai-studio";
 
-type Scope = "all" | "mine" | "ai";
-
-/** The offered aspect closest to w×h. */
-export function nearestAspect(w: number, h: number): CtPackImageAspect {
-  const r = w / h;
-  const ratio = (a: CtPackImageAspect) => {
-    const [x, y] = a.split(":").map(Number);
-    return x / y;
-  };
-  return PACK_ASPECTS.reduce((best, a) => (Math.abs(Math.log(ratio(a) / r)) < Math.abs(Math.log(ratio(best) / r)) ? a : best), "1:1");
-}
+type Scope = "all" | "mine";
 
 function pickFile(): Promise<File | undefined> {
   return new Promise((resolve) => {
@@ -52,10 +40,8 @@ interface Pending {
 export interface PackImageLibraryProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The photo picked (or just uploaded / generated and clicked). */
+  /** The photo picked (or just uploaded and clicked). */
   onPick: (image: CtPackImage) => void;
-  /** Default aspect for AI photos (the edit frame's). */
-  aspect: CtPackImageAspect;
 }
 
 export function PackImageLibrary(props: PackImageLibraryProps) {
@@ -67,7 +53,6 @@ export function PackImageLibrary(props: PackImageLibraryProps) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [studio, setStudio] = useState(false);
 
   // The grid: reload on scope / search (debounced).
   const [reload, setReload] = useState(0);
@@ -133,7 +118,7 @@ export function PackImageLibrary(props: PackImageLibraryProps) {
   };
 
   const remove = async (image: CtPackImage) => {
-    if (!(await ctConfirm({ title: `Xoá “${image.name}”?`, message: "Ảnh bị xoá khỏi thư viện. Các tổ hợp đã dùng ảnh này sẽ mất ảnh.", confirmLabel: "Xoá" }))) return;
+    if (!(await ctConfirm({ title: `Xoá “${image.name}”?`, message: "Ảnh bị xoá khỏi thư viện. Các mockup đã dùng ảnh này sẽ mất ảnh.", confirmLabel: "Xoá" }))) return;
     try {
       await ctApi.deletePackImage(image.id);
       setReload((n) => n + 1);
@@ -146,7 +131,7 @@ export function PackImageLibrary(props: PackImageLibraryProps) {
   const shown = images.filter((i) => i.status === "done" && i.url);
 
   return (
-    <CtModal open={open} onOpenChange={props.onOpenChange} title="Thư viện ảnh tổ hợp" wide>
+    <CtModal open={open} onOpenChange={props.onOpenChange} title="Thư viện ảnh mockup" wide>
       <div className="min-h-[60vh]">
         {/* Library */}
         <div className="flex min-w-0 flex-col gap-3">
@@ -179,11 +164,8 @@ export function PackImageLibrary(props: PackImageLibraryProps) {
             </div>
           ) : (
             <div className="flex gap-2">
-              <CtButton onClick={() => void chooseFile()}>
+              <CtButton variant="primary" onClick={() => void chooseFile()}>
                 <Upload className="h-4 w-4" /> Tải lên ảnh mới
-              </CtButton>
-              <CtButton variant="primary" onClick={() => setStudio(true)}>
-                <Sparkles className="h-4 w-4" /> Tạo ảnh với AI
               </CtButton>
             </div>
           )}
@@ -194,7 +176,6 @@ export function PackImageLibrary(props: PackImageLibraryProps) {
                 [
                   ["all", "Tất cả"],
                   ["mine", "Ảnh bạn tải lên"],
-                  ["ai", "Ảnh AI"],
                 ] as Array<[Scope, string]>
               ).map(([id, label]) => (
                 <button
@@ -221,14 +202,13 @@ export function PackImageLibrary(props: PackImageLibraryProps) {
                   <button
                     className="block w-full overflow-hidden rounded-lg border text-left hover:border-sky-500"
                     onClick={() => pick(img)}
-                    title={img.source === "ai" ? img.description : img.name}
+                    title={img.name}
                   >
                     <span className="block aspect-square" style={CHECKER_STYLE}>
                       <img src={img.url ?? ""} alt="" className="h-full w-full object-cover" loading="lazy" />
                     </span>
                     <span className="block truncate border-t bg-background px-2 py-1 text-[11px]">{img.name}</span>
                   </button>
-                  {img.source === "ai" && <Sparkles className="absolute left-1.5 top-1.5 h-3.5 w-3.5 text-violet-400 drop-shadow" />}
                   <button
                     className="absolute right-1.5 top-1.5 hidden rounded bg-black/70 p-1 text-white hover:bg-destructive group-hover:block"
                     onClick={() => void remove(img)}
@@ -245,17 +225,6 @@ export function PackImageLibrary(props: PackImageLibraryProps) {
         </div>
 
       </div>
-      {studio && (
-        <PackAiStudio
-          aspect={props.aspect}
-          onClose={() => setStudio(false)}
-          onChanged={() => setReload((n) => n + 1)}
-          onPick={(img) => {
-            setStudio(false);
-            pick(img);
-          }}
-        />
-      )}
     </CtModal>
   );
 }

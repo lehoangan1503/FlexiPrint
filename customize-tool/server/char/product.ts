@@ -20,6 +20,23 @@ import * as h from "../handlers";
 import type { CtSession } from "../supabase";
 import { fetchImage } from "./files";
 import { jsonError, loadImages, loadProject } from "./projects";
+import { getTemplate } from "../print-templates";
+import { makeTemplateProduct, productPrintOf } from "../print-products";
+import { safeShapes } from "../../lib/print-template";
+import { shapeBounds } from "../../lib/geometry";
+import type { CtPrintSpec } from "../../types/print";
+
+/** Where the characters + text go on a template: its first safe shape (a circle / ellipse → the rectangle inside it). */
+function safeArea(spec: CtPrintSpec): Box {
+  const s = safeShapes(spec)[0];
+  if (!s) return { x: 0, y: 0, w: spec.width, h: spec.height };
+  if (s.type === "ellipse") {
+    const w = s.rx * Math.SQRT2;
+    const h = s.ry * Math.SQRT2;
+    return { x: s.cx - w / 2, y: s.cy - h / 2, w, h };
+  }
+  return shapeBounds(s);
+}
 
 const DPI = 300;
 const DEFAULT_MM = { w: 220, h: 150 };
@@ -79,7 +96,9 @@ export async function createCharProduct(s: CtSession, id: string, raw: unknown):
 
 async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: string): Promise<string> {
   const brief = p.brief;
-  const { product } = await body<{ product: CtProduct }>(await h.createProduct(s, { name }));
+  // On a khuôn in (brief.product.templateId): the product's canvas is its sheet, the characters sit in its safe zone.
+  const template = brief.product.templateId ? await getTemplate(s, brief.product.templateId) : null;
+  const product = template ? await makeTemplateProduct(s.supabase, s.user.id, template, name) : (await body<{ product: CtProduct }>(await h.createProduct(s, { name }))).product;
   const upload = async (data: Buffer, role: string, assetName: string, parentId: string | null = null, meta: Record<string, unknown> = {}): Promise<CtAsset> => {
     const form = new FormData();
     form.set("file", new Blob([new Uint8Array(data)], { type: "image/png" }), `${assetName || role}.png`);
@@ -90,23 +109,40 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     return (await body<{ asset: CtAsset }>(await h.uploadAsset(s, product.id, form))).asset;
   };
 
-  // The print canvas: the print area at 300 dpi, transparent.
-  const mmW = brief.product.widthMm || DEFAULT_MM.w;
-  const mmH = brief.product.heightMm || DEFAULT_MM.h;
-  const W = Math.round((mmW / 25.4) * DPI);
-  const H = Math.round((mmH / 25.4) * DPI);
-  const canvas = await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer();
-  const main = await upload(canvas, "main", "Vùng in");
+  // The print canvas: the template's sheet, else the print area at 300 dpi, transparent.
+  const mmW = template?.spec.widthMm || brief.product.widthMm || DEFAULT_MM.w;
+  const mmH = template?.spec.heightMm || brief.product.heightMm || DEFAULT_MM.h;
+  let main: CtAsset;
+  let W: number;
+  let H: number;
+  let keep: CtRegion[] = [];
+  if (template) {
+    const { data: sheet } = await s.supabase.from(CT_TABLES.assets).select("*").eq("id", product.main_asset_id ?? "").single<CtAsset>();
+    if (!sheet) throw new Error("Không thấy tờ in của khuôn");
+    main = sheet;
+    W = template.spec.width;
+    H = template.spec.height;
+    // The khuôn layer made with the product stays (saveDesign replaces the regions).
+    const { data: frames } = await s.supabase.from(CT_TABLES.regions).select("*").eq("product_id", product.id).returns<CtRegion[]>();
+    keep = frames ?? [];
+  } else {
+    W = Math.round((mmW / 25.4) * DPI);
+    H = Math.round((mmH / 25.4) * DPI);
+    const canvas = await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer();
+    main = await upload(canvas, "main", "Vùng in");
+  }
 
-  // Characters: the set's canvas fitted into the print (a band below for the text), aspect kept exactly.
+  // Characters: the set's canvas fitted into the print area (a band below for the text), aspect kept exactly. The
+  // area is the template's safe zone (a round one: the rectangle inside the circle), else the sheet minus 4 %.
   const margin = Math.round(Math.min(W, H) * 0.04);
-  const textBand = brief.text.enabled ? Math.round(H * 0.2) : 0;
-  const areaW = W - 2 * margin;
-  const areaH = H - 2 * margin - textBand;
+  const area = template ? safeArea(template.spec) : { x: margin, y: margin, w: W - 2 * margin, h: H - 2 * margin };
+  const textBand = brief.text.enabled ? Math.round(area.h * 0.2) : 0;
+  const areaW = area.w;
+  const areaH = area.h - textBand;
   const k = Math.min(areaW / set.width, areaH / set.height);
   const box: Box = { w: set.width * k, h: set.height * k, x: 0, y: 0 };
-  box.x = (W - box.w) / 2;
-  box.y = margin + (areaH - box.h) / 2;
+  box.x = area.x + (area.w - box.w) / 2;
+  box.y = area.y + (areaH - box.h) / 2;
 
   const regions: CtRegion[] = [];
   const items: CtRegionItem[] = [];
@@ -206,13 +242,13 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
   if (brief.text.enabled) {
     const cfg = defaultRegionConfig("text");
     const font = CT_FONTS.some((f) => f.family === brief.text.font) ? brief.text.font : "Great Vibes";
-    const bandY = H - margin - textBand;
+    const bandY = area.y + area.h - textBand;
     regions.push({
       id: crypto.randomUUID(),
       product_id: product.id,
       name: "Chữ",
       kind: "text",
-      shape: { type: "rect", x: margin, y: bandY, w: W - 2 * margin, h: textBand, radius: 0 },
+      shape: { type: "rect", x: area.x, y: bandY, w: area.w, h: textBand, radius: 0 },
       config: {
         ...cfg,
         mainId: main.id,
@@ -234,7 +270,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
   await Promise.all(set.slots.map((sl) => (regionOf.get(sl.key) ? fill(regionOf.get(sl.key)!, sl) : Promise.resolve())));
   items.sort((a, b) => regions.findIndex((r) => r.id === a.region_id) - regions.findIndex((r) => r.id === b.region_id) || a.sort_order - b.sort_order);
 
-  const config = defaultProductConfig();
+  const config = { ...defaultProductConfig(), print: template ? productPrintOf(template) : null };
   if (brief.product.cut === "alpha") config.material = { ...applyMaterialPreset(config.material, "acrylic_white"), widthMm: mmW };
   else config.material = { ...config.material, widthMm: mmW };
   // The blank product photo: the storefront draws the design into the print area on it.
@@ -245,6 +281,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     const bh = (bw * H) / W;
     config.scene = { url: ref.url, width: blank.width, height: blank.height, box: { x: (blank.width - bw) / 2, y: Math.max(0, blank.height * 0.55 - bh / 2), w: bw, h: bh } };
   }
-  await body(await h.saveDesign(s, product.id, { regions, items, config }));
+  const all = [...keep, ...regions].map((r, i) => ({ ...r, sort_order: i }));
+  await body(await h.saveDesign(s, product.id, { regions: all, items, config }));
   return product.id;
 }

@@ -1,7 +1,7 @@
 {
   "flexiprint": {
-    "label": "FlexiPrint — thư viện clipart, studio tạo ảnh, task từ app FlexiPrint",
-    "short": "FlexiPrint library + studio",
+    "label": "FlexiPrint — thư viện clipart (chỉ đọc), task từ app FlexiPrint",
+    "short": "FlexiPrint library + tasks",
     "tools": [],
     "mcpServers": {
       "flexiprint": {
@@ -10,6 +10,6 @@
         "headers": { "Authorization": "Bearer <CT_AGENT_TOKEN của FlexiPrint>" }
       }
     },
-    "hint": "Dữ liệu thật của FlexiPrint. Đọc resource flexiprint://guide/overview trước. run_studio tốn tiền (fal.ai)."
+    "hint": "Dữ liệu thật của FlexiPrint. Đọc resource flexiprint://guide/overview trước."
   }
 }

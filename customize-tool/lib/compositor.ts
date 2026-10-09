@@ -5,11 +5,12 @@
  * scaled once at the end, so preview and full-res export are the same picture.
  */
 
-import type { CtMainFrame, CtMainLayout, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtShape, CtTextConfig, CtTransform } from "../types";
+import type { CtFillConfig, CtMainFrame, CtMainLayout, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtShape, CtTextConfig, CtTransform } from "../types";
 import { itemPlacement, orientedBox, photoFrameBox, resolvePhotoFrame, shapeBounds } from "./geometry";
 import { activeRegions, normalizeRegion, regionForSelection, resolveLinked, selectedMainId, selectedMainImageId, textMode, zoneText } from "./design";
 import { mainFrameFor, resolveLayout } from "./layout";
 import { frameRegionFor, renditionFrameBox, traceFrame } from "./material-frame";
+import { scaleShape } from "./print-template";
 
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 
@@ -53,6 +54,13 @@ export interface CompositeInput {
    * everything outside it (and its cut-out parts) is cleared. No khuôn: the main's own box, as without.
    */
   cutToFrame?: boolean;
+  /** The product shown on its photo (preview / mockup): print-only layers (a background the photo shows) are left out. */
+  display?: boolean;
+  /**
+   * One size of a khuôn in (lib/print-template printSize): the canvas is that size's sheet, fill layers fill their
+   * zone of that size (patterns keep their px size), everything else is stretched with the sheet.
+   */
+  size?: { width: number; height: number; zones: Record<string, CtShape> } | null;
 }
 
 /**
@@ -102,6 +110,12 @@ export async function renderComposite(input: CompositeInput): Promise<HTMLCanvas
     ctx.restore();
     return canvas;
   }
+  if (input.size) {
+    canvas.width = Math.max(1, Math.round(input.size.width * scale));
+    canvas.height = Math.max(1, Math.round(input.size.height * scale));
+    await drawComposite(ctx, input);
+    return canvas;
+  }
   const b = input.bleed ? compositeBleed(input) : { x: 0, y: 0 };
   canvas.width = Math.max(1, Math.round((main.width + 2 * b.x) * scale));
   canvas.height = Math.max(1, Math.round((main.height + 2 * b.y) * scale));
@@ -130,7 +144,20 @@ export async function drawComposite(ctx: CanvasRenderingContext2D, input: Compos
   // Child zones only while their parent shows the option they belong to.
   const regions = activeRegions(resolved.regions.map(normalizeRegion), selection)
     .map((r) => regionForSelection(normalizeRegion(r), selection[r.id]))
+    .filter((r) => !(input.display && r.config.printOnly))
     .sort((a, b) => a.sort_order - b.sort_order);
+  // A size of the khuôn in: fills take that size's zone, the rest is stretched with the sheet.
+  const size = input.size ?? null;
+  const kx = size ? size.width / main.width : 1;
+  const ky = size ? size.height / main.height : 1;
+  const draw = async (r: CtRegion) => {
+    const zone = size && r.config.fill?.zone ? size.zones[r.config.fill.zone] : undefined;
+    if (r.config.fill) return drawRegion(ctx, zone ? { ...r, shape: zone } : r.kind === "image" && size ? { ...r, shape: scaleShape(r.shape, kx, ky) } : r, items, byId, selection);
+    ctx.save();
+    ctx.scale(kx, ky);
+    await drawRegion(ctx, r, items, byId, selection);
+    ctx.restore();
+  };
   const byId = new Map(assets.map((a) => [a.id, a]));
 
   // Fonts used by text regions must be loaded before measureText, or the
@@ -147,33 +174,39 @@ export async function drawComposite(ctx: CanvasRenderingContext2D, input: Compos
 
   ctx.save();
   ctx.setTransform(scale, 0, 0, scale, offset.x * scale, offset.y * scale);
-  ctx.clearRect(-offset.x, -offset.y, main.width + 2 * offset.x, main.height + 2 * offset.y);
+  const sheetW = size ? size.width : main.width;
+  const sheetH = size ? size.height : main.height;
+  ctx.clearRect(-offset.x, -offset.y, sheetW + 2 * offset.x, sheetH + 2 * offset.y);
   if (background) {
     ctx.fillStyle = background;
-    ctx.fillRect(-offset.x, -offset.y, main.width + 2 * offset.x, main.height + 2 * offset.y);
+    ctx.fillRect(-offset.x, -offset.y, sheetW + 2 * offset.x, sheetH + 2 * offset.y);
   }
 
   const below = regions.filter((r) => !r.config.aboveMain);
   const above = regions.filter((r) => r.config.aboveMain);
 
-  for (const r of below) await drawRegion(ctx, r, items, byId, selection);
+  for (const r of below) await draw(r);
   // The version's picture lands in its frame on the artboard (moved / resized / turned in the editor); a rendition
   // on a larger canvas brings its plate / cord around that box.
   const { f, pad: mainPad } = mainPictureBox(input);
   const px = (mainPad?.x ?? 0) * f.w;
   const py = (mainPad?.y ?? 0) * f.h;
   ctx.save();
+  ctx.scale(kx, ky);
   ctx.translate(f.x + f.w / 2, f.y + f.h / 2);
   if (f.rotation) ctx.rotate((f.rotation * Math.PI) / 180);
   ctx.drawImage(mainImg, -f.w / 2 - px, -f.h / 2 - py, f.w + 2 * px, f.h + 2 * py);
   ctx.restore();
-  for (const r of above) await drawRegion(ctx, r, items, byId, selection);
+  for (const r of above) await draw(r);
 
   ctx.restore();
 }
 
 function clipToShape(ctx: CanvasRenderingContext2D, region: CtRegion): void {
-  const s = region.shape;
+  clipShape(ctx, region.shape);
+}
+
+function clipShape(ctx: CanvasRenderingContext2D, s: CtShape): void {
   ctx.beginPath();
   if (s.type === "rect") {
     if (s.radius > 0 && typeof ctx.roundRect === "function") ctx.roundRect(s.x, s.y, s.w, s.h, s.radius);
@@ -206,9 +239,12 @@ async function drawRegion(
   const bounds = shapeBounds(region.shape);
 
   ctx.save();
-  if (region.config.clip) clipToShape(ctx, region);
+  if (region.config.clip || region.config.fill) clipToShape(ctx, region);
 
-  if (region.kind === "image" && sel.kind === "image" && sel.assetId) {
+  if (region.kind === "image" && region.config.fill && sel.kind === "image" && sel.assetId) {
+    const asset = byId.get(sel.assetId);
+    if (asset) drawFill(ctx, await loadImage(asset.url), bounds, region.config.fill);
+  } else if (region.kind === "image" && sel.kind === "image" && sel.assetId) {
     const asset = byId.get(sel.assetId);
     const item = asset ? itemFor(region, items, asset) : undefined;
     if (asset && item) {
@@ -257,6 +293,23 @@ export function textBand(shape: CtShape): { cx: number; cy: number; w: number; h
   if (rotation <= -90) rotation += 180;
   if (rotation > 90) rotation -= 180;
   return { cx: b.cx, cy: b.cy, w, h, rotation: Math.abs(rotation) < 1 ? 0 : rotation };
+}
+
+/**
+ * A fill layer's picture over its (already clipped) outline: repeated `tile` px wide from the outline's corner, or
+ * one picture covering it.
+ */
+function drawFill(ctx: CanvasRenderingContext2D, img: HTMLImageElement, bounds: { x: number; y: number; w: number; h: number }, fill: CtFillConfig): void {
+  const iw = img.naturalWidth || 1;
+  const ih = img.naturalHeight || 1;
+  if (fill.mode === "cover") {
+    const k = Math.max(bounds.w / iw, bounds.h / ih);
+    ctx.drawImage(img, bounds.x + (bounds.w - iw * k) / 2, bounds.y + (bounds.h - ih * k) / 2, iw * k, ih * k);
+    return;
+  }
+  const tw = Math.max(4, fill.tile);
+  const th = (tw * ih) / iw;
+  for (let y = bounds.y; y < bounds.y + bounds.h; y += th) for (let x = bounds.x; x < bounds.x + bounds.w; x += tw) ctx.drawImage(img, x, y, tw, th);
 }
 
 /** `pad`: the image is a rendition on a larger canvas — placed by its art's box, the padding drawn around it. */

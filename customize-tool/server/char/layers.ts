@@ -140,10 +140,15 @@ async function runEdits(db: Db, userId: string, p: CtCharProject, plan: CtCharEd
     if (!work) throw new Error("Chưa có master làm việc");
     const models = await editModels();
     const draw = async (row: CtCharImage, src: CtCharImage) => {
-      const done = await runCharDraw(db, userId, { ...row, parent_id: src.id }, { prompt: row.prompt, refs: [src.url], aspect: null, refSize: { w: src.width, h: src.height }, models });
+      // The source is written before drawing: a measure that hangs (the VPS swapping) must not leave a finished
+      // edit without it — the plan step would call it "made from an old base".
+      const meta = { ...row.meta, sourceId: src.id };
+      await db.from(CT_TABLES.charImages).update({ parent_id: src.id, meta }).eq("id", row.id);
+      const done = await runCharDraw(db, userId, { ...row, parent_id: src.id, meta }, { prompt: row.prompt, refs: [src.url], aspect: null, refSize: { w: src.width, h: src.height }, models });
       if (!done) return null;
       const align = await measure(src.url, done.url);
-      const { data } = await db.from(CT_TABLES.charImages).update({ parent_id: src.id, meta: { ...row.meta, ...done.meta, sourceId: src.id, ...(align ? { align } : {}) } }).eq("id", done.id).select("*").single<CtCharImage>();
+      if (!align) return done;
+      const { data } = await db.from(CT_TABLES.charImages).update({ meta: { ...meta, ...done.meta, align } }).eq("id", done.id).select("*").single<CtCharImage>();
       return data ?? done;
     };
     const baseRow = byRole.get("base");

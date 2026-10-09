@@ -1,19 +1,23 @@
 "use client";
 
 /**
- * Step 1 — the brief. Left: the idea + brainstorm (@flexiprint proposes 3 directions, each a full brief). Right: the brief
- * itself — product, style, characters and what the customer may change, photo zones, text, decor, mockups.
- * Everything the later steps need comes from here; nothing else is asked.
+ * Step 1 — the brief. First a full-width brainstorm chat (@flexiprint proposes 3 directions, each a full brief with a
+ * master drawn from it); taking one opens the brief itself — product, style, characters and what the customer may
+ * change, photo zones, text, decor, mockups. Everything the later steps need comes from here; nothing else is asked.
  */
 
-import { useRef, useState } from "react";
-import { ArrowRight, Bot, ImagePlus, Loader2, Plus, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowRight, Bot, ImagePlus, Loader2, MessagesSquare, Plus, Send, Trash2, X } from "lucide-react";
 import type { CtCharBrief, CtCharCut, CtCharIdea, CtCharImage, CtCharOption, CtCharSlot, CtCharSlotMode, CtCharSubject, CtCharSubjectKind } from "../../types";
 import { briefCombos, newCharOption, newCharSlot, newCharSubject, newPhotoZone } from "../../lib/char-brief";
 import { charApi } from "../../lib/api-client";
-import { CtButton, CtCheckbox, CtField, CtInput, CtSelect, CtTextarea, cx } from "../ui";
+import { CtButton, CtCheckbox, CtField, CtInput, CtModal, CtSelect, CtTextarea, cx } from "../ui";
 import type { CharCtx } from "./char-project";
 import { RefPictures } from "./ref-pictures";
+import type { CtPrintTemplate } from "../../types/print";
+import { layoutHint } from "../../lib/print-template";
+import { printApi } from "../../lib/print-api";
+import { PrintSheet } from "../print/print-sheet";
 
 const CUTS: Array<{ value: CtCharCut; label: string }> = [
   { value: "rect", label: "In trong ô (túi, ly, áo…)" },
@@ -32,9 +36,18 @@ const KINDS: Array<{ value: CtCharSubjectKind; label: string }> = [
 ];
 
 export function BriefPanel(ctx: CharCtx) {
+  // Brainstorm first (a full-width chat); the brief opens once a direction is taken (or there is one already).
+  const chosen = ctx.project.brief.subjects.length > 0;
+  const [view, setView] = useState<"chat" | "brief">(chosen ? "brief" : "chat");
+  if (view === "chat") return <IdeaChat {...ctx} onTaken={() => setView("brief")} onBrief={chosen ? () => setView("brief") : null} />;
   return (
-    <div className="grid min-h-0 gap-0 lg:grid-cols-[400px_1fr]">
-      <IdeaColumn {...ctx} />
+    <div>
+      <div className="flex flex-wrap items-center gap-3 border-b bg-muted/20 px-6 py-2.5">
+        <CtButton size="sm" onClick={() => setView("chat")}>
+          <MessagesSquare className="h-4 w-4" /> Brainstorm với @flexiprint
+        </CtButton>
+        <span className="text-xs text-muted-foreground">Brief của hướng đã chọn — sửa trực tiếp, hoặc quay lại brainstorm để @flexiprint đề xuất thêm.</span>
+      </div>
       <div className="min-w-0 space-y-6 p-6">
         <BriefForm {...ctx} />
       </div>
@@ -42,89 +55,224 @@ export function BriefPanel(ctx: CharCtx) {
   );
 }
 
-// ---- idea + brainstorm -------------------------------------------------------------------------------------
+// ---- brainstorm chat ---------------------------------------------------------------------------------------
 
-function IdeaColumn(ctx: CharCtx) {
-  const { project, editable } = ctx;
+/**
+ * The brainstorm as a chat (asked 2026-10-09): the editor writes, @flexiprint answers with 3 directions, each with a
+ * master drawn from its own brief (server/char/projects.ts drawIdeaPreviews); "Dùng hướng này" fills the brief and
+ * keeps that picture as a master candidate. The composer stays at the bottom: ask for more directions any time.
+ */
+function IdeaChat(ctx: CharCtx & { onTaken: () => void; onBrief: (() => void) | null }) {
+  const { project, images, editable } = ctx;
   const brief = project.brief;
   const [request, setRequest] = useState("");
-  const rounds = [...project.ideas].reverse();
+  const [taking, setTaking] = useState<string | null>(null);
+  const [zoom, setZoom] = useState<CtCharImage | null>(null);
+  const rounds = project.ideas;
   const busy = ctx.agent.busy;
   const thinking = ctx.agent.task?.input.char?.step === "brainstorm";
+  const end = useRef<HTMLDivElement | null>(null);
+  const first = rounds.length === 0;
+  const text = first ? brief.idea : request;
+
+  useEffect(() => {
+    end.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [rounds.length, thinking]);
 
   const ask = async () => {
     await ctx.flush();
-    await ctx.agent.start("brainstorm", request.trim());
+    await ctx.agent.start("brainstorm", first ? "" : request.trim());
     setRequest("");
   };
 
-  const take = (idea: CtCharIdea) => {
-    ctx.setBrief({ ...idea.brief, idea: brief.idea || idea.brief.idea, product: { ...idea.brief.product, blankId: brief.product.blankId }, refs: brief.refs });
+  const preview = (ideaId: string) => images.find((im) => im.kind === "master" && im.role === `idea:${ideaId}`) ?? null;
+
+  const take = async (idea: CtCharIdea) => {
+    setTaking(idea.id);
+    try {
+      ctx.setBrief({ ...idea.brief, idea: brief.idea || idea.brief.idea, product: { ...idea.brief.product, blankId: brief.product.blankId }, refs: brief.refs });
+      const im = preview(idea.id);
+      if (im?.status === "done") {
+        await charApi.adoptMaster(project.id, im.id);
+        await ctx.reload();
+      }
+      ctx.onTaken();
+    } catch (e) {
+      ctx.error(e instanceof Error ? e.message : "Không dùng được hướng này");
+    } finally {
+      setTaking(null);
+    }
   };
 
   return (
-    <aside className="space-y-4 border-r bg-muted/20 p-5 lg:sticky lg:top-14 lg:h-[calc(100vh-3.5rem)] lg:overflow-y-auto">
-      <CtField label="Ý tưởng của bạn" hint="Viết tự nhiên, mơ hồ cũng được: cho ai, dịp gì, sản phẩm gì, mấy người / mấy con thú, cảm giác muốn có.">
-        <CtTextarea
-          rows={5}
-          value={brief.idea}
-          disabled={!editable}
-          placeholder="VD: túi mỹ phẩm tặng mẹ, mẹ + 2 con gái + 1 con cún, khách đổi được tóc, màu áo, tên…"
-          onChange={(e) => ctx.setBrief({ ...brief, idea: e.target.value })}
-        />
-      </CtField>
-      <RefPictures {...ctx} />
-      {rounds.length > 0 && (
-        <CtField label="Yêu cầu thêm cho @flexiprint (không bắt buộc)">
-          <CtTextarea rows={2} value={request} disabled={!editable} placeholder="VD: thêm hướng phong cách màu nước; bỏ con mèo…" onChange={(e) => setRequest(e.target.value)} />
-        </CtField>
-      )}
-      <CtButton variant="primary" className="w-full justify-center" disabled={!editable || busy || !(brief.idea.trim() || request.trim())} onClick={() => void ask()}>
-        {thinking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-        {thinking ? "@flexiprint đang nghĩ…" : rounds.length ? "@flexiprint gợi ý thêm" : "@flexiprint gợi ý 3 hướng"}
-      </CtButton>
-      {busy && !thinking && <p className="text-[11px] text-muted-foreground">@flexiprint đang làm bước khác của bộ này — chờ xong.</p>}
-
-      {rounds.map((r) => (
-        <div key={r.id} className="space-y-3 rounded-lg border bg-card p-3">
-          {r.request && <p className="text-xs italic text-muted-foreground">“{r.request}”</p>}
-          {r.summary && <p className="text-sm">{r.summary}</p>}
-          {r.questions.length > 0 && (
-            <div className="rounded-md bg-amber-500/10 p-2 text-xs">
-              <div className="mb-1 font-medium text-amber-700 dark:text-amber-400">Nên trả lời trước khi tạo master:</div>
-              <ul className="list-disc space-y-0.5 pl-4">
-                {r.questions.map((q) => (
-                  <li key={q}>{q}</li>
-                ))}
-              </ul>
-            </div>
+    <div className="flex min-h-[calc(100vh-3.5rem)] flex-col">
+      <div className="mx-auto w-full max-w-6xl flex-1 space-y-5 px-4 py-6 sm:px-6">
+        <div className="flex flex-wrap items-start gap-3 rounded-xl border bg-card p-4">
+          <Bot className="mt-0.5 h-5 w-5 text-violet-500" />
+          <div className="min-w-0 flex-1 text-sm">
+            <div className="font-semibold">Brainstorm với @flexiprint</div>
+            <p className="text-xs text-muted-foreground">
+              Kể ý tưởng (cho ai, dịp gì, sản phẩm gì, mấy người / thú, khách đổi được gì), thêm ảnh mẫu nếu có. @flexiprint đề xuất 3 hướng, mỗi hướng vẽ sẵn 1 master để bạn hình dung; chọn 1 hướng
+              để mở brief, hoặc yêu cầu thêm hướng khác.
+            </p>
+          </div>
+          {ctx.onBrief && (
+            <CtButton size="sm" onClick={ctx.onBrief}>
+              Mở brief <ArrowRight className="h-3.5 w-3.5" />
+            </CtButton>
           )}
-          {r.ideas.map((idea) => (
-            <div key={idea.id} className="rounded-md border p-2.5">
-              <div className="text-sm font-semibold">{idea.title}</div>
-              {idea.why && <p className="mt-0.5 text-xs text-muted-foreground">{idea.why}</p>}
-              <p className="mt-1.5 text-xs">
-                <span className="text-muted-foreground">Phong cách:</span> {idea.brief.style}
-              </p>
-              <ul className="mt-1 space-y-0.5 text-xs">
-                {idea.brief.subjects.map((sub) => (
-                  <li key={sub.id}>
-                    • {sub.description}
-                    {sub.slots.length > 0 && <span className="text-muted-foreground"> — {sub.slots.map((sl) => `${sl.part} (${sl.options.length}${sl.colors.length ? `×${sl.colors.length} màu` : ""})`).join(", ")}</span>}
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-2 flex items-center gap-2">
-                <span className="text-[11px] text-muted-foreground">{briefCombos(idea.brief).toLocaleString("vi-VN")} tổ hợp</span>
-                <CtButton size="sm" className="ml-auto" disabled={!editable} onClick={() => take(idea)}>
-                  Dùng hướng này <ArrowRight className="h-3.5 w-3.5" />
-                </CtButton>
+        </div>
+        <details className="rounded-xl border bg-card p-4" open={first}>
+          <summary className="cursor-pointer text-sm font-medium">Ảnh mẫu / tham khảo ({brief.refs.length})</summary>
+          <div className="mt-3">
+            <RefPictures {...ctx} />
+          </div>
+        </details>
+
+        {rounds.map((r, i) => (
+          <div key={r.id} className="space-y-3">
+            <div className="flex justify-end">
+              <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-sky-600 px-4 py-2 text-sm text-white">{r.request || (i === 0 ? brief.idea : "Gợi ý thêm")}</div>
+            </div>
+            <div className="space-y-3 rounded-2xl rounded-bl-sm border bg-card p-4">
+              {r.summary && <p className="whitespace-pre-wrap text-sm">{r.summary}</p>}
+              {r.questions.length > 0 && (
+                <div className="rounded-md bg-amber-500/10 p-2 text-xs">
+                  <div className="mb-1 font-medium text-amber-700 dark:text-amber-400">Nên trả lời trước khi chọn (gõ ở ô dưới):</div>
+                  <ul className="list-disc space-y-0.5 pl-4">
+                    {r.questions.map((q) => (
+                      <li key={q}>{q}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div className="grid gap-3 md:grid-cols-3">
+                {r.ideas.map((idea) => {
+                  const im = preview(idea.id);
+                  return (
+                    <div key={idea.id} className="flex flex-col overflow-hidden rounded-lg border">
+                      <button className="block aspect-[4/5] w-full bg-white" disabled={im?.status !== "done"} onClick={() => im && setZoom(im)}>
+                        {im?.status === "done" ? (
+                          // eslint-disable-next-line @next/next/no-img-element -- our R2 preview
+                          <img src={im.thumb_url || im.url} alt={idea.title} className="h-full w-full object-contain" />
+                        ) : im?.status === "running" ? (
+                          <span className="flex h-full flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
+                            <Loader2 className="h-5 w-5 animate-spin" /> Đang vẽ master xem trước…
+                          </span>
+                        ) : im?.status === "failed" ? (
+                          <span className="flex h-full items-center justify-center p-3 text-center text-[11px] text-destructive">{im.error || "Không vẽ được"}</span>
+                        ) : (
+                          <span className="flex h-full items-center justify-center text-[11px] text-muted-foreground">Chưa có ảnh</span>
+                        )}
+                      </button>
+                      <div className="flex flex-1 flex-col gap-1.5 p-3">
+                        <div className="text-sm font-semibold">{idea.title}</div>
+                        {idea.why && <p className="text-xs text-muted-foreground">{idea.why}</p>}
+                        <p className="text-xs">
+                          <span className="text-muted-foreground">Phong cách:</span> {idea.brief.style}
+                        </p>
+                        <ul className="space-y-0.5 text-xs">
+                          {idea.brief.subjects.map((sub) => (
+                            <li key={sub.id}>
+                              • {sub.description}
+                              {sub.slots.length > 0 && <span className="text-muted-foreground"> — {sub.slots.map((sl) => `${sl.part} (${sl.options.length}${sl.colors.length ? `×${sl.colors.length} màu` : ""})`).join(", ")}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="mt-auto flex items-center gap-2 pt-2">
+                          <span className="text-[11px] text-muted-foreground">{briefCombos(idea.brief).toLocaleString("vi-VN")} tổ hợp</span>
+                          <CtButton size="sm" variant="primary" className="ml-auto" disabled={!editable || taking !== null} onClick={() => void take(idea)}>
+                            {taking === idea.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Dùng hướng này <ArrowRight className="h-3.5 w-3.5" />
+                          </CtButton>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          ))}
+          </div>
+        ))}
+        {thinking && (
+          <div className="flex items-center gap-2 rounded-2xl rounded-bl-sm border bg-card p-4 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> @flexiprint đang nghĩ 3 hướng…
+          </div>
+        )}
+        <div ref={end} />
+      </div>
+
+      <div className="sticky bottom-0 border-t bg-background/95 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-6xl items-end gap-2 px-4 py-3 sm:px-6">
+          <CtTextarea
+            rows={first ? 3 : 2}
+            className="flex-1"
+            value={text}
+            disabled={!editable}
+            placeholder={first ? "VD: ornament tròn tặng 2 bạn thân, 2 bà nhảy múa nâng ly, khách đổi tóc, váy, đồ cầm, tên…" : "Yêu cầu thêm: thêm hướng màu nước; bỏ con mèo; trả lời câu hỏi…"}
+            onChange={(e) => (first ? ctx.setBrief({ ...brief, idea: e.target.value }) : setRequest(e.target.value))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim() && !busy) void ask();
+            }}
+          />
+          <CtButton variant="primary" disabled={!editable || busy || !text.trim()} onClick={() => void ask()}>
+            {thinking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            {first ? "Gợi ý 3 hướng" : "Gửi"}
+          </CtButton>
         </div>
-      ))}
-    </aside>
+        {busy && !thinking && <p className="mx-auto max-w-6xl px-6 pb-2 text-[11px] text-muted-foreground">@flexiprint đang làm bước khác của bộ này — chờ xong.</p>}
+      </div>
+
+      <CtModal open={!!zoom} onOpenChange={(o) => !o && setZoom(null)} title={zoom?.note || "Master xem trước"} wide>
+        {/* eslint-disable-next-line @next/next/no-img-element -- the original */}
+        {zoom && <img src={zoom.url} alt="" className="mx-auto max-h-[75vh] w-auto object-contain" />}
+      </CtModal>
+    </div>
+  );
+}
+
+// ---- khuôn in -----------------------------------------------------------------------------------------------
+
+/**
+ * The piece the set is made for (types/print.ts): picking one fills the product (name, cut, mm) and the layout
+ * sentence the master prompt carries (its safe zone, a hanging hole to keep clear).
+ */
+function TemplatePick({ brief, onPick }: { brief: CtCharBrief; onPick: (p: CtCharBrief["product"]) => void }) {
+  const [templates, setTemplates] = useState<CtPrintTemplate[]>([]);
+  useEffect(() => {
+    printApi
+      .list()
+      .then(setTemplates)
+      .catch(() => setTemplates([]));
+  }, []);
+  const p = brief.product;
+  const pick = (id: string) => {
+    const t = templates.find((x) => x.id === id);
+    if (!t) return onPick({ ...p, templateId: null, layout: "" });
+    onPick({
+      ...p,
+      templateId: t.id,
+      label: p.label || t.name,
+      cut: t.kind === "cut" ? "alpha" : t.spec.outline ? "frame" : "rect",
+      widthMm: t.spec.widthMm || p.widthMm,
+      heightMm: t.spec.heightMm || p.heightMm,
+      layout: layoutHint(t.kind, t.spec),
+    });
+  };
+  const current = templates.find((t) => t.id === p.templateId) ?? null;
+  return (
+    <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr]">
+      <CtField label="Khuôn in" hint="Kích thước file in, đường cắt, safe zone — master được bố cục nằm trong safe zone. Quản lý ở trang Khuôn in.">
+        <CtSelect<string> value={p.templateId ?? ""} placeholder="Chọn khuôn in…" options={templates.map((t) => ({ value: t.id, label: t.name }))} onChange={pick} />
+      </CtField>
+      <CtField label="Bố cục trên sản phẩm (cho AI)">
+        <CtTextarea rows={2} value={p.layout ?? ""} placeholder="a round piece: every character inside a centred circle…" onChange={(e) => onPick({ ...p, layout: e.target.value })} />
+      </CtField>
+      {current && (
+        <div className="sm:col-span-2">
+          <PrintSheet spec={current.spec} className="h-40 w-40 rounded border" />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -169,6 +317,7 @@ function BriefForm(ctx: CharCtx) {
             <CtInput type="number" min={0} value={brief.product.heightMm || ""} onChange={(e) => set({ product: { ...brief.product, heightMm: Number(e.target.value) || 0 } })} />
           </CtField>
         </div>
+        <TemplatePick brief={brief} onPick={(product) => set({ product })} />
         <div className="mt-3">
           <PictureSlot ctx={ctx} kind="blank" label="Ảnh phôi trơn (chụp thẳng)" id={brief.product.blankId} onPick={(id) => set({ product: { ...brief.product, blankId: id } })} />
         </div>

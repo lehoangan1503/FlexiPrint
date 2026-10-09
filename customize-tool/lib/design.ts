@@ -15,6 +15,8 @@ import type {
   CtPhotoMode,
   CtPhotoStyleRef,
   CtProductConfig,
+  CtProductPrint,
+  CtProductScene,
   CtRegion,
   CtRegionConfig,
   CtRegionItem,
@@ -28,6 +30,7 @@ import type {
   CtZoneParent,
   CtZoneOption,
   CtZoneOptions,
+  CtZoneMockup,
   CtZoneTextStyle,
 } from "../types";
 import { IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId } from "./geometry";
@@ -35,6 +38,7 @@ import { CT_FACE_STYLES, isAiStyleRef, isPhotoStyleRef, styleFamily } from "./ph
 import { normalizeLayouts, onVersion } from "./layout";
 import { defaultMaterialConfig, normalizeMaterialConfig } from "./materials";
 import { defaultScene, normalizeScene } from "./scene";
+import { isPrintKind, normalizePrintSpec } from "./print-template";
 
 export function defaultRegionConfig(kind: CtRegionKind): CtRegionConfig {
   return {
@@ -107,6 +111,10 @@ export function normalizeRegion(region: CtRegion): CtRegion {
       ...(region.kind === "image" && Array.isArray(cfg.cuts) && cfg.cuts.length
         ? { cuts: cfg.cuts.filter((s): s is CtShape => Boolean(s) && typeof s === "object" && "type" in s) }
         : {}),
+      ...(region.kind === "image" && cfg.fill && (cfg.fill.mode === "tile" || cfg.fill.mode === "cover")
+        ? { fill: { mode: cfg.fill.mode, tile: Math.max(8, Number(cfg.fill.tile) || 256), ...(typeof cfg.fill.zone === "string" && cfg.fill.zone ? { zone: cfg.fill.zone } : {}) } }
+        : {}),
+      ...(cfg.printOnly === true ? { printOnly: true } : {}),
     },
   };
 }
@@ -251,7 +259,17 @@ function normalizePhotoConfig(p: CtPhotoConfig): CtPhotoConfig {
 }
 
 export function defaultProductConfig(): CtProductConfig {
-  return { main: { enabled: false, label: "Choose color", display: "image", subOptions: [] }, scene: defaultScene(), layouts: {}, material: defaultMaterialConfig(), samples: {}, mockupEdit: null };
+  return {
+    main: { enabled: false, label: "Choose color", display: "image", subOptions: [] },
+    scene: defaultScene(),
+    layouts: {},
+    material: defaultMaterialConfig(),
+    samples: {},
+    mockupEdit: null,
+    print: null,
+    mockupsByOption: {},
+    zoneMockups: [],
+  };
 }
 
 /** Keep well-formed choices only; photos must be stored URLs (a blob: URL dies with its tab). */
@@ -291,7 +309,49 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     material: normalizeMaterialConfig(raw?.material),
     samples: normalizeSamples(raw?.samples),
     mockupEdit: normalizeMockupEdit(raw?.mockupEdit),
+    print: normalizeProductPrint(raw?.print),
+    mockupsByOption: normalizeMockupsByOption(raw?.mockupsByOption),
+    zoneMockups: normalizeZoneMockups(raw?.zoneMockups),
   };
+}
+
+function normalizeProductPrint(raw: unknown): CtProductPrint | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Partial<CtProductPrint>;
+  if (!p.spec) return null;
+  return { templateId: typeof p.templateId === "string" ? p.templateId : null, name: typeof p.name === "string" ? p.name : "", kind: isPrintKind(p.kind) ? p.kind : "flat", spec: normalizePrintSpec(p.spec) };
+}
+
+function normalizeMockupsByOption(raw: unknown): Record<string, Record<string, CtProductScene>> {
+  const out: Record<string, Record<string, CtProductScene>> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [layer, byOption] of Object.entries(raw as Record<string, unknown>)) {
+    if (!byOption || typeof byOption !== "object") continue;
+    const scenes: Record<string, CtProductScene> = {};
+    for (const [option, scene] of Object.entries(byOption as Record<string, Partial<CtProductScene>>)) {
+      const n = normalizeScene(scene);
+      if (n.url) scenes[option] = n;
+    }
+    if (Object.keys(scenes).length) out[layer] = scenes;
+  }
+  return out;
+}
+
+function normalizeZoneMockups(raw: unknown): CtZoneMockup[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((m) => m as Partial<CtZoneMockup>)
+    .filter((m) => typeof m.id === "string" && typeof m.url === "string" && m.url && typeof m.width === "number" && typeof m.height === "number")
+    .map((m) => ({
+      id: m.id as string,
+      name: typeof m.name === "string" ? m.name : "",
+      url: m.url as string,
+      width: m.width as number,
+      height: m.height as number,
+      zones: Object.fromEntries(Object.entries(m.zones ?? {}).filter(([, v]) => Boolean(v) && typeof v === "object" && "type" in v)) as Record<string, CtShape>,
+      tile: typeof m.tile === "number" && m.tile > 4 ? m.tile : 120,
+      shading: typeof m.shading === "number" ? Math.min(1, Math.max(0, m.shading)) : 0.85,
+    }));
 }
 
 function normalizeMockupEdit(raw: unknown): CtMockupEdit | null {

@@ -1,7 +1,7 @@
 /**
  * The image models the team can pick on the home page (ct_settings 'image_model'). Every AI picture uses the
- * picked one: studio clipart gốc / đa sắc / vật liệu / sửa (services/comfy providers: "cpa:<model>" = the company
- * image API, "fal:<endpoint>" = fal.ai) and the ảnh tổ hợp library.
+ * picked one — the v2 bộ nhân vật (server/pack-images.ts drawImage: "cpa:<model>" = the company image API,
+ * "fal:<endpoint>" = fal.ai).
  */
 
 export interface CtImageModel {

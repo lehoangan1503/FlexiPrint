@@ -36,6 +36,8 @@ import { CLIPART_DRAG, type CtClipartDrag } from "./library-panel";
 import { updateItem, updateRegion } from "./use-design";
 import { mainFrameFor } from "../../lib/layout";
 import { frameSvgPath } from "../../lib/material-frame";
+import { safeShapes } from "../../lib/print-template";
+import type { CtPrintSpec } from "../../types/print";
 
 const isTyping = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
@@ -111,6 +113,8 @@ export interface StageProps {
    * out of one); its own label shows while drawing.
    */
   drawInto?: { label: string; onShape: (shape: CtShape) => void } | null;
+  /** The khuôn in the product is made on (types/print.ts): its guide sheet, safe zone and zones over the canvas. */
+  printSpec?: CtPrintSpec | null;
 }
 
 const MIN_ZOOM = 0.02;
@@ -879,6 +883,18 @@ export function Stage(props: StageProps) {
                 <path key={i} d={shapeToSvgPath(c)} fill="url(#ct-cut-hatch)" stroke="#f43f5e" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
               ))}
               <path d={frameSvgPath(props.materialFrame)} fill="none" stroke="#f59e0b" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+            </g>
+          )}
+          {/* Khuôn in: the printer's guide sheet (faint), the safe zone (dashed green), the named zones. */}
+          {props.showOverlay && props.printSpec && (
+            <g pointerEvents="none">
+              {props.printSpec.frameUrl && <image href={props.printSpec.frameUrl} x={0} y={0} width={main.width} height={main.height} opacity={0.25} preserveAspectRatio="none" />}
+              {safeShapes(props.printSpec).map((sh, i) => (
+                <path key={`safe${i}`} d={shapeToSvgPath(sh)} fill="none" stroke="#16a34a" strokeWidth={2} strokeDasharray="10 7" vectorEffect="non-scaling-stroke" />
+              ))}
+              {props.printSpec.zones.map((z) => (
+                <path key={z.id} d={shapeToSvgPath(z.shape)} fill="none" stroke="#6366f1" strokeWidth={1} strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />
+              ))}
             </g>
           )}
           {props.showOverlay &&

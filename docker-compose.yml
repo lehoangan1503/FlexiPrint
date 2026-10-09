@@ -14,12 +14,9 @@ services:
     image: flexiprint-app
     env_file: .env
     environment:
-      CT_PHOTO_STYLE_URL: http://photo-style:7002
       CT_MATERIAL_URL: http://material-render:7003
       CT_BG_REMOVER_URL: http://bg-remover:7001
       CT_FACE_DETECT_URL: http://face-detect:7004
-      # ComfyUI studio for the editor's AI dialog (server/studio.ts, recipes).
-      CT_COMFY_URL: http://comfy:8188
       # v2 bộ nhân vật: layer sets cut from one master (services/layer-kit).
       CT_LAYER_KIT_URL: http://layer-kit:7005
     # Server-side Supabase calls go to the public URL; resolve it to the host's nginx
@@ -29,12 +26,7 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     restart: unless-stopped
-    depends_on: [photo-style, material-render, face-detect, layer-kit]
-
-  photo-style:
-    build: ./services/photo-style
-    restart: unless-stopped
-    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7002", "--workers", "1"]
+    depends_on: [material-render, face-detect, layer-kit]
 
   face-detect:
     build: ./services/face-detect
@@ -58,29 +50,6 @@ services:
     restart: unless-stopped
     command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7003", "--workers", "1"]
 
-  # ComfyUI studio (services/comfy/README.md): CPU only, models over HTTP. Host nginx serves it
-  # under /comfy/ behind auth_request (deploy/nginx/flexiprint-comfy.locations); the node pack calls the app's
-  # internal API over this network.
-  comfy:
-    build: ./services/comfy
-    restart: unless-stopped
-    environment:
-      FP_API_URL: http://app:3000/api/customize-tool
-      FP_COMFY_TOKEN: ${CT_COMFY_TOKEN}
-      CPA_BASE_URL: ${CPA_BASE_URL:-https://cpa.next.lc/v1}
-      CPA_API_KEY: ${CPA_API_KEY}
-      FAL_KEY: ${FAL_KEY}
-    volumes:
-      - comfy-user:/opt/comfy/user
-      - comfy-output:/opt/comfy/output
-      - comfy-input:/opt/comfy/input
-    ports:
-      - "127.0.0.1:8188:8188"
-    deploy:
-      resources:
-        limits:
-          memory: 1200m
-
   # BiRefNet cut-out (~1 GB model). The VPS leans on swap for it — slow but free;
   # set FAL_KEY and stop this service to use fal.ai instead.
   bg-remover:
@@ -94,8 +63,3 @@ services:
       resources:
         limits:
           memory: 3g
-
-volumes:
-  comfy-user:
-  comfy-output:
-  comfy-input:

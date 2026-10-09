@@ -4,15 +4,19 @@
  * "File in" tab: the final flat 2D artwork the Thiết kế tab makes — what the factory prints. One rule for every
  * product: the flat clipart (single, combined, with or without a khuôn) + the layers, full resolution. A product
  * with a khuôn vật liệu prints only the khuôn (its cut-out parts cleared); otherwise the version's own box.
- * Never a vật liệu: how the material looks is the Tổ hợp's job.
+ * Never a vật liệu: how the material looks is the Mockups tab's job.
  */
 
 import { useEffect, useState } from "react";
-import { Download, Loader2, Settings2 } from "lucide-react";
+import { BookmarkPlus, Download, Loader2, Settings2 } from "lucide-react";
 import type { CtAsset, CtMainLayout, CtMaterialConfig, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
+import type { CtProductPrint } from "../../types/print";
 import { displayAssets } from "../../lib/library";
 import { canvasToBlob, printFrame, renderComposite } from "../../lib/compositor";
-import { CtButton } from "../ui";
+import { normalizeSamples } from "../../lib/design";
+import { printSize } from "../../lib/print-template";
+import { ctApi } from "../../lib/api-client";
+import { CtButton, CtSelect } from "../ui";
 
 /** Preview render: longest side in px (the download is always full resolution). */
 const PREVIEW_SIDE = 1400;
@@ -27,6 +31,8 @@ export interface PrintPanelProps {
   material: CtMaterialConfig;
   selection: CtSelection;
   onOpenSettings: () => void;
+  /** The khuôn in the product is made on: its sizes (a print file per size). */
+  print?: CtProductPrint | null;
 }
 
 function shrink(src: HTMLCanvasElement, k: number): HTMLCanvasElement {
@@ -49,7 +55,13 @@ interface Rendered {
 
 export function PrintPanel(props: PrintPanelProps) {
   const { product, main, assets, regions, items, layouts, material, selection } = props;
+  const sizes = props.print?.spec.sizes ?? [];
+  const [sizeId, setSizeId] = useState<string>(sizes[0]?.id ?? "");
+  // A khuôn in with sizes: that size's sheet (its zones), else the product's own canvas cut to the khuôn.
+  const size = props.print && sizes.length ? printSize(props.print.spec, sizeId || sizes[0].id) : null;
+  const sizeArgs = size?.id ? { size, cutToFrame: false } : { cutToFrame: true };
   const [shot, setShot] = useState<Rendered | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const flat = displayAssets(assets, "flat");
@@ -60,7 +72,7 @@ export function PrintPanel(props: PrintPanelProps) {
     let url = "";
     const t = setTimeout(async () => {
       try {
-        const full = await renderComposite({ main, assets: displayAssets(assets, "flat"), regions, items, selection, scale: 1, layouts, cutToFrame: true });
+        const full = await renderComposite({ main, assets: displayAssets(assets, "flat"), regions, items, selection, scale: 1, layouts, ...sizeArgs });
         const k = Math.min(1, PREVIEW_SIDE / Math.max(full.width, full.height));
         const small = k < 1 ? shrink(full, k) : full;
         url = URL.createObjectURL(await canvasToBlob(small, "image/png"));
@@ -76,20 +88,42 @@ export function PrintPanel(props: PrintPanelProps) {
       clearTimeout(t);
       if (url) URL.revokeObjectURL(url);
     };
-  }, [main, assets, regions, items, selection, layouts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sizeArgs follows sizeId
+  }, [main, assets, regions, items, selection, layouts, sizeId]);
 
   const download = async () => {
     setSaving(true);
     try {
-      const full = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts, cutToFrame: true });
+      const full = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts, ...sizeArgs });
       const href = URL.createObjectURL(await canvasToBlob(full, "image/png"));
       const a = document.createElement("a");
       a.href = href;
-      a.download = `${product.name.replace(/[^\w-]+/g, "-") || "product"}-print.png`;
+      a.download = `${product.name.replace(/[^\w-]+/g, "-") || "product"}${size?.name ? `-${size.name}` : ""}-print.png`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(href), 1000);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Xuất file thất bại");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** The finished artwork (this choice) as a library clipart: reused in other designs, opened again from its meta. */
+  const saveArtwork = async () => {
+    setSaving(true);
+    setSaved(null);
+    try {
+      const full = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts, cutToFrame: true });
+      const clip = await ctApi.uploadClipart(await canvasToBlob(full, "image/png"), {
+        categoryId: null,
+        name: `${product.name} — artwork`,
+        tags: ["artwork", ...(props.print ? [props.print.name] : [])],
+        source: "upload",
+        meta: { artwork: { productId: product.id, selection: normalizeSamples(selection), templateId: props.print?.templateId ?? null } },
+      });
+      setSaved(clip.name);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không lưu được artwork");
     } finally {
       setSaving(false);
     }
@@ -108,7 +142,14 @@ export function PrintPanel(props: PrintPanelProps) {
           {dpi > 0 && ` · ${mm}mm ≈ ${dpi} dpi`}
         </span>
         <span className="text-muted-foreground">Bản phẳng + layer của khách đang chọn ở Thiết kế — đúng file gửi xưởng.</span>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex items-center gap-2">
+          {saved && <span className="text-emerald-600">Đã lưu “{saved}” vào thư viện</span>}
+          {sizes.length > 0 && (
+            <CtSelect<string> className="w-28" value={sizeId || sizes[0].id} options={sizes.map((s) => ({ value: s.id, label: `Cỡ ${s.name}` }))} onChange={setSizeId} />
+          )}
+          <CtButton size="sm" variant="outline" onClick={() => void saveArtwork()} disabled={saving || !shot} title="Lưu artwork hoàn chỉnh (lựa chọn đang xem) thành clipart trong thư viện để dùng lại">
+            <BookmarkPlus className="h-3.5 w-3.5" /> Lưu artwork vào thư viện
+          </CtButton>
           <CtButton size="sm" variant="outline" onClick={props.onOpenSettings}>
             <Settings2 className="h-3.5 w-3.5" /> Cài đặt in
           </CtButton>

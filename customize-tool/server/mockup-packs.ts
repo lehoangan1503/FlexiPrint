@@ -1,5 +1,5 @@
 /**
- * Bộ tổ hợp (migration 007, table ct_mockup_packs): named sets of hand-made
+ * Bộ mockup (migration 007, table ct_mockup_packs): named sets of hand-made
  * mockup scenes, shared by every product (lib/mockup.ts renders them in the
  * browser; a product puts its own main versions in the frames).
  *
@@ -60,7 +60,7 @@ export async function updatePack(s: CtSession, id: string, body: CtMockupPackBod
   const clean = normalizePackBody(body);
   const { data, error } = await s.supabase.from(CT_TABLES.mockupPacks).update(row(clean)).eq("id", id).select("*").maybeSingle<PackRow>();
   if (error) return jsonError(error.message, 500);
-  if (!data) return jsonError("Chỉ người tạo hoặc admin mới được sửa bộ tổ hợp", 403);
+  if (!data) return jsonError("Chỉ người tạo hoặc admin mới được sửa bộ mockup", 403);
   const pack: CtMockupPack = { ...normalizePack(data), can_edit: true };
   return NextResponse.json({ pack });
 }
@@ -68,7 +68,7 @@ export async function updatePack(s: CtSession, id: string, body: CtMockupPackBod
 export async function deletePack(s: CtSession, id: string): Promise<NextResponse> {
   const { error, count } = await s.supabase.from(CT_TABLES.mockupPacks).delete({ count: "exact" }).eq("id", id);
   if (error) return jsonError(error.message, 500);
-  if (!count) return jsonError("Chỉ người tạo hoặc admin mới được xoá bộ tổ hợp", 403);
+  if (!count) return jsonError("Chỉ người tạo hoặc admin mới được xoá bộ mockup", 403);
   return new NextResponse(null, { status: 204 });
 }
 

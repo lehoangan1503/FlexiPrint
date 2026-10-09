@@ -3,7 +3,6 @@
  * one JSON reply). POST /api/customize-tool/mcp.
  *
  *   Bearer CT_AGENT_TOKEN  → "agent": the @flexiprint agent on agent_ide — every tool, tasks included
- *   Bearer CT_COMFY_TOKEN  → "studio": the ComfyUI node pack — library reads
  *   login cookie           → "user": a signed-in editor (Claude Code on their own machine…) — library reads
  *
  * Tools: server/mcp/tools.ts. Resources (how the system works, the writing rules): server/mcp/guide.ts.
@@ -12,14 +11,13 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { ctServiceClient, ctSession } from "../supabase";
-import { internalAuthorized } from "../studio";
 import { CT_MCP_RESOURCES } from "./guide";
 import { CT_MCP_TOOLS, type CtMcpContext, type CtMcpOutput } from "./tools";
 
 const PROTOCOL_VERSION = "2025-06-18";
 
 const INSTRUCTIONS =
-  "FlexiPrint clipart library and image studio. Read the resource flexiprint://guide/overview first. Reuse style packs, materials and detail wording from the library; only the category spec is unique per category. Check drafts with assemble_prompts / review_category. Tasks from the web app: get_task → work → submit_result (or fail_task).";
+  "FlexiPrint clipart library (read-only) and web-app tasks. Read the resource flexiprint://guide/overview first. Tasks from the web app (kind content | char): get_task → work → submit_result (or fail_task).";
 
 interface RpcRequest {
   jsonrpc?: string;
@@ -47,10 +45,6 @@ export async function mcpContext(req: NextRequest): Promise<CtMcpContext | null>
   if (bearerIs(req, process.env.CT_AGENT_TOKEN)) {
     const service = ctServiceClient();
     return service ? { db: service, service, caller: "agent" } : null;
-  }
-  if (internalAuthorized(req)) {
-    const service = ctServiceClient();
-    return service ? { db: service, service: null, caller: "studio" } : null;
   }
   const session = await ctSession();
   return session ? { db: session.supabase, service: null, caller: "user" } : null;

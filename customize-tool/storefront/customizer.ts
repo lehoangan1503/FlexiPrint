@@ -42,6 +42,7 @@ import type {
   CtPackFrameLayer,
   CtPhotoSelection,
   CtPhotoStyleRef,
+  CtProductScene,
   CtRegion,
   CtRenderAsset,
   CtSelection,
@@ -54,6 +55,8 @@ import { ctGoogleFontsHref } from "../config";
 import { canvasToBlob, compositeBleed, drawComposite, loadImage, renderComposite } from "../lib/compositor";
 import { isHidden, layoutFor, onVersion } from "../lib/layout";
 import { drawOnScene } from "../lib/scene";
+import { renderZoneMockup, zoneFills } from "../lib/zone-mockup";
+import { printSize } from "../lib/print-template";
 import { renderSlide, type CtSlotArt } from "../lib/mockup";
 import {
   defaultRegionSelection,
@@ -566,11 +569,23 @@ export class Customizer {
       canvas.getContext("2d")?.drawImage(off, 0, 0);
       return;
     }
-    // The design on the product's background (Thiết kế → Nền), when it has one.
+    // Clothes: the product photo with its zones repainted in the picked patterns (lib/zone-mockup).
+    const zm = this.tpl.config.zoneMockups?.[0];
+    if (zm) {
+      const off = await renderZoneMockup(zm, zoneFills(this.regions, this.tpl.assets, this.selection), side).catch(() => null);
+      if (!off || token !== this.renderToken) return;
+      canvas.width = off.width;
+      canvas.height = off.height;
+      canvas.getContext("2d")?.drawImage(off, 0, 0);
+      return;
+    }
+    // The design on the product's photo — the one of the picked background when it has its own — without the
+    // print-only layers the photo already shows.
+    const scene = this.sceneFor(this.selection);
     const b = compositeBleed({ main: this.main, assets: this.tpl.assets, regions: this.regions, selection: this.selection, layouts: this.tpl.config.layouts });
     const bleed = { x: b.x / this.main.width, y: b.y / this.main.height };
-    const off = await this.product(this.selection, side)
-      .then((c) => drawOnScene(this.tpl.config.scene, c, side, bleed))
+    const off = await this.product(this.selection, side, !!scene.url)
+      .then((c) => drawOnScene(scene, c, side, bleed))
       .catch(() => null);
     if (!off || token !== this.renderToken) return;
     canvas.width = off.width;
@@ -621,11 +636,33 @@ export class Customizer {
    * The product as the customer sees it (material renditions are already swapped in by the template), long side
    * `maxSide` — grown by the material version's padding, so its plate / cord are not cut off.
    */
-  private product(selection: CtSelection, maxSide: number): Promise<HTMLCanvasElement> {
+  private product(selection: CtSelection, maxSide: number, display = false): Promise<HTMLCanvasElement> {
     const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts };
     const b = compositeBleed(input);
     const scale = Math.min(1, maxSide / Math.max(this.main.width + 2 * b.x, this.main.height + 2 * b.y));
-    return renderComposite({ ...input, scale, bleed: true });
+    return renderComposite({ ...input, scale, bleed: true, display });
+  }
+
+  /** The product photo for a selection: the picked background's own (config.mockupsByOption), else the product's. */
+  private sceneFor(selection: CtSelection): CtProductScene {
+    for (const [layerId, byOption] of Object.entries(this.tpl.config.mockupsByOption ?? {})) {
+      const sel = selection[layerId];
+      if (sel?.kind === "image" && sel.assetId && byOption[sel.assetId]) return byOption[sel.assetId];
+    }
+    return this.tpl.config.scene;
+  }
+
+  /**
+   * The print file of a design on a khuôn in (config.print), full size: the sheet of the size picked in the variant
+   * picker (an option value equal to a size name), cut to the khuôn's line; null = the product has no khuôn in.
+   */
+  private async printFile(selection: CtSelection): Promise<HTMLCanvasElement | null> {
+    const print = this.tpl.config.print;
+    if (!print) return null;
+    const picked = pickedOptions(this.root);
+    const size = print.spec.sizes.length ? printSize(print.spec, picked.find((v) => print.spec.sizes.some((s) => s.name.toLowerCase() === v.toLowerCase())) ?? null) : null;
+    const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts };
+    return renderComposite({ ...input, scale: 1, cutToFrame: !size, size: size && size.id ? size : null });
   }
 
   /** Zones the chosen main version uses: its own layers (older templates: a layout may hide some). */
@@ -1357,7 +1394,7 @@ export class Customizer {
     return p;
   }
 
-  private async upload(blob: Blob, kind: "photo" | "preview"): Promise<string> {
+  private async upload(blob: Blob, kind: "photo" | "preview" | "print"): Promise<string> {
     if (!this.uploadUrl) return URL.createObjectURL(blob);
     const body = new FormData();
     body.append("file", blob, `${kind}.${blob.type === "image/png" ? "png" : "jpg"}`);
@@ -1409,7 +1446,19 @@ export class Customizer {
         }
         previews.push(url);
       }
-      const properties = this.cartProperties(designs, previews);
+      // The print file of each design (khuôn in products), full size — what goes to the printer as it is.
+      const prints: string[] = [];
+      for (const selection of designs) {
+        let url = "";
+        try {
+          const c = await this.printFile(selection);
+          if (c) url = await this.upload(await canvasToBlob(c, "image/png"), "print");
+        } catch (err) {
+          console.warn("[ct] print file upload failed", err);
+        }
+        prints.push(url);
+      }
+      const properties = this.cartProperties(designs, previews, prints);
       if (this.options.onPreviewCart) {
         this.options.onPreviewCart({ properties, previewUrl: previews[0] ?? "", previews });
         return;
@@ -1498,7 +1547,7 @@ export class Customizer {
    * name ("Ornament 2 · Enter name") and carries one preview per design (_ct_preview, _ct_preview_2…) and every
    * selection (_ct_selections, a JSON array); a single design keeps the one-design form (_ct_selection).
    */
-  private cartProperties(designs: CtSelection[], previews: string[]): Array<[string, string]> {
+  private cartProperties(designs: CtSelection[], previews: string[], prints: string[] = []): Array<[string, string]> {
     const tpl = this.tpl;
     const byId = new Map(tpl.assets.map((a) => [a.id, a]));
     const used = new Set<string>();
@@ -1554,6 +1603,7 @@ export class Customizer {
     }
     // Underscore properties are hidden from the customer in cart/checkout.
     previews.forEach((url, i) => url && add(i === 0 ? "_ct_preview" : `_ct_preview_${i + 1}`, url));
+    prints.forEach((url, i) => url && add(i === 0 ? "_ct_print" : `_ct_print_${i + 1}`, url));
     add("_ct_template", `${tpl.productId}@v${tpl.version}`);
     if (many) {
       add("_ct_designs", String(designs.length));

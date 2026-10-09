@@ -29,7 +29,8 @@ export function MasterPanel(ctx: CharCtx) {
   const [busy, setBusy] = useState(false);
   const [zoom, setZoom] = useState<CtCharImage | null>(null);
   const problems = briefProblems(brief);
-  const masters = images.filter((im) => im.kind === "master");
+  // Brainstorm previews of directions not taken (role "idea:…") stay with their idea.
+  const masters = images.filter((im) => im.kind === "master" && !im.role.startsWith("idea:"));
   const numbers = new Map(masters.map((m, i) => [m.id, i + 1]));
   const approved = masters.find((m) => m.id === project.master_id) ?? null;
   const locked = !!project.master_id;

@@ -1,6 +1,6 @@
 /**
- * Customer-photo processing: AI styles (ct_ai_styles rows on fal.ai), the free
- * "oil" filter, and subject cut-out. Browser-side styles ("pixel") and the final trim happen in
+ * Customer-photo processing: AI styles (ct_ai_styles rows on fal.ai), face
+ * crops, and subject cut-out. Browser-side styles ("pixel") and the final trim happen in
  * lib/photo-process.ts; this file only does what needs a model.
  *
  * Cut-out, best first:
@@ -13,10 +13,6 @@
  *                 the browser keys out (backdrop: "white"). Good for painted
  *                 styles, but a "Real photo" gets subtly regenerated.
  *
- * Painted styles, best first:
- *   CT_PHOTO_STYLE_URL  services/photo-style — OpenCV filters, ~1 s, free, no AI
- *   otherwise           the AI image model repaints the photo (better art, costs per call)
- *
  * AI styles ("ai:<id>", server/ai/fal-style.ts): the stored prompt + model run
  * on fal.ai on the ORIGINAL photo, then the result is cut out — the same order
  * as a redraw needs. A model that can output alpha (GPT Image) is asked for a
@@ -25,12 +21,12 @@
  * (photo hash, style id, style updated_at) in server/photo-cache.ts — memory +
  * Storage for 24 h — so re-asking never re-bills.
  *
- * Env: CT_PHOTO_STYLE_URL, CT_PHOTO_STYLE_TOKEN, CT_BG_REMOVER_URL, CT_BG_REMOVER_TOKEN, CT_FACE_DETECT_URL, CT_FACE_DETECT_TOKEN, FAL_KEY, CT_CUTOUT_MODEL (BiRefNet variant, default "General Use (Heavy)"),
+ * Env: CT_BG_REMOVER_URL, CT_BG_REMOVER_TOKEN, CT_FACE_DETECT_URL, CT_FACE_DETECT_TOKEN, FAL_KEY, CT_CUTOUT_MODEL (BiRefNet variant, default "General Use (Heavy)"),
  *      CT_PHOTO_AI_PROVIDER (gemini|openai), CT_PHOTO_AI_MODEL — plus the
  *      provider keys from providers.ts.
  */
 
-import type { CtAiProviderId, CtAiStyle, CtAspectRatio, CtPhotoCapabilities, CtPhotoStyleId, CtPhotoStyleRef } from "../../types";
+import type { CtAiProviderId, CtAiStyle, CtAspectRatio, CtPhotoCapabilities, CtPhotoStyleRef } from "../../types";
 import { isAiStyleRef, photoStyle } from "../../lib/photo-styles";
 import { aiStyleModel, normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { cachedPhoto, peekPhotoCache, photoCacheKey } from "../photo-cache";
@@ -72,31 +68,20 @@ class ServiceHttpError extends Error {
 // Prompts
 // ---------------------------------------------------------------------------
 
-const KEEP_IDENTITY =
-  "The reference is a customer's photo. Keep the subject unmistakably recognisable: same species/breed, face shape, eye colour, markings, fur or hair pattern, expression and pose. Do not add accessories, text, logos or extra subjects.";
-
-const STYLE_PROMPTS: Partial<Record<CtPhotoStyleId, string>> = {
-  oil: "Repaint it as a classical oil painting portrait: rich visible brush strokes, painterly texture, warm natural lighting, museum-quality fine art.",
-};
-
-function subjectFraming(cutout: boolean, transparent: boolean): string {
-  if (!cutout) return "Keep the original composition and framing.";
+function subjectFraming(transparent: boolean): string {
   const backdrop = transparent
     ? "Use a fully transparent background."
     : "Place it on a perfectly flat, solid pure white (#FFFFFF) background: no gradient, no shadow, no floor, no paint splashes behind it.";
   return `Show ONLY the main subject, whole and centred, filling about 85% of the frame, with every other part of the photo removed. ${backdrop}`;
 }
 
-function stylePrompt(style: CtPhotoStyleId, cutout: boolean, transparent: boolean): string {
-  const framing = subjectFraming(cutout, transparent);
-  if (style === "original" || style === "pixel") {
-    return [
-      "Isolate the main subject (the pet or person) from this photo.",
-      "Reproduce the subject EXACTLY as photographed — same pixels, colours, lighting and detail. Do not restyle, retouch, beautify or redraw it.",
-      framing,
-    ].join("\n");
-  }
-  return [KEEP_IDENTITY, STYLE_PROMPTS[style] ?? "", framing, "High resolution, crisp edges, no watermark, no signature, no border."].join("\n");
+/** The cut-out fallback without a matting model: the image model lifts the subject out, unchanged. */
+function cutoutPrompt(transparent: boolean): string {
+  return [
+    "Isolate the main subject (the pet or person) from this photo.",
+    "Reproduce the subject EXACTLY as photographed — same pixels, colours, lighting and detail. Do not restyle, retouch, beautify or redraw it.",
+    subjectFraming(transparent),
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -169,13 +154,6 @@ async function callService(
 }
 
 const serviceUrl = (base: string, path: string) => `${base.replace(/\/$/, "")}${path}`;
-
-/** Painted styles without AI: services/photo-style (OpenCV). Keeps a cut-out's alpha. */
-function styleService(): ((image: ProviderImage, style: CtPhotoStyleId) => Promise<ProviderImage>) | null {
-  const url = process.env.CT_PHOTO_STYLE_URL;
-  if (!url) return null;
-  return (image, style) => callService("photo-style", serviceUrl(url, "/stylize"), process.env.CT_PHOTO_STYLE_TOKEN, image, { style });
-}
 
 /**
  * Face styles: services/face-detect cuts the head out of `image` (the cut-out,
@@ -351,7 +329,7 @@ function matting(): ((image: ProviderImage) => Promise<ProviderImage>) | null {
 
 export function photoCapabilities(): CtPhotoCapabilities {
   const ai = aiProvider() !== null;
-  return { ai, styleService: styleService() !== null, cutout: matting() !== null || ai, aiStyles: falConfigured(), faceDetect: faceCrop() !== null };
+  return { ai, cutout: matting() !== null || ai, aiStyles: falConfigured(), faceDetect: faceCrop() !== null };
 }
 
 /** AI results by (photo, style version, cut-out) — see server/photo-cache.ts. */
@@ -387,8 +365,7 @@ async function runAiStyle(job: PhotoJob, style: CtAiStyle): Promise<PhotoResult>
 
 /**
  * Order matters:
- *   service style   cut out first, then filter — the filter keeps the alpha,
- *                   and never paints the backdrop it would throw away
+ *   free / face     cut out first; the browser applies its filter after
  *   AI style        restyle first on a flat backdrop, then matte (the model
  *                   redraws everything anyway)
  */
@@ -414,30 +391,9 @@ export async function processPhoto(job: PhotoJob): Promise<PhotoResult> {
     const cut = matte ? await matte(job.image) : job.image;
     return { image: await crop(cut, job.image), backdrop: null };
   }
-  const stylize = styleService();
   const ai = aiProvider();
   let image = job.image;
   let backdrop: PhotoResult["backdrop"] = null;
-  const aiStyled = def.engine === "server" && !stylize;
-
-  if (aiStyled) {
-    if (!ai) throw new PhotoConfigError("Chưa cấu hình CT_PHOTO_STYLE_URL hoặc AI provider cho style ảnh");
-    // With a matting model on hand, the AI only needs a clean white backdrop to hand over.
-    const transparent = job.cutout && !matte && ai.model.supportsTransparent;
-    const [out] = await ai.provider.generate({
-      model: ai.model.id,
-      prompt: stylePrompt(job.style, job.cutout, transparent),
-      references: [image],
-      aspectRatio: aspectOf(image),
-      count: 1,
-      transparent,
-    });
-    image = out;
-    if (job.cutout && !matte && !transparent) backdrop = "white";
-    if (job.cutout && matte) image = await matte(image);
-    return { image, backdrop };
-  }
-
   if (job.cutout && matte) {
     image = await matte(image);
   } else if (job.cutout) {
@@ -446,7 +402,7 @@ export async function processPhoto(job: PhotoJob): Promise<PhotoResult> {
     const transparent = ai.model.supportsTransparent;
     const [out] = await ai.provider.generate({
       model: ai.model.id,
-      prompt: stylePrompt("original", true, transparent),
+      prompt: cutoutPrompt(transparent),
       references: [image],
       aspectRatio: aspectOf(image),
       count: 1,
@@ -457,6 +413,5 @@ export async function processPhoto(job: PhotoJob): Promise<PhotoResult> {
     backdrop = transparent ? null : "white";
   }
 
-  if (def.engine === "server" && stylize) image = await stylize(image, job.style);
   return { image, backdrop };
 }

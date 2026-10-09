@@ -25,7 +25,7 @@
 
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
-import type { CtCharBrief, CtCharCutState, CtCharImage, CtCharImageKind, CtCharMask, CtCharProject, CtCharRef, CtCharRefUse } from "../../types";
+import type { CtCharBrief, CtCharCutState, CtCharIdeaRound, CtCharImage, CtCharImageKind, CtCharMask, CtCharProject, CtCharRef, CtCharRefUse } from "../../types";
 import { REF_USE_INFO, masterPrompt, parseCharBrief } from "../../lib/char-brief";
 import { CT_IMAGE_MODELS } from "../../lib/image-models";
 import { drawImage } from "../pack-images";
@@ -291,6 +291,40 @@ export async function drawMasters(db: Db, userId: string, p: CtCharProject, a: M
   const models = await newPictureModels();
   for (const row of data) void runCharDraw(db, userId, row, { prompt: full, refs, aspect, refSize: { w: null, h: null }, models });
   return data;
+}
+
+/**
+ * One master preview per brainstorm idea (asked 2026-10-09: the editor sees each direction drawn before choosing):
+ * the idea's own brief as a master prompt, with the project's reference pictures. Rows are masters with role
+ * "idea:<idea id>" — the master step lists only "master" ones; taking the idea adopts its preview (adoptMaster).
+ */
+export async function drawIdeaPreviews(db: Db, userId: string, p: CtCharProject, round: CtCharIdeaRound): Promise<CtCharImage[]> {
+  if (!round.ideas.length) return [];
+  const images = await loadImages(db, p.id);
+  const models = await newPictureModels();
+  const rows = round.ideas.map((idea) => {
+    const brief = { ...idea.brief, refs: p.brief.refs };
+    const { text } = modelRefs(brief, images);
+    return { project_id: p.id, user_id: userId, kind: "master" as CtCharImageKind, role: `idea:${idea.id}`, status: "running", prompt: text + masterPrompt(brief), note: idea.title, meta: { ideaId: idea.id, roundId: round.id } };
+  });
+  const { data, error } = await db.from(CT_TABLES.charImages).insert(rows).select("*").returns<CtCharImage[]>();
+  if (error || !data) throw new Error(error?.message ?? "Không tạo được");
+  data.forEach((row, i) => {
+    const brief = { ...round.ideas[i].brief, refs: p.brief.refs };
+    const { urls } = modelRefs(brief, images);
+    void runCharDraw(db, userId, row, { prompt: row.prompt, refs: urls, aspect: masterAspect(brief), refSize: { w: null, h: null }, models });
+  });
+  return data;
+}
+
+/** An idea's preview becomes a master candidate of the project (the editor took that direction). */
+export async function adoptMaster(s: CtSession, id: string, imageId: string): Promise<NextResponse> {
+  const p = await ownProject(s, id);
+  if (p instanceof NextResponse) return p;
+  const { data, error } = await jobDb(s).from(CT_TABLES.charImages).update({ role: "master" }).eq("id", imageId).eq("project_id", id).eq("kind", "master").select("*").maybeSingle<CtCharImage>();
+  if (error) return jsonError(error.message, 500);
+  if (!data) return jsonError("Không tìm thấy ảnh", 404);
+  return NextResponse.json({ image: data });
 }
 
 /** POST char/projects/:id/masters */

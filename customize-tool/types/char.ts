@@ -16,6 +16,10 @@ export interface CtCharProduct {
   heightMm: number;
   /** Blank product photo shot straight on (ct_char_images kind "blank"); null = AI makes one later. */
   blankId: string | null;
+  /** The khuôn in (types/print.ts) the set is made for; its safe zone decides the composition. */
+  templateId?: string | null;
+  /** How the picture must sit on that piece, for the image model (lib/print-template layoutHint). */
+  layout?: string;
 }
 
 /**

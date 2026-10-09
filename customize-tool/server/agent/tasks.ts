@@ -137,7 +137,7 @@ function parseCharInput(raw: unknown): CtAgentTaskInput | null {
 const CHAR_STEP_TEXT: Record<CtCharTaskStep, string> = {
   brainstorm: "Brainstorm 3 hướng brief",
   master: "Viết prompt master, tạo và tự duyệt master",
-  edits: "Viết prompt các bản sửa tại chỗ, chạy và kiểm tra",
+  edits: "Viết prompt ảnh AI tô vùng clipart (3b), chạy và kiểm tra",
 };
 
 /** The turn's message: short — the agent reads the task itself over the MCP. */

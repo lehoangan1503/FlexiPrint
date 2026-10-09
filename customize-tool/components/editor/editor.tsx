@@ -42,7 +42,7 @@ import {
 } from "lucide-react";
 import { CT_CONFIG, ctGoogleFontsHref } from "../../config";
 import { CT_BASE_OPTION, CT_MAIN_KEY } from "../../types";
-import type { CtAsset, CtMainFrame, CtMainOptionConfig, CtPackImage, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection, CtShape, CtZoneParent, CtRegionKind } from "../../types";
+import type { CtAsset, CtMainFrame, CtMainOptionConfig, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection, CtShape, CtZoneParent, CtRegionKind } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import {
   defaultProductConfig,
@@ -58,17 +58,15 @@ import {
   selectedMainImageId,
   zoneSubtree,
 } from "../../lib/design";
-import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, pointInShape, shapeBounds, translateShape } from "../../lib/geometry";
+import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, shapeBounds, translateShape } from "../../lib/geometry";
 import { CHECKER_STYLE, CtAutoWidthInput, CtButton, CtTooltip, CtTooltipProvider, cx } from "../ui";
 import { Stage, type EditTarget, type StageTool } from "./stage";
 import { Inspector } from "./inspector";
 import { AssetPanel } from "./asset-panel";
-import { PrintMockups } from "../print/print-mockups";
-import { PreviewPanel } from "./preview-panel";
+import { AiMockupsPanel } from "./ai-mockups";
 import { SceneDialog } from "./scene-dialog";
 import { StorefrontPreview } from "./storefront-preview";
 import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zoneOptionView } from "./use-design";
-import { PackImageLibrary } from "./pack-image-library";
 import { PrintDialog } from "./print-dialog";
 import { PrintPanel } from "./print-panel";
 import { CLIPART_DRAG, type CtClipartDrag, type CtClipartSetEntry } from "./library-panel";
@@ -76,9 +74,13 @@ import { ClipartPickerDialog } from "./clipart-picker";
 import { ctConfirm } from "../dialogs";
 import { asLayerClipart, asMainOption, asVersion } from "../../lib/library";
 import { claimSharedLayers, cloneLayers, fitMainFrame, mainFrameFor, versionLayers } from "../../lib/layout";
+import { useArtworkSaver } from "./artwork-saver";
 import { frameRegionFor, isMaterialFrame } from "../../lib/material-frame";
 
-/** Thiết kế = edit · Xem trước = the real storefront page · File in = the flat print file · Mockups = hand-made product mockups. */
+/**
+ * Thiết kế = edit, flat (what is printed — no phôi) · File in = the flat print file · Xem trước = the real storefront
+ * page, the artwork on the phôi trơn · Mockups = AI photos of the finished product on its phôi.
+ */
 type View = "design" | "preview" | "print" | "mockup";
 
 
@@ -140,11 +142,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const design = useDesign({ regions: [], items: [], config: defaultProductConfig() });
   const [nameDraft, setNameDraft] = useState("");
   const router = useRouter();
-  /**
-   * The thư viện ảnh mockup is open for a custom layer: `regionId` null = a new layer (tool L), else that layer's
-   * picture (an empty layer clicked, or "Đổi ảnh").
-   */
-  const [layerLibrary, setLayerLibrary] = useState<{ regionId: string | null } | null>(null);
   const [deploying, setDeploying] = useState(false);
   const [selection, setSelection] = useState<CtSelection>({});
   /** Photo zones whose test photo is being processed (spinner on the canvas). */
@@ -258,6 +255,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const allItems = design.state.items;
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  /** Every version of the product as an artwork in its library folder (saved with the design). */
+  const artworks = useArtworkSaver({ product, main, mains, assets, regions: allRegions, items: allItems, config, selection, onError: (m) => flash(m) });
+  const saveArtworks = artworks.saveAll;
   useEffect(() => {
     const reconcile = (prev: CtSelection): CtSelection => {
       const next: CtSelection = {};
@@ -361,6 +361,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       design.markSaved();
       setNotice("Đã lưu");
       setTimeout(() => setNotice(null), 1500);
+      // Every version is an artwork in the product's folder of the library (in the background).
+      saveArtworks();
       return true;
     } catch (e) {
       setNotice(e instanceof Error ? `Lỗi lưu: ${e.message}` : "Lỗi lưu");
@@ -368,7 +370,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     } finally {
       setSaving(false);
     }
-  }, [product, design]);
+  }, [product, design, saveArtworks]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -417,14 +419,11 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     setEditTarget("region");
   };
 
-  /**
-   * Custom layer (tool L) — like an image frame: pick its picture in the thư viện ảnh mockup (upload a new one
-   * there, or AI); the layer is made around it, centred. A library clipart can be dragged onto the canvas instead.
-   */
+  /** Tool L: a layer is a clipart dragged from the Thư viện tab (each one its own frame) — nothing is uploaded here. */
   const addCustomLayer = () => {
     if (!main) return;
-    setLayerLibrary({ regionId: null });
     setTool("select");
+    flash("Kéo clipart từ tab Thư viện (cột trái) thả lên canvas — mỗi clipart là 1 layer riêng");
   };
 
   /**
@@ -475,43 +474,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       return;
     }
     router.push(`${CT_CONFIG.basePath}/${product.id}/deploy`);
-  };
-
-  /** A photo of the thư viện ảnh mockup becomes this product's picture (a sub asset) in a custom layer. */
-  const applyLayerImage = async (img: CtPackImage) => {
-    const target = layerLibrary;
-    setLayerLibrary(null);
-    if (!product || !main || !img.url || !target) return;
-    try {
-      flash("Đang thêm ảnh vào layer…");
-      const blob = await fetch(img.url).then((r) => {
-        if (!r.ok) throw new Error(`Không tải được ảnh (HTTP ${r.status})`);
-        return r.blob();
-      });
-      const sub = await ctApi.uploadAsset(product.id, blob, { role: "sub", name: img.name || "Ảnh" });
-      setAssets((list) => [...list, sub]);
-      const layer = target.regionId ? regions.find((r) => r.id === target.regionId) : undefined;
-      if (layer) {
-        // "Đổi ảnh" / an empty layer: it now holds only this picture (its frame refits to it, centred where it was).
-        const item = makeItem(layer.id, sub.id, 0);
-        ed.commit((s) => {
-          const rest = { ...s, items: s.items.filter((i) => i.region_id !== layer.id) };
-          return { ...rest, regions: fitLayerToFirstItem(rest, layer.id, sub), items: [...rest.items, item] };
-        });
-        setSelectedRegionId(layer.id);
-        setActiveItemId(item.id);
-        setSelection((sel) => ({ ...sel, [layer.id]: { kind: "image", assetId: sub.id } }));
-      } else {
-        const size = Math.round(Math.min(main.width, main.height) * 0.4);
-        const box = fitAspect({ x: (main.width - size) / 2, y: (main.height - size) / 2, w: size, h: size }, sub.width, sub.height);
-        const region = makeRegion(product.id, "image", { type: "rect", x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h), radius: 0 }, regions.length);
-        placeInto({ ...region, name: img.name || region.name }, sub, true);
-      }
-      setEditTarget("region");
-      flash("Đã thêm ảnh — nhớ Lưu thiết kế");
-    } catch (e) {
-      flash(e instanceof Error ? e.message : "Không thêm được ảnh");
-    }
   };
 
   /**
@@ -854,8 +816,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
 
   /**
    * Library picture dropped on the canvas — used exactly as it is. With no main yet it becomes the first
-   * version; otherwise it is a layer clipart: it drops into the custom layer under the cursor (another option
-   * group), or becomes a new layer centred there. (A new version is dropped on the Version column instead.)
+   * version; otherwise it is ALWAYS a new layer of its own (asked 2026-10-10: a clipart dropped on a layer must not
+   * join it), its frame the picture's own outline centred where it was dropped. (A new version is dropped on the
+   * Version column instead.)
    */
   const dropClipart = (drag: CtClipartDrag, at: CtPoint | null) => {
     if (!main) {
@@ -876,26 +839,35 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       return [...list, ...family.filter((a) => !have.has(a.id))];
     });
     keepAsDragged([head.id]);
-    const p = at ?? { x: main.width / 2, y: main.height / 2 };
-    const hit = [...regions].reverse().find((r) => r.kind === "image" && pointInShape(p, r.shape));
-    if (hit) {
-      placeInto(hit, head, false, members.map((m) => m.id));
-      return;
-    }
-    const size = Math.round(Math.min(main.width, main.height) * 0.3);
-    const x = Math.round(Math.min(Math.max(p.x - size / 2, 0), main.width - size));
-    const y = Math.round(Math.min(Math.max(p.y - size / 2, 0), main.height - size));
-    const layer = makeRegion(product?.id ?? "", "image", { type: "rect", x, y, w: size, h: size, radius: 0 }, regions.length);
+    const box = dropBox(head, at);
+    const layer = makeRegion(product?.id ?? "", "image", { type: "rect", ...box, radius: 0 }, regions.length);
     placeInto({ ...layer, name: head.name || layer.name }, head, true, members.map((m) => m.id));
     setEditTarget("region");
     setTool("select");
   };
 
   /**
-   * A set of pictures dragged together: ONE custom layer. Pictures are grouped by the gốc they hang off — each gốc
-   * is an option group (side by side), and its đa sắc / vật liệu picked with it are the options inside that group
-   * (a vật liệu picks the picture it was made from, drawn in its material; a đa sắc of a vật liệu version is offered
-   * through config.image.extraOptions). What wasn't picked stays hidden. Dropped on a custom layer, they join it.
+   * Where a dropped clipart's frame goes (artboard px): its own pixel size when it fits the artboard (a v2 layer file,
+   * an artwork: exactly the frame), else contain-fitted into it — centred on the drop point, kept on the artboard.
+   */
+  const dropBox = (a: CtAsset, at: CtPoint | null): { x: number; y: number; w: number; h: number } => {
+    if (!main) return { x: 0, y: 0, w: a.width, h: a.height };
+    const k = Math.min(1, main.width / Math.max(1, a.width), main.height / Math.max(1, a.height));
+    const w = Math.max(1, Math.round(a.width * k));
+    const h = Math.max(1, Math.round(a.height * k));
+    const p = at ?? { x: main.width / 2, y: main.height / 2 };
+    // Full-size pictures land exactly on the artboard.
+    const x = w >= main.width ? 0 : Math.round(Math.min(Math.max(p.x - w / 2, 0), main.width - w));
+    const y = h >= main.height ? 0 : Math.round(Math.min(Math.max(p.y - h / 2, 0), main.height - h));
+    return { x, y, w, h };
+  };
+
+  /**
+   * A set of pictures dragged together: ONE new custom layer (never merged into the layer under the cursor).
+   * Pictures are grouped by the gốc they hang off — each gốc is an option group (side by side), and its đa sắc /
+   * vật liệu picked with it are the options inside that group (a vật liệu picks the picture it was made from, drawn in
+   * its material; a đa sắc of a vật liệu version is offered through config.image.extraOptions). What wasn't picked
+   * stays hidden.
    */
   const dropSet = (set: CtClipartSetEntry[], at: CtPoint | null) => {
     if (!main || !product) return;
@@ -931,26 +903,16 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       return [...cur, ...added.filter((a) => !have.has(a.id) && have.add(a.id))];
     });
     keepAsDragged(flat);
-    const p = at ?? { x: main.width / 2, y: main.height / 2 };
-    const hit = [...regions].reverse().find((r) => r.kind === "image" && pointInShape(p, r.shape));
-    const size = Math.round(Math.min(main.width, main.height) * 0.3);
     const first = list[0].head;
-    const box = fitAspect(
-      { x: Math.min(Math.max(p.x - size / 2, 0), main.width - size), y: Math.min(Math.max(p.y - size / 2, 0), main.height - size), w: size, h: size },
-      first.width,
-      first.height,
-    );
-    const layer = hit ?? { ...makeRegion(product.id, "image", { type: "rect", x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h), radius: 0 }, regions.length), name: list.length > 1 ? `Bộ ${list.length} nhóm` : first.name || "Bộ ảnh" };
-    const have = new Set(items.filter((i) => i.region_id === layer.id).map((i) => i.asset_id));
-    const start = items.filter((i) => i.region_id === layer.id).length;
-    const fresh = list.filter((g) => !have.has(g.head.id));
-    const newItems = fresh.map((g, i) => makeItem(layer.id, g.head.id, start + i));
-    // A new group shows only what was picked; a group already in the layer just gets the picked ones switched on.
-    const hide = fresh.flatMap((g) => [g.head.id, ...g.members].filter((id) => !g.picked.includes(id)));
+    const box = dropBox(first, at);
+    const layer = { ...makeRegion(product.id, "image", { type: "rect", ...box, radius: 0 }, regions.length), name: list.length > 1 ? `Bộ ${list.length} nhóm` : first.name || "Bộ ảnh" };
+    const newItems = list.map((g, i) => makeItem(layer.id, g.head.id, i));
+    // Each group shows only what was picked.
+    const hide = list.flatMap((g) => [g.head.id, ...g.members].filter((id) => !g.picked.includes(id)));
     const show = new Set(list.flatMap((g) => g.picked));
     const extraOptions = Object.fromEntries(list.flatMap((g) => g.extras.map((x) => [x.id, g.head.id] as const)));
     ed.commit((s) => {
-      const regionsNow = hit ? s.regions : [...s.regions, layer];
+      const regionsNow = [...s.regions, layer];
       return {
         ...s,
         regions: regionsNow.map((x) => {
@@ -963,11 +925,11 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               ...n.config,
               image: {
                 ...img,
-                label: hit ? img.label : "Choose option",
-                groupLabel: hit ? img.groupLabel : "Choose style",
+                label: "Choose option",
+                groupLabel: "Choose style",
                 hiddenAssetIds: [...new Set([...img.hiddenAssetIds, ...hide])].filter((id) => !show.has(id)),
                 extraOptions: { ...img.extraOptions, ...extraOptions },
-                defaultAssetId: hit ? img.defaultAssetId : (list[0].picked[0] ?? null),
+                defaultAssetId: list[0].picked[0] ?? null,
               },
             },
           };
@@ -977,11 +939,11 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     });
     setSelectedRegionId(layer.id);
     setActiveItemId(newItems[0]?.id ?? null);
-    if (!hit) setSelection((sel) => ({ ...sel, [layer.id]: { kind: "image", assetId: list[0].picked[0] ?? first.id } }));
+    setSelection((sel) => ({ ...sel, [layer.id]: { kind: "image", assetId: list[0].picked[0] ?? first.id } }));
     setEditTarget("region");
     setTool("select");
     const options = list.reduce((n, g) => n + g.picked.length, 0);
-    flash(`${hit ? "Thêm vào layer" : "Tạo custom layer"}: ${list.length} nhóm, ${options} option — khách chọn (không sửa). Nhớ Lưu thiết kế`);
+    flash(`Tạo custom layer: ${list.length} nhóm, ${options} option — khách chọn (không sửa). Nhớ Lưu thiết kế`);
   };
 
   /**
@@ -1292,7 +1254,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                   </RailButton>
                 ))}
                 <RailDivider />
-                <RailButton label="Custom layer — thêm 1 layer trống (kéo clipart từ tab Thư viện vào), khung chính là vị trí ảnh" keys={["L"]} disabled={!main} onClick={addCustomLayer}>
+                <RailButton label="Custom layer — kéo clipart từ tab Thư viện thả lên canvas: mỗi clipart 1 layer riêng, khung chính là ảnh" keys={["L"]} disabled={!main} onClick={addCustomLayer}>
                   <ImageIcon className="h-4 w-4" />
                 </RailButton>
                 {kinds.map((k) => (
@@ -1329,7 +1291,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                   <Move className="h-4 w-4" />
                 </RailButton>
                 <RailDivider />
-                <RailButton label="Nền & khung main — ảnh nền phía sau, kéo / resize thiết kế trên nền" keys={[]} active={!!config.scene.url} disabled={!main} onClick={() => setSceneOpen(true)}>
+                <RailButton label="Phôi trơn — ảnh phôi + vị trí thiết kế trên phôi (chỉ dùng cho Xem trước & Mockups; Thiết kế và File in luôn phẳng)" keys={[]} active={!!config.scene.url} disabled={!main} onClick={() => setSceneOpen(true)}>
                   <Wallpaper className="h-4 w-4" />
                 </RailButton>
               </div>
@@ -1415,14 +1377,12 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     showOverlay={showOverlay}
                     photoBusy={photoBusy}
                     onDropClipart={dropClipart}
-                    scene={config.scene}
                     versionId={shownMainId ?? main.id}
                     mainSelected={mainSelected}
                     onSelectMain={(on) => {
                       setMainSelected(on);
                       if (on) setEditTarget("region");
                     }}
-                    onEmptyLayerClick={(regionId) => setLayerLibrary({ regionId })}
                     materialFrame={materialFrame}
                     printSpec={config.print?.spec ?? null}
                     drawInto={
@@ -1471,34 +1431,24 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           ) : view === "preview" ? (
             main ? null : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
           ) : main ? (
-            <div className="flex h-full min-h-0 flex-col">
-            <PrintMockups
-              config={config}
-              regions={allRegions}
-              items={allItems}
-              assets={assets}
-              selection={selection}
-              design={{ width: main.width, height: main.height }}
-              onConfig={(patch) => design.commit((st) => ({ ...st, config: { ...st.config, ...patch } }))}
-            />
-            <div className="min-h-0 flex-1">
-            <PreviewPanel
-              productId={product.id}
+            <AiMockupsPanel
+              product={product}
               main={main}
-              mains={config.main.enabled ? mains : []}
-              layouts={config.layouts}
               assets={assets}
               regions={allRegions}
               items={allItems}
-              samples={selection}
-              onAdded={(created) => setAssets((a) => [...a, ...created.filter((c) => !a.some((x) => x.id === c.id))])}
+              selection={selection}
+              config={config}
+              onAssets={(created) => setAssets((a) => [...a.filter((x) => !created.some((c) => c.id === x.id)), ...created])}
               onDelete={deleteMockup}
+              onProduct={(p) => {
+                setProduct(p);
+                const scene = normalizeProductConfig(p.config).scene;
+                design.commit((st) => ({ ...st, config: { ...st.config, scene } }));
+              }}
+              onOpenScene={() => setSceneOpen(true)}
               flash={flash}
-              mockupEdit={config.mockupEdit}
-              onMockupEdit={(mockupEdit) => design.commit((s) => ({ ...s, config: { ...s.config, mockupEdit } }))}
             />
-            </div>
-            </div>
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
           )}
@@ -1546,9 +1496,11 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               }}
               onMainFrame={setMainFrame}
               onPreviewOption={(regionId, assetId) => setSelection((sel) => ({ ...sel, [regionId]: { kind: "image", assetId } }))}
-              onPickLayerImage={(regionId) => setLayerLibrary({ regionId })}
               onAddChild={addChildZone}
               onDrawCut={startFrameCut}
+              onSaveArtwork={artworks.saveExtra}
+              artworkBusy={artworks.busy}
+              artworkFolder={artworks.folderName}
               print={config.print}
               onSampleText={(regionId, text) =>
                 setSelection((sel) => {
@@ -1631,13 +1583,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           />
           <PrintDialog open={materialOpen} onOpenChange={setMaterialOpen} design={design} product={product} main={main} assets={assets} selection={selection} />
         </>
-      )}
-      {layerLibrary && main && (
-        <PackImageLibrary
-          open
-          onOpenChange={(o) => !o && setLayerLibrary(null)}
-          onPick={(img) => void applyLayerImage(img)}
-        />
       )}
     </div>
     </CtTooltipProvider>

@@ -358,6 +358,13 @@ export interface CtRegionConfig {
   /** Khuôn vật liệu: parts cut out of the piece (a hanging hole), artboard px. */
   cuts?: CtShape[];
   /**
+   * Khuôn vật liệu drawn as a picture (a khuôn in face, types/print.ts CtPrintFace): alpha = printed, artboard size.
+   * When set it is what the print file is cut to (the shape is then the whole artboard).
+   */
+  maskUrl?: string | null;
+  /** Its cut line + safe zone, drawn over the canvas in the editor (artboard size, transparent). */
+  guideUrl?: string | null;
+  /**
    * Image layer that FILLS its outline instead of placing a picture in it (types/print.ts): a pattern repeated over
    * a pair of trousers' legs, a background covering the whole piece. `zone`: the khuôn in zone it follows — each
    * size of the piece draws it in that size's zone.
@@ -463,7 +470,7 @@ export interface CtAssetMeta {
   /** A product's canvas made from a khuôn in (server/print-products.ts): a transparent sheet. */
   printSheet?: boolean;
   /** A library artwork (saved from a product): what it was made of, to open / reuse it. */
-  artwork?: { productId: string; selection: CtSelection; templateId: string | null };
+  artwork?: CtArtworkMeta;
   /** For composites: which variant/text was chosen per region. */
   selection?: CtSelection;
   /** Colour shown when the option group uses the "swatch" display. */
@@ -501,6 +508,29 @@ export interface CtAssetMeta {
    * so "Màu gốc" can bring it back. null = cleared.
    */
   colorSource?: CtColorSource | null;
+}
+
+/**
+ * A finished design saved into the product's folder (server/artworks.ts): one per version, updated when the design is
+ * saved — or an extra one saved by hand ("Lưu thành artwork mới", no version).
+ */
+export interface CtArtworkMeta {
+  productId: string;
+  selection: CtSelection;
+  templateId: string | null;
+  /** The main version it is the artwork of; absent = an extra one. */
+  versionId?: string;
+  /** What it was rendered from (layers + content): the same again = not uploaded again. */
+  hash?: string;
+}
+
+/** What a library category shows: its cliparts, or the finished artworks saved into it. */
+export type CtLibraryShelf = "clipart" | "artwork";
+
+/** GET products/:id/artworks — the product's folder and the artworks in it. */
+export interface CtProductArtworks {
+  category: CtClipartCategory | null;
+  artworks: CtAsset[];
 }
 
 export interface CtColorSource {
@@ -1066,6 +1096,11 @@ export interface CtCategoryRules {
   productRefs: string[];
   /** The editor's description the details were read from. */
   detailsNote: string;
+  /**
+   * The product this category is the folder of (server/artworks.ts): its artworks and — a v2 bộ nhân vật — its
+   * layer cliparts live here; renaming the product renames the category. null = an ordinary category.
+   */
+  productId: string | null;
 }
 
 export type CtProductShape = "alpha" | "frame";

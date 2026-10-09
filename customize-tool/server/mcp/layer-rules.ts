@@ -59,6 +59,14 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
 - An AI-made option is an in-place edit of the master canvas (same size, same base) and the part is extracted on that
   canvas (difference / alpha). Never generate a part alone and scale it into the slot.
 
+## 9b. The cut follows the AI-painted regions (bước 3b — asked 2026-10-10)
+- Step 3b ("AI tô vùng clipart") makes, on the approved master, one in-place picture per clipart: the part painted
+  flat magenta (its exact region), or another shape / colour / material drawn in place. Those pictures ARE the cut:
+  a part's file is cut by its painted region (or by its own picture against the base), never guessed from the
+  master alone. A region that comes out wrong is fixed by painting that picture again, not by cutting looser.
+- "Tạo bộ custom" (3c) = cut every clipart from those regions → the cliparts in the product's library folder → ONE
+  finished product built from them, ready in the editor (it replaces the set's previous product).
+
 ## 10. Checks before a set is used
 - Every file of a slot has the same pixel size.
 - Every option of a slot has the same box in the product (no per-item transform).

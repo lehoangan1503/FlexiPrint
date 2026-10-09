@@ -155,14 +155,14 @@ export function SceneDialog(props: SceneDialogProps) {
   };
 
   return (
-    <CtModal open={props.open} onOpenChange={(o) => !o && props.onClose()} title="Nền & khung main" wide>
+    <CtModal open={props.open} onOpenChange={(o) => !o && props.onClose()} title="Phôi trơn" wide>
       <div className="space-y-3 text-sm">
         <p className="text-xs text-muted-foreground">
-          Ảnh nền nằm sau thiết kế trên storefront và tab Xem trước. Kéo khung thiết kế để đặt vị trí, kéo góc để to / nhỏ. File in không có nền.
+          Ảnh phôi trơn (sản phẩm chưa in, chụp thẳng): Xem trước, storefront và Mockups đặt artwork lên đây. Kéo khung thiết kế cho khớp phôi, kéo góc để to / nhỏ. Thiết kế và File in luôn phẳng, không có phôi.
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <CtButton size="sm" variant="primary" onClick={() => void upload()} disabled={!!busy}>
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} {scene.url ? "Đổi ảnh nền" : "Chọn ảnh nền"}
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} {scene.url ? "Đổi ảnh phôi" : "Chọn ảnh phôi"}
           </CtButton>
           {scene.url && (
             <>
@@ -170,7 +170,7 @@ export function SceneDialog(props: SceneDialogProps) {
                 <Maximize className="h-3.5 w-3.5" /> Căn giữa
               </CtButton>
               <CtButton size="sm" variant="ghost" className="text-destructive" onClick={() => props.onChange({ url: null, width: 0, height: 0, box: { x: 0, y: 0, w: 0, h: 0 } })}>
-                <Trash2 className="h-3.5 w-3.5" /> Bỏ nền
+                <Trash2 className="h-3.5 w-3.5" /> Bỏ phôi
               </CtButton>
               <span className="text-xs text-muted-foreground">
                 Nền {scene.width}×{scene.height} · thiết kế {Math.round(box.w)}×{Math.round(box.h)}

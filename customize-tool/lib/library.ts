@@ -17,7 +17,7 @@
  * — asVersion / asLayerClipart give the role the product reads it with.
  */
 
-import type { CtAsset, CtAssetRole, CtCategoryRules, CtClipartCategory, CtMaterialDisplay, CtRenderAsset } from "../types";
+import type { CtAsset, CtAssetRole, CtCategoryBody, CtCategoryRules, CtClipartCategory, CtMaterialDisplay, CtRenderAsset } from "../types";
 import { normalizeMaterialSpecs } from "./materials";
 
 export function defaultCategoryRules(): CtCategoryRules {
@@ -34,6 +34,7 @@ export function defaultCategoryRules(): CtCategoryRules {
     details: [],
     productRefs: [],
     detailsNote: "",
+    productId: null,
   };
 }
 
@@ -71,7 +72,26 @@ export function normalizeCategoryRules(raw: LegacyRules | null | undefined): CtC
     details: normalizeMaterialSpecs(r.details),
     productRefs: refList(r.productRefs),
     detailsNote: typeof r.detailsNote === "string" ? r.detailsNote.trim().slice(0, 4000) : "",
+    productId: typeof r.productId === "string" && r.productId ? r.productId : null,
   };
+}
+
+/** A category body with only the name changed (everything else as it is, or the defaults for a new one). */
+export function categoryBody(name: string, c: CtClipartCategory | null): CtCategoryBody {
+  return {
+    name: name.trim(),
+    parent_id: c?.parent_id ?? null,
+    usage: c?.usage ?? "element",
+    mode: c?.mode ?? "origin_set",
+    spec: c?.spec ?? "",
+    rules: c?.rules ?? defaultCategoryRules(),
+    sort_order: c?.sort_order ?? 0,
+  };
+}
+
+/** A finished design saved from a product (meta.artwork) — the category's Artwork tab, not its Clipart tab. */
+export function isArtworkClipart(a: Pick<CtAsset, "meta">): boolean {
+  return Boolean(a.meta?.artwork);
 }
 
 /** Role an ORIGIN of the category gets. */

@@ -44,7 +44,7 @@ export function ProductStep(ctx: CharCtx) {
   }, [loadBundles]);
 
   if (project.layers?.status !== "done") return <div className="p-10 text-center text-sm text-muted-foreground">Cắt layer ở bước 3 trước.</div>;
-  if (!project.layers.approved) return <div className="p-10 text-center text-sm text-muted-foreground">Duyệt bộ file cuối ở bước 3d trước — sản phẩm chỉ làm từ bộ file đã duyệt.</div>;
+  if (!project.layers.approved) return <div className="p-10 text-center text-sm text-muted-foreground">Bấm “Tạo bộ custom” ở bước 3c — nó cắt clipart và tạo luôn sản phẩm.</div>;
 
   const create = async () => {
     setBusy(true);

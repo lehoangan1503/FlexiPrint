@@ -113,7 +113,7 @@ export function useCharAgent(projectId: string, onChange: () => Promise<void>, o
   return { agent, cancel, answer, dismiss: () => setLast(null) };
 }
 
-const STEP_LABEL: Record<CtCharTaskStep, string> = { brainstorm: "Brainstorm", master: "Master", edits: "Bản sửa" };
+const STEP_LABEL: Record<CtCharTaskStep, string> = { brainstorm: "Brainstorm", master: "Master", edits: "Tô vùng clipart" };
 
 /** Under the header: what @flexiprint is doing now, or what it said when it finished. */
 export function CharAgentBar(props: ReturnType<typeof useCharAgent>) {

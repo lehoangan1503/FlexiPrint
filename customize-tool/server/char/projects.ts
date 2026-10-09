@@ -12,6 +12,7 @@
  *   POST   char/projects/:id/masters   {prompt?, count?, aspect?} → { images } status running, then done / failed
  *   POST   char/projects/:id/masters/:imageId/refine {note} → { image } an in-place edit of that master
  *   POST   char/projects/:id/approve   {imageId | null} → { project } the master every layer is cut from
+ *   POST   char/projects/:id/khuon     server/char/khuon.ts — the editor's khuôn picture → a khuôn; {} → the AI one
  *   POST   char/projects/:id/edits     server/char/layers.ts — in-place edits the brief needs
  *   POST   char/projects/:id/layers    server/char/layers.ts — cut the layer set (services/layer-kit)
  *   POST   char/projects/:id/layers/:imageId[/revert]  server/char/layer-edit.ts — fix one file by hand / undo

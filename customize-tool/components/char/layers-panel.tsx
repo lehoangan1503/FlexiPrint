@@ -10,11 +10,15 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Bot, CheckCircle2, ChevronLeft, ChevronRight, Loader2, RefreshCw } from "lucide-react";
+import { Bot, CheckCircle2, ChevronLeft, ChevronRight, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import type { CtCharImage } from "../../types";
 import { planEdits } from "../../lib/char-plan";
 import { latestEditsOf } from "../../lib/char-images";
 import { CHECKER_STYLE, CtButton, CtModal, CtTextarea, cx } from "../ui";
+import { charApi } from "../../lib/api-client";
+import { printApi } from "../../lib/print-api";
+import type { CtPrintTemplate } from "../../types/print";
+import { PrintSheet } from "../print/print-sheet";
 import type { CharCtx } from "./char-project";
 import { ProductStep } from "./product-step";
 import { CustomSection, CutEditor, MatteSection, type CutEdit } from "./cut-panel";
@@ -34,8 +38,8 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
   if (ctx.step === "product") return <ProductStep {...ctx} />;
   const tabs: Array<{ id: Sub; label: string; ok: boolean; note: string }> = [
     { id: "matte", label: "3a. Tách nền", ok: !!cut?.matte?.approved, note: cut?.matte?.status === "running" ? "đang chạy" : "" },
-    { id: "edits", label: "3b. Bản sửa (AI)", ok: ready, note: `${editsDone}/${plan.length}` },
-    { id: "custom", label: "3c. Bộ custom", ok: !!project.layers?.approved, note: cut?.plan?.status === "running" ? "đang phác thảo" : project.layers?.status === "building" ? "đang cắt" : "" },
+    { id: "edits", label: "3b. AI tô vùng clipart", ok: ready, note: `${editsDone}/${plan.length}` },
+    { id: "custom", label: "3c. Bộ custom → sản phẩm", ok: !!project.layers?.approved, note: cut?.plan?.status === "running" ? "đang phác thảo" : project.layers?.status === "building" ? "đang cắt + tạo sản phẩm" : "" },
   ];
   // The editors are modals over whichever tab is open.
   const onEdit = (e: CutEdit) => setEdit(e);
@@ -56,16 +60,17 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
       {!project.master_id ? (
         <div className="rounded-xl border bg-card p-6 text-sm">
           <p className="font-medium">Bước 3 bắt đầu khi đã có master được duyệt.</p>
-          <p className="mt-1 text-muted-foreground">Sang tab “2. Master”, cho @flexiprint vẽ rồi bấm Duyệt 1 bản. Sau đó ở đây lần lượt: 3a tách nền (sửa nền bằng tay) → 3b bản sửa AI → 3c bộ custom (một nút phác thảo + cắt file, xem từng kiểu, sửa vùng, duyệt).</p>
+          <p className="mt-1 text-muted-foreground">Sang tab “2. Master”, cho @flexiprint vẽ rồi bấm Duyệt 1 bản. Sau đó ở đây lần lượt: 3a tách nền (sửa nền bằng tay) → 3b AI tô vùng clipart (mỗi phần tô / vẽ trên master) → 3c bộ custom (một nút: cắt clipart theo vùng đã tô, ráp thành sản phẩm hoàn chỉnh trong editor).</p>
           <CtButton className="mt-3" onClick={() => ctx.goto("master")}>
             Sang bước Master →
           </CtButton>
         </div>
       ) : (
         <>
+          <MasterAndBlank {...ctx} />
           {sub === "matte" && <MatteSection {...ctx} onEdit={onEdit} />}
           {sub === "edits" && <EditsSection {...ctx} />}
-          {sub === "custom" && <CustomSection {...ctx} onEdit={onEdit} ready={ready} missing={ready ? "" : `Cần đủ bản sửa ở bước 3b (${editsDone}/${plan.length}).`} />}
+          {sub === "custom" && <CustomSection {...ctx} onEdit={onEdit} ready={ready} missing={ready ? "" : `Cần đủ ảnh tô vùng ở bước 3b (${editsDone}/${plan.length}).`} />}
         </>
       )}
       {edit && <CutEditor {...ctx} edit={edit} onClose={() => setEdit(null)} />}
@@ -113,10 +118,10 @@ function EditsSection(ctx: CharCtx) {
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <div className="flex-1">
           <h3 className="text-sm font-semibold">
-            Bản sửa tại chỗ ({done}/{plan.length})
+            AI tô vùng clipart ({done}/{plan.length})
           </h3>
           <p className="text-xs text-muted-foreground">
-            Danh sách bản sửa tự sinh từ brief; @flexiprint viết prompt từng bản, chạy trên master đã duyệt, tự xem và làm lại bản sai. Model xê dịch phần giữ nguyên một chút: lúc cắt layer, mỗi bản được đo và kéo về đúng chỗ (còn ≤ 0,3 px mới đạt, đỏ = làm lại).
+            Mỗi clipart cần 1 ảnh AI làm trên master đã duyệt: tô hồng đúng vùng của nó, hoặc vẽ kiểu / màu khác tại chỗ. Bước 3c cắt clipart theo đúng các vùng này. Danh sách tự sinh từ brief; @flexiprint viết prompt từng ảnh, tự xem và làm lại ảnh sai. Model xê dịch phần giữ nguyên một chút: lúc cắt layer, mỗi bản được đo và kéo về đúng chỗ (còn ≤ 0,3 px mới đạt, đỏ = làm lại).
           </p>
         </div>
         {editable && (
@@ -205,6 +210,110 @@ function EditsSection(ctx: CharCtx) {
           </div>
         )}
       </CtModal>
+    </section>
+  );
+}
+
+/**
+ * The approved master, the khuôn in and the phôi trơn side by side: the khuôn is the brief's (picked / uploaded), else
+ * the one AI draws to fit the master once it is approved (server/char/khuon.ts); the phôi is the uploaded photo, else
+ * the one AI draws from the khuôn (server/char/blank.ts) — the products get it for Xem trước and Mockups.
+ */
+function MasterAndBlank(ctx: CharCtx) {
+  const { project, images, editable } = ctx;
+  const [busy, setBusy] = useState(false);
+  const master = images.find((im) => im.id === project.master_id) ?? null;
+  const uploaded = project.brief.product.blankId ? images.find((im) => im.id === project.brief.product.blankId) : undefined;
+  const ai = [...images].reverse().find((im) => im.kind === "blank" && im.role === "blank:ai");
+  const aiKhuon = [...images].reverse().find((im) => im.kind === "blank" && im.role === "khuon:ai");
+  // The khuôn's own phôi (Thư viện → Phôi) is reused before an AI one.
+  const [template, setTemplate] = useState<CtPrintTemplate | null>(null);
+  const templateId = project.brief.product.templateId ?? null;
+  useEffect(() => {
+    if (!templateId) return;
+    printApi
+      .list()
+      .then((list) => setTemplate(list.find((t) => t.id === templateId) ?? null))
+      .catch(() => setTemplate(null));
+  }, [templateId]);
+  const kept = templateId ? (template?.spec.blanks[0]?.url ?? null) : null;
+  const blank = uploaded ?? ai ?? null;
+  const canMake = !!templateId && !uploaded;
+  const remakeKhuon = async () => {
+    setBusy(true);
+    try {
+      ctx.addImages([await charApi.khuonAi(project.id)]);
+    } catch (e) {
+      ctx.error(e instanceof Error ? e.message : "Không tạo được khuôn");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remake = async () => {
+    setBusy(true);
+    try {
+      ctx.addImages([await charApi.blank(project.id)]);
+    } catch (e) {
+      ctx.error(e instanceof Error ? e.message : "Không tạo được phôi");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const tile = (label: string, url: string | null, body: React.ReactNode) => (
+    <figure className="w-40 shrink-0">
+      <div className="flex aspect-square items-center justify-center overflow-hidden rounded-lg border" style={CHECKER_STYLE}>
+        {url ? (
+          // eslint-disable-next-line @next/next/no-img-element -- our R2 preview
+          <img src={url} alt={label} className="h-full w-full object-contain" />
+        ) : (
+          body
+        )}
+      </div>
+      <figcaption className="mt-1 text-[11px] text-muted-foreground">{label}</figcaption>
+    </figure>
+  );
+  return (
+    <section className="flex flex-wrap items-start gap-4 rounded-xl border bg-card p-4">
+      {tile("Master (đã duyệt)", master ? master.thumb_url || master.url : null, <span className="text-[11px] text-muted-foreground">—</span>)}
+      {tile(
+        templateId && template ? `Khuôn in: ${template.name}` : "Khuôn in (AI theo master)",
+        null,
+        templateId && template ? (
+          <PrintSheet spec={template.spec} className="h-full w-full" />
+        ) : aiKhuon?.status === "running" ? (
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        ) : aiKhuon?.status === "failed" ? (
+          <span className="p-2 text-center text-[11px] text-destructive">{aiKhuon.error || "Lỗi"}</span>
+        ) : (
+          <span className="p-2 text-center text-[11px] text-muted-foreground">Chưa có</span>
+        ),
+      )}
+      {tile(
+        uploaded ? "Phôi trơn (upload)" : kept ? "Phôi của khuôn (Thư viện → Phôi)" : "Phôi trơn (AI theo khuôn in)",
+        uploaded?.status === "done" ? uploaded.thumb_url || uploaded.url : kept ?? (blank?.status === "done" ? blank.thumb_url || blank.url : null),
+        blank?.status === "running" ? (
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        ) : blank?.status === "failed" ? (
+          <span className="p-2 text-center text-[11px] text-destructive">{blank.error || "Lỗi"}</span>
+        ) : (
+          <span className="p-2 text-center text-[11px] text-muted-foreground">Chưa có</span>
+        ),
+      )}
+      <div className="min-w-[220px] flex-1 space-y-2 text-xs text-muted-foreground">
+        <p>
+          Phôi trơn = sản phẩm chưa in, chụp thẳng. Sản phẩm tạo ở bước 4 dùng nó cho <b>Xem trước</b> và <b>Mockups</b> (artwork đặt lên phôi); Thiết kế và File in vẫn phẳng.
+        </p>
+        {editable && (!templateId || aiKhuon?.status === "done") && (
+          <CtButton size="sm" disabled={busy || aiKhuon?.status === "running"} onClick={() => void remakeKhuon()}>
+            {busy || aiKhuon?.status === "running" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {aiKhuon ? "Vẽ lại khuôn AI" : "Tạo khuôn bằng AI"}
+          </CtButton>
+        )}
+        {canMake && editable && (
+          <CtButton size="sm" disabled={busy || blank?.status === "running"} onClick={() => void remake()}>
+            {busy || blank?.status === "running" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {ai ? "Vẽ lại phôi AI" : "Tạo phôi bằng AI"}
+          </CtButton>
+        )}
+      </div>
     </section>
   );
 }

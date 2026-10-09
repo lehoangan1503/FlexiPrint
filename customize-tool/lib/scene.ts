@@ -2,11 +2,13 @@
  * The product scene (Thiết kế → Nền): a background photo with the design —
  * main + its layers, in main px — drawn into `box` (background px). The
  * storefront and the editor preview show the product this way; print files
- * never include it. Small on purpose: the storefront bundle imports it.
+ * never include it — and the design takes the photo's own light (lib/blank-shading). Small on purpose: the
+ * storefront bundle imports it.
  */
 
 import type { CtProductScene } from "../types";
 import { loadImage } from "./compositor";
+import { lightOnBlank } from "./blank-shading";
 
 function num(v: unknown, fallback: number, lo: number, hi: number): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback;
@@ -62,7 +64,42 @@ export async function drawOnScene(
   if (bg) ctx.drawImage(bg, 0, 0, out.width, out.height);
   const bx = scene.box.w * bleed.x;
   const by = scene.box.h * bleed.y;
-  ctx.drawImage(design, (scene.box.x - bx) * k, (scene.box.y - by) * k, (scene.box.w + 2 * bx) * k, (scene.box.h + 2 * by) * k);
+  const dx = (scene.box.x - bx) * k;
+  const dy = (scene.box.y - by) * k;
+  const dw = (scene.box.w + 2 * bx) * k;
+  const dh = (scene.box.h + 2 * by) * k;
+  if (!bg || !lightDesign(ctx, design, dx, dy, dw, dh)) ctx.drawImage(design, dx, dy, dw, dh);
   return out;
+}
+
+/**
+ * The design printed on the photo, lit by it (lib/blank-shading): the phôi's shading and gloss stay on the print.
+ * False when the photo's pixels can't be read (a picture served without CORS) — the caller pastes it flat.
+ */
+function lightDesign(ctx: CanvasRenderingContext2D, design: HTMLCanvasElement, dx: number, dy: number, dw: number, dh: number): boolean {
+  const W = ctx.canvas.width;
+  const H = ctx.canvas.height;
+  const x0 = Math.max(0, Math.floor(dx));
+  const y0 = Math.max(0, Math.floor(dy));
+  const x1 = Math.min(W, Math.ceil(dx + dw));
+  const y1 = Math.min(H, Math.ceil(dy + dh));
+  const w = x1 - x0;
+  const h = y1 - y0;
+  if (w <= 0 || h <= 0) return true;
+  const layer = document.createElement("canvas");
+  layer.width = w;
+  layer.height = h;
+  const lctx = layer.getContext("2d");
+  if (!lctx) return false;
+  lctx.drawImage(design, dx - x0, dy - y0, dw, dh);
+  try {
+    const under = ctx.getImageData(x0, y0, w, h);
+    const art = lctx.getImageData(0, 0, w, h);
+    lightOnBlank(art.data, under.data, w, h, 4, under.data);
+    ctx.putImageData(under, x0, y0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 

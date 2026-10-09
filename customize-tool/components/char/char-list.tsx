@@ -63,7 +63,7 @@ export function CharList({ currentUserId }: { currentUserId: string }) {
   };
 
   const remove = async (p: CtCharProject) => {
-    if (!(await ctConfirm({ title: `Xoá “${p.name}”?`, message: "Xoá brief, mọi master, bản sửa và layer của bộ. Sản phẩm đã tạo từ bộ vẫn giữ.", tone: "danger", confirmLabel: "Xoá" }))) return;
+    if (!(await ctConfirm({ title: `Xoá “${p.name}”?`, message: "Xoá brief, mọi master, ảnh tô vùng clipart và layer của bộ. Sản phẩm đã tạo từ bộ vẫn giữ.", tone: "danger", confirmLabel: "Xoá" }))) return;
     try {
       await charApi.remove(p.id);
       setProjects((list) => list.filter((x) => x.id !== p.id));

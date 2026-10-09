@@ -5,7 +5,8 @@
  *
  *   work                 the approved master (a copy: the print upscale happens in layer-kit, after registration)
  *   base                 every "shape" part removed (bald heads, no hats) — only when the brief has shape slots
- *   part:<slot>          a shape part painted magenta on the work master (splits the master's parts between slots)
+ *   part:<slot>          a shape part painted magenta on the work master — the region the master's own part is cut by
+ *                        (only with several shape slots: with one, base differs from work by that part alone)
  *   mask:<slot>          a colour / texture part painted magenta on the base
  *   texture:<slot>:<opt> the part in another material, on the base
  *   shape:<slot>:<opt>   another shape added back on the base

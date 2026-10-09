@@ -23,6 +23,7 @@ import type { CtSession } from "../supabase";
 import { ctRemove, ctStoragePath, ctUpload } from "../storage";
 import { fetchImage, saveCharFile, saveCharRaw } from "./files";
 import { kitForget, kitJob, kitPost } from "./kit";
+import { remakeSetProduct } from "./product";
 import { editModels, jobDb, jsonError, loadImages, loadProject, projectRow, runCharDraw } from "./projects";
 
 type Db = ReturnType<typeof jobDb>;
@@ -262,8 +263,11 @@ function cutInput(p: CtCharProject): Record<string, unknown> {
   return { pictures, body_picture: body.picture, body_region: body.region.url, slots, zones };
 }
 
-/** Start the cut of the set (layers.status "building", files made in the background). Throws with a message for the editor. */
-export async function startBuild(db: Db, userId: string, p: CtCharProject, cut?: CtCharCutState): Promise<CtCharProject> {
+/**
+ * Start the cut of the set (layers.status "building", files made in the background). Throws with a message for the
+ * editor. `product` ("Tạo bộ custom"): the set is approved and the product rebuilt from it when the cut is done.
+ */
+export async function startBuild(db: Db, userId: string, p: CtCharProject, cut?: CtCharCutState, product = false): Promise<CtCharProject> {
   if (!p.master_id) throw new Error("Duyệt master trước");
   if (p.layers?.status === "building") throw new Error("Đang cắt layer");
   const input = cutInput(p);
@@ -273,7 +277,7 @@ export async function startBuild(db: Db, userId: string, p: CtCharProject, cut?:
   const { data, error } = await db.from(CT_TABLES.charProjects).update({ layers: building, ...(cut ? { cut } : {}) }).eq("id", p.id).select("*").single<CtCharProject>();
   if (error || !data) throw new Error(error?.message ?? "Không lưu được");
   const project = projectRow(data);
-  void runBuild(db, userId, project, input, images.filter((im) => im.kind === "layer"), p.layers);
+  void runBuild(db, userId, project, input, images.filter((im) => im.kind === "layer"), p.layers, product);
   return project;
 }
 
@@ -285,7 +289,7 @@ export async function buildCharLayers(s: CtSession, id: string, _body: unknown):
   if (!p.master_id) return jsonError("Duyệt master trước", 409);
   if (p.layers?.status === "building") return jsonError("Đang cắt layer", 409);
   try {
-    return NextResponse.json({ project: await startBuild(jobDb(s), s.user.id, p) }, { status: 202 });
+    return NextResponse.json({ project: await startBuild(jobDb(s), s.user.id, p, undefined, true) }, { status: 202 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Chưa cắt được", 400);
   }
@@ -303,7 +307,7 @@ export async function approveCharLayers(s: CtSession, id: string, body: unknown)
   return NextResponse.json({ project: projectRow(data) });
 }
 
-async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<string, unknown>, oldLayers: CtCharImage[], oldSet: CtCharLayerSet | null): Promise<void> {
+async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<string, unknown>, oldLayers: CtCharImage[], oldSet: CtCharLayerSet | null, product: boolean): Promise<void> {
   let job = "";
   try {
     const r = await kitJob<KitCut>("/cut", input);
@@ -345,10 +349,20 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
       diffPath: diff.path,
       approved: false,
     };
-    await db.from(CT_TABLES.charProjects).update({ layers, status: p.status === "product" ? "product" : "layers" }).eq("id", p.id);
+    if (product) {
+      // "Tạo bộ custom": the cliparts + the finished product, made from this set (the old product goes with the old files).
+      const now = (await loadProject(db, p.id)) ?? p;
+      try {
+        const productId = await remakeSetProduct(db, userId, now, { ...layers, approved: true });
+        await db.from(CT_TABLES.charProjects).update({ layers: { ...layers, approved: true }, product_ids: [productId], status: "product" }).eq("id", p.id);
+      } catch (e) {
+        const msg = `Đã cắt file nhưng chưa tạo được sản phẩm: ${e instanceof Error ? e.message : String(e)}`.slice(0, 1000);
+        await db.from(CT_TABLES.charProjects).update({ layers: { ...layers, error: msg }, status: "layers" }).eq("id", p.id);
+      }
+    } else await db.from(CT_TABLES.charProjects).update({ layers, status: p.status === "product" ? "product" : "layers" }).eq("id", p.id);
     // The previous build's files are replaced — in the products made from them too.
     if (oldLayers.length) {
-      await relinkProducts(db, p, oldLayers, stored.map((x) => x.image)).catch((e: Error) => console.warn("[ct] char relink products", e.message));
+      if (!product) await relinkProducts(db, p, oldLayers, stored.map((x) => x.image)).catch((e: Error) => console.warn("[ct] char relink products", e.message));
       await db.from(CT_TABLES.charImages).delete().in("id", oldLayers.map((x) => x.id));
       await ctRemove([...new Set(oldLayers.flatMap((x) => [x.storage_path, x.thumb_path]))]);
     }
@@ -371,6 +385,11 @@ export async function relinkProducts(db: Db, p: CtCharProject, oldFiles: CtCharI
   for (const old of oldFiles) {
     const next = byRole.get(old.role);
     if (!next) continue;
+    // A front half's options are shown by their back half (meta.thumb, server/char/product.ts): that link too.
+    for (const was of [old.thumb_url, old.url].filter((u): u is string => !!u)) {
+      const { data: shown } = await db.from(CT_TABLES.assets).select("id, meta").in("product_id", p.product_ids).eq("meta->>thumb", was).returns<Array<Pick<CtAsset, "id" | "meta">>>();
+      for (const a of shown ?? []) await db.from(CT_TABLES.assets).update({ meta: { ...a.meta, thumb: next.thumb_url || next.url } }).eq("id", a.id);
+    }
     const { data: assets } = await db.from(CT_TABLES.assets).select("*").in("product_id", p.product_ids).eq("meta->>charLayerId", old.id).returns<CtAsset[]>();
     if (!assets?.length) continue;
     const data = await fetchImage(next.url);

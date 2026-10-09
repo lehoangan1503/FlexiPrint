@@ -3,6 +3,12 @@
  *
  *   POST char/projects/:id/products {name?} → { productId } a draft product, opened in the editor
  *
+ * With it comes a clipart set (asked 2026-10-10): the product's folder in the library — a category with the
+ * product's name (server/artworks.ts) — holds every layer file as a clipart (a group's first file the gốc, the others
+ * its đa sắc); the product's layers use those cliparts, and its artworks are saved into the same folder. On a khuôn in
+ * the canvas is its sheet; without one the edit frame IS the print file's frame (the set's canvas, + a band for the
+ * text). The phôi trơn — uploaded, else the AI one (server/char/blank.ts) — becomes the product photo (config.scene).
+ *
  * Built by the layer rules: every image layer gets the SAME box (the set's canvas fitted into the print, aspect
  * kept, transforms identity → files land 1:1); z-order fixed bottom → top: wrapping parts' back halves, body,
  * customer photo zones, colour / texture parts, shape parts (front halves), text. A back half follows its front
@@ -13,7 +19,7 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_FONTS, CT_TABLES } from "../../config";
-import type { CtAsset, CtCharBrief, CtCharImage, CtCharLayerSet, CtCharLayerSlot, CtCharProject, CtProduct, CtRegion, CtRegionItem } from "../../types";
+import type { CtAsset, CtCharBrief, CtCharImage, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject, CtProduct, CtRegion, CtRegionItem } from "../../types";
 import { defaultProductConfig, defaultRegionConfig } from "../../lib/design";
 import { applyMaterialPreset } from "../../lib/materials";
 import * as h from "../handlers";
@@ -25,6 +31,11 @@ import { makeTemplateProduct, productPrintOf } from "../print-products";
 import { safeShapes } from "../../lib/print-template";
 import { shapeBounds } from "../../lib/geometry";
 import type { CtPrintSpec } from "../../types/print";
+import { findProductFolder, productFolder } from "../artworks";
+import { ctRemove } from "../storage";
+import { insertClipart } from "../library";
+import { guessedBox, sceneForBlank } from "../product-mockups";
+import { AI_BLANK_ROLE, projectBlank } from "./blank";
 
 /** Where the characters + text go on a template: its first safe shape (a circle / ellipse → the rectangle inside it). */
 function safeArea(spec: CtPrintSpec): Box {
@@ -38,8 +49,8 @@ function safeArea(spec: CtPrintSpec): Box {
   return shapeBounds(s);
 }
 
-const DPI = 300;
-const DEFAULT_MM = { w: 220, h: 150 };
+/** Print width (mm) of a product without a khuôn in or a size in the brief. */
+const DEFAULT_MM = 220;
 
 interface Box {
   x: number;
@@ -94,11 +105,38 @@ export async function createCharProduct(s: CtSession, id: string, raw: unknown):
   }
 }
 
+/**
+ * "Tạo bộ custom" ends here (asked 2026-10-10: the set IS the cliparts + a finished product, ready in the editor):
+ * the cut that just finished (layers.ts runBuild, minutes after the request — the service client acting as the
+ * project's owner) replaces the products made from the set before — each with its clipart folder — by ONE new
+ * product built from `set`. → the new product id.
+ */
+export async function remakeSetProduct(db: CtSession["supabase"], userId: string, p: CtCharProject, set: CtCharLayerSet): Promise<string> {
+  const { data, error } = await db.auth.admin.getUserById(userId);
+  if (error || !data.user) throw new Error(`Không đọc được người dùng: ${error?.message ?? "không có"}`);
+  const s: CtSession = { supabase: db, user: data.user };
+  for (const pid of p.product_ids) {
+    const folder = await findProductFolder(db, pid);
+    if (folder) {
+      const { data: cliparts } = await db.from(CT_TABLES.assets).select("id, storage_path").eq("category_id", folder.id).returns<Array<Pick<CtAsset, "id" | "storage_path">>>();
+      await ctRemove((cliparts ?? []).map((c) => c.storage_path).filter(Boolean));
+      await db.from(CT_TABLES.assets).delete().eq("category_id", folder.id);
+      await db.from(CT_TABLES.categories).delete().eq("id", folder.id);
+    }
+    await h.deleteProduct(s, pid);
+  }
+  return build(s, p, set, p.name);
+}
+
 async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: string): Promise<string> {
   const brief = p.brief;
   // On a khuôn in (brief.product.templateId): the product's canvas is its sheet, the characters sit in its safe zone.
   const template = brief.product.templateId ? await getTemplate(s, brief.product.templateId) : null;
   const product = template ? await makeTemplateProduct(s.supabase, s.user.id, template, name) : (await body<{ product: CtProduct }>(await h.createProduct(s, { name }))).product;
+  // The product's clipart set: its folder in the library, named after it.
+  const folder = await productFolder(s.supabase, s.user.id, { id: product.id, name });
+  const clipart = (data: Buffer, assetName: string, parentId: string | null, meta: CtAsset["meta"]): Promise<CtAsset> =>
+    insertClipart(s.supabase, s.user.id, { categoryId: folder.id, parentId, rendition: false, name: assetName, spec: "", tags: [], source: "ai", meta, generationId: null, data });
   const upload = async (data: Buffer, role: string, assetName: string, parentId: string | null = null, meta: Record<string, unknown> = {}): Promise<CtAsset> => {
     const form = new FormData();
     form.set("file", new Blob([new Uint8Array(data)], { type: "image/png" }), `${assetName || role}.png`);
@@ -109,9 +147,8 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     return (await body<{ asset: CtAsset }>(await h.uploadAsset(s, product.id, form))).asset;
   };
 
-  // The print canvas: the template's sheet, else the print area at 300 dpi, transparent.
-  const mmW = template?.spec.widthMm || brief.product.widthMm || DEFAULT_MM.w;
-  const mmH = template?.spec.heightMm || brief.product.heightMm || DEFAULT_MM.h;
+  // The print canvas: the template's sheet, else the set's own canvas (transparent).
+  const mmW = template?.spec.widthMm || brief.product.widthMm || DEFAULT_MM;
   let main: CtAsset;
   let W: number;
   let H: number;
@@ -126,17 +163,17 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     const { data: frames } = await s.supabase.from(CT_TABLES.regions).select("*").eq("product_id", product.id).returns<CtRegion[]>();
     keep = frames ?? [];
   } else {
-    W = Math.round((mmW / 25.4) * DPI);
-    H = Math.round((mmH / 25.4) * DPI);
+    // No khuôn in: the edit frame is the print file's frame — the set's canvas exactly, a band below for the text.
+    W = set.width;
+    H = set.height + (brief.text.enabled ? Math.round(set.height * 0.2) : 0);
     const canvas = await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer();
-    main = await upload(canvas, "main", "Vùng in");
+    main = await upload(canvas, "main", `Khung in ${W}×${H}`);
   }
 
   // Characters: the set's canvas fitted into the print area (a band below for the text), aspect kept exactly. The
-  // area is the template's safe zone (a round one: the rectangle inside the circle), else the sheet minus 4 %.
-  const margin = Math.round(Math.min(W, H) * 0.04);
-  const area = template ? safeArea(template.spec) : { x: margin, y: margin, w: W - 2 * margin, h: H - 2 * margin };
-  const textBand = brief.text.enabled ? Math.round(area.h * 0.2) : 0;
+  // area is the template's safe zone (a round one: the rectangle inside the circle), else the whole frame.
+  const area = template ? safeArea(template.spec) : { x: 0, y: 0, w: W, h: H };
+  const textBand = brief.text.enabled ? (template ? Math.round(area.h * 0.2) : H - set.height) : 0;
   const areaW = area.w;
   const areaH = area.h - textBand;
   const k = Math.min(areaW / set.width, areaH / set.height);
@@ -178,13 +215,18 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     const colours = [...new Set(slot.files.map((f) => f.color))];
     const grouped = colours.length > 1 || colours[0] !== "";
     const groups = grouped ? colours.map((c) => ({ name: c, files: slot.files.filter((f) => f.color === c) })) : [{ name: "", files: slot.files }];
+    // A front half's option is shown by its back half (the whole part — hair over the face is cut from the front).
+    const back = set.slots.find((x) => x.follows === slot.key);
+    const thumbOf = (f: CtCharLayerFile) => back?.files.find((b) => b.option === f.option && b.color === f.color);
     // Uploads of a group go in order (variants hang on the first); groups in parallel.
     const subs = await Promise.all(
       groups.map(async (g) => {
         let sub: CtAsset | null = null;
         for (const f of g.files) {
           const swatch = swatchOf(brief, slot.key, f.option, f.color);
-          const a = await upload(await bytes(f.url), sub ? "variant" : "sub", f.option, sub?.id ?? null, { charLayerId: f.imageId, ...(swatch ? { swatch } : {}) });
+          const label = [labelFor(slot), f.option, f.color].filter(Boolean).join(" · ");
+          const whole = thumbOf(f);
+          const a = await clipart(await bytes(f.url), label, sub?.id ?? null, { charLayerId: f.imageId, ...(swatch ? { swatch } : {}), ...(whole ? { thumb: whole.thumbUrl || whole.url } : {}) });
           sub ??= a;
         }
         return sub;
@@ -273,13 +315,20 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
   const config = { ...defaultProductConfig(), print: template ? productPrintOf(template) : null };
   if (brief.product.cut === "alpha") config.material = { ...applyMaterialPreset(config.material, "acrylic_white"), widthMm: mmW };
   else config.material = { ...config.material, widthMm: mmW };
-  // The blank product photo: the storefront draws the design into the print area on it.
-  const blank = brief.product.blankId ? (await loadImages(s.supabase, p.id)).find((im: CtCharImage) => im.id === brief.product.blankId) : undefined;
-  if (blank?.width && blank.height) {
-    const ref = await upload(await fetchImage(blank.url), "reference", "Phôi trơn chụp thẳng");
-    const bw = blank.width * 0.6;
-    const bh = (bw * H) / W;
-    config.scene = { url: ref.url, width: blank.width, height: blank.height, box: { x: (blank.width - bw) / 2, y: Math.max(0, blank.height * 0.55 - bh / 2), w: bw, h: bh } };
+  // The phôi trơn (uploaded, else the AI one): Xem trước, the storefront and the mockups draw the design on it. The
+  // sheet's box is found on the photo when the piece has a fixed shape (or the AI drew it on its plain backdrop).
+  const blank: CtCharImage | null = projectBlank(p, await loadImages(s.supabase, p.id));
+  const kept = template?.spec.blanks[0];
+  if (blank?.role !== "blank" && kept) {
+    // The khuôn's own phôi (Thư viện → Phôi) wins over one the set drew by AI: it is the one the team keeps.
+    config.scene = { url: kept.url, width: kept.width, height: kept.height, box: kept.box };
+  } else if (blank?.width && blank.height) {
+    const photo = await fetchImage(blank.url);
+    const ref = await upload(photo, "reference", blank.role === AI_BLANK_ROLE ? "Phôi trơn (AI)" : "Phôi trơn chụp thẳng");
+    config.scene =
+      template?.spec.outline || blank.role === AI_BLANK_ROLE
+        ? await sceneForBlank(photo, ref.url, template?.spec ?? { width: W, height: H, outline: null })
+        : { url: ref.url, width: blank.width, height: blank.height, box: guessedBox(blank.width, blank.height, W, H) };
   }
   const all = [...keep, ...regions].map((r, i) => ({ ...r, sort_order: i }));
   await body(await h.saveDesign(s, product.id, { regions: all, items, config }));

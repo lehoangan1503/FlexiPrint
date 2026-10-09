@@ -4,7 +4,7 @@
 
 import { CT_CONFIG } from "../config";
 import type { CtApiError, CtProduct } from "../types";
-import type { CtPrintKind, CtPrintSpec, CtPrintTemplate } from "../types/print";
+import type { CtPrintAiRequest, CtPrintAiResult, CtPrintFace, CtPrintKind, CtPrintSpec, CtPrintTemplate } from "../types/print";
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${CT_CONFIG.apiBase}/${path}`, init);
@@ -32,6 +32,17 @@ export const printApi = {
     form.append("file", file);
     return call<{ url: string; width: number; height: number }>("print-templates/images", { method: "POST", body: form });
   },
+  /** The khuôn drawn by AI (not saved): a new one, a change of `templateId`'s, or of an unsaved round (`base`). */
+  ai: (body: CtPrintAiRequest & { name: string; base: CtPrintFace[] }) => call<CtPrintAiResult>("print-templates/ai", json("POST", body)),
+  /** A phôi photo of the khuôn (its box found on it). */
+  uploadBlank: (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("name", file.name.replace(/\.[a-z0-9]+$/i, ""));
+    return call<{ template: CtPrintTemplate }>(`print-templates/${id}/blanks`, { method: "POST", body: form }).then((r) => r.template);
+  },
+  /** A phôi drawn by AI from the khuôn. */
+  aiBlank: (id: string) => call<{ template: CtPrintTemplate }>(`print-templates/${id}/blanks/ai`, json("POST", {})).then((r) => r.template),
   /** A product on the template: its canvas = the sheet, the cut line = its khuôn vật liệu. */
   createProduct: (templateId: string, name: string) => call<{ product: CtProduct }>("products/from-template", json("POST", { templateId, name })).then((r) => r.product),
 };

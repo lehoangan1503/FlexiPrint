@@ -19,7 +19,7 @@ What `/build` does (layers.py):
 - **Colour slots**: mask = the magenta edit (+ the part's own outline, + same-colour bits next to it); options are
   recolours of the base's own pixels in Lab → identical alpha.
 - **Texture slots**: the texture edit's pixels inside that same mask.
-- **Shape slots**: option = edit − base (master − base for the first), hair-colour guard, colours = recolours;
+- **Shape slots**: the first option (the master's own part) = its magenta paint on the master ("Tô …", 3b) grown a few px for the outline; other options = edit − base, hair-colour guard; colours = recolours;
   `wraps` → back (whole part, under the body) + front (the part over the body + 2 px).
 - **Photo zones**: magenta edit → polygon.
 - Checks: registration, masks kept, front ⊆ back, back + body + front = master.

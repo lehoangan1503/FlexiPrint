@@ -10,7 +10,6 @@
  *              ("Choose Color"). "Thêm option" gives a version sub-options
  *              (đa sắc): a second row on the storefront, the version itself
  *              first, sharing its layers and config.
- *   Tham chiếu style/subject references fed to AI requests (older products).
  *   Thư viện   the global clipart library (library-panel.tsx): drag any
  *              picture onto the Version column or the canvas.
  */
@@ -23,7 +22,7 @@ import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtSelect, CtTool
 import { DISPLAY_OPTIONS } from "./inspector";
 import { LibraryBadge, LibraryPanel } from "./library-panel";
 
-export type AssetTab = "main" | "reference" | "library";
+export type AssetTab = "main" | "library";
 
 export interface AssetPanelProps {
   assets: CtAsset[];
@@ -53,7 +52,6 @@ export function AssetPanel(props: AssetPanelProps) {
   const { assets } = props;
   const mains = mainVersions(assets, props.mainAssetId);
   const defaultMain = mains.find((m) => m.id === props.mainAssetId) ?? null;
-  const refs = assets.filter((a) => a.role === "reference");
 
   return (
     <div className="flex h-full flex-col text-sm">
@@ -62,7 +60,6 @@ export function AssetPanel(props: AssetPanelProps) {
           [
             ["main", `Version (${mains.length})`],
             // References only fed AI requests (older products).
-            ...(refs.length > 0 ? [["reference", `Tham chiếu (${refs.length})`]] : []),
             ["library", "Thư viện"],
           ] as Array<[AssetTab, string]>
         ).map(([k, label]) => (
@@ -137,13 +134,6 @@ export function AssetPanel(props: AssetPanelProps) {
               </>
             ))}
 
-          {tab === "reference" && (
-            <div className="grid grid-cols-2 gap-2">
-              {refs.map((a) => (
-                <AssetCard key={a.id} asset={a} {...props} />
-              ))}
-            </div>
-          )}
         </div>
       )}
     </div>

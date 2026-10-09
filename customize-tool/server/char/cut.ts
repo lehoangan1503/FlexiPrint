@@ -206,8 +206,8 @@ function pieceSigs(input: { base: string | null; slots: unknown[]; zones: unknow
   };
 }
 
-/** `auto`: when the plan is done, approve it and cut the files too (one button for the whole bộ custom) — unless
- * products are already made from the old files (the editor cuts again himself, with the warning). */
+/** `auto` ("Tạo bộ custom"): when the plan is done, approve it, cut the files and make the set's product from them
+ * (it replaces the one made before — the page warns). */
 export async function startPlan(db: Db, userId: string, p: CtCharProject, auto = false): Promise<CtCharProject> {
   const m = doneMatte(p);
   if (!m.approved) throw new Error("Duyệt phần tách nền trước");
@@ -215,14 +215,14 @@ export async function startPlan(db: Db, userId: string, p: CtCharProject, auto =
   if (p.layers?.status === "building") throw new Error("Đang cắt layer — chờ xong");
   const images = await loadImages(db, p.id);
   const input = kitPlanInput(p, latestEdits(images));
-  if ("missing" in input) throw new Error(`Chưa đủ bản sửa: ${input.missing.join(", ")}`);
+  if ("missing" in input) throw new Error(`Chưa đủ ảnh tô vùng (3b): ${input.missing.join(", ")}`);
   const { data: master } = await db.from(CT_TABLES.charImages).select("url").eq("id", p.master_id!).single<{ url: string }>();
   if (!master) throw new Error("Không thấy master đã duyệt");
   const old = p.cut?.plan ?? null;
   const running: CtCharPlan = { status: "running", error: "", width: old?.width ?? 0, height: old?.height ?? 0, pictures: old?.pictures ?? [], pieces: old?.pieces ?? [], checks: [], approved: false, at: new Date().toISOString() };
   const project = await saveCut(db, p.id, { ...cutState(p), plan: running });
   const sigOf = pieceSigs(input.plan, master.url, m.alpha.url);
-  void runPlan(db, userId, p.id, { source: master.url, colour: m.colourUrl, alpha: m.alpha.url, ...input.plan }, old, sigOf, auto && !p.product_ids.length);
+  void runPlan(db, userId, p.id, { source: master.url, colour: m.colourUrl, alpha: m.alpha.url, ...input.plan }, old, sigOf, auto);
   return project;
 }
 
@@ -286,7 +286,7 @@ async function runPlan(db: Db, userId: string, projectId: string, body: Record<s
     if (thenCut) {
       try {
         const cut = { ...cutState(p), plan: { ...plan, approved: true } };
-        next = await startBuild(db, userId, { ...p, cut }, cut);
+        next = await startBuild(db, userId, { ...p, cut }, cut, true);
       } catch (e) {
         note = `Chưa tự cắt được: ${(e instanceof Error ? e.message : String(e)).slice(0, 500)}`;
       }

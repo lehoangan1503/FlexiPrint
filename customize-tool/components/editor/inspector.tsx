@@ -112,8 +112,12 @@ export interface InspectorProps {
   mainSelected: boolean;
   onSelectMain: () => void;
   onMainFrame: (f: CtMainFrame) => void;
-  /** A custom layer's picture from the thư viện ảnh mockup (upload / pick), replacing what it holds. */
-  onPickLayerImage: (regionId: string) => void;
+  /** Save what is shown now as one more artwork in the product's library folder. */
+  onSaveArtwork: (name: string) => Promise<void>;
+  /** An artwork is being saved (also the versions' own ones after Lưu thiết kế). */
+  artworkBusy: boolean;
+  /** The product's library folder, once it has one. */
+  artworkFolder: string | null;
   /** Show (and edit) a text / photo zone as one of its sub-options; null = its own look. */
   onZoneOption: (regionId: string, optionId: string | null) => void;
   /** A child zone for one option of a zone (text / custom layer / photo upload) — shown while that option is. */
@@ -367,7 +371,7 @@ export function Inspector(props: InspectorProps) {
         ) : props.mainSelected && props.mainLayer ? (
           <MainFrameProps layer={props.mainLayer} onChange={props.onMainFrame} />
         ) : (
-          <p className="px-3 py-4 text-xs text-muted-foreground">Chọn một vùng để chỉnh thuộc tính.</p>
+          <ArtworkOptions {...props} />
         )}
       </div>
     </div>
@@ -1406,9 +1410,6 @@ function ImageProps(props: InspectorProps & { region: CtRegion }) {
           ? `Khách chọn 1 trong ${offered} ảnh (chỉ chọn, không sửa) — vd. bộ kiểu tóc. Mặc định = card / ảnh viền cam (bấm để đổi).`
           : "1 ảnh = layer cố định (khách không chọn). Thêm ảnh (kéo cả bộ từ tab Thư viện, hoặc bật ảnh ẩn) để khách chọn."}
       </p>
-      <CtButton size="sm" className="w-full" onClick={() => props.onPickLayerImage(region.id)}>
-        <ImageIcon className="h-3.5 w-3.5" /> {items.length ? "Đổi ảnh…" : "Chọn ảnh…"} (thư viện ảnh mockup / upload)
-      </CtButton>
 
       <LinkedLayerField {...props} region={region} />
 
@@ -1598,6 +1599,96 @@ function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionIte
           </CtButton>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Nothing selected: every layer the customer can change, its options as chips — pick them to make an artwork (asked
+ * 2026-10-10: a v2 set's options work from the right sidebar). Picking only changes what the editor shows (the
+ * design content), never the product's defaults. Lưu thiết kế saves each version as an artwork; "Lưu thành artwork
+ * mới" keeps this combination as one more.
+ */
+function ArtworkOptions(props: InspectorProps) {
+  const { design, assets, selection } = props;
+  const [name, setName] = useState("");
+  const [saved, setSaved] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const regions = formOrder(design.state.regions).filter((r) => !r.config.materialFrame && !isLinkedLayer(r, design.state.regions));
+  const rows = regions
+    .map((raw) => {
+      const r = normalizeRegion(raw);
+      if (r.kind === "text") return { r, options: [] as CtAsset[] };
+      if (r.kind !== "image") return null;
+      const hidden = new Set(r.config.image.hiddenAssetIds);
+      const options = design.state.items
+        .filter((i) => i.region_id === r.id)
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .flatMap((i) => {
+          const sub = assets.find((a) => a.id === i.asset_id);
+          return sub ? [sub, ...variantsOf(assets, sub.id)] : [];
+        })
+        .filter((o) => !hidden.has(o.id));
+      return options.length >= 2 ? { r, options } : null;
+    })
+    .filter((x): x is { r: CtRegion; options: CtAsset[] } => x !== null);
+
+  const save = async () => {
+    setError(null);
+    try {
+      await props.onSaveArtwork(name);
+      setSaved(name.trim() || "artwork");
+      setName("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không lưu được artwork");
+    }
+  };
+
+  return (
+    <div className="space-y-3 p-3">
+      <div>
+        <div className="text-xs font-semibold">Tạo artwork — chọn option</div>
+        <p className="text-[11px] leading-snug text-muted-foreground">
+          Chọn option từng layer để ra 1 artwork (chỉ đổi nội dung đang xem, không đổi mặc định của khách). Lưu thiết kế = mỗi version thành 1 artwork trong thư viện
+          {props.artworkFolder ? ` (danh mục “${props.artworkFolder}” → tab Artwork)` : " (danh mục mang tên sản phẩm → tab Artwork)"}. Bấm 1 layer ở trên để chỉnh thuộc tính.
+        </p>
+      </div>
+      {rows.length === 0 && <p className="text-[11px] text-muted-foreground">Chưa có layer nào có từ 2 option.</p>}
+      {rows.map(({ r, options }) => {
+        const cur = selection[r.id];
+        if (r.kind === "text")
+          return (
+            <CtField key={r.id} label={r.name}>
+              <CtInput value={cur?.kind === "text" ? cur.text : ""} placeholder={r.config.text.placeholder} onChange={(e) => props.onSampleText(r.id, e.target.value)} />
+            </CtField>
+          );
+        const shown = cur?.kind === "image" ? cur.assetId : null;
+        return (
+          <div key={r.id}>
+            <div className="mb-1 flex items-center gap-1 text-[11px]">
+              <span className="truncate font-medium">{r.name}</span>
+              <span className="text-muted-foreground">({options.length})</span>
+            </div>
+            <div className="grid grid-cols-6 gap-1">
+              {options.map((o) => (
+                <CtTooltip key={o.id} label={o.name || "(không tên)"}>
+                  <button className={cx("block aspect-square w-full overflow-hidden rounded border", shown === o.id && "ring-2 ring-sky-500")} style={CHECKER_STYLE} onClick={() => props.onPreviewOption(r.id, o.id)}>
+                    <img src={o.url} alt="" className="h-full w-full object-contain" loading="lazy" />
+                  </button>
+                </CtTooltip>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+      <div className="space-y-1.5 border-t pt-3">
+        <CtInput value={name} placeholder="Tên artwork (tuỳ chọn)" onChange={(e) => setName(e.target.value)} />
+        <CtButton size="sm" className="w-full" disabled={props.artworkBusy} onClick={() => void save()}>
+          {props.artworkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageIcon className="h-3.5 w-3.5" />} Lưu thành artwork mới
+        </CtButton>
+        {saved && <p className="text-[11px] text-emerald-600">Đã lưu “{saved}” vào thư viện (tab Artwork).</p>}
+        {error && <p className="text-[11px] text-destructive">{error}</p>}
+      </div>
     </div>
   );
 }

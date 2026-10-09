@@ -8,7 +8,9 @@ import { approveCharLayers, buildCharLayers, startEdits } from "./layers";
 import { cutRoute } from "./cut";
 import { createCharProduct } from "./product";
 import { makeCharMockups } from "./mockups";
-import { adoptMaster, approveMaster, createCharProject, deleteCharProject, generateMasters, getCharProject, jsonError, listCharProjects, refineMaster, updateCharProject, uploadCharFile } from "./projects";
+import { makeCharBlank } from "./blank";
+import { autoCharKit, charKhuonRoute } from "./khuon";
+import { adoptMaster, approveMaster, createCharProject, deleteCharProject, generateMasters, getCharProject, jobDb, jsonError, listCharProjects, loadProject, refineMaster, updateCharProject, uploadCharFile } from "./projects";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -41,7 +43,19 @@ export async function dispatchChar(req: NextRequest, s: CtSession, path: string[
   if (action === "masters" && !sub) return generateMasters(s, id, await json(req));
   if (action === "masters" && sub && UUID.test(sub) && subAction === "refine") return refineMaster(s, id, sub, await json(req));
   if (action === "masters" && sub && UUID.test(sub) && subAction === "adopt") return adoptMaster(s, id, sub);
-  if (action === "approve" && !sub) return approveMaster(s, id, await json(req));
+  if (action === "approve" && !sub) {
+    const body = await json(req);
+    const res = await approveMaster(s, id, body);
+    // A master approved: no khuôn in → the AI draws one that fits it, then the phôi trơn; a khuôn and no phôi → the
+    // AI phôi trơn. Both run while the edits are made (step 3 shows them).
+    if (res.ok && body && typeof body === "object" && typeof (body as { imageId?: unknown }).imageId === "string") {
+      const p = await loadProject(s.supabase, id);
+      if (p) await autoCharKit(jobDb(s), s.user.id, p);
+    }
+    return res;
+  }
+  if (action === "blank" && !sub) return makeCharBlank(s, id);
+  if (action === "khuon" && !sub) return charKhuonRoute(s, id, (req.headers.get("content-type") ?? "").includes("multipart/form-data") ? await req.formData() : null);
   if (action === "edits" && !sub) return startEdits(s, id, await json(req));
   if (action === "layers" && !sub) return buildCharLayers(s, id, await json(req));
   if (action === "layers" && sub === "approve") return approveCharLayers(s, id, await json(req));

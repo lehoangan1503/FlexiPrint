@@ -8,11 +8,13 @@
 import { useState } from "react";
 import { Scissors } from "lucide-react";
 import type { CtCharLayerFile, CtCharLayerSet } from "../../types";
-import { CHECKER_STYLE, CtButton, CtModal } from "../ui";
+import { CHECKER_STYLE, CtButton, CtModal, cx } from "../ui";
 
 export function LayerFiles({ set, onFix }: { set: CtCharLayerSet; onFix: ((piece: string) => void) | null }) {
   const [open, setOpen] = useState<CtCharLayerFile | null>(null);
+  const [colour, setColour] = useState<Record<string, string>>({});
   const total = set.slots.reduce((n, s) => n + s.files.length, 0);
+  const colourOf = (key: string, files: CtCharLayerFile[]) => colour[key] ?? colourGroups(files)[0] ?? "";
   return (
     <div className="space-y-3">
       <div>
@@ -21,11 +23,12 @@ export function LayerFiles({ set, onFix }: { set: CtCharLayerSet; onFix: ((piece
       </div>
       {set.slots.map((s) => (
         <div key={s.key}>
-          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             {s.label} ({s.files.length})
+            <ColourPick colours={colourGroups(s.files)} value={colourOf(s.key, s.files)} onChange={(c) => setColour((cur) => ({ ...cur, [s.key]: c }))} />
           </div>
           <div className="flex flex-wrap gap-2">
-            {s.files.map((f) => (
+            {s.files.filter((f) => colourGroups(s.files).length < 2 || f.color === colourOf(s.key, s.files)).map((f) => (
               <button key={f.imageId} onClick={() => setOpen(f)} className="w-24 overflow-hidden rounded-md border text-left hover:ring-2 hover:ring-orange-400">
                 <div className="aspect-square" style={CHECKER_STYLE}>
                   <Thumb set={set} file={f} />
@@ -87,5 +90,24 @@ export function Thumb({ set, file }: { set: CtCharLayerSet; file: CtCharLayerFil
       role="img"
       aria-label={file.option}
     />
+  );
+}
+
+/** The colours a slot's files come in (a shape part × its colours), in order; empty or one = no colour sets. */
+export function colourGroups(files: CtCharLayerFile[]): string[] {
+  return [...new Set(files.map((f) => f.color).filter(Boolean))];
+}
+
+/** One radio per colour (only when the slot has colour sets). */
+function ColourPick({ colours, value, onChange }: { colours: string[]; value: string; onChange: (c: string) => void }) {
+  if (colours.length < 2) return null;
+  return (
+    <span role="radiogroup" className="flex flex-wrap gap-1 normal-case tracking-normal">
+      {colours.map((c) => (
+        <button key={c} role="radio" aria-checked={c === value} onClick={() => onChange(c)} className={cx("rounded-full border px-2 py-0.5 text-[10px] font-normal", c === value ? "border-orange-500 bg-orange-500/10 text-foreground" : "hover:bg-accent")}>
+          {c}
+        </button>
+      ))}
+    </span>
   );
 }

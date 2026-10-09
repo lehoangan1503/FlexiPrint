@@ -1,6 +1,6 @@
 # Customize Tool (2D)
 
-Tool dựng sản phẩm custom 2D kiểu Customily / Teeinblue: **main object** + các **vùng custom** + **sub object** có nhiều **version**. Clipart, đa sắc, vật liệu và ảnh mockup đều upload tay (công cụ tạo / sửa ảnh bằng AI của v1 đã bỏ); mockup dựng tay ở tab **Mockups**.
+Tool dựng sản phẩm custom 2D kiểu Customily / Teeinblue: **main object** + các **vùng custom** + **sub object** có nhiều **version**. Clipart (ảnh bất kỳ) upload tay vào danh mục, mỗi danh mục có 2 tab Clipart / Artwork; mỗi version của sản phẩm được lưu thành 1 artwork trong danh mục mang tên sản phẩm. Thiết kế và File in phẳng (file in = toàn khung edit, cắt theo khuôn); Xem trước và **Mockups** đặt artwork lên phôi trơn (upload hoặc AI vẽ theo khuôn in), mockup bối cảnh do AI tạo.
 
 Toàn bộ code nằm trong folder này. Host site chỉ có 3 file shim 1 dòng và 1 tab trên dashboard.
 

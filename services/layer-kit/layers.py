@@ -12,8 +12,8 @@ Inputs (all the same canvas once resized to the master — every edit is an in-p
   per slot:
     color    mask   magenta edit of the BASE → which pixels are the part; options = hex → recolour base pixels
     texture  mask   (same); options[0] = base pixels, options[i] = the texture edit's pixels inside the mask
-    shape    part   magenta edit of the MASTER (only to split the master's parts between shape slots)
-             options[0] = master − base (inside the part mask), options[i] = edit − base; colours = recolours;
+    shape    part   magenta edit of the MASTER = the region of the master's own part (options[0]); without it
+             master − base. options[i] = edit − base; colours = recolours;
              wraps → back (whole part, under the body) + front (the part lying over the body, on top)
   photo zones: magenta edit of the base → polygon (the customer photo is clipped to it)
 
@@ -425,7 +425,7 @@ def regions_colour(base: np.ndarray, base_a: np.ndarray, masks: dict[str, tuple[
         if ref.sum() > 100:
             med = np.array([np.median(lab[..., i][ref]) for i in range(3)], np.float32)
             de = np.sqrt(((lab - med) ** 2).sum(2))
-            near = cv2.dilate(core.astype(np.uint8), kernel(10)).astype(bool) & (de < 10)
+            near = cv2.dilate(core.astype(np.uint8), kernel(4)).astype(bool) & (de < 10)
         part = clean(((core & ~others) | (grown & ~skin & ~others) | (near & ~others)) & (base_a > 0.02), open_r=1, close_r=2, min_px=200)
         part = fill_small_holes(part, 2500)
         kept = float(part.sum()) / max(1.0, float(core.sum()))
@@ -491,6 +491,21 @@ def region_shape(white: np.ndarray, cut_a: np.ndarray, base: np.ndarray, base_a:
     # Pixel-threshold leftovers: pin-holes, notched edges. Hair keeps its strands (light smoothing only).
     part = clean(tidy(part, allow, sigma=1.0 if hairlike else 2.2), open_r=0, close_r=0, min_px=1500)
     return soft(part, grow=1, blur=1.2)
+
+
+def region_painted(core: np.ndarray, white: np.ndarray, cut_a: np.ndarray, base: np.ndarray, base_a: np.ndarray, others: np.ndarray, grow: int) -> np.ndarray:
+    """A part the AI painted flat magenta on the picture itself (3b "Tô …", registered): the paint IS the region —
+    no diff against the base decides it. Grown by `grow` px only to take the part's own outline / strand tips the
+    paint stopped short of: there a pixel joins when the picture really differs from the base or lies off the
+    base's body. Never into another slot's paint."""
+    core = clean(core, open_r=1, close_r=4, min_px=300) & ~others
+    if not core.any():
+        return np.zeros(core.shape, np.float32)
+    near = cv2.dilate(core.astype(np.uint8), kernel(max(1, grow))).astype(bool) & ~others
+    diff = np.abs(white - base).max(2)
+    edge = near & (cut_a > 0.1) & ((diff > 0.06) | (base_a < 0.5))
+    part = fill_small_holes(core | edge, 2500)
+    return soft(part, grow=1, blur=0.8)
 
 
 def claim_orphans(regions: list[np.ndarray], subject_a: np.ndarray, base_a: np.ndarray, max_d: float) -> list[np.ndarray]:

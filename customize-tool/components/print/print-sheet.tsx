@@ -22,10 +22,12 @@ export interface PrintSheetProps {
   /** Points of a zone being drawn. */
   drawing?: Array<{ x: number; y: number }>;
   className?: string;
+  /** A khuôn with faces: which one to show. */
+  faceIndex?: number;
   onPointerDown?: (e: React.PointerEvent<SVGSVGElement>) => void;
 }
 
-export function PrintSheet({ spec, sizeId, overlay, hideZones = [], drawing, className, onPointerDown }: PrintSheetProps) {
+export function PrintSheet({ spec, sizeId, overlay, hideZones = [], drawing, className, onPointerDown, faceIndex = 0 }: PrintSheetProps) {
   const size = printSize(spec, sizeId);
   const kx = size.width / spec.width;
   const ky = size.height / spec.height;
@@ -34,6 +36,17 @@ export function PrintSheet({ spec, sizeId, overlay, hideZones = [], drawing, cla
   const stroke = Math.max(2, Math.min(W, H) / 250);
   const scaled = (s: CtShape) => (kx === 1 && ky === 1 ? s : scaleShape(s, kx, ky));
   const outline = spec.outline ? scaled(spec.outline) : null;
+  // A khuôn drawn as a picture: its face (the cut line + safe zone are in the picture).
+  const face = spec.faces[faceIndex] ?? spec.faces[0];
+  if (face) {
+    const href = overlay ? (face.guideUrl ?? face.imageUrl) : (face.imageUrl ?? face.guideUrl);
+    return (
+      <svg viewBox={`0 0 ${spec.width} ${spec.height}`} className={className} onPointerDown={onPointerDown} preserveAspectRatio="xMidYMid meet">
+        {!overlay && <rect x={0} y={0} width={spec.width} height={spec.height} fill="#ffffff" />}
+        {href && <image href={href} x={0} y={0} width={spec.width} height={spec.height} opacity={overlay && !face.guideUrl ? 0.4 : 1} preserveAspectRatio="none" />}
+      </svg>
+    );
+  }
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className={className} onPointerDown={onPointerDown} preserveAspectRatio="xMidYMid meet">
       {!overlay && <rect x={0} y={0} width={W} height={H} fill="#e5e7eb" />}

@@ -9,6 +9,9 @@
  *   PATCH  print-templates/:id           { name?, kind?, spec? }
  *   DELETE print-templates/:id
  *   POST   print-templates/images        multipart file → { url, width, height }
+ *   POST   print-templates/ai            CtPrintAiRequest → CtPrintAiResult  khuôn drawn by AI (server/print-khuon.ts)
+ *   POST   print-templates/:id/blanks    multipart file → { template }  a phôi of the khuôn (server/print-blanks.ts)
+ *   POST   print-templates/:id/blanks/ai → { template }  a phôi drawn by AI
  *   POST   products/from-template        { templateId, name } → { product }   (server/print-products.ts)
  *   POST   products                      { name }
  *   GET    products/:id                  → CtProductBundle
@@ -48,6 +51,12 @@
  *   POST   ai/agent-tasks/:id/cancel
  *   POST   products/:id/photo            multipart: file, style, cutout=0|1 → processed image bytes
  *   POST   products/:id/print-pack       multipart: file (flat design), main?, material, dpi? → zip (services/material-render)
+ *   GET    products/:id/artworks         → the product's folder + its artworks (server/artworks.ts)
+ *   POST   products/:id/artworks         multipart: file, versionId?, hash?, name?, selection → { artwork }
+ *   POST   products/:id/artworks/prune   { versionIds } — artworks of removed versions are deleted
+ *   GET    products/:id/mockups          → { jobs } AI mockups being made / made (server/product-mockups.ts)
+ *   POST   products/:id/mockups          multipart: print, scenes (JSON) → front mockup on the phôi + AI scenes
+ *   POST   products/:id/blank            {} → AI phôi trơn from the product's khuôn in → { product } (config.scene)
  *
  * AI photo-style library (global; owner or admin edits, see server/ai-styles.ts):
  *   GET    ai-styles                     → { styles: CtAiStyle[], admin }
@@ -102,7 +111,11 @@ import * as h from "./handlers";
 import * as st from "./ai-styles";
 import * as lib from "./library";
 import * as printTpl from "./print-templates";
+import { khuonAi } from "./print-khuon";
+import { aiTemplateBlank, uploadTemplateBlank } from "./print-blanks";
 import { createProductFromTemplate } from "./print-products";
+import * as artworks from "./artworks";
+import * as productMockups from "./product-mockups";
 import * as packs from "./mockup-packs";
 import { dispatchChar } from "./char/router";
 import * as packImages from "./pack-images";
@@ -181,6 +194,10 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
   }
   // Khuôn in (server/print-templates.ts) and products made on one (server/print-products.ts).
   if (head === "print-templates" && id === "images" && !sub && method === "POST") return printTpl.uploadTemplateImage(session, await req.formData());
+  if (head === "print-templates" && id === "ai" && !sub && method === "POST") return khuonAi(session, await readJson<unknown>(req));
+  if (head === "print-templates" && id && UUID.test(id) && sub === "blanks" && method === "POST") {
+    return path[3] === "ai" ? aiTemplateBlank(session, id) : uploadTemplateBlank(session, id, await req.formData());
+  }
   if (head === "products" && id === "from-template" && !sub && method === "POST") return createProductFromTemplate(session, (await readJson<Record<string, unknown>>(req)) ?? {});
   if (id && !UUID.test(id)) return h.jsonError("id không hợp lệ", 400);
   if (head === "print-templates" && !sub) {
@@ -235,6 +252,18 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
       return h.editorPhoto(session, id, await req.formData());
     } else if (sub === "print-pack" && method === "POST") {
       return h.editorPrintPack(session, id, await req.formData());
+    } else if (sub === "artworks" && !path[3] && method === "GET") {
+      return artworks.listProductArtworks(session, id);
+    } else if (sub === "artworks" && !path[3] && method === "POST") {
+      return artworks.saveProductArtwork(session, id, await req.formData());
+    } else if (sub === "artworks" && path[3] === "prune" && method === "POST") {
+      return artworks.pruneProductArtworks(session, id, await readJson<unknown>(req));
+    } else if (sub === "mockups" && method === "GET") {
+      return productMockups.listMockupJobs(session, id);
+    } else if (sub === "mockups" && method === "POST") {
+      return productMockups.makeProductMockups(session, id, await req.formData());
+    } else if (sub === "blank" && method === "POST") {
+      return productMockups.makeProductBlank(session, id);
     } else if (sub === "mains") {
       const assetId = path[3];
       if (!assetId && method === "POST") {

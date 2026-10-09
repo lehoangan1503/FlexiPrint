@@ -12,7 +12,7 @@ import { BookmarkPlus, Download, Loader2, Settings2 } from "lucide-react";
 import type { CtAsset, CtMainLayout, CtMaterialConfig, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import type { CtProductPrint } from "../../types/print";
 import { displayAssets } from "../../lib/library";
-import { canvasToBlob, printFrame, renderComposite } from "../../lib/compositor";
+import { canvasToBlob, mirrorSheet, printFrame, renderComposite } from "../../lib/compositor";
 import { normalizeSamples } from "../../lib/design";
 import { printSize } from "../../lib/print-template";
 import { ctApi } from "../../lib/api-client";
@@ -66,13 +66,18 @@ export function PrintPanel(props: PrintPanelProps) {
   const [saving, setSaving] = useState(false);
   const flat = displayAssets(assets, "flat");
   const frame = printFrame({ main, assets: flat, regions, selection });
+  /** The print file: the sheet — and, a khuôn made as one half (spec.mirror), its mirror image beside it. */
+  const printCanvas = async (): Promise<HTMLCanvasElement> => {
+    const sheet = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts, ...sizeArgs });
+    return props.print?.spec.mirror ? mirrorSheet(sheet) : sheet;
+  };
 
   useEffect(() => {
     let live = true;
     let url = "";
     const t = setTimeout(async () => {
       try {
-        const full = await renderComposite({ main, assets: displayAssets(assets, "flat"), regions, items, selection, scale: 1, layouts, ...sizeArgs });
+        const full = await printCanvas();
         const k = Math.min(1, PREVIEW_SIDE / Math.max(full.width, full.height));
         const small = k < 1 ? shrink(full, k) : full;
         url = URL.createObjectURL(await canvasToBlob(small, "image/png"));
@@ -94,7 +99,7 @@ export function PrintPanel(props: PrintPanelProps) {
   const download = async () => {
     setSaving(true);
     try {
-      const full = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts, ...sizeArgs });
+      const full = await printCanvas();
       const href = URL.createObjectURL(await canvasToBlob(full, "image/png"));
       const a = document.createElement("a");
       a.href = href;
@@ -108,20 +113,14 @@ export function PrintPanel(props: PrintPanelProps) {
     }
   };
 
-  /** The finished artwork (this choice) as a library clipart: reused in other designs, opened again from its meta. */
+  /** The finished artwork (this choice) as one more artwork in the product's library folder (server/artworks.ts). */
   const saveArtwork = async () => {
     setSaving(true);
     setSaved(null);
     try {
       const full = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts, cutToFrame: true });
-      const clip = await ctApi.uploadClipart(await canvasToBlob(full, "image/png"), {
-        categoryId: null,
-        name: `${product.name} — artwork`,
-        tags: ["artwork", ...(props.print ? [props.print.name] : [])],
-        source: "upload",
-        meta: { artwork: { productId: product.id, selection: normalizeSamples(selection), templateId: props.print?.templateId ?? null } },
-      });
-      setSaved(clip.name);
+      const r = await ctApi.saveProductArtwork(product.id, await canvasToBlob(full, "image/png"), { name: `${product.name} — artwork`, selection: normalizeSamples(selection) });
+      setSaved(r.artwork.name);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không lưu được artwork");
     } finally {
@@ -137,7 +136,8 @@ export function PrintPanel(props: PrintPanelProps) {
       <div className="flex shrink-0 flex-wrap items-center gap-3 border-b px-4 py-2 text-xs">
         <span className="font-semibold">File in</span>
         <span className="text-muted-foreground">
-          {frame ? `Cắt theo khuôn "${frame.name}"` : "Khung version (không có khuôn)"}
+          {frame ? `Toàn khung edit, cắt theo khuôn "${frame.name}"` : "Toàn khung edit (không có khuôn)"}
+          {props.print?.spec.mirror && " · + nửa đối xứng"}
           {shot && ` · ${shot.w}×${shot.h}px`}
           {dpi > 0 && ` · ${mm}mm ≈ ${dpi} dpi`}
         </span>
@@ -147,7 +147,7 @@ export function PrintPanel(props: PrintPanelProps) {
           {sizes.length > 0 && (
             <CtSelect<string> className="w-28" value={sizeId || sizes[0].id} options={sizes.map((s) => ({ value: s.id, label: `Cỡ ${s.name}` }))} onChange={setSizeId} />
           )}
-          <CtButton size="sm" variant="outline" onClick={() => void saveArtwork()} disabled={saving || !shot} title="Lưu artwork hoàn chỉnh (lựa chọn đang xem) thành clipart trong thư viện để dùng lại">
+          <CtButton size="sm" variant="outline" onClick={() => void saveArtwork()} disabled={saving || !shot} title="Lưu artwork hoàn chỉnh (lựa chọn đang xem) vào danh mục mang tên sản phẩm (tab Artwork) — Lưu thiết kế cũng tự lưu mỗi version">
             <BookmarkPlus className="h-3.5 w-3.5" /> Lưu artwork vào thư viện
           </CtButton>
           <CtButton size="sm" variant="outline" onClick={props.onOpenSettings}>

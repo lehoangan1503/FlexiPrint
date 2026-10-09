@@ -8,15 +8,17 @@
  */
 
 import { useState } from "react";
-import { AlertTriangle, Bot, CheckCircle2, Download, Eye, Loader2, Pencil, RefreshCw, Scissors, Undo2, XCircle } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, Bot, CheckCircle2, Download, ExternalLink, Eye, Loader2, Pencil, RefreshCw, Scissors, Undo2, XCircle } from "lucide-react";
 import type { CtCharLayerCheck, CtCharLayerSet, CtCharLayerSlot, CtCharPiece, CtCharPicture, CtCharPlan } from "../../types";
 import { charApi } from "../../lib/api-client";
+import { CT_CONFIG } from "../../config";
 import { zip } from "../../lib/zip";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
 import type { CharCtx } from "./char-project";
 import { MaskEditor } from "./mask-editor";
 import { MatteFix } from "./matte-fix";
-import { LayerFiles, Thumb } from "./layer-files";
+import { LayerFiles, Thumb, colourGroups } from "./layer-files";
 
 export type CutEdit = { kind: "matte" } | { kind: "piece"; key: string } | null;
 
@@ -128,7 +130,7 @@ export function MatteSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void }) {
           </figure>
         </div>
       )}
-      {!m && <p className="text-xs text-muted-foreground">Chưa tách nền. Trong lúc chờ, có thể cho @flexiprint tạo các bản sửa ở mục dưới.</p>}
+      {!m && <p className="text-xs text-muted-foreground">Chưa tách nền. Trong lúc chờ, có thể cho @flexiprint tô vùng clipart ở mục dưới.</p>}
     </section>
   );
 }
@@ -153,7 +155,7 @@ export function PlanSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void; ready
     act("cut", async () => {
       if (!plan?.approved) await charApi.cut(project.id, "plan", "approve", { approved: true });
       const edits = ctx.images.filter((im) => im.kind === "layer").length;
-      if (edits && project.layers?.status === "done" && !window.confirm("Cắt lại sẽ thay toàn bộ file đang có (cả trong các sản phẩm đã tạo). Tiếp tục?")) {
+      if (edits && project.layers?.status === "done" && !window.confirm("Cắt lại sẽ thay toàn bộ clipart và làm lại sản phẩm của bộ (sản phẩm cũ bị thay). Tiếp tục?")) {
         await ctx.reload();
         return;
       }
@@ -290,7 +292,7 @@ export function CustomSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void; rea
   const edited = plan?.pieces.filter((x) => x.region.edited).length ?? 0;
   const start = () =>
     act("start", async () => {
-      if (hasSet && !window.confirm(`Tạo lại bộ custom: phác thảo lại vùng rồi cắt lại toàn bộ file (vài chục phút).${edited ? ` ${edited} vùng đã sửa tay được giữ nếu ảnh của chúng không đổi.` : ""}${project.product_ids.length ? " Sản phẩm đã tạo: file chỉ được thay khi bạn bấm “Cắt lại” sau đó." : ""} Tiếp tục?`)) return;
+      if (hasSet && !window.confirm(`Tạo lại bộ custom: phác thảo lại vùng rồi cắt lại toàn bộ file (vài chục phút).${edited ? ` ${edited} vùng đã sửa tay được giữ nếu ảnh của chúng không đổi.` : ""}${project.product_ids.length ? " Sản phẩm cũ của bộ (và thư mục clipart của nó) được thay bằng sản phẩm mới." : ""} Tiếp tục?`)) return;
       ctx.setProject(await charApi.cut(project.id, "plan", undefined, { auto: true }));
     });
   /** The plan is done but the files are not (the cut failed or could not start): cut again without planning again. */
@@ -307,7 +309,7 @@ export function CustomSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void; rea
           <div className="flex-1">
             <h3 className="text-sm font-semibold">Bộ custom</h3>
             <p className="text-xs text-muted-foreground">
-              Một nút: phác thảo vùng từng lớp trên ảnh của nó rồi cắt luôn bộ file. Xong sẽ hiện thẳng: bên trái master xếp lớp, bên phải các kiểu của từng hạng mục — bấm từng kiểu để xem, chưa ưng thì sửa vùng hoặc nhờ @flexiprint làm lại ảnh. Mất vài chục phút.
+              Một nút: lấy vùng AI đã tô ở bước 3b cho từng lớp, cắt ra clipart rồi ráp thành sản phẩm hoàn chỉnh — mở trong editor là dùng được ngay. Xong sẽ hiện: bên trái master xếp lớp, bên phải các kiểu của từng hạng mục — chưa ưng thì sửa vùng hoặc nhờ @flexiprint tô lại ảnh, rồi tạo lại. Mất vài chục phút.
             </p>
           </div>
           {editable && cutOnly && (
@@ -319,13 +321,19 @@ export function CustomSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void; rea
           {editable && (
             <CtButton variant={hasSet || cutOnly ? "outline" : "primary"} disabled={!!busy || planning || building || !canStart} title={!m?.approved ? "Duyệt nền (3a) trước" : !ctx.ready ? ctx.missing : ""} onClick={() => void start()}>
               {busy === "start" || planning || building ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}
-              {planning ? "Đang phác thảo vùng…" : building ? "Đang cắt file…" : hasSet ? "Tạo lại bộ custom" : "Tạo bộ custom"}
+              {planning ? "Đang phác thảo vùng…" : building ? "Đang cắt clipart + tạo sản phẩm…" : hasSet ? "Tạo lại bộ custom" : "Tạo bộ custom"}
             </CtButton>
+          )}
+          {project.product_ids[0] && project.layers?.status === "done" && (
+            <Link href={`${CT_CONFIG.basePath}/${project.product_ids[0]}`} target="_blank" className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm hover:bg-accent">
+              <ExternalLink className="h-4 w-4" /> Mở sản phẩm trong editor
+            </Link>
           )}
         </div>
         {!m?.approved && <p className="mt-2 text-xs text-muted-foreground">Cần duyệt phần tách nền (3a) trước.</p>}
         {m?.approved && !ctx.ready && <p className="mt-2 text-xs text-muted-foreground">{ctx.missing}</p>}
         {plan?.status === "failed" && <p className="mt-2 rounded bg-destructive/10 p-2 text-xs text-destructive">{plan.error}</p>}
+        {project.layers?.status === "done" && project.layers.error && <p className="mt-2 rounded bg-destructive/10 p-2 text-xs text-destructive">{project.layers.error}</p>}
         {plan?.status === "done" && plan.error && <p className="mt-2 rounded bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400">{plan.error}</p>}
       </section>
       {hasSet && <FinalSection {...ctx} />}
@@ -347,7 +355,7 @@ export function FinalSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void }) {
   /** Regions were fixed by hand after the last cut: approve the plan and cut again (products made from the old files get the new ones). */
   const cutAgain = () =>
     act("cut", async () => {
-      if (project.product_ids.length && !window.confirm("Cắt lại sẽ thay toàn bộ file đang có (cả trong các sản phẩm đã tạo). Tiếp tục?")) return;
+      if (project.product_ids.length && !window.confirm("Cắt lại sẽ thay toàn bộ clipart và làm lại sản phẩm của bộ (sản phẩm cũ bị thay). Tiếp tục?")) return;
       await charApi.cut(project.id, "plan", "approve", { approved: true });
       ctx.setProject(await charApi.buildLayers(project.id));
     });
@@ -387,7 +395,7 @@ export function FinalSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void }) {
             Bộ file cuối ({total} file) {set.status === "done" && <Status ok={!!set.approved}>{set.approved ? "Đã duyệt — final" : "Chờ duyệt"}</Status>}
           </h3>
           <p className="text-xs text-muted-foreground">
-            Cắt tự động từ nền + vùng đã duyệt. Kiểm tra tự động: các lớp ráp lại có ra đúng master không (lỗ hổng / thừa / khác màu được tô lên hình), mảnh rời trong từng file, độ khớp của từng bản sửa. Xem từng kiểu ở cột phải, sửa vùng nếu cần (rồi “Cắt lại”), duyệt để chuyển bộ file cho bước Sản phẩm hoặc tải ZIP gửi người làm tiếp.
+            Cắt tự động từ nền + vùng đã duyệt. Kiểm tra tự động: các lớp ráp lại có ra đúng master không (lỗ hổng / thừa / khác màu được tô lên hình), mảnh rời trong từng file, độ khớp của từng ảnh tô vùng. Xem từng kiểu ở cột phải, sửa vùng nếu cần (rồi “Cắt lại” — clipart và sản phẩm làm lại theo), hoặc tải ZIP gửi người làm tiếp. Sản phẩm của bộ đã sẵn trong editor.
           </p>
         </div>
         {set.status === "done" && (
@@ -460,7 +468,8 @@ function LayerView({ ctx, set, plan, onEdit }: { ctx: CharCtx; set: CtCharLayerS
   const defaults = Object.values(pick).every((v) => v === 0);
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_440px]">
-      <div>
+      {/* The stack stays in view while the option list on the right scrolls (under the sticky page header). */}
+      <div className="lg:sticky lg:top-16 lg:self-start">
         <div className="relative mx-auto w-full max-w-[640px]" style={{ aspectRatio: `${set.width} / ${set.height}`, ...CHECKER_STYLE }}>
           {set.slots.map((s) => {
             const { list, index } = files(s);
@@ -492,26 +501,16 @@ function LayerView({ ctx, set, plan, onEdit }: { ctx: CharCtx; set: CtCharLayerS
         {set.slots
           .filter((s) => !s.follows && s.files.length > 1)
           .map((s) => (
-            <div key={s.key}>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                {s.label} ({s.files.length})
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {s.files.map((f, i) => (
-                  <button
-                    key={f.imageId}
-                    title={[f.option, f.color].filter(Boolean).join(" · ")}
-                    onClick={() => {
-                      setPick((p) => ({ ...p, [s.key]: i }));
-                      setFocus(s.key);
-                    }}
-                    className={cx("h-14 w-14 overflow-hidden rounded border bg-white", (pick[s.key] ?? 0) === i && "ring-2 ring-orange-500")}
-                  >
-                    <Thumb set={set} file={f} />
-                  </button>
-                ))}
-              </div>
-            </div>
+            <SlotOptions
+              key={s.key}
+              set={set}
+              slot={s}
+              picked={pick[s.key] ?? 0}
+              onPick={(i) => {
+                setPick((p) => ({ ...p, [s.key]: i }));
+                setFocus(s.key);
+              }}
+            />
           ))}
         {focused && ff && onEdit && (
           <div className="rounded-lg border border-dashed p-3 text-xs">
@@ -534,6 +533,58 @@ function LayerView({ ctx, set, plan, onEdit }: { ctx: CharCtx; set: CtCharLayerS
             {redoRole && <p className="mt-2 text-muted-foreground">Làm lại ảnh xong thì bấm “Tạo lại bộ custom” ở trên — vùng bạn đã sửa tay của các ảnh không đổi được giữ nguyên.</p>}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** A slot's options as sets of one colour: a radio per colour, the set of that colour below it. A part made of a
+ * back + a front layer (hair) shows each option by its BACK file — the whole part; the front is cut where it lies
+ * over the body. */
+function SlotOptions({ set, slot, picked, onPick }: { set: CtCharLayerSet; slot: CtCharLayerSlot; picked: number; onPick: (i: number) => void }) {
+  const back = set.slots.find((x) => x.follows === slot.key);
+  const colours = colourGroups(slot.files);
+  const current = slot.files[Math.min(picked, slot.files.length - 1)];
+  const [colour, setColour] = useState(current?.color ?? colours[0] ?? "");
+  const shown = slot.files.map((f, i) => ({ f, i })).filter(({ f }) => colours.length < 2 || f.color === colour);
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {back ? slot.label.replace(/\s+—\s+lớp trước$/i, "") : slot.label} ({colours.length > 1 ? `${shown.length} kiểu × ${colours.length} màu` : slot.files.length})
+      </div>
+      {colours.length > 1 && (
+        <div role="radiogroup" aria-label={`Màu — ${slot.label}`} className="mb-1.5 flex flex-wrap gap-1">
+          {colours.map((c) => (
+            <button
+              key={c}
+              role="radio"
+              aria-checked={c === colour}
+              onClick={() => {
+                setColour(c);
+                // The same option in the new colour.
+                const same = slot.files.findIndex((f) => f.color === c && f.option === current?.option);
+                const first = slot.files.findIndex((f) => f.color === c);
+                if (same >= 0 || first >= 0) onPick(same >= 0 ? same : first);
+              }}
+              className={cx("flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]", c === colour ? "border-orange-500 bg-orange-500/10" : "hover:bg-accent")}
+            >
+              <span className={cx("h-2.5 w-2.5 rounded-full border", c === colour ? "border-[3px] border-orange-500" : "border-muted-foreground")} />
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        {shown.map(({ f, i }) => (
+          <button
+            key={f.imageId}
+            title={[f.option, f.color].filter(Boolean).join(" · ")}
+            onClick={() => onPick(i)}
+            className={cx("h-14 w-14 overflow-hidden rounded border bg-white", picked === i && "ring-2 ring-orange-500")}
+          >
+            <Thumb set={set} file={(back && back.files[i]) || f} />
+          </button>
+        ))}
       </div>
     </div>
   );

@@ -52,7 +52,7 @@ import type {
   CtTransform,
 } from "../types";
 import { ctGoogleFontsHref } from "../config";
-import { canvasToBlob, compositeBleed, drawComposite, loadImage, renderComposite } from "../lib/compositor";
+import { canvasToBlob, compositeBleed, drawComposite, loadImage, mirrorSheet, printFrame, renderComposite } from "../lib/compositor";
 import { isHidden, layoutFor, onVersion } from "../lib/layout";
 import { drawOnScene } from "../lib/scene";
 import { renderZoneMockup, zoneFills } from "../lib/zone-mockup";
@@ -579,12 +579,15 @@ export class Customizer {
       canvas.getContext("2d")?.drawImage(off, 0, 0);
       return;
     }
-    // The design on the product's photo — the one of the picked background when it has its own — without the
-    // print-only layers the photo already shows.
-    const scene = this.sceneFor(this.selection);
-    const b = compositeBleed({ main: this.main, assets: this.tpl.assets, regions: this.regions, selection: this.selection, layouts: this.tpl.config.layouts });
+    // The design on the product's photo: the picked background's own photo (it already shows the print-only layers,
+    // they are left out), else the phôi trơn (a blank piece: everything printed is drawn on it).
+    const own = this.optionScene(this.selection);
+    const scene = own ?? this.tpl.config.scene;
+    // On the phôi photo a piece with a khuôn shows only the piece (cut to it, the hanging hole open), like it is made.
+    const cut = !!scene.url && !!printFrame({ main: this.main, assets: this.tpl.assets, regions: this.regions, selection: this.selection });
+    const b = cut ? { x: 0, y: 0 } : compositeBleed({ main: this.main, assets: this.tpl.assets, regions: this.regions, selection: this.selection, layouts: this.tpl.config.layouts });
     const bleed = { x: b.x / this.main.width, y: b.y / this.main.height };
-    const off = await this.product(this.selection, side, !!scene.url)
+    const off = await this.product(this.selection, side, !!own, cut)
       .then((c) => drawOnScene(scene, c, side, bleed))
       .catch(() => null);
     if (!off || token !== this.renderToken) return;
@@ -636,20 +639,20 @@ export class Customizer {
    * The product as the customer sees it (material renditions are already swapped in by the template), long side
    * `maxSide` — grown by the material version's padding, so its plate / cord are not cut off.
    */
-  private product(selection: CtSelection, maxSide: number, display = false): Promise<HTMLCanvasElement> {
+  private product(selection: CtSelection, maxSide: number, display = false, cutToFrame = false): Promise<HTMLCanvasElement> {
     const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts };
-    const b = compositeBleed(input);
+    const b = cutToFrame ? { x: 0, y: 0 } : compositeBleed(input);
     const scale = Math.min(1, maxSide / Math.max(this.main.width + 2 * b.x, this.main.height + 2 * b.y));
-    return renderComposite({ ...input, scale, bleed: true, display });
+    return renderComposite({ ...input, scale, bleed: !cutToFrame, display, cutToFrame });
   }
 
-  /** The product photo for a selection: the picked background's own (config.mockupsByOption), else the product's. */
-  private sceneFor(selection: CtSelection): CtProductScene {
+  /** The picked background's own product photo (config.mockupsByOption); null = none (the product's phôi is used). */
+  private optionScene(selection: CtSelection): CtProductScene | null {
     for (const [layerId, byOption] of Object.entries(this.tpl.config.mockupsByOption ?? {})) {
       const sel = selection[layerId];
       if (sel?.kind === "image" && sel.assetId && byOption[sel.assetId]) return byOption[sel.assetId];
     }
-    return this.tpl.config.scene;
+    return null;
   }
 
   /**
@@ -662,7 +665,9 @@ export class Customizer {
     const picked = pickedOptions(this.root);
     const size = print.spec.sizes.length ? printSize(print.spec, picked.find((v) => print.spec.sizes.some((s) => s.name.toLowerCase() === v.toLowerCase())) ?? null) : null;
     const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts };
-    return renderComposite({ ...input, scale: 1, cutToFrame: !size, size: size && size.id ? size : null });
+    const sheet = await renderComposite({ ...input, scale: 1, cutToFrame: !size, size: size && size.id ? size : null });
+    // A khuôn made as one half (one trouser leg): the other half is its mirror image.
+    return print.spec.mirror ? mirrorSheet(sheet) : sheet;
   }
 
   /** Zones the chosen main version uses: its own layers (older templates: a layout may hide some). */

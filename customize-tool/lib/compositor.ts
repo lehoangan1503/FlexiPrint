@@ -50,7 +50,7 @@ export interface CompositeInput {
    */
   bleed?: boolean;
   /**
-   * The print file of a product with a khuôn vật liệu (lib/material-frame): the canvas is the khuôn's box and
+   * The print file of a product with a khuôn vật liệu (lib/material-frame): the canvas is the whole artboard and
    * everything outside it (and its cut-out parts) is cleared. No khuôn: the main's own box, as without.
    */
   cutToFrame?: boolean;
@@ -96,17 +96,21 @@ export async function renderComposite(input: CompositeInput): Promise<HTMLCanvas
   if (!ctx) throw new Error("Canvas 2D không khả dụng");
   const cut = input.cutToFrame ? printFrame(input) : null;
   if (cut) {
-    const box = shapeBounds(cut.shape);
-    canvas.width = Math.max(1, Math.round(box.w * scale));
-    canvas.height = Math.max(1, Math.round(box.h * scale));
-    await drawComposite(ctx, input, { x: -box.x, y: -box.y });
-    // Only the khuôn is printed: the piece, minus the parts cut out of it.
+    // The print file is the whole edit frame (asked 2026-10-10): the khuôn sits inside it, and only the piece —
+    // minus the parts cut out of it — is printed.
+    canvas.width = Math.max(1, Math.round(main.width * scale));
+    canvas.height = Math.max(1, Math.round(main.height * scale));
+    await drawComposite(ctx, input);
     ctx.save();
-    ctx.setTransform(scale, 0, 0, scale, -box.x * scale, -box.y * scale);
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
     ctx.globalCompositeOperation = "destination-in";
-    ctx.beginPath();
-    traceFrame(ctx, cut);
-    ctx.fill("evenodd");
+    const mask = cut.config.maskUrl ? await loadImage(cut.config.maskUrl).catch(() => null) : null;
+    if (mask) ctx.drawImage(mask, 0, 0, main.width, main.height);
+    else {
+      ctx.beginPath();
+      traceFrame(ctx, cut);
+      ctx.fill("evenodd");
+    }
     ctx.restore();
     return canvas;
   }
@@ -420,4 +424,23 @@ export function canvasToBlob(canvas: HTMLCanvasElement, type = "image/png", qual
   return new Promise((resolve, reject) => {
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Không xuất được ảnh"))), type, quality);
   });
+}
+
+/**
+ * A khuôn in whose sheet is ONE half of a symmetric piece (spec.mirror — one trouser leg): the print file is the
+ * half and its mirror image side by side (the half on the left).
+ */
+export function mirrorSheet(half: HTMLCanvasElement): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = half.width * 2;
+  out.height = half.height;
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D không khả dụng");
+  ctx.drawImage(half, 0, 0);
+  ctx.save();
+  ctx.translate(out.width, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(half, 0, 0);
+  ctx.restore();
+  return out;
 }

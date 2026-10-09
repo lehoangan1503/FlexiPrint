@@ -4,6 +4,7 @@
 
 import { CT_CONFIG } from "../config";
 import type { CtImageModel } from "./image-models";
+import type { CtPrintTemplate } from "../types/print";
 import type {
   CtPackImage,
   CtAgentStatus,
@@ -39,6 +40,7 @@ import type {
   CtProductListRow,
   CtPublishResponse,
   CtSaveDesignBody,
+  CtSelection,
   CtUpdateAssetBody,
   CtUpdateClipartBody,
   CtUpdateProductBody,
@@ -46,6 +48,7 @@ import type {
   CtCharIdeaRound,
   CtCharImage,
   CtCharProject,
+  CtProductArtworks,
 } from "../types";
 
 export interface CtUploadClipartOpts {
@@ -132,6 +135,31 @@ export const ctApi = {
   createAiStyle: (body: CtAiStyleBody) => call<{ style: CtAiStyle }>("ai-styles", json("POST", body)).then((r) => r.style),
   updateAiStyle: (id: string, body: CtAiStyleBody) => call<{ style: CtAiStyle }>(`ai-styles/${id}`, json("PATCH", body)).then((r) => r.style),
   deleteAiStyle: (id: string) => call<void>(`ai-styles/${id}`, { method: "DELETE" }),
+
+  /** The product's folder in the library and the artworks saved into it (server/artworks.ts). */
+  productArtworks: (productId: string) => call<CtProductArtworks>(`products/${productId}/artworks`),
+  /** A version's artwork (replaced in place) or, without versionId, one more artwork. */
+  saveProductArtwork: (productId: string, file: Blob, opts: { versionId?: string; hash?: string; name: string; selection: CtSelection }) => {
+    const form = new FormData();
+    form.append("file", file, "artwork.png");
+    if (opts.versionId) form.append("versionId", opts.versionId);
+    if (opts.hash) form.append("hash", opts.hash);
+    form.append("name", opts.name);
+    form.append("selection", JSON.stringify(opts.selection));
+    return call<{ artwork: CtAsset }>(`products/${productId}/artworks`, { method: "POST", body: form });
+  },
+  pruneProductArtworks: (productId: string, versionIds: string[]) => call<{ removed: number }>(`products/${productId}/artworks/prune`, json("POST", { versionIds })),
+  /** AI mockups of the product (server/product-mockups.ts): jobs newest first. */
+  mockupJobs: (productId: string) => call<{ jobs: CtPackImage[] }>(`products/${productId}/mockups`).then((r) => r.jobs),
+  /** The artwork laid on the phôi (exact) + one AI photo per scene (running in the background). */
+  makeMockups: (productId: string, print: Blob, scenes: string[]) => {
+    const form = new FormData();
+    form.append("print", print, "print.png");
+    form.append("scenes", JSON.stringify(scenes));
+    return call<{ jobs: CtPackImage[]; front: CtAsset }>(`products/${productId}/mockups`, { method: "POST", body: form });
+  },
+  /** An AI phôi trơn from the product's khuôn in → config.scene. */
+  makeBlank: (productId: string) => call<{ product: CtProduct; asset: CtAsset }>(`products/${productId}/blank`, json("POST", {})),
 
   /** Print files + cut path (zip) for the product's material — services/material-render. */
   printPack: async (productId: string, body: { design: Blob; main: Blob | null; material: CtMaterialConfig; dpi: number }): Promise<Blob> => {
@@ -250,12 +278,22 @@ export const charApi = {
     form.append("kind", kind);
     return call<{ image: CtCharImage }>(`char/projects/${id}/files`, { method: "POST", body: form }).then((r) => r.image);
   },
+  /** The editor's own khuôn in as a picture → a new khuôn (Thư viện → Khuôn in) the brief can point at. */
+  uploadKhuon: (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return call<{ template: CtPrintTemplate }>(`char/projects/${id}/khuon`, { method: "POST", body: form }).then((r) => r.template);
+  },
+  /** (Re)draw the AI khuôn from the approved master (then its phôi trơn). */
+  khuonAi: (id: string) => call<{ image: CtCharImage }>(`char/projects/${id}/khuon`, json("POST", {})).then((r) => r.image),
   masters: (id: string, body: { prompt?: string; count?: number; aspect?: string }) => call<{ images: CtCharImage[] }>(`char/projects/${id}/masters`, json("POST", body)).then((r) => r.images),
   refine: (id: string, imageId: string, note: string) => call<{ image: CtCharImage }>(`char/projects/${id}/masters/${imageId}/refine`, json("POST", { note })).then((r) => r.image),
   approve: (id: string, imageId: string | null) => call<{ project: CtCharProject }>(`char/projects/${id}/approve`, json("POST", { imageId })).then((r) => r.project),
   /** Make the planned edits still missing (or `roles` again). */
   edits: (id: string, roles?: string[]) => call<{ images: CtCharImage[] }>(`char/projects/${id}/edits`, json("POST", roles ? { roles } : {})).then((r) => r.images),
   createProduct: (id: string, name: string) => call<{ productId: string }>(`char/projects/${id}/products`, json("POST", { name })).then((r) => r.productId),
+  /** (Re)make the AI phôi trơn from the brief's khuôn in (server/char/blank.ts). */
+  blank: (id: string) => call<{ image: CtCharImage }>(`char/projects/${id}/blank`, json("POST", {})).then((r) => r.image),
   mockups: (id: string, productId: string, print: Blob) => {
     const form = new FormData();
     form.append("productId", productId);

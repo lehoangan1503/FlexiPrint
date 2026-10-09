@@ -866,7 +866,11 @@ export function Stage(props: StageProps) {
           style={{ pointerEvents: "none" }}
         >
           {/* Khuôn vật liệu: what is printed / made into the vật liệu — outside it dimmed, its cut-out parts hatched. */}
-          {props.showOverlay && props.materialFrame && (
+          {/* A khuôn drawn as a picture (khuôn in face): its own cut line + safe zone. */}
+          {props.showOverlay && props.materialFrame?.config.guideUrl && (
+            <image href={props.materialFrame.config.guideUrl} x={0} y={0} width={main.width} height={main.height} preserveAspectRatio="none" pointerEvents="none" />
+          )}
+          {props.showOverlay && props.materialFrame && !props.materialFrame.config.maskUrl && (
             <g pointerEvents="none">
               <defs>
                 <pattern id="ct-cut-hatch" width={12 * px} height={12 * px} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -886,7 +890,7 @@ export function Stage(props: StageProps) {
             </g>
           )}
           {/* Khuôn in: the printer's guide sheet (faint), the safe zone (dashed green), the named zones. */}
-          {props.showOverlay && props.printSpec && (
+          {props.showOverlay && props.printSpec && !props.printSpec.faces.length && (
             <g pointerEvents="none">
               {props.printSpec.frameUrl && <image href={props.printSpec.frameUrl} x={0} y={0} width={main.width} height={main.height} opacity={0.25} preserveAspectRatio="none" />}
               {safeShapes(props.printSpec).map((sh, i) => (
@@ -919,10 +923,10 @@ export function Stage(props: StageProps) {
               );
             })}
 
-          {/* An empty custom layer: like an empty image frame — click it to pick a picture, or drop a clipart on it. */}
+          {/* An empty custom layer (not a khuôn): it waits for a picture — cliparts dropped on the canvas are layers of their own. */}
           {props.showOverlay &&
             shownRegions
-              .filter((r) => r.kind === "image" && !items.some((i) => i.region_id === r.id))
+              .filter((r) => r.kind === "image" && !r.config.materialFrame && !items.some((i) => i.region_id === r.id))
               .map((r) => {
                 const b = shapeBounds(r.shape);
                 const size = Math.min(14 * px, b.h / 4, b.w / 10);
@@ -932,7 +936,7 @@ export function Stage(props: StageProps) {
                       +
                     </text>
                     <text x={b.x + b.w / 2} y={b.y + b.h / 2 + size * 1.4} textAnchor="middle" fontSize={size} fill={kindColor.image} fillOpacity={0.85}>
-                      Bấm để chọn ảnh · kéo clipart vào
+                      Layer trống — xoá, hoặc kéo clipart lên canvas
                     </text>
                   </g>
                 );

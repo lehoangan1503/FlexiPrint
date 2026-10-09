@@ -43,7 +43,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 import upscale
-from layers import (Option, Slot, Zone, claim_orphans, clean, cut, cut_of, erase_at, keep_of, kernel, magenta, mix, on_white, region_body, region_shape,
+from layers import (Option, Slot, Zone, claim_orphans, cut, cut_of, erase_at, keep_of, kernel, magenta, mix, on_white, region_body, region_painted, region_shape,
                     region_zone, regions_colour, register)
 
 BG = os.getenv("BG_REMOVER_URL", "http://127.0.0.1:7001").rstrip("/")
@@ -418,12 +418,11 @@ def _plan(body: PlanBody, out_dir: str) -> dict:
 
     # Shape parts: the master's own (master − base) and each option (edit − base).
     shapes = [s for s in body.slots if s.mode == "shape"]
-    split: dict[str, np.ndarray] = {}
-    if len(shapes) > 1:
-        for s in shapes:
-            if s.mask:
-                m = clean(magenta(edit(s.mask, master_n, f"tô {s.label}")), close_r=6)
-                split[s.key] = to_size(cv2.dilate(m.astype(np.uint8), kernel(12)).astype(np.float32)) > 0.5
+    # The master's own parts: the magenta the AI painted on the master in 3b ("Tô …") — exact, so it is the region.
+    painted: dict[str, np.ndarray] = {}
+    for s in shapes:
+        if s.mask:
+            painted[s.key] = to_size(magenta(edit(s.mask, master_n, f"tô {s.label}")).astype(np.float32)) > 0.5
     max_d = 12 * factor
     master_regions: list[tuple[str, str, str, np.ndarray]] = []   # (piece key, slot, label/option, region)
     for s in shapes:
@@ -431,7 +430,14 @@ def _plan(body: PlanBody, out_dir: str) -> dict:
         for i, o in enumerate(s.options):
             key = f"{s.key}#{i}"
             if i == 0:
-                reg = region_shape(m_white, a_m, base_white, base_a, split.get(s.key), hairlike)
+                if s.key in painted:
+                    others = np.zeros(a_m.shape, bool)
+                    for k, m in painted.items():
+                        if k != s.key:
+                            others |= m
+                    reg = region_painted(painted[s.key], m_white, a_m, base_white, base_a, others, round(4 * factor))
+                else:
+                    reg = region_shape(m_white, a_m, base_white, base_a, None, hairlike)
                 master_regions.append((key, s.key, o.name, reg))
                 continue
             if not o.url:

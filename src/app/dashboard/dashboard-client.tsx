@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Library, Printer, Ruler, Sparkles } from "lucide-react";
+import { Library, Printer, Sparkles } from "lucide-react";
 import type { UserProfile } from "@/types/auth";
 import { UserDropdown } from "@/components/user-dropdown";
 import { FirstLoginDialog } from "@/components/first-login-dialog";
@@ -24,11 +24,6 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
             <Button variant="ghost" size="sm" asChild>
               <Link href="/v2">
                 <Sparkles className="h-4 w-4" /> Bộ nhân vật v2
-              </Link>
-            </Button>
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/templates">
-                <Ruler className="h-4 w-4" /> Khuôn in
               </Link>
             </Button>
             <Button variant="ghost" size="sm" asChild>

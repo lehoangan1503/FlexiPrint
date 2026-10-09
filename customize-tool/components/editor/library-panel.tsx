@@ -2,8 +2,11 @@
 
 /**
  * "Thư viện" tab of the asset sidebar: browse the global clipart library
- * (migration 006) and drag cliparts into this product. Making and fixing
- * cliparts happens on /library ("Quản lý") — the editor only uses them.
+ * (migration 006) and drag cliparts into this product. Cliparts are uploaded
+ * here too ("Upload clipart": several files at once, into a category picked or
+ * made first) — a clipart is any picture; fixing them happens on /library.
+ * Each category has two shelves: Clipart and Artwork (finished designs saved
+ * from products).
  *
  * Every picture is a clipart: a card shows a gốc, its two buttons open its
  * đa sắc and vật liệu versions. Whichever picture is dragged is used exactly
@@ -15,13 +18,13 @@
  * storefront).
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { CheckSquare, ExternalLink, GripVertical, Layers, Library, Loader2, Palette, Square, X } from "lucide-react";
-import type { CtAsset, CtClipartCategory } from "../../types";
+import { CheckSquare, ExternalLink, GripVertical, ImagePlus, Layers, Library, Loader2, Palette, Square, X } from "lucide-react";
+import type { CtAsset, CtClipartCategory, CtLibraryShelf } from "../../types";
 import { ctApi } from "../../lib/api-client";
-import { clipartBadges, clipartFamily, flattenCategories, isMaterialClipart, isMulticolorClipart, libraryOrigins, renditionsOf, setMembers } from "../../lib/library";
-import { CHECKER_STYLE, CtSelect, CtTooltip, cx } from "../ui";
+import { categoryBody, clipartBadges, clipartFamily, flattenCategories, isArtworkClipart, isMaterialClipart, isMulticolorClipart, libraryOrigins, renditionsOf, setMembers } from "../../lib/library";
+import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, CtSelect, CtTooltip, cx } from "../ui";
 
 /** dataTransfer type of a library clipart dragged onto the canvas / the Version column (payload: CtClipartDrag JSON). */
 export const CLIPART_DRAG = "application/x-flexiprint-clipart";
@@ -87,8 +90,11 @@ export function LibraryPanel(props: LibraryPanelProps) {
   /** Pictures picked to drag as one set (ids, any order — the set follows the list order). */
   const [selected, setSelected] = useState<string[]>([]);
   const [anchor, setAnchor] = useState<string | null>(null);
+  const [shelf, setShelf] = useState<CtLibraryShelf>("clipart");
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [reload, setReload] = useState(0);
 
-  useEffect(() => {
+  const loadCategories = useCallback(() => {
     ctApi
       .listCategories()
       .then((r) => {
@@ -97,6 +103,9 @@ export function LibraryPanel(props: LibraryPanelProps) {
       })
       .catch((e: Error) => setError(e.message));
   }, []);
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -110,7 +119,7 @@ export function LibraryPanel(props: LibraryPanelProps) {
 
   useEffect(() => {
     load();
-  }, [load, props.version]);
+  }, [load, props.version, reload]);
 
   // Back from the library tab: show what it just made.
   useEffect(() => {
@@ -126,18 +135,20 @@ export function LibraryPanel(props: LibraryPanelProps) {
     ],
     [categories, uncategorized],
   );
-  const origins = libraryOrigins(cliparts);
+  const allOrigins = libraryOrigins(cliparts);
+  const artworkCount = allOrigins.filter(isArtworkClipart).length;
+  const origins = allOrigins.filter((o) => isArtworkClipart(o) === (shelf === "artwork"));
   /** Every picture in list order: each gốc, then its đa sắc and vật liệu. */
   const order = useMemo(() => {
     const out: CtAsset[] = [];
-    for (const o of libraryOrigins(cliparts)) out.push(o, ...clipartFamily(cliparts, o).filter((a) => a.id !== o.id && (isMulticolorClipart(a) || isMaterialClipart(a))));
+    for (const o of libraryOrigins(cliparts).filter((x) => isArtworkClipart(x) === (shelf === "artwork"))) out.push(o, ...clipartFamily(cliparts, o).filter((a) => a.id !== o.id && (isMulticolorClipart(a) || isMaterialClipart(a))));
     return out;
-  }, [cliparts]);
+  }, [cliparts, shelf]);
   // A new category / list: the picked set starts over.
   useEffect(() => {
     setSelected([]);
     setAnchor(null);
-  }, [category]);
+  }, [category, shelf]);
 
   const sel: Selecting = {
     selected,
@@ -183,6 +194,25 @@ export function LibraryPanel(props: LibraryPanelProps) {
           </Link>
         </CtTooltip>
       </div>
+      <div className="flex items-center gap-1.5 border-b px-2 py-1.5">
+        <div className="flex flex-1 rounded-md border p-0.5 text-[11px]">
+          {(
+            [
+              ["clipart", `Clipart (${allOrigins.length - artworkCount})`],
+              ["artwork", `Artwork (${artworkCount})`],
+            ] as Array<[CtLibraryShelf, string]>
+          ).map(([k, label]) => (
+            <button key={k} onClick={() => setShelf(k)} className={cx("flex-1 rounded px-2 py-0.5 font-medium", shelf === k ? "bg-foreground text-background" : "hover:bg-accent")}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <CtTooltip label="Upload clipart (chọn nhiều ảnh cùng lúc) vào 1 danh mục — chọn hoặc tạo danh mục trước">
+          <button className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-foreground px-2 text-[11px] font-medium text-background hover:opacity-90" onClick={() => setUploadOpen(true)}>
+            <ImagePlus className="h-3.5 w-3.5" /> Upload
+          </button>
+        </CtTooltip>
+      </div>
       {error && <p className="border-b px-2 py-1.5 text-[11px] text-destructive">{error}</p>}
       <div className="flex items-center gap-1.5 border-b px-2 py-1 text-[11px]">
         {selected.length ? (
@@ -214,12 +244,123 @@ export function LibraryPanel(props: LibraryPanelProps) {
             <Loader2 className="h-4 w-4 animate-spin" />
           </div>
         ) : origins.length === 0 ? (
-          <p className="px-1 py-6 text-center text-xs text-muted-foreground">Chưa có clipart. Tạo hoặc upload ở trang Thư viện (nút Quản lý).</p>
+          <p className="px-1 py-6 text-center text-xs text-muted-foreground">
+            {shelf === "artwork" ? "Chưa có artwork — Lưu thiết kế để mỗi version thành 1 artwork (danh mục mang tên sản phẩm)." : "Chưa có clipart — bấm Upload (chọn / tạo danh mục, chọn nhiều ảnh)."}
+          </p>
         ) : (
           origins.map((o) => <OriginCard key={o.id} origin={o} family={clipartFamily(cliparts, o)} usedIds={props.usedIds} sel={sel} />)
         )}
       </div>
+      {uploadOpen && (
+        <UploadDialog
+          categories={categories}
+          initial={category !== ALL && category !== NONE ? category : null}
+          onClose={() => setUploadOpen(false)}
+          onDone={(categoryId) => {
+            setUploadOpen(false);
+            loadCategories();
+            setShelf("clipart");
+            if (categoryId === category) setReload((n) => n + 1);
+            else setCategory(categoryId);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Upload cliparts: the category first (picked, or a new one by name), then any number of pictures — each one a
+ * clipart gốc of that category, uploaded one after another.
+ */
+function UploadDialog(props: { categories: CtClipartCategory[]; initial: string | null; onClose: () => void; onDone: (categoryId: string) => void }) {
+  const NEW = "__new";
+  const [target, setTarget] = useState<string>(props.initial ?? (props.categories[0]?.id ?? NEW));
+  const [newName, setNewName] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const input = useRef<HTMLInputElement | null>(null);
+  const ready = files.length > 0 && (target !== NEW || newName.trim() !== "");
+
+  const run = async () => {
+    setError(null);
+    try {
+      let categoryId = target;
+      if (target === NEW) {
+        setProgress("Đang tạo danh mục…");
+        categoryId = (await ctApi.createCategory(categoryBody(newName, null))).id;
+      }
+      const failed: string[] = [];
+      for (const [i, f] of files.entries()) {
+        setProgress(`Đang upload ${i + 1}/${files.length}…`);
+        try {
+          await ctApi.uploadClipart(f, { categoryId });
+        } catch (e) {
+          failed.push(`${f.name}: ${e instanceof Error ? e.message : "lỗi"}`);
+        }
+      }
+      setProgress(null);
+      if (failed.length) {
+        setError(`Không upload được: ${failed.join("; ")}`);
+        return;
+      }
+      props.onDone(categoryId);
+    } catch (e) {
+      setProgress(null);
+      setError(e instanceof Error ? e.message : "Lỗi");
+    }
+  };
+
+  return (
+    <CtModal open onOpenChange={(o) => !o && !progress && props.onClose()} title="Upload clipart">
+      <div className="space-y-3 text-sm">
+        <CtField label="Danh mục" hint="Clipart nào cũng được (nhân vật, nền, chữ, khung…) — cuối cùng chỉ là 1 tấm hình.">
+          <CtSelect<string>
+            value={target}
+            onChange={setTarget}
+            options={[...flattenCategories(props.categories).map(({ category: c, depth }) => ({ value: c.id, label: `${"— ".repeat(depth)}${c.name}` })), { value: NEW, label: "+ Danh mục mới…" }]}
+          />
+        </CtField>
+        {target === NEW && (
+          <CtField label="Tên danh mục mới">
+            <CtInput value={newName} autoFocus placeholder="vd. Nền Noel" onChange={(e) => setNewName(e.target.value)} />
+          </CtField>
+        )}
+        <div>
+          <CtButton onClick={() => input.current?.click()} disabled={progress !== null}>
+            <ImagePlus className="h-3.5 w-3.5" /> Chọn ảnh… (nhiều ảnh cùng lúc)
+          </CtButton>
+          <input
+            ref={input}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const list = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              if (list.length) setFiles(list);
+            }}
+          />
+          {files.length > 0 && <p className="mt-1.5 text-[11px] text-muted-foreground">{files.length} ảnh: {files.map((f) => f.name).join(", ").slice(0, 300)}</p>}
+        </div>
+        {progress && (
+          <p className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" /> {progress}
+          </p>
+        )}
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        <div className="flex justify-end gap-2 border-t pt-3">
+          <CtButton onClick={props.onClose} disabled={progress !== null}>
+            Huỷ
+          </CtButton>
+          <CtButton variant="primary" onClick={() => void run()} disabled={!ready || progress !== null}>
+            Upload {files.length || ""}
+          </CtButton>
+        </div>
+      </div>
+    </CtModal>
   );
 }
 

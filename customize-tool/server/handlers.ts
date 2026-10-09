@@ -43,6 +43,7 @@ import { isAdmin, loadAiStyle, originAllowed, publicAiStyles, takeAiQuota } from
 import { falConfigured } from "./ai/fal-style";
 import { printPack, readPrintPackForm } from "./material";
 import { deleteClipart, loadProductAssets } from "./library";
+import { renameProductFolder } from "./artworks";
 import { loadPriceTable } from "./price-tables";
 import { createCollection, deployToShopify, listCollections, searchShopifyProducts, shopifyConfigured, shopifyInfo } from "./shopify";
 import { priceTableProblems } from "../lib/pricing";
@@ -140,6 +141,8 @@ export async function updateProduct(s: CtSession, productId: string, body: CtUpd
   if (typeof body.notes === "string") patch.notes = body.notes;
   const { data, error } = await s.supabase.from(CT_TABLES.products).update(patch).eq("id", productId).select("*").single<CtProduct>();
   if (error) return jsonError(error.message, 500);
+  // Its folder in the library (artworks, a v2 set's cliparts) carries its name.
+  if (patch.name && patch.name !== product.name) await renameProductFolder(s.supabase, productId, patch.name);
   return NextResponse.json({ product: data });
 }
 

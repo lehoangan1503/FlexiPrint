@@ -4,11 +4,12 @@
  */
 
 import type { CtBounds, CtPoint, CtShape } from "../types";
-import type { CtPrintKind, CtPrintSize, CtPrintSpec, CtPrintZone } from "../types/print";
+import type { CtPrintBlank, CtPrintFace, CtPrintHistoryEntry, CtPrintKind, CtPrintSize, CtPrintSpec, CtPrintZone } from "../types/print";
 import { pointInShape, shapeBounds } from "./geometry";
 
 const num = (v: unknown, fallback: number, lo = 0, hi = 100000): number => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback);
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
+const urlOrNull = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
 
 function isShape(v: unknown): v is CtShape {
   if (!v || typeof v !== "object") return false;
@@ -38,6 +39,29 @@ export function normalizePrintSpec(raw: unknown): CtPrintSpec {
       ...(s.zones && typeof s.zones === "object" ? { zones: Object.fromEntries(Object.entries(s.zones).filter(([, v]) => isShape(v))) } : {}),
     }));
   const box = r.blankBox as Partial<CtBounds> | null | undefined;
+  const blankBox: CtBounds | null = box && typeof box.w === "number" && typeof box.h === "number" ? { x: num(box.x, 0, -1e5, 1e5), y: num(box.y, 0, -1e5, 1e5), w: num(box.w, 1, 1), h: num(box.h, 1, 1) } : null;
+  const blankUrl = typeof r.blankUrl === "string" && r.blankUrl ? r.blankUrl : null;
+  const blanks: CtPrintBlank[] = (Array.isArray(r.blanks) ? r.blanks : [])
+    .map((b) => b as Partial<CtPrintBlank>)
+    .filter((b) => typeof b.url === "string" && b.url && b.box && typeof b.box.w === "number")
+    .map((b, i) => ({
+      id: typeof b.id === "string" ? b.id : `blank-${i}`,
+      name: str(b.name, "Phôi"),
+      url: b.url as string,
+      width: Math.round(num(b.width, 1000, 1, 20000)),
+      height: Math.round(num(b.height, 1000, 1, 20000)),
+      box: { x: num(b.box?.x, 0, -1e5, 1e5), y: num(b.box?.y, 0, -1e5, 1e5), w: num(b.box?.w, 1, 1), h: num(b.box?.h, 1, 1) },
+      ai: b.ai === true,
+    }));
+  const faces: CtPrintFace[] = (Array.isArray(r.faces) ? r.faces : [])
+    .map((f) => f as Partial<CtPrintFace>)
+    .filter((f) => typeof f.id === "string")
+    .map((f) => ({ id: f.id as string, name: str(f.name, "Mặt in"), imageUrl: urlOrNull(f.imageUrl), maskUrl: urlOrNull(f.maskUrl), guideUrl: urlOrNull(f.guideUrl) }));
+  const history: CtPrintHistoryEntry[] = (Array.isArray(r.history) ? r.history : [])
+    .map((h) => h as Partial<CtPrintHistoryEntry>)
+    .filter((h) => typeof h.prompt === "string")
+    .map((h) => ({ at: str(h.at), prompt: h.prompt as string, refs: Array.isArray(h.refs) ? h.refs.filter((u): u is string => typeof u === "string") : [] }))
+    .slice(-20);
   return {
     width,
     height,
@@ -51,9 +75,14 @@ export function normalizePrintSpec(raw: unknown): CtPrintSpec {
     zones,
     sizes,
     frameUrl: typeof r.frameUrl === "string" && r.frameUrl ? r.frameUrl : null,
-    blankUrl: typeof r.blankUrl === "string" && r.blankUrl ? r.blankUrl : null,
-    blankBox: box && typeof box.w === "number" && typeof box.h === "number" ? { x: num(box.x, 0, -1e5, 1e5), y: num(box.y, 0, -1e5, 1e5), w: num(box.w, 1, 1), h: num(box.h, 1, 1) } : null,
+    blankUrl,
+    blankBox,
     notes: str(r.notes),
+    faces,
+    mirror: r.mirror === true,
+    // The legacy single photo is the first blank.
+    blanks: blanks.length || !blankUrl || !blankBox ? blanks : [{ id: "legacy", name: "Phôi", url: blankUrl, width: Math.round(blankBox.x * 2 + blankBox.w), height: Math.round(blankBox.y * 2 + blankBox.h), box: blankBox, ai: false }],
+    history,
   };
 }
 
@@ -190,15 +219,104 @@ function trousers(): CtPrintSpec {
   });
 }
 
+/**
+ * A closed curve through `pts` (Catmull-Rom, `steps` points per span) — smooth seams from a few control points; a
+ * point in `corners` stays a sharp corner (a span between two corners is straight: a hem).
+ */
+function smooth(pts: Array<[number, number]>, steps = 6, corners: Array<[number, number]> = []): Array<[number, number]> {
+  const n = pts.length;
+  const sharp = (p: [number, number]) => corners.some((c) => c[0] === p[0] && c[1] === p[1]);
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < n; i++) {
+    const [p1, p2] = [pts[i], pts[(i + 1) % n]];
+    const p0 = sharp(p1) ? p1 : pts[(i - 1 + n) % n];
+    const p3 = sharp(p2) ? p2 : pts[(i + 2) % n];
+    for (let k = 0; k < steps; k++) {
+      const t = k / steps;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      const at = (a: number, b: number, c: number, d: number) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      out.push([Math.round(at(p0[0], p1[0], p2[0], p3[0])), Math.round(at(p0[1], p1[1], p2[1], p3[1]))]);
+    }
+  }
+  return out;
+}
+
+/** The polygon moved `d` px inwards along each corner's bisector (a seam allowance; fine for gentle curves). */
+function insetPolygon(pts: Array<[number, number]>, d: number): Array<[number, number]> {
+  const n = pts.length;
+  let area = 0;
+  for (let i = 0; i < n; i++) area += pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1];
+  const inward = area > 0 ? -1 : 1;
+  return pts.map((p, i) => {
+    const a = pts[(i - 1 + n) % n];
+    const b = pts[(i + 1) % n];
+    const n1 = norm([a[1] - p[1], p[0] - a[0]]);
+    const n2 = norm([p[1] - b[1], b[0] - p[0]]);
+    const m = norm([n1[0] + n2[0], n1[1] + n2[1]]);
+    const k = d / Math.max(0.35, m[0] * n1[0] + m[1] * n1[1]);
+    return [Math.round(p[0] - inward * m[0] * k), Math.round(p[1] - inward * m[1] * k)] as [number, number];
+  });
+}
+
+function norm(v: [number, number]): [number, number] {
+  const l = Math.hypot(v[0], v[1]) || 1;
+  return [v[0] / l, v[1] / l];
+}
+
+/**
+ * One face of all-over-print joggers laid flat (asked 2026-10-10, the "chaps" Christmas trousers): ONE printed
+ * piece like an ornament — cut line + safe zone, no panels; the design is the v2 master's layers (thong, skin,
+ * leg pattern) over the whole piece. The rib waistband and ankle cuffs are not printed, so the sheet starts under
+ * the waistband and ends above the cuffs. ~60 × 107 cm at 150 dpi (adult M); the back has the higher rise and the
+ * fuller seat.
+ */
+function joggerFace(back: boolean): CtPrintSpec {
+  const W = 3600;
+  const H = 6400;
+  const top = back ? 150 : 190;
+  // Left half, waist centre → ankle → crotch, then mirrored.
+  const crotch = back ? 2010 : 1930;
+  const left: Array<[number, number]> = [
+    [1800, back ? 90 : top],
+    [1150, back ? 115 : top],
+    [600, top + 10],
+    [470, 650],
+    back ? [345, 1250] : [385, 1250],
+    [400, 1950],
+    [500, 3300],
+    [660, 4800],
+    [840, 6240],
+    [1500, 6240],
+    [1570, 4800],
+    [1630, 3300],
+    [1680, crotch + 280],
+    [1730, crotch + 90],
+  ];
+  const right = mirror(left.slice(1), W);
+  const control = [...left, [1800, crotch] as [number, number], ...right];
+  const hems = control.filter(([, y]) => y === 6240);
+  const outline = smooth(control, 5, hems);
+  return base(W, H, [610, 1084], {
+    outline: poly(outline),
+    bleed: 60,
+    safe: [poly(insetPolygon(outline, 150))],
+    notes: back
+      ? "Mặt sau quần jogger in toàn thân (cỡ M): artwork phủ kín đường cắt + 1 cm; hình, chữ chính trong nét đứt (cách đường may 2.5 cm). Cạp và bo gấu không in."
+      : "Mặt trước quần jogger in toàn thân (cỡ M): artwork phủ kín đường cắt + 1 cm; hình, chữ chính trong nét đứt (cách đường may 2.5 cm). Cạp và bo gấu không in.",
+  });
+}
+
 export const PRINT_PRESETS: Array<{ name: string; kind: CtPrintKind; spec: CtPrintSpec }> = [
   {
     name: "Circle Ceramic Ornament 3\"",
     kind: "flat",
+    // The piece IS the sheet (asked 2026-10-10): the edit frame, the print file and the khuôn are all 1000 × 1000.
     spec: base(1000, 1000, [76, 76], {
-      outline: circle(500, 500, 474),
-      bleed: 14,
-      safe: [circle(500, 500, 432)],
-      cuts: [circle(500, 158, 27)],
+      outline: circle(500, 500, 500),
+      bleed: 0,
+      safe: [circle(500, 500, 456)],
+      cuts: [circle(500, 139, 28.5)],
       notes: "Artwork phủ kín hình tròn ngoài; hình, chữ, vật chính nằm trong vòng nét đứt; giữ trống lỗ treo.",
     }),
   },
@@ -226,4 +344,6 @@ export const PRINT_PRESETS: Array<{ name: string; kind: CtPrintKind; spec: CtPri
     spec: base(2000, 2000, [100, 100], { bleed: 24, notes: "Đường cắt = viền hình (alpha) + 24 px; không có khung cố định." }),
   },
   { name: "Quần in toàn thân (mặt trước, mẫu thử)", kind: "panels", spec: trousers() },
+  { name: "Quần jogger in toàn thân — mặt trước", kind: "flat", spec: joggerFace(false) },
+  { name: "Quần jogger in toàn thân — mặt sau", kind: "flat", spec: joggerFace(true) },
 ];

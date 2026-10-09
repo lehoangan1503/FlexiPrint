@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Bot, ImagePlus, Loader2, MessagesSquare, Plus, Send, Trash2, X } from "lucide-react";
-import type { CtCharBrief, CtCharCut, CtCharIdea, CtCharImage, CtCharOption, CtCharSlot, CtCharSlotMode, CtCharSubject, CtCharSubjectKind } from "../../types";
+import type { CtCharBrief, CtCharIdea, CtCharImage, CtCharOption, CtCharSlot, CtCharSlotMode, CtCharSubject, CtCharSubjectKind } from "../../types";
 import { briefCombos, newCharOption, newCharSlot, newCharSubject, newPhotoZone } from "../../lib/char-brief";
 import { charApi } from "../../lib/api-client";
 import { CtButton, CtCheckbox, CtField, CtInput, CtModal, CtSelect, CtTextarea, cx } from "../ui";
@@ -19,11 +19,6 @@ import { layoutHint } from "../../lib/print-template";
 import { printApi } from "../../lib/print-api";
 import { PrintSheet } from "../print/print-sheet";
 
-const CUTS: Array<{ value: CtCharCut; label: string }> = [
-  { value: "rect", label: "In trong ô (túi, ly, áo…)" },
-  { value: "alpha", label: "Cắt viền theo hình (sticker, acrylic)" },
-  { value: "frame", label: "Khuôn cố định" },
-];
 const MODES: Array<{ value: CtCharSlotMode; label: string }> = [
   { value: "color", label: "Đổi màu" },
   { value: "texture", label: "Đổi chất liệu" },
@@ -32,7 +27,7 @@ const MODES: Array<{ value: CtCharSlotMode; label: string }> = [
 const KINDS: Array<{ value: CtCharSubjectKind; label: string }> = [
   { value: "person", label: "Người" },
   { value: "pet", label: "Thú cưng" },
-  { value: "object", label: "Vật" },
+  { value: "object", label: "Vật / khác" },
 ];
 
 export function BriefPanel(all: CharCtx) {
@@ -55,7 +50,7 @@ export function BriefPanel(all: CharCtx) {
       <div className="min-w-0 space-y-6 p-6">
         {locked && (
           <p className="rounded-md bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
-            Master đã duyệt — brief bị khoá, chỉ xem. Muốn đổi brief: về bước Master, bỏ duyệt master (các bản sửa theo brief cũ sẽ không còn khớp).
+            Master đã duyệt — brief bị khoá, chỉ xem. Muốn đổi brief: về bước Master, bỏ duyệt master (các ảnh tô vùng clipart theo brief cũ sẽ không còn khớp).
           </p>
         )}
         <BriefForm {...ctx} />
@@ -242,45 +237,80 @@ function IdeaChat(ctx: CharCtx & { onTaken: () => void; onBrief: (() => void) | 
 // ---- khuôn in -----------------------------------------------------------------------------------------------
 
 /**
- * The piece the set is made for (types/print.ts): picking one fills the product (name, cut, mm) and the layout
- * sentence the master prompt carries (its safe zone, a hanging hole to keep clear).
+ * The piece the set is made for (types/print.ts): picking one fills the product (cut, mm) and the layout sentence the
+ * master prompt carries (its safe zone, a hanging hole to keep clear) — none of that is asked. The editor's own khuôn
+ * can be uploaded as a picture (it becomes a khuôn of Thư viện → Khuôn in, its printed area read from it). None at
+ * all: the AI draws one that fits the master once it is approved, then the phôi trơn (server/char/khuon.ts).
  */
-function TemplatePick({ brief, onPick }: { brief: CtCharBrief; onPick: (p: CtCharBrief["product"]) => void }) {
+function TemplatePick({ ctx, brief, onPick }: { ctx: CharCtx; brief: CtCharBrief; onPick: (p: CtCharBrief["product"]) => void }) {
   const [templates, setTemplates] = useState<CtPrintTemplate[]>([]);
+  const [busy, setBusy] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const templateId = brief.product.templateId ?? null;
   useEffect(() => {
     printApi
       .list()
       .then(setTemplates)
       .catch(() => setTemplates([]));
-  }, []);
+    // A khuôn the AI made for this set shows up once it is linked.
+  }, [templateId]);
   const p = brief.product;
-  const pick = (id: string) => {
-    const t = templates.find((x) => x.id === id);
-    if (!t) return onPick({ ...p, templateId: null, layout: "" });
+  const NONE = "__none";
+  const choose = (t: CtPrintTemplate) =>
     onPick({
       ...p,
       templateId: t.id,
       label: p.label || t.name,
-      cut: t.kind === "cut" ? "alpha" : t.spec.outline ? "frame" : "rect",
+      cut: t.kind === "cut" ? "alpha" : t.spec.outline || t.spec.faces.some((f) => f.maskUrl) ? "frame" : "rect",
       widthMm: t.spec.widthMm || p.widthMm,
       heightMm: t.spec.heightMm || p.heightMm,
       layout: layoutHint(t.kind, t.spec),
     });
+  const pick = (id: string) => {
+    const t = templates.find((x) => x.id === id);
+    if (!t) return onPick({ ...p, templateId: null, layout: "", cut: "rect", widthMm: 0, heightMm: 0 });
+    choose(t);
+  };
+  const upload = async (file: File) => {
+    setBusy(true);
+    try {
+      const t = await charApi.uploadKhuon(ctx.project.id, file);
+      setTemplates((cur) => [...cur, t]);
+      choose(t);
+    } catch (e) {
+      ctx.error(e instanceof Error ? e.message : "Upload khuôn thất bại");
+    } finally {
+      setBusy(false);
+    }
   };
   const current = templates.find((t) => t.id === p.templateId) ?? null;
   return (
-    <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr]">
-      <CtField label="Khuôn in" hint="Kích thước file in, đường cắt, safe zone — master được bố cục nằm trong safe zone. Quản lý ở trang Khuôn in.">
-        <CtSelect<string> value={p.templateId ?? ""} placeholder="Chọn khuôn in…" options={templates.map((t) => ({ value: t.id, label: t.name }))} onChange={pick} />
+    <div className="space-y-2">
+      <CtField label="Khuôn in" hint="Kích thước file in, đường cắt, safe zone — master tự bố cục trong safe zone. Chọn từ thư viện hoặc upload khuôn của xưởng. Không có → AI tạo khuôn khớp master khi duyệt master.">
+        <CtSelect<string> value={p.templateId ?? NONE} options={[{ value: NONE, label: "— Chưa có (AI tạo theo master) —" }, ...templates.map((t) => ({ value: t.id, label: t.name }))]} onChange={pick} />
       </CtField>
-      <CtField label="Bố cục trên sản phẩm (cho AI)">
-        <CtTextarea rows={2} value={p.layout ?? ""} placeholder="a round piece: every character inside a centred circle…" onChange={(e) => onPick({ ...p, layout: e.target.value })} />
-      </CtField>
-      {current && (
-        <div className="sm:col-span-2">
-          <PrintSheet spec={current.spec} className="h-40 w-40 rounded border" />
-        </div>
-      )}
+      <div className="flex items-start gap-2">
+        {current && <PrintSheet spec={current.spec} className="h-36 w-36 rounded border" />}
+        <button
+          type="button"
+          className="flex h-9 items-center gap-1 rounded-md border border-dashed px-2 text-xs text-muted-foreground hover:bg-accent"
+          disabled={!ctx.editable || busy}
+          onClick={() => input.current?.click()}
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} Upload khuôn
+        </button>
+      </div>
+      <input
+        ref={input}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) void upload(f);
+        }}
+      />
     </div>
   );
 }
@@ -302,33 +332,29 @@ function Section({ title, hint, children, action }: { title: string; hint?: stri
   );
 }
 
+type OptionView = "edit" | "preview";
+
 function BriefForm(ctx: CharCtx) {
-  const { project, images, editable } = ctx;
+  const { project, editable } = ctx;
   const brief = project.brief;
+  const [optionView, setOptionView] = useState<OptionView>("edit");
   const set = (patch: Partial<CtCharBrief>) => ctx.setBrief({ ...brief, ...patch });
   const setSubject = (i: number, sub: CtCharSubject) => set({ subjects: brief.subjects.map((s, j) => (j === i ? sub : s)) });
   const ro = !editable;
 
   return (
+    <div className="space-y-6">
     <fieldset disabled={ro} className="space-y-6">
-      <Section title="Sản phẩm" hint="In lên đâu, cỡ vùng in. Ảnh phôi trơn chụp thẳng giúp xem trước chính xác (không có thì để AI tạo sau).">
-        <div className="grid gap-3 sm:grid-cols-[1fr_220px_100px_100px]">
-          <CtField label="Sản phẩm">
-            <CtInput value={brief.product.label} placeholder="Túi mỹ phẩm vải seersucker" onChange={(e) => set({ product: { ...brief.product, label: e.target.value } })} />
+      <Section
+        title="Sản phẩm"
+        hint="Tên, khuôn in và ảnh phôi trơn — chọn / upload nếu có. Thiếu khuôn → khi duyệt master AI tạo khuôn khớp master rồi phôi trơn theo khuôn; thiếu phôi → AI tạo phôi theo khuôn (thấy ở bước 3, dùng cho Xem trước & Mockups)."
+      >
+        <div className="grid gap-4 md:grid-cols-[1fr_1fr_220px]">
+          <CtField label="Tên sản phẩm">
+            <CtInput value={brief.product.label} placeholder="Round ceramic Christmas ornament" onChange={(e) => set({ product: { ...brief.product, label: e.target.value } })} />
           </CtField>
-          <CtField label="Kiểu in / cắt">
-            <CtSelect<CtCharCut> value={brief.product.cut} options={CUTS} onChange={(cut) => set({ product: { ...brief.product, cut } })} />
-          </CtField>
-          <CtField label="Rộng (mm)">
-            <CtInput type="number" min={0} value={brief.product.widthMm || ""} onChange={(e) => set({ product: { ...brief.product, widthMm: Number(e.target.value) || 0 } })} />
-          </CtField>
-          <CtField label="Cao (mm)">
-            <CtInput type="number" min={0} value={brief.product.heightMm || ""} onChange={(e) => set({ product: { ...brief.product, heightMm: Number(e.target.value) || 0 } })} />
-          </CtField>
-        </div>
-        <TemplatePick brief={brief} onPick={(product) => set({ product })} />
-        <div className="mt-3">
-          <PictureSlot ctx={ctx} kind="blank" label="Ảnh phôi trơn (chụp thẳng)" id={brief.product.blankId} onPick={(id) => set({ product: { ...brief.product, blankId: id } })} />
+          <TemplatePick ctx={ctx} brief={brief} onPick={(product) => set({ product })} />
+          <PictureSlot ctx={ctx} kind="blank" label="Ảnh phôi trơn (nếu có)" id={brief.product.blankId} onPick={(id) => set({ product: { ...brief.product, blankId: id } })} />
         </div>
       </Section>
 
@@ -344,22 +370,40 @@ function BriefForm(ctx: CharCtx) {
           </div>
         </div>
       </Section>
+    </fieldset>
 
+      {/* Outside the read-only fieldset: the Nội dung / Xem trước switch works on a locked brief too. */}
       <Section
-        title={`Nhân vật (${brief.subjects.length})`}
-        hint="Thứ tự = từ trái sang phải trong tranh. Mô tả người/thú (dáng, tuổi, giống chó…); phần khách đổi được ghi ở bên dưới, lựa chọn ĐẦU TIÊN = như trong master."
+        title={`Custom option (${brief.subjects.length})`}
+        hint="Mỗi mục là 1 thứ trong tranh (người, thú, vật…), thứ tự = từ trái sang phải. Phần khách đổi được ghi bên dưới, lựa chọn ĐẦU TIÊN = như trong master."
         action={
-          <div className="flex gap-1">
-            <CtButton size="sm" onClick={() => set({ subjects: [...brief.subjects, newCharSubject("person")] })}>
-              <Plus className="h-3.5 w-3.5" /> Người
-            </CtButton>
-            <CtButton size="sm" onClick={() => set({ subjects: [...brief.subjects, newCharSubject("pet")] })}>
-              <Plus className="h-3.5 w-3.5" /> Thú
-            </CtButton>
+          <div className="flex flex-wrap items-center gap-1">
+            <div className="mr-2 flex rounded-md border p-0.5 text-xs">
+              {(
+                [
+                  ["edit", "Nội dung"],
+                  ["preview", "Xem trước"],
+                ] as Array<[OptionView, string]>
+              ).map(([k, label]) => (
+                <button key={k} type="button" onClick={() => setOptionView(k)} className={cx("rounded px-2.5 py-1 font-medium", optionView === k ? "bg-foreground text-background" : "hover:bg-accent")}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {optionView === "edit" &&
+              !ro &&
+              KINDS.map((k) => (
+                <CtButton key={k.value} size="sm" onClick={() => set({ subjects: [...brief.subjects, newCharSubject(k.value)] })}>
+                  <Plus className="h-3.5 w-3.5" /> {k.label}
+                </CtButton>
+              ))}
           </div>
         }
       >
-        <div className="space-y-4">
+        {optionView === "preview" ? (
+          <OptionsPreview ctx={ctx} />
+        ) : (
+        <fieldset disabled={ro} className="space-y-4">
           {brief.subjects.map((sub, i) => (
             <SubjectCard
               key={sub.id}
@@ -376,10 +420,12 @@ function BriefForm(ctx: CharCtx) {
               }}
             />
           ))}
-          {!brief.subjects.length && <p className="text-sm text-muted-foreground">Chưa có — thêm tay, hoặc bấm “Gợi ý 3 hướng” bên trái rồi chọn một hướng.</p>}
-        </div>
+          {!brief.subjects.length && <p className="text-sm text-muted-foreground">Chưa có — thêm tay, hoặc brainstorm với @flexiprint rồi chọn một hướng.</p>}
+        </fieldset>
+        )}
       </Section>
 
+    <fieldset disabled={ro} className="space-y-6">
       <Section
         title="Ảnh khách tải lên"
         hint="Chỗ trong tranh khách tự đặt ảnh (khung ảnh cầm trên tay, mặt thú cưng…). AI vẽ chỗ đó trống, sau đó tô để lấy đúng vùng."
@@ -440,6 +486,7 @@ function BriefForm(ctx: CharCtx) {
         </CtButton>
       </div>
     </fieldset>
+    </div>
   );
 }
 
@@ -589,6 +636,85 @@ function PictureSlot({ ctx, kind, label, id, onPick }: { ctx: CharCtx; kind: "re
           if (f) void upload(f);
         }}
       />
+    </div>
+  );
+}
+
+/**
+ * "Xem trước" of the custom options: the master on the left (the approved one, else the newest), on the right every
+ * option the customer will pick, laid out like the product page — only to see it, nothing works yet.
+ */
+function OptionsPreview({ ctx }: { ctx: CharCtx }) {
+  const { project, images } = ctx;
+  const brief = project.brief;
+  const masters = images.filter((im) => im.kind === "master" && im.status === "done");
+  const master = masters.find((im) => im.id === project.master_id) ?? [...masters].reverse().find((im) => im.role === "master") ?? [...masters].reverse()[0] ?? null;
+  const short = (d: string) => {
+    const t = d.split(/[,.;]/)[0].trim();
+    return t ? t[0].toUpperCase() + t.slice(1) : "";
+  };
+  return (
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="flex aspect-square items-center justify-center self-start overflow-hidden rounded-xl border bg-white lg:sticky lg:top-20">
+        {master ? (
+          // eslint-disable-next-line @next/next/no-img-element -- our R2 preview
+          <img src={master.thumb_url || master.url} alt="master" className="h-full w-full object-contain" />
+        ) : (
+          <span className="p-6 text-center text-sm text-muted-foreground">Chưa có master — sang bước 2 để vẽ.</span>
+        )}
+      </div>
+      <div className="space-y-4 rounded-xl border bg-[#f6f3ee] p-4 text-[#1d1d1f]">
+        <div className="rounded-md bg-gradient-to-r from-[#d9814a] to-transparent px-3 py-2 text-sm font-semibold text-white">Personalized</div>
+        {brief.subjects.map((sub, i) => (
+          <div key={sub.id} className="space-y-3">
+            {sub.slots.length > 0 && <div className="text-xs font-semibold uppercase tracking-wide text-[#8a7f73]">{short(sub.description) || `Option ${i + 1}`}</div>}
+            {sub.slots.map((slot) => (
+              <div key={slot.id} className="space-y-1.5">
+                <div className="text-sm font-medium">
+                  Choose {slot.part || "option"} <span className="text-[#c0392b]">*</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {slot.options.map((o, j) =>
+                    slot.mode === "color" ? (
+                      <span key={o.id} title={o.name} className={cx("h-8 w-8 rounded-full border-2", j === 0 ? "border-[#d9814a]" : "border-white shadow")} style={{ backgroundColor: /^#[0-9a-f]{6}$/i.test(o.value) ? o.value : "#cccccc" }} />
+                    ) : (
+                      <span key={o.id} className={cx("rounded-md border bg-white px-2.5 py-1 text-xs", j === 0 && "border-[#d9814a] ring-1 ring-[#d9814a]")}>
+                        {o.name || "(chưa tên)"}
+                      </span>
+                    ),
+                  )}
+                </div>
+                {slot.mode === "shape" && slot.colors.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pl-1">
+                    {slot.colors.map((c, j) => (
+                      <span key={c.id} title={c.name} className={cx("h-6 w-6 rounded-full border-2", j === 0 ? "border-[#d9814a]" : "border-white shadow")} style={{ backgroundColor: /^#[0-9a-f]{6}$/i.test(c.value) ? c.value : "#cccccc" }} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ))}
+        {brief.photoZones.map((z) => (
+          <div key={z.id} className="space-y-1.5">
+            <div className="text-sm font-medium">{z.label || "Upload your photo"}</div>
+            <span className="inline-flex rounded-md border border-dashed bg-white px-3 py-2 text-xs text-[#8a7f73]">Upload photo</span>
+          </div>
+        ))}
+        {brief.text.enabled && (
+          <div className="space-y-1.5">
+            <div className="text-sm font-medium">
+              Enter name <span className="text-[#c0392b]">*</span>
+            </div>
+            <div className="rounded-md border bg-white px-3 py-2 text-sm" style={{ fontFamily: brief.text.font || undefined }}>
+              {brief.text.defaultText || "Jessica"}
+            </div>
+          </div>
+        )}
+        {!brief.subjects.some((x) => x.slots.length) && !brief.text.enabled && !brief.photoZones.length && <p className="text-xs text-[#8a7f73]">Chưa có option nào cho khách.</p>}
+        <div className="rounded-md bg-[#d9814a] py-2 text-center text-sm font-semibold text-white opacity-80">Add to cart</div>
+        <p className="text-[11px] text-[#8a7f73]">Chỉ để nhìn trực quan — chưa bấm chọn được.</p>
+      </div>
     </div>
   );
 }

@@ -17,6 +17,7 @@ import type { CtCharImage, CtProduct, CtProductScene } from "../../types";
 import * as h from "../handlers";
 import type { CtSession } from "../supabase";
 import { fetchImage, saveCharFile } from "./files";
+import { lightOnBlank } from "../../lib/blank-shading";
 import { editModels, jobDb, jsonError, loadProject, runCharDraw } from "./projects";
 
 const KEEP_PRINT =
@@ -24,29 +25,30 @@ const KEEP_PRINT =
   "the same text letter for letter, the same size and position on the product. Do not redraw, restyle, crop or change the print. " +
   "Photorealistic product photography, natural soft light.";
 
-/** The print on the blank photo, inside `box`, lit by the blank's own shading. */
-async function frontMockup(blank: Buffer, print: Buffer, box: CtProductScene["box"]): Promise<Buffer> {
-  const base = sharp(blank).removeAlpha();
-  const meta = await base.metadata();
+/** The print on the blank photo, inside `box` (photo px, may reach past the photo), lit by the blank's own shading. */
+export async function frontMockup(blank: Buffer, print: Buffer, box: CtProductScene["box"]): Promise<Buffer> {
+  const meta = await sharp(blank).metadata();
   const W = meta.width ?? 0;
   const H = meta.height ?? 0;
-  const x = Math.max(0, Math.round(box.x));
-  const y = Math.max(0, Math.round(box.y));
-  const w = Math.max(1, Math.min(W - x, Math.round(box.w)));
-  const hh = Math.max(1, Math.min(H - y, Math.round(box.h)));
-  const art = await sharp(print).resize(w, hh, { fit: "fill", kernel: "lanczos3" }).ensureAlpha().raw().toBuffer();
-  const shade = await sharp(blank).extract({ left: x, top: y, width: w, height: hh }).greyscale().blur(6).raw().toBuffer();
+  const bw = Math.max(1, Math.round(box.w));
+  const bh = Math.max(1, Math.round(box.h));
+  const bx = Math.round(box.x);
+  const by = Math.round(box.y);
+  // The part of the box on the photo.
+  const x = Math.max(0, bx);
+  const y = Math.max(0, by);
+  const w = Math.min(W, bx + bw) - x;
+  const hh = Math.min(H, by + bh) - y;
+  if (w <= 0 || hh <= 0) return sharp(blank).removeAlpha().jpeg({ quality: 92 }).toBuffer();
+  const art = await sharp(await sharp(print).resize(bw, bh, { fit: "fill", kernel: "lanczos3" }).ensureAlpha().png().toBuffer())
+    .extract({ left: x - bx, top: y - by, width: w, height: hh })
+    .raw()
+    .toBuffer();
+  // The phôi's own light on the print: its shading darkens it, its gloss highlights lie over it (lib/blank-shading).
   const under = await sharp(blank).removeAlpha().extract({ left: x, top: y, width: w, height: hh }).raw().toBuffer();
-  let sum = 0;
-  for (let i = 0; i < shade.length; i++) sum += shade[i];
-  const mean = sum / Math.max(1, shade.length) || 1;
-  const out = Buffer.alloc(w * hh * 3);
-  for (let i = 0, j = 0; i < w * hh; i++, j += 4) {
-    const a = art[j + 3] / 255;
-    const k = Math.min(1.15, Math.max(0.55, shade[i] / mean));
-    for (let c = 0; c < 3; c++) out[i * 3 + c] = Math.round(Math.min(255, art[j + c] * k) * a + under[i * 3 + c] * (1 - a));
-  }
-  const patch = await sharp(out, { raw: { width: w, height: hh, channels: 3 } }).png().toBuffer();
+  const out = Buffer.alloc(w * hh * 4);
+  lightOnBlank(art, under, w, hh, 3, out);
+  const patch = await sharp(out, { raw: { width: w, height: hh, channels: 4 } }).removeAlpha().png().toBuffer();
   return sharp(blank).removeAlpha().composite([{ input: patch, left: x, top: y }]).jpeg({ quality: 92 }).toBuffer();
 }
 

@@ -150,7 +150,11 @@ export async function updateCharProject(s: CtSession, id: string, body: unknown)
   const b = (body && typeof body === "object" ? body : {}) as { name?: unknown; brief?: unknown };
   const patch: { name?: string; brief?: CtCharBrief } = {};
   if (typeof b.name === "string" && b.name.trim()) patch.name = b.name.trim().slice(0, 200);
-  if (b.brief !== undefined) patch.brief = parseCharBrief(b.brief);
+  if (b.brief !== undefined) {
+    patch.brief = parseCharBrief(b.brief);
+    // The edits, the plan and the layers hang on the brief's slot / option ids: once a master is approved the brief is frozen.
+    if (p.master_id && JSON.stringify(patch.brief) !== JSON.stringify(parseCharBrief(p.brief))) return jsonError("Master đã duyệt — brief bị khoá. Bỏ duyệt master (về bước Master) nếu muốn đổi brief", 409);
+  }
   const { data, error } = await s.supabase.from(CT_TABLES.charProjects).update(patch).eq("id", id).select("*").single<CtCharProject>();
   if (error || !data) return jsonError(error?.message ?? "Không lưu được", 500);
   return NextResponse.json({ project: projectRow(data) });

@@ -3,8 +3,10 @@
 /**
  * Step 3 — the cut, done on the master (asked 2026-10-09): 3a the master's backdrop removed and fixed by hand →
  * 3b the in-place edits the brief needs (@flexiprint writes each prompt, runs it on the approved master, checks it)
- * → 3c every layer's region highlighted on its picture, fixed by hand → 3d the files cut from both, checked, approved.
- * 3a and 3b are independent (the edits can run while the backdrop is reviewed).
+ * → 3c "Bộ custom": ONE button plans every layer's region and cuts the files from both; the dress-up view (master on the
+ * left, the options of each item on the right) is where regions are fixed by hand, files checked and approved.
+ * 3a and 3b are independent (the edits can run while the backdrop is reviewed). PlanSection (cut-panel.tsx) is the
+ * old step-by-step view of the regions, no longer in the nav.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -15,9 +17,9 @@ import { latestEditsOf } from "../../lib/char-images";
 import { CHECKER_STYLE, CtButton, CtModal, CtTextarea, cx } from "../ui";
 import type { CharCtx } from "./char-project";
 import { ProductStep } from "./product-step";
-import { CutEditor, FinalSection, MatteSection, PlanSection, type CutEdit } from "./cut-panel";
+import { CustomSection, CutEditor, MatteSection, type CutEdit } from "./cut-panel";
 
-type Sub = "matte" | "edits" | "plan" | "final";
+type Sub = "matte" | "edits" | "custom";
 
 export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
   const { project, images } = ctx;
@@ -26,20 +28,17 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
   const editsDone = plan.filter((e) => latest.get(e.role)?.status === "done").length;
   const ready = editsDone === plan.length;
   const cut = project.cut;
-  const first: Sub = !cut?.matte?.approved ? "matte" : !ready ? "edits" : !cut.plan?.approved || !project.layers ? "plan" : "final";
+  const first: Sub = !cut?.matte?.approved ? "matte" : !ready ? "edits" : "custom";
   const [sub, setSub] = useState<Sub>(first);
   const [edit, setEdit] = useState<CutEdit>(null);
   if (ctx.step === "product") return <ProductStep {...ctx} />;
   const tabs: Array<{ id: Sub; label: string; ok: boolean; note: string }> = [
     { id: "matte", label: "3a. Tách nền", ok: !!cut?.matte?.approved, note: cut?.matte?.status === "running" ? "đang chạy" : "" },
     { id: "edits", label: "3b. Bản sửa (AI)", ok: ready, note: `${editsDone}/${plan.length}` },
-    { id: "plan", label: "3c. Phác thảo lớp", ok: !!cut?.plan?.approved, note: cut?.plan?.status === "running" ? "đang chạy" : "" },
-    { id: "final", label: "3d. File cuối", ok: !!project.layers?.approved, note: project.layers?.status === "building" ? "đang cắt" : "" },
+    { id: "custom", label: "3c. Bộ custom", ok: !!project.layers?.approved, note: cut?.plan?.status === "running" ? "đang phác thảo" : project.layers?.status === "building" ? "đang cắt" : "" },
   ];
-  const onEdit = (e: CutEdit) => {
-    if (e?.kind === "piece") setSub("plan");
-    setEdit(e);
-  };
+  // The editors are modals over whichever tab is open.
+  const onEdit = (e: CutEdit) => setEdit(e);
   return (
     <div className="space-y-4 p-6">
       <nav className="flex flex-wrap items-center gap-1 text-sm">
@@ -57,7 +56,7 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
       {!project.master_id ? (
         <div className="rounded-xl border bg-card p-6 text-sm">
           <p className="font-medium">Bước 3 bắt đầu khi đã có master được duyệt.</p>
-          <p className="mt-1 text-muted-foreground">Sang tab “2. Master”, cho @flexiprint vẽ rồi bấm Duyệt 1 bản. Sau đó ở đây lần lượt: 3a tách nền (sửa nền bằng tay) → 3b bản sửa AI → 3c phác thảo vùng từng lớp (sửa vùng bằng tay) → 3d cắt file, kiểm tra, duyệt.</p>
+          <p className="mt-1 text-muted-foreground">Sang tab “2. Master”, cho @flexiprint vẽ rồi bấm Duyệt 1 bản. Sau đó ở đây lần lượt: 3a tách nền (sửa nền bằng tay) → 3b bản sửa AI → 3c bộ custom (một nút phác thảo + cắt file, xem từng kiểu, sửa vùng, duyệt).</p>
           <CtButton className="mt-3" onClick={() => ctx.goto("master")}>
             Sang bước Master →
           </CtButton>
@@ -65,9 +64,8 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
       ) : (
         <>
           {sub === "matte" && <MatteSection {...ctx} onEdit={onEdit} />}
-      {sub === "edits" && <EditsSection {...ctx} />}
-      {sub === "plan" && <PlanSection {...ctx} onEdit={onEdit} ready={ready} missing={ready ? "" : `Cần đủ bản sửa ở bước 3b (${editsDone}/${plan.length}).`} />}
-      {sub === "final" && <FinalSection {...ctx} onEdit={onEdit} />}
+          {sub === "edits" && <EditsSection {...ctx} />}
+          {sub === "custom" && <CustomSection {...ctx} onEdit={onEdit} ready={ready} missing={ready ? "" : `Cần đủ bản sửa ở bước 3b (${editsDone}/${plan.length}).`} />}
         </>
       )}
       {edit && <CutEditor {...ctx} edit={edit} onClose={() => setEdit(null)} />}

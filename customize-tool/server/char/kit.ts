@@ -24,10 +24,10 @@ interface KitJobState<T> {
   error?: string;
 }
 
-/** Start a job and wait for its result (≤ 30 min). The job stays on layer-kit (its files) until kitForget. */
+/** Start a job and wait for its result (≤ 60 min: a plan of 40+ pictures is slow). The job stays on layer-kit (its files) until kitForget. */
 export async function kitJob<T>(path: "/matte" | "/plan" | "/cut", body: unknown): Promise<{ job: string; result: T }> {
   const { job } = await kitPost<{ job: string }>(path, body, 60_000);
-  const until = Date.now() + 30 * 60_000;
+  const until = Date.now() + 60 * 60_000;
   while (Date.now() < until) {
     await new Promise((r) => setTimeout(r, 4_000));
     const st = await fetch(`${kitUrl()}/jobs/${job}`, { headers: kitHeaders(), signal: AbortSignal.timeout(120_000) }).catch(() => null);
@@ -37,7 +37,7 @@ export async function kitJob<T>(path: "/matte" | "/plan" | "/cut", body: unknown
     if (j.status === "done" && j.result) return { job, result: j.result };
     if (j.status === "failed") throw new Error(`layer-kit: ${j.error ?? "lỗi"}`);
   }
-  throw new Error("layer-kit: quá 30 phút");
+  throw new Error("layer-kit: quá 60 phút");
 }
 
 /** A picture / mask a job wrote. */

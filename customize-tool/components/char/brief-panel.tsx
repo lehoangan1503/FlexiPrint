@@ -35,7 +35,11 @@ const KINDS: Array<{ value: CtCharSubjectKind; label: string }> = [
   { value: "object", label: "Vật" },
 ];
 
-export function BriefPanel(ctx: CharCtx) {
+export function BriefPanel(all: CharCtx) {
+  // The edits, the plan and the layers hang on the brief's ids: with a master approved the brief is read-only
+  // (the server refuses a changed brief too).
+  const locked = !!all.project.master_id;
+  const ctx: CharCtx = locked ? { ...all, editable: false } : all;
   // Brainstorm first (a full-width chat); the brief opens once a direction is taken (or there is one already).
   const chosen = ctx.project.brief.subjects.length > 0;
   const [view, setView] = useState<"chat" | "brief">(chosen ? "brief" : "chat");
@@ -49,6 +53,11 @@ export function BriefPanel(ctx: CharCtx) {
         <span className="text-xs text-muted-foreground">Brief của hướng đã chọn — sửa trực tiếp, hoặc quay lại brainstorm để @flexiprint đề xuất thêm.</span>
       </div>
       <div className="min-w-0 space-y-6 p-6">
+        {locked && (
+          <p className="rounded-md bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+            Master đã duyệt — brief bị khoá, chỉ xem. Muốn đổi brief: về bước Master, bỏ duyệt master (các bản sửa theo brief cũ sẽ không còn khớp).
+          </p>
+        )}
         <BriefForm {...ctx} />
       </div>
     </div>

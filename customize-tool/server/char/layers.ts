@@ -16,7 +16,7 @@
 
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
-import type { CtAsset, CtCharAlign, CtCharImage, CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject } from "../../types";
+import type { CtAsset, CtCharAlign, CtCharCutState, CtCharImage, CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject } from "../../types";
 import { planEdits, slotLabel, type CtCharEditPlan } from "../../lib/char-plan";
 import { latestEditsOf } from "../../lib/char-images";
 import type { CtSession } from "../supabase";
@@ -262,6 +262,21 @@ function cutInput(p: CtCharProject): Record<string, unknown> {
   return { pictures, body_picture: body.picture, body_region: body.region.url, slots, zones };
 }
 
+/** Start the cut of the set (layers.status "building", files made in the background). Throws with a message for the editor. */
+export async function startBuild(db: Db, userId: string, p: CtCharProject, cut?: CtCharCutState): Promise<CtCharProject> {
+  if (!p.master_id) throw new Error("Duyệt master trước");
+  if (p.layers?.status === "building") throw new Error("Đang cắt layer");
+  const input = cutInput(p);
+  const images = await loadImages(db, p.id);
+  const building: CtCharLayerSet = { status: "building", error: "", width: 0, height: 0, slots: p.layers?.slots ?? [], zones: [], checks: [], builtAt: "" };
+  // `cut` (the plan just approved, server/char/cut.ts) is saved in the same write: the page never sees a finished plan with nothing running.
+  const { data, error } = await db.from(CT_TABLES.charProjects).update({ layers: building, ...(cut ? { cut } : {}) }).eq("id", p.id).select("*").single<CtCharProject>();
+  if (error || !data) throw new Error(error?.message ?? "Không lưu được");
+  const project = projectRow(data);
+  void runBuild(db, userId, project, input, images.filter((im) => im.kind === "layer"), p.layers);
+  return project;
+}
+
 /** POST char/projects/:id/layers */
 export async function buildCharLayers(s: CtSession, id: string, _body: unknown): Promise<NextResponse> {
   const p = await loadProject(s.supabase, id);
@@ -269,18 +284,11 @@ export async function buildCharLayers(s: CtSession, id: string, _body: unknown):
   if (p.user_id !== s.user.id) return jsonError("Bộ nhân vật của người khác — chỉ xem", 403);
   if (!p.master_id) return jsonError("Duyệt master trước", 409);
   if (p.layers?.status === "building") return jsonError("Đang cắt layer", 409);
-  let input: Record<string, unknown>;
   try {
-    input = cutInput(p);
+    return NextResponse.json({ project: await startBuild(jobDb(s), s.user.id, p) }, { status: 202 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Chưa cắt được", 400);
   }
-  const images = await loadImages(s.supabase, id);
-  const building: CtCharLayerSet = { status: "building", error: "", width: 0, height: 0, slots: p.layers?.slots ?? [], zones: [], checks: [], builtAt: "" };
-  const { data, error } = await s.supabase.from(CT_TABLES.charProjects).update({ layers: building }).eq("id", id).select("*").single<CtCharProject>();
-  if (error || !data) return jsonError(error?.message ?? "Không lưu được", 500);
-  void runBuild(jobDb(s), s.user.id, projectRow(data), input, images.filter((im) => im.kind === "layer"), p.layers);
-  return NextResponse.json({ project: projectRow(data) }, { status: 202 });
 }
 
 /** POST char/projects/:id/layers/approve {approved} */

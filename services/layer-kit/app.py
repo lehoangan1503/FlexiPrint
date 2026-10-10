@@ -43,8 +43,8 @@ from PIL import Image
 from pydantic import BaseModel
 
 import upscale
-from layers import (Option, Slot, Zone, claim_orphans, cut, cut_of, erase_at, keep_of, kernel, magenta, mix, on_white, region_body, region_painted, region_shape,
-                    region_zone, regions_colour, register)
+from layers import (Option, Slot, Zone, _fill, claim_orphans, cut, cut_of, erase_at, keep_of, kernel, key_part, magenta, match_colours, mix, on_white, region_body,
+                    region_painted, region_shape, region_zone, regions_colour, register, register_key, register_rgba, soft, warp_rgba)
 
 BG = os.getenv("BG_REMOVER_URL", "http://127.0.0.1:7001").rstrip("/")
 TOKEN = os.getenv("LAYER_TOKEN", "")
@@ -246,7 +246,25 @@ class MatteBody(BaseModel):
 
 def _matte(body: MatteBody, out_dir: str) -> dict:
     t0 = time.time()
-    work = rgb_on_white(fetch(body.master))
+    img = fetch(body.master)
+    rgba = rgba_of(img)
+    if (rgba[..., 3] < 0.03).mean() > 0.02:
+        # A master drawn on a transparent background (key mode): its own alpha is the matte — nothing to guess.
+        a = rgba[..., 3]
+        col = np.where(a[..., None] > 0.9, rgba[..., :3], _fill(rgba[..., :3], (a > 0.9).astype(np.float32)))
+        h, w = a.shape
+        factor = print_factor(w, h)
+        if factor > 1:
+            col = upscale.upscale2(np.clip(col, 0, 1))
+            a = cv2.resize(a, (col.shape[1], col.shape[0]), interpolation=cv2.INTER_LINEAR)
+        log.info("matte (own alpha) %d×%d ×%.0f in %.1fs", w, h, factor, time.time() - t0)
+        return {
+            "width": col.shape[1],
+            "height": col.shape[0],
+            "factor": factor,
+            "files": {"colour": write_colour(out_dir, "colour.png", np.clip(col, 0, 1)), "alpha": write_mask(out_dir, "alpha.png", np.clip(a, 0, 1))},
+        }
+    work = rgb_on_white(img)
     h, w = work.shape[:2]
     coarse = matte(work)
     factor = print_factor(w, h)
@@ -322,6 +340,7 @@ class PlanZone(BaseModel):
 
 
 class PlanBody(BaseModel):
+    key: bool = False      # key mode: every option / part is its own clip picture (customize-tool lib/char-plan.ts)
     source: str            # the approved master as the image model drew it (the edits are registered to it)
     colour: str            # /matte colours (print size)
     alpha: str             # /matte alpha, fixed by hand
@@ -330,7 +349,122 @@ class PlanBody(BaseModel):
     zones: list[PlanZone] = []
 
 
+def _plan_key(body: PlanBody, out_dir: str) -> dict:
+    """Key mode: no region is worked out — every clip carries its own part (layers.key_part). The base (transparent,
+    the paper doll) IS the body. Each picture is registered onto the master's canvas (the base by its unchanged
+    pixels, a clip by its silhouette), upscaled to print, its region = its own alpha with a little room."""
+    t0 = time.time()
+    if not body.base:
+        raise HTTPException(400, "key mode needs the base")
+    src = rgb_on_white(fetch(body.source))
+    probe = rgba_of(fetch(body.base))
+    H, W = probe.shape[:2]
+    master_n = fit(src, W, H)
+    factor = print_factor(W, H)
+    size = (round(W * factor), round(H * factor))
+
+    def to_size(m: np.ndarray) -> np.ndarray:
+        return cv2.resize(m, size, interpolation=cv2.INTER_LINEAR) if m.shape[:2] != (size[1], size[0]) else m
+
+    def up_rgba(rgba: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Colours (spread under the transparent pixels first: the upscale never pulls the background in) + alpha."""
+        a = rgba[..., 3]
+        col = np.where(a[..., None] > 0.9, rgba[..., :3], _fill(rgba[..., :3], (a > 0.9).astype(np.float32)))
+        col = upscale.upscale2(col) if factor > 1 else col
+        return to_size(np.clip(col, 0, 1)), np.clip(to_size(a), 0, 1)
+
+    a_m = np.clip(fit(read_mask(fetch(body.alpha)), *size), 0, 1)
+    ref_a = cv2.resize(a_m, (W, H), interpolation=cv2.INTER_AREA)
+    pictures: list[dict] = [{"id": "master", "label": "Master", "parent": None}]
+    pieces: list[dict] = []
+    checks: list[dict] = []
+    aligns: dict[str, dict] = {}
+    by_url: dict[str, dict] = {}
+
+    def picture(pid: str, label: str, col: np.ndarray, a: np.ndarray) -> None:
+        pictures.append({"id": pid, "label": label, "parent": None, "colour": write_colour(out_dir, f"{pid}.colour.png", col), "alpha": write_mask(out_dir, f"{pid}.alpha.png", a)})
+
+    def piece(key: str, slot: str, kind: str, label: str, pid: str, region: np.ndarray, option: str = "", index: int = 0) -> None:
+        pieces.append({"key": key, "slot": slot, "kind": kind, "label": label, "option": option, "index": index, "picture": pid, "region": write_mask(out_dir, f"region.{len(pieces)}.png", region)})
+
+    # The base: registered on its unchanged pixels (faces, legs), with its own alpha — the body file as drawn.
+    base_rgba, aligns["base"] = register_rgba(master_n, fit(probe, W, H))
+    by_url[body.base] = aligns["base"]
+    base_col, base_a = up_rgba(base_rgba)
+    picture("base", "Thân (búp bê giấy)", base_col, base_a)
+    base_n = on_white(base_rgba[..., :3], base_rgba[..., 3])
+
+    base_ref_a = base_rgba[..., 3]
+
+    def clip(url: str, pid: str, label: str, own_part: bool, on_master: bool | None = None) -> np.ndarray | None:
+        """A clip → its registered, upscaled picture; the region (its alpha + room) is returned. A clip of the
+        master's own part has the master's silhouette; an option drawn on the base has the base's (paper doll)."""
+        rgba = fit(rgba_of(fetch(url)), W, H)
+        col, part_a, sil = key_part(rgba)
+        on_m = own_part if on_master is None else on_master
+        warp, info = register_key(ref_a if on_m else base_ref_a, np.dstack([rgba[..., :3], sil]), part_a)
+        if not on_m:
+            # An option is drawn on the base — or on the master when the base was refused: the silhouette that fits.
+            w2, i2 = register_key(ref_a, np.dstack([rgba[..., :3], sil]), part_a)
+            if i2["residual"] < info["residual"]:
+                warp, info = w2, i2
+        aligns[label] = by_url[url] = {"dx": info["dx"], "dy": info["dy"], "unchanged": 0.0, "before": info["before"], "residual": info["residual"], "max": info["residual"]}
+        part = warp_rgba(np.dstack([col, part_a]), warp)
+        if own_part:
+            part[..., :3] = match_colours(part[..., :3], part[..., 3], master_n, ref_a)
+        n = int((part[..., 3] > 0.5).sum())
+        if n < 150:
+            checks.append({"name": f"Clipart {label}", "ok": False, "detail": "Ảnh không giữ lại phần nào (toàn hồng / trong suốt) — làm lại ảnh."})
+            return None
+        c_up, a_up = up_rgba(part)
+        picture(pid, label, c_up, a_up)
+        return soft(a_up > 0.05, grow=max(2, round(3 * factor)), blur=1.0)
+
+    for s in body.slots:
+        if s.mode == "shape":
+            for i, o in enumerate(s.options):
+                if not o.url:
+                    continue
+                key = f"{s.key}#{i}"
+                reg = clip(o.url, f"clip.{s.key}.{i}", f"{s.label}: {o.name}", i == 0, on_master=True)
+                if reg is not None:
+                    piece(key, s.key, "part", f"{s.label}: {o.name}", f"clip.{s.key}.{i}", reg, o.name, i)
+            continue
+        if not s.mask:
+            continue
+        reg = clip(s.mask, f"clip.{s.key}", s.label, True)
+        if reg is None:
+            continue
+        piece(s.key, s.key, "part", s.label, f"clip.{s.key}", reg)
+        if s.mode == "texture":
+            for i, o in enumerate(s.options):
+                if i > 0 and o.url:
+                    clip(o.url, f"tex.{s.key}.{i}", f"{s.label}: {o.name}", False, on_master=True)
+
+    for z in body.zones:
+        z_n, aligns[f"vùng ảnh {z.id}"] = register(base_n, fit(rgb_on_white(fetch(z.mask)), W, H))
+        reg = to_size(region_zone(z_n))
+        ok = int((reg > 0.5).sum()) >= 500
+        checks.append({"name": f"Vùng ảnh khách: {z.label or z.id}", "ok": ok, "detail": "" if ok else "AI không tô được — tô vùng bằng tay.", "piece": f"zone:{z.id}"})
+        piece(f"zone:{z.id}", f"zone:{z.id}", "zone", f"Vùng ảnh khách: {z.label or z.id}", "base", reg)
+    piece("body", "body", "body", "Thân", "base", region_body(base_a))
+
+    for role, a in aligns.items():
+        if role == "base" or role.startswith("vùng ảnh"):
+            # The paper doll re-draws most of the figure (clothes gone): what stayed is matched to ~1 px.
+            ok = a["residual"] <= (1.5 if role == "base" else 0.3) and a["before"] <= 3.0
+            checks.insert(0, {"name": f"Khớp: {role}", "ok": ok, "detail": f"lệch {a['before']:.2f} → {a['residual']:.2f} px (tệ nhất {a['max']:.2f})"})
+        else:
+            # A clip is placed by its outline (re-drawn by the model): ≈ px between the outlines left after the fit.
+            ok = a["residual"] <= 1.5 and abs(a["dx"]) < 20 and abs(a["dy"]) < 20
+            checks.insert(0, {"name": f"Khớp clipart: {role}", "ok": ok, "detail": f"dời {a['dx']:+.1f}, {a['dy']:+.1f} px · viền lệch ≈ {a['residual']:.2f} px" + ("" if ok else " — ảnh lệch dáng, làm lại")})
+    log.info("plan (key): %d pictures, %d pieces in %.1fs", len(pictures), len(pieces), time.time() - t0)
+    return {"width": size[0], "height": size[1], "factor": factor, "pictures": pictures, "pieces": pieces, "checks": checks, "align": by_url}
+
+
 def _plan(body: PlanBody, out_dir: str) -> dict:
+    if body.key:
+        return _plan_key(body, out_dir)
     t0 = time.time()
     src = rgb_on_white(fetch(body.source))
     # The canvas is the edits' own size (the model's native one); the master is mapped onto it.
@@ -501,6 +635,7 @@ class CutSlot(BaseModel):
     mode: str
     wraps: bool = False
     region: str | None = None
+    picture: str | None = None   # key mode, color / texture: the part's own clip
     options: list[CutOption]
     colors: list[CutOption] = []
 
@@ -511,6 +646,7 @@ class CutZone(BaseModel):
 
 
 class CutBody(BaseModel):
+    key: bool = False
     pictures: dict[str, CutPicture]
     body_picture: str
     body_region: str
@@ -548,6 +684,8 @@ def _cut(body: CutBody, out_dir: str) -> dict:
     slots: list[Slot] = []
     for s in body.slots:
         slot = Slot(s.key, s.label, s.mode, region=region(s.region), wraps=s.wraps)
+        if s.picture:
+            slot.col, slot.alpha = pic(s.picture)
         for o in s.options:
             opt = Option(o.name, o.hex)
             if o.picture:
@@ -558,7 +696,8 @@ def _cut(body: CutBody, out_dir: str) -> dict:
         slots.append(slot)
     zones = [Zone(z.id, region(z.region)) for z in body.zones]
     base_a = base_a if base_a is not None else a_m
-    if body.body_picture != "master":
+    # Key mode: the base is the body as drawn (its own alpha, nothing of the master mixed in).
+    if body.body_picture != "master" and not body.key:
         # The base is an AI edit: besides removing the hair it re-draws a little (eyes, brows). Where the master
         # shows the body itself (outside every master part's region, inside both silhouettes) the body takes the
         # master's own pixels — the stacked default is then the master, face included.
@@ -569,7 +708,7 @@ def _cut(body: CutBody, out_dir: str) -> dict:
         parts = cv2.dilate(parts.astype(np.uint8), kernel(8)).astype(bool)
         own_body = cv2.GaussianBlur((~parts & (base_a > 0.5) & (a_m > 0.5)).astype(np.float32), (0, 0), 1.5)
         base_col = mix(own_body, col_m, base_col)
-    out = cut(col_m, a_m, base_col, base_a, region(body.body_region), slots, zones)
+    out = cut(col_m, a_m, base_col, base_a, region(body.body_region), slots, zones, redrawn=body.key)
     log.info("cut %d files in %.1fs", len(out["files"]), time.time() - t0)
     return {
         "width": out["width"],

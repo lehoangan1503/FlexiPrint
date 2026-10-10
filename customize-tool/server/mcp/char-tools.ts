@@ -15,7 +15,7 @@
 import { CT_TABLES } from "../../config";
 import type { CtAgentTask, CtAgentTaskProgress, CtCharImage, CtCharProject, CtCharTaskResult } from "../../types";
 import { REF_USE_INFO, masterPrompt } from "../../lib/char-brief";
-import { KEEP, planEdits } from "../../lib/char-plan";
+import { KEEP, KEEP_CLEAR, KEY, planEdits, tailOf } from "../../lib/char-plan";
 import { latestEditsOf } from "../../lib/char-images";
 import { imageModelLabel } from "../../lib/image-models";
 import type { CtServiceClient } from "../supabase";
@@ -67,6 +67,9 @@ const EDITS_INSTRUCTIONS = [
   "1. For each edit write a prompt that changes EXACTLY one thing on the named subject (say which one: \"the second character from the left, the girl in the green sweater\") WITHOUT the keep-everything sentence (\"keepSentence\"): the server appends it to every edit prompt. Magenta edits: solid flat pure magenta #FF00FF over ALL of the part (sleeves, cuffs, the part under hands too), nothing else, no outline change. Base: hair removed completely — a smooth bald scalp, ears visible, nothing else changed (clothes, faces, poses stay). Shape options: the new hairstyle / hat in the same art style, sitting naturally on the bald head of the base, same colour as the master's unless given.",
   "2. char_run_edits(task_id, prompts: {role: prompt}, roles: [...]) — base first when it is missing (everything on the base is made from it; redoing base redoes them), then the rest in one call. \"roles\" runs a role with its starting prompt (get_task shows one example per kind, \"startingPromptExamples\"); give a prompt only where you want a different one. → char_wait → view_image the results (a few at a time).",
   "3. Check each against its purpose: the magenta covers the whole part and only it; the base has no hair left and nothing else changed; shapes look right and match the style; nothing moved. Wrong → a better prompt and char_run_edits for that role again (at most ~3 tries per role).",
+  "KEY MODE (get_task clipMode \"key\" — every new project; UI 3b \"AI tạo clipart\"): there is no paint step and no region cut. Each clipart is ONE picture: the part kept as drawn, everything else of every character a flat magenta silhouette, background transparent (the server appends keySentence; base gets baseSentence). layer-kit takes the non-magenta pixels as the file, places it by the silhouette and fits the colours of a master part back to the master. Roles: work · base = the PAPER DOLL (every part any slot changes removed: bald, a smooth skin-tone bodysuit, empty hands, bare arms / feet) — it is used as the body file as it is · clip:<slot>:<option> = a shape option, ALL from work (the first = the master's own part kept; the others = the part taken off and replaced, then kept) · clip:<slot> = a colour / texture part from work (recoloured by code) · clip:<slot>:<option> of a texture slot = that material, from work.",
+  "KEY MODE prompts (tested 2026-10-10): a part of the master is asked as \"Turn EVERYTHING magenta except the <part> itself of <who>. Her <every other part BY NAME AND COLOUR: mustard cardigan, red shoes, wine glass, hairstyle (top bun)>, face, arms, legs all become magenta, also where they lie over the <part>; only the <part> keeps its drawing and colours\" — \"keep only the dress\" kept the cardigan and shoes too. Never ask for the part alone on an empty transparent canvas: the model invents a new one anywhere (the silhouettes are what hold it in place). Another option, from work: \"Take OFF the <part> of <who> (the <current option>) and give her a completely DIFFERENT one: <option + colour, its own features>. Nothing of the <current option> stays — not its shape, neckline, belt or details (\"replace with a skater dress\" kept the wrap dress's belt and bow); same pose. Then turn EVERYTHING magenta except that new <part>: <the others by name>…\". Never draw options on the paper doll: on that transparent picture the model re-frames the figures ~10 % bigger and moves the arms — a mug lands beside the hand.",
+  "KEY MODE check (view_image each): ONLY the part is in colour (anything else in colour → redo with that thing named magenta); the magenta is flat with no inner lines; the background is transparent (a checkerboard or white drawn in = refused by the server, it retries); the part is complete and where it belongs. An option that came out like the current one (same dress under another name) → redo with what must differ named. The base (paper doll) may be refused by the safety filter: the server retries; word it as a family-friendly paper-doll dress-up base.",
   "4. submit_result(task_id, {summary: Vietnamese — what you ran, what you redid and why, what is still off; image_ids: the final edits}). The editor then cuts the layers (layer-kit) and sees the registration checks.",
 ].join("\n");
 
@@ -109,9 +112,10 @@ function compactBrief(b: CtCharProject["brief"]) {
   };
 }
 
-/** An edit prompt without the keep-everything sentence (the server adds it: withKeep). */
-const withoutKeep = (prompt: string) => prompt.replace(KEEP, "").trim();
-const withKeep = (prompt: string) => (prompt.includes(KEEP.trim()) ? prompt : prompt.replace(/\.?\s*$/, ".") + KEEP);
+/** An edit prompt without its ending sentence (keep-everything, or key mode's magenta / transparent one — the server
+ * adds it: withTail). */
+const withoutKeep = (prompt: string) => [KEEP, KEEP_CLEAR, KEY].reduce((p, t) => p.replace(t, ""), prompt).trim();
+const withTail = (prompt: string, tail: string) => (prompt.includes(tail.trim()) ? prompt : withoutKeep(prompt).replace(/\.?\s*$/, ".") + tail);
 
 /** get_task of a char task. */
 export async function charTaskView(db: CtServiceClient, task: CtAgentTask): Promise<unknown> {
@@ -177,6 +181,11 @@ export async function charTaskView(db: CtServiceClient, task: CtAgentTask): Prom
     // Compact: 40+ edits on a big brief. The keep sentence is given once; a made edit carries its prompt only when
     // it is not the starting one.
     out.keepSentence = KEEP.trim();
+    if (p.brief.clips === "key") {
+      out.clipMode = "key";
+      out.keySentence = KEY.trim();
+      out.baseSentence = KEEP_CLEAR.trim();
+    }
     out.edits = planEdits(p.brief).map((e) => {
       const im = latest.get(e.role);
       const current = im
@@ -323,7 +332,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const prompts: Record<string, string> = {};
       for (const [role, v] of Object.entries(record(args.prompts))) {
         if (!plan.some((e) => e.role === role)) throw new Error(`Unknown role "${role}" — use the roles of get_task "edits"`);
-        if (role !== "work" && str(v).trim()) prompts[role] = withKeep(clip(str(v), 7600));
+        if (role !== "work" && str(v).trim()) prompts[role] = withTail(clip(str(v), 7600), tailOf(project.brief, role));
       }
       const extra = (Array.isArray(args.roles) ? args.roles : []).map(str).filter((r) => plan.some((e) => e.role === r));
       const roles = [...new Set([...Object.keys(prompts), ...extra])];

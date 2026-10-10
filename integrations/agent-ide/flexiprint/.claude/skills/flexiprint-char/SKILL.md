@@ -19,6 +19,14 @@ Trang `/v2` gửi 1 task cho mỗi bước. Mọi task của cùng 1 bộ là 1 
    `char_refine_master` (1 thay đổi mỗi lần) hoặc vẽ lại → `submit_result {summary, image_ids}` (đề xuất, người
    dùng tự duyệt). Có `imageId` = sửa đúng master đó theo `request`.
 4. **edits** (trang: "3b. AI tô vùng clipart" — vùng tô / kiểu vẽ tại chỗ CHÍNH LÀ vùng cắt clipart, layer-rules §9b):
+   Project mới (`clipMode: "key"`, trang: "3b. AI tạo clipart"): mỗi clipart = 1 ảnh — giữ đúng phần đó, mọi thứ
+   khác thành bóng hồng phẳng, nền trong suốt (server tự thêm `keySentence`). Viết "Turn EVERYTHING magenta except
+   the <part>…" và GỌI TÊN + MÀU từng phần khác của người đó (áo khoác vàng, giày đỏ, ly rượu…) — viết "chỉ giữ váy"
+   thì model giữ luôn áo khoác. Không bao giờ bảo vẽ phần đó một mình trên nền trống (model vẽ bừa chỗ khác). base =
+   búp bê giấy bỏ mọi phần đổi được (layer-rules §9a) — chỉ dùng làm lớp thân. MỌI option vẽ từ master: "Take OFF the
+   <part> (<kiểu hiện tại>) and give her a completely DIFFERENT one: … Nothing of the <kiểu hiện tại> stays…" rồi tô hồng
+   mọi thứ trừ nó (vẽ trên búp bê giấy thì model phóng to + đổi tay → lệch). Kiểm tra: chỉ phần đó có màu, hồng phẳng
+   không nét, nền trong suốt, option khác hẳn kiểu mặc định.
    mỗi `role` 1 prompt (đúng 1 thay đổi, nói rõ nhân vật nào, giữ nguyên mọi thứ khác; tô magenta
    #FF00FF phủ HẾT phần đó) → `char_run_edits {prompts: {role: prompt}}` (base trước nếu thiếu) → `char_wait` →
    `view_image` → làm lại bản sai → `submit_result {summary, image_ids}`.

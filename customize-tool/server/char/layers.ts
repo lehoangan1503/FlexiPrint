@@ -145,8 +145,12 @@ async function runEdits(db: Db, userId: string, p: CtCharProject, plan: CtCharEd
       // edit without it — the plan step would call it "made from an old base".
       const meta = { ...row.meta, sourceId: src.id };
       await db.from(CT_TABLES.charImages).update({ parent_id: src.id, meta }).eq("id", row.id);
-      const done = await runCharDraw(db, userId, { ...row, parent_id: src.id, meta }, { prompt: row.prompt, refs: [src.url], aspect: null, refSize: { w: src.width, h: src.height }, models });
+      const transparent = plan.find((e) => e.role === row.role)?.transparent === true;
+      const done = await runCharDraw(db, userId, { ...row, parent_id: src.id, meta }, { prompt: row.prompt, refs: [src.url], aspect: null, refSize: { w: src.width, h: src.height }, models, transparent });
       if (!done) return null;
+      // A key-mode clip is mostly magenta: nothing of its source is left to measure it on (layer-kit registers it
+      // by its silhouette when it plans).
+      if (row.role.startsWith("clip:")) return done;
       const align = await measure(src.url, done.url);
       if (!align) return done;
       const { data } = await db.from(CT_TABLES.charImages).update({ meta: { ...meta, ...done.meta, align } }).eq("id", done.id).select("*").single<CtCharImage>();
@@ -193,7 +197,7 @@ interface KitCut {
 }
 
 /** The edits the plan step needs (layer-kit /plan), or why it can't run yet. */
-export function kitPlanInput(p: CtCharProject, latest: Map<string, CtCharImage>): { plan: { base: string | null; slots: unknown[]; zones: unknown[] } } | { missing: string[] } {
+export function kitPlanInput(p: CtCharProject, latest: Map<string, CtCharImage>): { plan: { key?: boolean; base: string | null; slots: unknown[]; zones: unknown[] } } | { missing: string[] } {
   const plan = planEdits(p.brief);
   const missing = plan.filter((e) => latest.get(e.role)?.status !== "done").map((e) => e.label);
   if (missing.length) return { missing };
@@ -210,6 +214,26 @@ export function kitPlanInput(p: CtCharProject, latest: Map<string, CtCharImage>)
     .map((e) => e.label);
   if (stale.length) return { missing: stale.map((l) => `${l} (làm từ bản gốc cũ — làm lại)`) };
   const url = (role: string) => latest.get(role)?.url ?? null;
+  const zones = p.brief.photoZones.map((z) => ({ id: z.id, label: z.label, mask: url(`zone:${z.id}`) }));
+  if (p.brief.clips === "key") {
+    // Key mode: every option has its own clip picture (a colour slot one, recoloured by code); the base is the body.
+    const slots = p.brief.subjects.flatMap((sub, i) =>
+      sub.slots.map((slot) => ({
+        key: slot.id,
+        label: slotLabel(p.brief, i, slot),
+        mode: slot.mode,
+        mask: slot.mode === "shape" ? null : url(`clip:${slot.id}`),
+        options: slot.options.map((o, j) => ({
+          name: o.name,
+          hex: slot.mode === "color" ? o.value : null,
+          url: slot.mode === "shape" ? url(`clip:${slot.id}:${o.id}`) : slot.mode === "texture" && j > 0 ? url(`clip:${slot.id}:${o.id}`) : null,
+        })),
+        colors: slot.mode === "shape" ? slot.colors.map((c) => ({ name: c.name, hex: c.value })) : [],
+        wraps: slot.mode === "shape" && slot.wraps,
+      })),
+    );
+    return { plan: { key: true, base: base?.url ?? null, slots, zones } };
+  }
   const slots = p.brief.subjects.flatMap((sub, i) =>
     sub.slots.map((slot) => ({
       key: slot.id,
@@ -225,7 +249,7 @@ export function kitPlanInput(p: CtCharProject, latest: Map<string, CtCharImage>)
       wraps: slot.mode === "shape" && slot.wraps,
     })),
   );
-  return { plan: { base: base?.url ?? null, slots, zones: p.brief.photoZones.map((z) => ({ id: z.id, label: z.label, mask: url(`zone:${z.id}`) })) } };
+  return { plan: { base: base?.url ?? null, slots, zones } };
 }
 
 /** layer-kit /cut input: the reviewed matte + regions, slots as the brief has them. */
@@ -248,6 +272,8 @@ function cutInput(p: CtCharProject): Record<string, unknown> {
       mode: slot.mode,
       wraps: slot.mode === "shape" && slot.wraps,
       region: slot.mode === "shape" ? null : (piece(slot.id)?.region.url ?? null),
+      // Key mode: a colour / texture part has its own clip (the base has no such part).
+      picture: slot.mode !== "shape" && p.brief.clips === "key" ? (piece(slot.id)?.picture ?? null) : null,
       options: slot.options.map((o, j) => {
         if (slot.mode === "shape") {
           const pc = piece(`${slot.id}#${j}`);
@@ -260,7 +286,7 @@ function cutInput(p: CtCharProject): Record<string, unknown> {
     })),
   );
   const zones = plan.pieces.filter((x) => x.kind === "zone").map((x) => ({ id: x.key.slice(5), region: x.region.url }));
-  return { pictures, body_picture: body.picture, body_region: body.region.url, slots, zones };
+  return { key: p.brief.clips === "key", pictures, body_picture: body.picture, body_region: body.region.url, slots, zones };
 }
 
 /**

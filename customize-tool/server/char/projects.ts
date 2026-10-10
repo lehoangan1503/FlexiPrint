@@ -29,7 +29,7 @@ import { CT_TABLES } from "../../config";
 import type { CtCharBrief, CtCharCutState, CtCharIdeaRound, CtCharImage, CtCharImageKind, CtCharMask, CtCharProject, CtCharRef, CtCharRefUse } from "../../types";
 import { REF_USE_INFO, masterPrompt, parseCharBrief } from "../../lib/char-brief";
 import { CT_IMAGE_MODELS } from "../../lib/image-models";
-import { drawImage } from "../pack-images";
+import { drawImage, supportsTransparent } from "../pack-images";
 import { currentImageModel } from "../settings";
 import { ctServiceClient, type CtSession } from "../supabase";
 import { ctRemove } from "../storage";
@@ -130,7 +130,7 @@ export async function createCharProject(s: CtSession, body: unknown): Promise<Ne
   const name = typeof b.name === "string" && b.name.trim() ? b.name.trim().slice(0, 200) : "Bộ nhân vật mới";
   const { data, error } = await s.supabase
     .from(CT_TABLES.charProjects)
-    .insert({ user_id: s.user.id, name, brief: parseCharBrief(b.brief) })
+    .insert({ user_id: s.user.id, name, brief: { ...parseCharBrief(b.brief), clips: "key" } })
     .select("*")
     .single<CtCharProject>();
   if (error || !data) return jsonError(error?.message ?? "Không tạo được", 500);
@@ -152,7 +152,8 @@ export async function updateCharProject(s: CtSession, id: string, body: unknown)
   const patch: { name?: string; brief?: CtCharBrief } = {};
   if (typeof b.name === "string" && b.name.trim()) patch.name = b.name.trim().slice(0, 200);
   if (b.brief !== undefined) {
-    patch.brief = parseCharBrief(b.brief);
+    // How the cliparts are made is the project's, not the editor's: a brief taken from an idea keeps it.
+    patch.brief = { ...parseCharBrief(b.brief), clips: parseCharBrief(p.brief).clips };
     // The edits, the plan and the layers hang on the brief's slot / option ids: once a master is approved the brief is frozen.
     if (p.master_id && JSON.stringify(patch.brief) !== JSON.stringify(parseCharBrief(p.brief))) return jsonError("Master đã duyệt — brief bị khoá. Bỏ duyệt master (về bước Master) nếu muốn đổi brief", 409);
   }
@@ -213,14 +214,19 @@ export interface CharDraw {
   refSize: { w: number | null; h: number | null };
   /** Models to try in order. */
   models: string[];
+  /** A transparent background (key-mode clips, the base): only models that can, each tried twice. */
+  transparent?: boolean;
 }
 
 /** Draw one picture into an existing running row → done / failed. Never throws. */
 export async function runCharDraw(db: Db, userId: string, row: CtCharImage, d: CharDraw): Promise<CtCharImage | null> {
   let lastError = "";
-  for (const model of d.models) {
+  // Transparent: gpt-image now and then paints the background anyway — each model gets three tries.
+  const models = d.transparent ? d.models.filter(supportsTransparent).flatMap((m) => [m, m, m]) : d.models;
+  if (!models.length) lastError = "Model ảnh của team không vẽ được nền trong suốt — chọn GPT Image";
+  for (const model of models) {
     try {
-      const out = await drawImage(model, d.prompt, d.refs, d.aspect ?? editAspect(model, d.refSize.w, d.refSize.h), "pad");
+      const out = await drawImage(model, d.prompt, d.refs, d.aspect ?? editAspect(model, d.refSize.w, d.refSize.h), "pad", d.transparent === true);
       const saved = await saveCharFile(userId, row.project_id, row.kind, out.data);
       const { data } = await db
         .from(CT_TABLES.charImages)
@@ -294,7 +300,9 @@ export async function drawMasters(db: Db, userId: string, p: CtCharProject, a: M
   const { data, error } = await db.from(CT_TABLES.charImages).insert(rows).select("*").returns<CtCharImage[]>();
   if (error || !data) throw new Error(error?.message ?? "Không tạo được");
   const models = await newPictureModels();
-  for (const row of data) void runCharDraw(db, userId, row, { prompt: full, refs, aspect, refSize: { w: null, h: null }, models });
+  // Key mode: the master is drawn cut out (transparent) — step 3a takes its own alpha.
+  const transparent = p.brief.clips === "key";
+  for (const row of data) void runCharDraw(db, userId, row, { prompt: full, refs, aspect, refSize: { w: null, h: null }, models, transparent });
   return data;
 }
 
@@ -308,16 +316,16 @@ export async function drawIdeaPreviews(db: Db, userId: string, p: CtCharProject,
   const images = await loadImages(db, p.id);
   const models = await newPictureModels();
   const rows = round.ideas.map((idea) => {
-    const brief = { ...idea.brief, refs: p.brief.refs };
+    const brief = { ...idea.brief, refs: p.brief.refs, clips: p.brief.clips };
     const { text } = modelRefs(brief, images);
     return { project_id: p.id, user_id: userId, kind: "master" as CtCharImageKind, role: `idea:${idea.id}`, status: "running", prompt: text + masterPrompt(brief), note: idea.title, meta: { ideaId: idea.id, roundId: round.id } };
   });
   const { data, error } = await db.from(CT_TABLES.charImages).insert(rows).select("*").returns<CtCharImage[]>();
   if (error || !data) throw new Error(error?.message ?? "Không tạo được");
   data.forEach((row, i) => {
-    const brief = { ...round.ideas[i].brief, refs: p.brief.refs };
+    const brief = { ...round.ideas[i].brief, refs: p.brief.refs, clips: p.brief.clips };
     const { urls } = modelRefs(brief, images);
-    void runCharDraw(db, userId, row, { prompt: row.prompt, refs: urls, aspect: masterAspect(brief), refSize: { w: null, h: null }, models });
+    void runCharDraw(db, userId, row, { prompt: row.prompt, refs: urls, aspect: masterAspect(brief), refSize: { w: null, h: null }, models, transparent: brief.clips === "key" });
   });
   return data;
 }
@@ -352,6 +360,8 @@ export const KEEP_REFINE =
 /** An in-place edit of a master candidate: `prompt` as the model gets it, `note` what the editor asked. */
 export async function refineMasterImage(db: Db, userId: string, p: CtCharProject, imageId: string, prompt: string, note: string, taskId?: string | null): Promise<CtCharImage> {
   if (p.master_id) throw new Error("Master đã duyệt — bỏ duyệt trước khi sửa");
+  // Key mode: the master is cut out — it stays transparent.
+  if (p.brief.clips === "key") prompt = prompt.replace("the flat white background", "the fully transparent background");
   const images = await loadImages(db, p.id);
   const parent = images.find((im) => im.id === imageId && im.kind === "master" && im.status === "done");
   if (!parent) throw new Error("Không tìm thấy master");
@@ -361,7 +371,7 @@ export async function refineMasterImage(db: Db, userId: string, p: CtCharProject
     .select("*")
     .single<CtCharImage>();
   if (error || !row) throw new Error(error?.message ?? "Không tạo được");
-  void runCharDraw(db, userId, row, { prompt, refs: [parent.url], aspect: null, refSize: { w: parent.width, h: parent.height }, models: await editModels() });
+  void runCharDraw(db, userId, row, { prompt, refs: [parent.url], aspect: null, refSize: { w: parent.width, h: parent.height }, models: await editModels(), transparent: p.brief.clips === "key" });
   return row;
 }
 

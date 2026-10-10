@@ -59,7 +59,30 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
 - An AI-made option is an in-place edit of the master canvas (same size, same base) and the part is extracted on that
   canvas (difference / alpha). Never generate a part alone and scale it into the slot.
 
-## 9b. The cut follows the AI-painted regions (bước 3b — asked 2026-10-10)
+## 9a. Key mode — one AI picture per clipart (every new project, asked 2026-10-10)
+- The master is drawn on a TRANSPARENT background (gpt-image background "transparent"): step 3a takes its own alpha.
+- Each clipart is ONE picture made from the master: the part kept as drawn, everything else of every character a
+  flat magenta (#FF00FF) silhouette with no lines, the background transparent. The file = that picture's non-magenta
+  pixels — its colours and its cut line come from the SAME picture, so nothing of a neighbour sticks to the edge
+  (painting a region on one picture and taking the pixels from another left skin on hair, cardigans and glasses).
+- Ask "turn EVERYTHING magenta except the <part>", naming every other part with its colour. Never ask for a part
+  alone on an empty canvas: the model then invents a new part anywhere — the silhouettes are what hold it in place.
+- Every clip is made FROM THE MASTER, options too ("take OFF the wrap dress, give her a completely different skater
+  dress — no belt, no bow …, then everything magenta except it"). Drawn on the transparent paper doll the model
+  re-framed the figures ~10 % bigger and moved the arms (a mug beside the hand); "replace with X" alone kept the old
+  garment's details.
+- The body is the PAPER DOLL (every changeable part removed, skin-tone bodysuit, empty hands) drawn transparent and
+  used as it is — nothing is cut from it. Word it as a "family-friendly paper-doll dress-up base" (a plain "remove
+  her dress" is refused by the safety filter).
+- Placement: layer-kit registers each clip by its silhouette on the master's (ECC on the alphas, the part itself
+  left out; an ECC that wanders off is dropped), and fits a master part's colours back to the master. The magenta is
+  strict (#FF00FF ± a few levels, + its shaded edge within 5 px): purple / lilac / pink garments are never keyed out.
+- Checks: "ráp lại = master" allows ~2–3 px (every file is the model's own re-drawing); a clip placed more than that
+  off is flagged "Khớp clipart … làm lại".
+- A picture asked transparent that comes back with a painted background (checkerboard / white) is refused and
+  drawn again.
+
+## 9b. The cut follows the AI-painted regions (bước 3b — asked 2026-10-10; paint mode, older projects)
 - Step 3b ("AI tô vùng clipart") makes, on the approved master, one in-place picture per clipart: the part painted
   flat magenta (its exact region), or another shape / colour / material drawn in place. Those pictures ARE the cut:
   a part's file is cut by its painted region (or by its own picture against the base), never guessed from the

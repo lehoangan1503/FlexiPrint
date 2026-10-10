@@ -17,6 +17,11 @@ Inputs (all the same canvas once resized to the master — every edit is an in-p
              wraps → back (whole part, under the body) + front (the part lying over the body, on top)
   photo zones: magenta edit of the base → polygon (the customer photo is clipped to it)
 
+KEY mode (every new project, 2026-10-10 — customize-tool lib/char-plan.ts): no region is worked out. Each clipart is
+its own AI picture (the part kept, everything else flat magenta, background transparent): key_part takes its
+non-magenta pixels, register_key places it by the silhouette, match_colours fits a master part back to the master;
+the transparent paper-doll base is the body file as drawn.
+
 Every file is cropped by ONE common rectangle; transparent pixels carry no colour.
 """
 
@@ -326,10 +331,27 @@ def _affine(ref: np.ndarray, img: np.ndarray, dx: float, dy: float) -> np.ndarra
     return warp
 
 
+def _sane(warp: np.ndarray, dx: float, dy: float) -> np.ndarray:
+    """An in-place edit is the same canvas: a few px and a fraction of a percent at most. An ECC that wandered off
+    (a picture mostly flat backdrop, or one that changed a lot — the key-mode paper doll: scale 0.6, 119 px) is
+    dropped for the plain shift."""
+    if abs(warp[0, 2] - dx) < 15 and abs(warp[1, 2] - dy) < 15 and np.all(np.abs(warp[:, :2] - np.eye(2)) < 0.02):
+        return warp
+    return np.float32([[1, 0, dx], [0, 1, dy]])
+
+
 def _local(ref: np.ndarray, img: np.ndarray, sigma: float = 24) -> tuple[np.ndarray, float]:
     """What is left after the affine: gpt-image re-draws each character and moves it a fraction of a pixel on its own.
     Dense flow, kept only where the pixels did not change, smoothed (σ 24 px) so it can only move whole regions — it
     never reshapes an edit's new content, which takes the flow of the pixels around it."""
+    fx, fy = _local_flow(ref, img, sigma)
+    h, wd = img.shape[:2]
+    xs, ys = np.meshgrid(np.arange(wd, dtype=np.float32), np.arange(h, dtype=np.float32))
+    out = cv2.remap(img, xs + fx, ys + fy, cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REPLICATE)
+    return np.clip(out, 0, 1), float(np.hypot(fx, fy).max())
+
+
+def _local_flow(ref: np.ndarray, img: np.ndarray, sigma: float = 24) -> tuple[np.ndarray, np.ndarray]:
     g1 = _gray(ref).clip(0, 255).astype(np.uint8)
     g2 = _gray(img).clip(0, 255).astype(np.uint8)
     dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_ULTRAFAST)
@@ -342,10 +364,7 @@ def _local(ref: np.ndarray, img: np.ndarray, sigma: float = 24) -> tuple[np.ndar
     conf = np.clip(den / 0.02, 0, 1)
     fx = k(f[..., 0] * w) / (den + 1e-6) * conf
     fy = k(f[..., 1] * w) / (den + 1e-6) * conf
-    h, wd = g1.shape
-    xs, ys = np.meshgrid(np.arange(wd, dtype=np.float32), np.arange(h, dtype=np.float32))
-    out = cv2.remap(img, xs + fx, ys + fy, cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REPLICATE)
-    return np.clip(out, 0, 1), float(np.hypot(fx, fy).max())
+    return fx.astype(np.float32), fy.astype(np.float32)
 
 
 def register(ref: np.ndarray, img: np.ndarray) -> tuple[np.ndarray, dict]:
@@ -357,7 +376,7 @@ def register(ref: np.ndarray, img: np.ndarray) -> tuple[np.ndarray, dict]:
     t0 = tile_shifts(ref, img)
     out = img
     try:
-        warp = _affine(ref, img, before["dx"], before["dy"])
+        warp = _sane(_affine(ref, img, before["dx"], before["dy"]), before["dx"], before["dy"])
         out = np.clip(cv2.warpAffine(img, warp, (img.shape[1], img.shape[0]), flags=cv2.INTER_LANCZOS4 | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_REPLICATE), 0, 1)
     except cv2.error:
         m = np.float32([[1, 0, -before["dx"]], [0, 1, -before["dy"]]])
@@ -366,6 +385,146 @@ def register(ref: np.ndarray, img: np.ndarray) -> tuple[np.ndarray, dict]:
     t1 = tile_shifts(ref, out)
     p90 = lambda t: round(float(np.percentile(t, 90)), 3) if len(t) else 0.0
     return out, {**before, "before": p90(t0), "residual": p90(t1), "max": round(float(t1.max()), 3) if len(t1) else 0.0, "local": round(moved, 2)}
+
+
+# ---- key mode: one AI picture per clipart --------------------------------------------------------------------
+# A clip keeps ONE part as drawn; everything else of the figures is a flat magenta silhouette, the background is
+# transparent (customize-tool lib/char-plan.ts KEY). The file is the clip's own non-magenta pixels: its colours and
+# its cut line come from the same picture, so no neighbour sticks to the edge.
+
+MAGENTA = np.array([1.0, 0.0, 1.0], np.float32)
+
+
+def _premul_warp(rgba: np.ndarray, fn) -> np.ndarray:
+    """Move an RGBA picture without dragging transparent (or magenta) colours into the edge: colours premultiplied."""
+    a = rgba[..., 3:4]
+    moved = fn(np.dstack([rgba[..., :3] * a, a]))
+    out_a = np.clip(moved[..., 3:4], 0, 1)
+    col = np.where(out_a > 1e-4, moved[..., :3] / np.maximum(out_a, 1e-4), 0)
+    return np.dstack([np.clip(col, 0, 1), out_a]).astype(np.float32)
+
+
+def register_rgba(ref: np.ndarray, rgba: np.ndarray) -> tuple[np.ndarray, dict]:
+    """`register` for a picture with its own alpha (the key-mode base): measured on its colours over white, the same
+    affine + local flow applied to colours and alpha."""
+    rgb = on_white(rgba[..., :3], rgba[..., 3])
+    before = align(ref, rgb)
+    t0 = tile_shifts(ref, rgb)
+    h, w = rgb.shape[:2]
+    try:
+        warp = _sane(_affine(ref, rgb, before["dx"], before["dy"]), before["dx"], before["dy"])
+    except cv2.error:
+        warp = np.float32([[1, 0, before["dx"]], [0, 1, before["dy"]]])
+    aff = lambda x: cv2.warpAffine(x, warp, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    rgba1 = _premul_warp(rgba, aff)
+    rgb1 = on_white(rgba1[..., :3], rgba1[..., 3])
+    fx, fy = _local_flow(ref, rgb1)
+    xs, ys = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
+    rgba2 = _premul_warp(rgba1, lambda x: cv2.remap(x, xs + fx, ys + fy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0))
+    t1 = tile_shifts(ref, on_white(rgba2[..., :3], rgba2[..., 3]))
+    p90 = lambda t: round(float(np.percentile(t, 90)), 3) if len(t) else 0.0
+    return rgba2, {**before, "before": p90(t0), "residual": p90(t1), "max": round(float(t1.max()), 3) if len(t1) else 0.0, "local": round(float(np.hypot(fx, fy).max()), 2)}
+
+
+def key_magenta(col: np.ndarray, a: np.ndarray) -> np.ndarray:
+    """The magenta silhouettes of a clip (a little looser than `magenta`: the fill is never exactly #FF00FF), as big
+    blobs only — a magenta-ish speck inside the part stays the part's."""
+    r, g, b = col[..., 0], col[..., 1], col[..., 2]
+    # Strict: the fill comes back within a few levels of #FF00FF; a purple / lilac / pink garment must not match
+    # (a looser test punched holes in a royal-purple dress, 2026-10-10).
+    m = (r > 0.8) & (b > 0.8) & (g < 0.3) & (np.abs(r - b) < 0.15) & (a > 0.3)
+    # Every bit counts, however small: the magenta showing through the gaps between hair strands is a few px each
+    # (dropping islands < 400 px left pink streaks in the hair, 2026-10-10). Then the shaded magenta right beside it
+    # (a strand's shadow on the fill): magenta hue, r ≈ b, little green — within 5 px of the true fill only.
+    loose = (r > 0.4) & (b > 0.4) & (g < 0.55 * np.minimum(r, b)) & (np.abs(r - b) < 0.1) & (a > 0.3)
+    near = cv2.dilate(m.astype(np.uint8), kernel(5)).astype(bool)
+    return m | (loose & near)
+
+
+def key_part(rgba: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """A clip → (colours, the part's alpha, the whole silhouette's alpha). Where the part meets the magenta the edge
+    pixels are part colour mixed with magenta: un-mixed (alpha by projection on the line magenta → the part's own
+    colour nearby, colour = what is left), so no pink rim."""
+    col, a = rgba[..., :3], rgba[..., 3]
+    mag = key_magenta(col, a)
+    near = cv2.dilate(mag.astype(np.uint8), kernel(3)).astype(bool) & ~mag
+    inner = (a > 0.9) & ~cv2.dilate(mag.astype(np.uint8), kernel(3)).astype(bool)
+    own = _fill(col, inner.astype(np.float32))
+    d = own - MAGENTA
+    t = np.clip(((col - MAGENTA) * d).sum(2) / np.maximum((d * d).sum(2), 1e-3), 0, 1)
+    part_a = np.where(mag, 0.0, np.where(near, a * t, a)).astype(np.float32)
+    # The silhouettes' own rim (magenta fading into the transparent background) is no part: half-transparent pixels
+    # beside the magenta go. Then only the part's real pieces stay — crumbs along the silhouettes are dropped.
+    part_a[near & (a < 0.95)] = 0
+    # The silhouettes' outline (a dark line between the magenta and the transparent background — the model draws one
+    # now and then): what touches both is no part.
+    clear = cv2.dilate((a < 0.1).astype(np.uint8), kernel(3)).astype(bool)
+    part_a[clear & cv2.dilate(mag.astype(np.uint8), kernel(3)).astype(bool)] = 0
+    lab, n = ndi.label(part_a > 0.3)
+    if n:
+        sizes = ndi.sum(np.ones_like(part_a), lab, range(1, n + 1))
+        keep = [i + 1 for i, z in enumerate(sizes) if z >= max(150.0, 0.01 * float(sizes.max()))]
+        part_a = np.where(np.isin(lab, keep) | ((part_a <= 0.3) & cv2.dilate(np.isin(lab, keep).astype(np.uint8), kernel(2)).astype(bool)), part_a, 0).astype(np.float32)
+    un = (col - (1 - t[..., None]) * MAGENTA) / np.maximum(t[..., None], 0.15)
+    colour = np.where(near[..., None], np.clip(un, 0, 1), col)
+    # Colours under transparent / magenta pixels: the part's own, spread (an upscale or a resize never pulls pink in).
+    solid = (part_a > 0.9).astype(np.float32)
+    colour = np.where(part_a[..., None] > 0.9, colour, _fill(colour, solid))
+    return colour.astype(np.float32), part_a, a.astype(np.float32)
+
+
+def warp_rgba(rgba: np.ndarray, warp: np.ndarray) -> np.ndarray:
+    h, w = rgba.shape[:2]
+    return _premul_warp(rgba, lambda x: cv2.warpAffine(x, warp, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_CONSTANT, borderValue=0))
+
+
+def register_key(ref_a: np.ndarray, rgba: np.ndarray, part_a: np.ndarray) -> tuple[np.ndarray, dict]:
+    """→ (the affine warp to apply with warp_rgba, how well the outlines meet)."""
+    """Put a clip on the master's canvas by its SILHOUETTE (magenta + part): the model re-draws everything, so there
+    are no unchanged pixels to measure — the outline of the figures is what stayed. The part itself is left out of
+    the measure (an option's new hair has another outline than the master's). ECC affine on the blurred alphas."""
+    h, w = ref_a.shape
+    b1 = cv2.GaussianBlur(ref_a.astype(np.float32), (0, 0), 2.0)
+    b2 = cv2.GaussianBlur(rgba[..., 3].astype(np.float32), (0, 0), 2.0)
+    away = ~cv2.dilate((part_a > 0.05).astype(np.uint8), kernel(18)).astype(bool)
+    edge = cv2.dilate((np.abs(cv2.Laplacian(b1, cv2.CV_32F)) > 0.002).astype(np.uint8), kernel(4)).astype(bool)
+    mask = (away & edge).astype(np.uint8)
+    win = cv2.createHanningWindow((w, h), cv2.CV_32F)
+    (dx, dy), _ = cv2.phaseCorrelate(b1, b2, win)
+    warp = np.float32([[1, 0, dx], [0, 1, dy]])
+    before = float(np.abs(b1 - b2)[mask > 0].mean()) if mask.any() else 0.0
+    if abs(dx) > 40 or abs(dy) > 40:
+        warp = np.float32([[1, 0, 0], [0, 1, 0]])
+    try:
+        crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
+        _, found = cv2.findTransformECC(b1, b2, warp.copy(), cv2.MOTION_AFFINE, crit, mask, 5)
+        # A clip is the same canvas: a few px and a fraction of a percent at most — anything else is ECC lost.
+        if abs(found[0, 2]) < 40 and abs(found[1, 2]) < 40 and np.all(np.abs(found[:, :2] - np.eye(2)) < 0.03):
+            warp = found
+    except cv2.error:
+        pass
+    out = warp_rgba(rgba, warp)
+    after = cv2.GaussianBlur(out[..., 3], (0, 0), 2.0)
+    resid = float(np.abs(b1 - after)[mask > 0].mean()) if mask.any() else 0.0
+    # Mean alpha error on the outline band ≈ how far the outlines sit apart (px, roughly: a 1 px shift of a blurred
+    # edge ≈ 0.2).
+    return warp, {"dx": round(float(warp[0, 2]), 2), "dy": round(float(warp[1, 2]), 2), "sx": round(float(warp[0, 0]), 4), "sy": round(float(warp[1, 1]), 4), "before": round(before / 0.2, 2), "residual": round(resid / 0.2, 2)}
+
+
+def match_colours(colour: np.ndarray, part_a: np.ndarray, master: np.ndarray, master_a: np.ndarray) -> np.ndarray:
+    """A clip of the master's own part re-drawn by the model drifts in colour (silver hair came back golden): its
+    colours are fitted back to the master's on the same pixels (per Lab channel gain + offset, on the part's core)."""
+    core = cv2.erode(((part_a > 0.95) & (master_a > 0.95)).astype(np.uint8), kernel(3)).astype(bool)
+    if core.sum() < 500:
+        return colour
+    a, b = to_lab(colour), to_lab(master)
+    out = a.copy()
+    for c in range(3):
+        x, y = a[..., c][core], b[..., c][core]
+        sx = float(x.std())
+        gain = float(np.clip(y.std() / sx, 0.7, 1.4)) if sx > 1e-3 else 1.0
+        out[..., c] = (a[..., c] - x.mean()) * gain + y.mean()
+    return from_lab(out)
 
 
 def polygon_of(mask: np.ndarray, eps: float = 1.5) -> list[list[float]]:
@@ -567,6 +726,8 @@ class Slot:
     label: str
     mode: str                                # color | texture | shape
     region: np.ndarray | None = None         # color / texture: the part on the base
+    col: np.ndarray | None = None            # key mode, color / texture: the part's own clip (colours …)
+    alpha: np.ndarray | None = None          # … and alpha) — the base has no such part
     options: list[Option] = field(default_factory=list)
     colors: list[Option] = field(default_factory=list)
     wraps: bool = False
@@ -610,7 +771,7 @@ def drop_specks(a: np.ndarray, min_px: int = 40) -> tuple[np.ndarray, int]:
     return a, small
 
 
-def cut(master: np.ndarray, master_a: np.ndarray, base: np.ndarray, base_a: np.ndarray, body_region: np.ndarray, slots: list[Slot], zones: list[Zone]) -> dict:
+def cut(master: np.ndarray, master_a: np.ndarray, base: np.ndarray, base_a: np.ndarray, body_region: np.ndarray, slots: list[Slot], zones: list[Zone], redrawn: bool = False) -> dict:
     """The layer files from the reviewed regions. base / base_a: the base's colours + subject alpha (the master's
     where the base kept it). Every file is region × its picture's alpha; colours un-mixed already (matte_white)."""
     H, W = master.shape[:2]
@@ -620,21 +781,28 @@ def cut(master: np.ndarray, master_a: np.ndarray, base: np.ndarray, base_a: np.n
     backs: list[dict] = []
     tops: list[dict] = []
     middle: list[dict] = []
+    middle_parts: list[np.ndarray] = []
     body_cover = soft(A_B > 0.5, grow=2, blur=1.0)
 
     for s in slots:
         if s.mode not in ("color", "texture") or s.region is None:
             continue
-        alpha = np.clip(s.region, 0, 1) * A_B
+        own = s.col if s.col is not None else base
+        alpha = np.clip(s.region, 0, 1) * (s.alpha if s.alpha is not None else A_B)
         if (alpha > 0.5).sum() < 200:
             checks.append({"name": f"{s.label}", "ok": False, "detail": "Vùng trống — tô lại vùng ở bước phác thảo.", "piece": s.key})
             continue
         for i, o in enumerate(s.options):
+            a_o = alpha
             if s.mode == "color":
-                col = recolor(base, alpha, o.hex if i > 0 else None)
+                col = recolor(own, alpha, o.hex if i > 0 else None)
             else:
-                col = base if (i == 0 or o.col is None) else np.clip(o.col, 0, 1)
-            files.append(Out(s.key, s.label, o.name, "", np.dstack([col, alpha]), s.key))
+                col = own if (i == 0 or o.col is None) else np.clip(o.col, 0, 1)
+                if i > 0 and o.alpha is not None and s.alpha is not None:
+                    a_o = np.clip(s.region, 0, 1) * o.alpha
+            files.append(Out(s.key, s.label, o.name, "", np.dstack([col, a_o]), s.key))
+            if i == 0:
+                middle_parts.append(np.dstack([col, a_o]))
         middle.append({"key": s.key, "label": s.label, "follows": None})
 
     first_parts: list[tuple[np.ndarray, np.ndarray]] = []
@@ -690,14 +858,23 @@ def cut(master: np.ndarray, master_a: np.ndarray, base: np.ndarray, base_a: np.n
     for back, _ in first_parts:
         canvas = over(canvas, back)
     canvas = over(canvas, B)
+    for m in middle_parts:
+        canvas = over(canvas, m)
     for _, front in first_parts:
         canvas = over(canvas, front)
     vis = master_a > 0.9
     d = float(np.abs(canvas[..., :3] - master[..., :3])[vis].mean() * 255) if vis.any() else 0.0
-    checks.append({"name": "Ráp lại = master", "ok": d < 12, "detail": f"lệch màu trung bình {d:.1f}/255"})
+    checks.append({"name": "Ráp lại = master", "ok": d < (20 if redrawn else 12), "detail": f"lệch màu trung bình {d:.1f}/255" + (" (vẽ lại bởi AI — chỉ để tham khảo)" if redrawn else "")})
     holes = (master_a > 0.5) & (canvas[..., 3] < 0.5)
     extra = (master_a < 0.2) & (canvas[..., 3] > 0.5)
     off = (np.abs(canvas[..., :3] - master[..., :3]).max(2) > 0.25) & (master_a > 0.9) & (canvas[..., 3] > 0.9)
+    if redrawn:
+        # Key mode: every file is the model's own re-drawing — its lines sit a px or three off the master's. Only
+        # what is more than that apart counts (a real hole, a part left out, a stray piece).
+        tol = max(2, round(min(H, W) / 700))
+        holes = cv2.erode(holes.astype(np.uint8), kernel(tol)).astype(bool)
+        extra = cv2.erode(extra.astype(np.uint8), kernel(tol)).astype(bool)
+        off = cv2.erode(off.astype(np.uint8), kernel(tol)).astype(bool)
     n_holes, n_extra, n_off = int(clean(holes, 1, 1, 30).sum()), int(clean(extra, 1, 1, 30).sum()), int(clean(off, 1, 1, 30).sum())
     checks.append({"name": "Lỗ hổng (master có, ráp lại thiếu)", "ok": n_holes < 400, "detail": f"{n_holes:,} px — vùng đỏ"})
     checks.append({"name": "Thừa (ráp lại có, master là nền)", "ok": n_extra < 400, "detail": f"{n_extra:,} px — vùng xanh"})

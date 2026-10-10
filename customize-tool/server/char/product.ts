@@ -273,7 +273,8 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     const coloured = sl.files.some((f) => f.color !== "");
     const w = who(brief, sl.key);
     const part = w.part.replace(/\s*(style|kiểu)$/i, "").trim() || w.part;
-    regionOf.set(sl.key, imageRegion(sl.label, labelFor(sl), { display: "button", groupLabel: `${w.name} — ${part} Colour`, groupDisplay: coloured ? "swatch" : "button" }));
+    // The styles are picked by their picture (a back half's full clipart — meta.thumb), the colour by its swatch.
+    regionOf.set(sl.key, imageRegion(sl.label, labelFor(sl), { display: "image", groupLabel: `${w.name} — ${part} Colour`, groupDisplay: coloured ? "swatch" : "button" }));
   }
   for (const sl of backs) {
     const leader = regionOf.get(sl.follows ?? "");

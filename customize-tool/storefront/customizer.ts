@@ -35,6 +35,7 @@
  * A gallery without product media starts on the live canvas.
  */
 
+import { optionThumb } from "../lib/option-thumb";
 import { CT_MAIN_KEY } from "../types";
 import type {
   CtMockupEdit,
@@ -909,7 +910,15 @@ export class Customizer {
       if (display === "button") add(o.id, el("span", { class: "ct-choice__text", text: o.label }), o.label);
       else if (display === "swatch" && o.swatch) add(o.id, el("span", { class: "ct-choice__swatch", style: `background:${o.swatch}` }), o.label);
       else if (!o.image) add(o.id, el("span", { class: "ct-choice__text", text: o.label }), o.label);
-      else add(o.id, el("img", { src: o.image, alt: o.label, loading: "lazy" }), o.label);
+      else {
+        // The part cropped and centred in its tile (lib/option-thumb.ts) once it is read; the file until then.
+        const img = el("img", { src: o.image, alt: o.label, loading: "lazy" });
+        const src = o.image;
+        void optionThumb(src).then((t) => {
+          if (img.getAttribute("src") === src) img.setAttribute("src", t);
+        });
+        add(o.id, img, o.label);
+      }
     }
     return list;
   }

@@ -46,6 +46,7 @@ export function defaultCharBrief(): CtCharBrief {
     text: { enabled: false, defaultText: "", font: "Great Vibes", place: "" },
     decor: "",
     mockups: [],
+    clips: "key",
   };
 }
 
@@ -169,6 +170,8 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
     },
     decor: s(o.decor, 1000),
     mockups: arr(o.mockups).map((m) => s(m, 300)).filter(Boolean).slice(0, 6),
+    // A brief saved before "key" existed keeps its painted regions.
+    clips: o.clips === "key" ? "key" : "paint",
   };
 }
 
@@ -245,7 +248,11 @@ export function masterPrompt(brief: CtCharBrief): string {
       : "Full body, fully visible, not cropped, centred with a generous empty margin all around.",
   );
   lines.push("No accessories or props unless described. No text, no logo, no watermark.");
-  lines.push("Pure flat white background (#FFFFFF), no floor, no cast shadow, no scenery.");
+  lines.push(
+    brief.clips === "key"
+      ? "A fully transparent background (the characters alone, cut out), no floor, no cast shadow, no scenery."
+      : "Pure flat white background (#FFFFFF), no floor, no cast shadow, no scenery.",
+  );
   return lines.join("\n");
 }
 

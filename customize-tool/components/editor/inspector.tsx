@@ -69,6 +69,7 @@ import { AiStyleDialog } from "./ai-style-dialog";
 import { useAiStyles } from "./ai-styles-store";
 import { processPhoto } from "../../lib/photo-process";
 import { ctApi } from "../../lib/api-client";
+import { OptionThumb } from "./option-thumb";
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtNumber, CtSelect, CtTextarea, CtTooltip, cx } from "../ui";
 import type { DesignApi } from "./use-design";
 import { updateItem, updateRegion } from "./use-design";
@@ -1554,7 +1555,7 @@ function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionIte
                   style={CHECKER_STYLE}
                   onClick={() => (isHidden ? props.onPreviewOption(region.id, o.id) : makeDefault(o.id))}
                 >
-                  <img src={o.url} alt="" className="h-full w-full object-contain" loading="lazy" />
+                  <OptionThumb url={o.meta.thumb ?? o.url} className="h-full w-full object-contain" />
                 </button>
               </CtTooltip>
               <button
@@ -1673,7 +1674,7 @@ function ArtworkOptions(props: InspectorProps) {
               {options.map((o) => (
                 <CtTooltip key={o.id} label={o.name || "(không tên)"}>
                   <button className={cx("block aspect-square w-full overflow-hidden rounded border", shown === o.id && "ring-2 ring-sky-500")} style={CHECKER_STYLE} onClick={() => props.onPreviewOption(r.id, o.id)}>
-                    <img src={o.url} alt="" className="h-full w-full object-contain" loading="lazy" />
+                    <OptionThumb url={o.meta.thumb ?? o.url} className="h-full w-full object-contain" />
                   </button>
                 </CtTooltip>
               ))}

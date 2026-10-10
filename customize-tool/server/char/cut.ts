@@ -202,7 +202,7 @@ function pieceSigs(input: { base: string | null; slots: unknown[]; zones: unknow
     if (!slot) return "";
     if (hash < 0) return [slot.mask ?? "", ...slot.options.map((o) => o.url ?? ""), base, alphaUrl].join("|");
     const i = Number(key.slice(hash + 1));
-    return [i === 0 ? masterUrl : (slot.options[i]?.url ?? ""), slot.mask ?? "", base, alphaUrl].join("|");
+    return [i === 0 && !slot.options[0]?.url ? masterUrl : (slot.options[i]?.url ?? ""), slot.mask ?? "", base, alphaUrl].join("|");
   };
 }
 

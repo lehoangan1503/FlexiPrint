@@ -126,7 +126,7 @@ function cpaSize(aspect: string): { size: string; ratio: number } {
 }
 
 /** The company image API (OpenAI-compatible, like services/comfy providers._cpa): references go as data URIs. */
-async function drawCpa(model: string, prompt: string, refs: string[], aspect: string, fit: "crop" | "pad" = "crop"): Promise<{ data: Buffer; mime: string }> {
+async function drawCpa(model: string, prompt: string, refs: string[], aspect: string, fit: "crop" | "pad" = "crop", transparent = false): Promise<{ data: Buffer; mime: string }> {
   const key = process.env.CPA_API_KEY;
   if (!key) throw new Error("Chưa cấu hình CPA_API_KEY");
   const base = (process.env.CPA_BASE_URL || "https://cpa.next.lc/v1").replace(/\/+$/, "");
@@ -142,7 +142,7 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
   const res = await fetch(`${base}/images/${images.length ? "edits" : "generations"}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, prompt, size, ...(images.length ? { images } : {}) }),
+    body: JSON.stringify({ model, prompt, size, ...(transparent ? { background: "transparent", output_format: "png" } : {}), ...(images.length ? { images } : {}) }),
     signal: AbortSignal.timeout(300_000),
   });
   const json = (await res.json().catch(() => ({}))) as CpaImageResponse;
@@ -156,6 +156,7 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
   // character sheet on white), padded with white to it.
   const img = sharp(Buffer.from(b64, "base64"));
   const meta = await img.metadata();
+  if (transparent) await assertTransparent(Buffer.from(b64, "base64"));
   const W = meta.width ?? 1024;
   const H = meta.height ?? 1024;
   if (fit === "pad") {
@@ -163,7 +164,7 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
     const h = Math.max(H, Math.round(W / ratio));
     const left = Math.floor((w - W) / 2);
     const top = Math.floor((h - H) / 2);
-    const data = await img.extend({ left, right: w - W - left, top, bottom: h - H - top, background: "#ffffff" }).png().toBuffer();
+    const data = await img.extend({ left, right: w - W - left, top, bottom: h - H - top, background: transparent ? { r: 0, g: 0, b: 0, alpha: 0 } : "#ffffff" }).png().toBuffer();
     return { data, mime: "image/png" };
   }
   const w = Math.min(W, Math.round(H * ratio));
@@ -172,9 +173,24 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
   return { data, mime: "image/png" };
 }
 
+/**
+ * A picture asked with a transparent background really has one: gpt-image now and then paints a checkerboard (or
+ * white) instead — that picture is refused (the caller tries again).
+ */
+async function assertTransparent(png: Buffer): Promise<void> {
+  const { data, info } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
+  let clear = 0;
+  for (let i = 0; i < data.length; i++) if (data[i] < 8) clear++;
+  if (clear < info.width * info.height * 0.02) throw new Error("Ảnh không có nền trong suốt thật (model vẽ nền) — chạy lại");
+}
+
+/** Models that can draw a transparent background (lib/image-models ids). */
+export const supportsTransparent = (model: string) => model.startsWith("cpa:");
+
 /** One photo with `model` (a lib/image-models id: "cpa:<model>" or "fal:<endpoint>/edit"). */
-export async function drawImage(model: string, prompt: string, refs: string[], aspect: string, fit: "crop" | "pad" = "crop"): Promise<{ data: Buffer; mime: string }> {
-  if (model.startsWith("cpa:")) return drawCpa(model.slice(4), prompt, refs, aspect, fit);
+export async function drawImage(model: string, prompt: string, refs: string[], aspect: string, fit: "crop" | "pad" = "crop", transparent = false): Promise<{ data: Buffer; mime: string }> {
+  if (model.startsWith("cpa:")) return drawCpa(model.slice(4), prompt, refs, aspect, fit, transparent);
+  if (transparent) throw new Error(`${model} không vẽ được nền trong suốt`);
   return drawFal(model.replace(/^fal:/, "").replace(/\/edit$/, ""), prompt, refs, aspect);
 }
 

@@ -38,7 +38,7 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
   if (ctx.step === "product") return <ProductStep {...ctx} />;
   const tabs: Array<{ id: Sub; label: string; ok: boolean; note: string }> = [
     { id: "matte", label: "3a. Tách nền", ok: !!cut?.matte?.approved, note: cut?.matte?.status === "running" ? "đang chạy" : "" },
-    { id: "edits", label: "3b. AI tô vùng clipart", ok: ready, note: `${editsDone}/${plan.length}` },
+    { id: "edits", label: project.brief.clips === "key" ? "3b. AI tạo clipart" : "3b. AI tô vùng clipart", ok: ready, note: `${editsDone}/${plan.length}` },
     { id: "custom", label: "3c. Bộ custom → sản phẩm", ok: !!project.layers?.approved, note: cut?.plan?.status === "running" ? "đang phác thảo" : project.layers?.status === "building" ? "đang cắt + tạo sản phẩm" : "" },
   ];
   // The editors are modals over whichever tab is open.
@@ -118,10 +118,12 @@ function EditsSection(ctx: CharCtx) {
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <div className="flex-1">
           <h3 className="text-sm font-semibold">
-            AI tô vùng clipart ({done}/{plan.length})
+            {project.brief.clips === "key" ? "AI tạo clipart" : "AI tô vùng clipart"} ({done}/{plan.length})
           </h3>
           <p className="text-xs text-muted-foreground">
-            Mỗi clipart cần 1 ảnh AI làm trên master đã duyệt: tô hồng đúng vùng của nó, hoặc vẽ kiểu / màu khác tại chỗ. Bước 3c cắt clipart theo đúng các vùng này. Danh sách tự sinh từ brief; @flexiprint viết prompt từng ảnh, tự xem và làm lại ảnh sai. Model xê dịch phần giữ nguyên một chút: lúc cắt layer, mỗi bản được đo và kéo về đúng chỗ (còn ≤ 0,3 px mới đạt, đỏ = làm lại).
+            {project.brief.clips === "key"
+              ? "Mỗi clipart là 1 ảnh AI trên master đã duyệt: giữ đúng phần đó (hoặc vẽ kiểu mới lên thân), mọi thứ khác thành bóng hồng, nền trong suốt — bước 3c lấy thẳng phần không hồng làm clipart, không cắt theo vùng. Ảnh “Thân” = búp bê giấy bỏ mọi phần đổi được, dùng nguyên làm lớp thân."
+              : "Mỗi clipart cần 1 ảnh AI làm trên master đã duyệt: tô hồng đúng vùng của nó, hoặc vẽ kiểu / màu khác tại chỗ. Bước 3c cắt clipart theo đúng các vùng này."} Danh sách tự sinh từ brief; @flexiprint viết prompt từng ảnh, tự xem và làm lại ảnh sai. Model xê dịch phần giữ nguyên một chút: lúc cắt layer, mỗi bản được đo và kéo về đúng chỗ (còn ≤ 0,3 px mới đạt, đỏ = làm lại).
           </p>
         </div>
         {editable && (

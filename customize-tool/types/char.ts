@@ -116,6 +116,13 @@ export interface CtCharBrief {
   decor: string;
   /** Lifestyle mockup scenes. */
   mockups: string[];
+  /**
+   * How the clipart files are made (asked 2026-10-10):
+   *   key    one AI picture per clipart — the part kept as drawn, everything else of the figures flat magenta, the
+   *          background transparent; the file is that picture's own non-magenta pixels (lib/char-plan.ts)
+   *   paint  (older projects) magenta regions painted on the master, the pixels cut from the master / base
+   */
+  clips: "key" | "paint";
 }
 
 export type CtCharStatus = "brief" | "master" | "layers" | "product";

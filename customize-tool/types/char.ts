@@ -20,6 +20,8 @@ export interface CtCharProduct {
   templateId?: string | null;
   /** How the picture must sit on that piece, for the image model (lib/print-template layoutHint). */
   layout?: string;
+  /** The material preset of the product (lib/materials: "ceramic_gloss" for a ceramic ornament…); empty = by cut. */
+  material?: string;
 }
 
 /**
@@ -83,23 +85,112 @@ export interface CtCharSubject {
   slots: CtCharSlot[];
 }
 
-/** A place in the picture the customer fills with their own photo (pet face, framed photo…). */
+/**
+ * How the customer's photo is shown in a zone:
+ *   ai     redrawn in a style the customer picks (`styles`, ct_ai_styles refs "ai:<uuid>"), cut out
+ *   face   only the head is kept, cut out (a face on an elf body — services/face-detect)
+ *   photo  as uploaded
+ */
+export type CtCharPhotoTreat = "ai" | "face" | "photo";
+
+/** A place in the picture the customer fills with their own photo (pet face, framed photo, the pet itself…). */
 export interface CtCharPhotoZone {
   id: string;
-  /** "the photo frame she holds", "the corgi's face" — the AI paints it to find it. */
+  /** "the photo frame she holds", "the corgi's face" — the AI paints it to find it (a bộ nhân vật). In a bộ ảnh
+   * khách: what the photo shows ("the customer's pet, sitting"). */
   where: string;
   label: string;
+  /** Absent = "photo" (zones made before 2026-10-15). */
+  treat?: CtCharPhotoTreat;
+  /** treat "ai": the styles offered, first = default. */
+  styles?: string[];
+  /** A bộ ảnh khách: where the photo sits on the piece (shares of the safe area); null = the middle, above the texts. */
+  box?: CtCharBox | null;
 }
 
-export interface CtCharText {
-  enabled: boolean;
+/** A box on the piece as shares (0–1) of its safe area (the frame without a khuôn in). */
+export interface CtCharBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * What a set is (asked 2026-10-15):
+ *   character  drawn characters the customer dresses (doll + every option drawn on it, pixel lock)
+ *   photo      a bộ ảnh khách: the customer's own photo is the hero; the set is the decorations around it (wings,
+ *              halo, a band of clouds over the photo's cut edge…), each option drawn on its own, + backgrounds + texts
+ */
+export type CtCharSetKind = "character" | "photo";
+
+/**
+ * Where a decoration of a bộ ảnh khách sits, from the photo zone:
+ *   behind  behind the photo, wider than it (angel wings)
+ *   above   over the top of the photo (a halo, a crown)
+ *   bottom  a band over the bottom of the photo and the piece's bottom edge — hides where the photo's body is cut
+ *           (clouds, flowers, snow); the texts go over it
+ *   free    `box`
+ */
+export type CtCharElementPlace = "behind" | "above" | "bottom" | "free";
+
+/** One decoration the customer picks (bộ ảnh khách). */
+export interface CtCharElement {
+  id: string;
+  /** What the customer is asked, English: "Wings", "Halo colour". */
+  name: string;
+  place: CtCharElementPlace;
+  /** shape: every option drawn on its own · color: the first drawn, the others recoloured from it (same outline). */
+  mode: "shape" | "color";
+  /** shape: an English description each · color: #rrggbb each. */
+  options: CtCharOption[];
+  /** One picture per background instead of options, drawn in that background's colours — follows the customer's
+   * background choice (the band of clouds that matches each sky). */
+  perBackdrop: boolean;
+  /** On the piece (shares of the safe area); null = from `place`. */
+  box: CtCharBox | null;
+}
+
+/** Where a text sits on the product, around the characters. */
+export type CtCharTextPlace = "top" | "bottom" | "left" | "right";
+
+/**
+ * A text the customer personalises (asked 2026-10-14: a name left and right of the characters, a slogan picked from
+ * the shop's list):
+ *   input   the customer types it (defaultText as the example)
+ *   choice  the customer picks one of `choices` (the first is the default)
+ */
+export interface CtCharTextField {
+  id: string;
+  /** What the customer is asked, in English: "Name on the left", "Choose your slogan". */
+  label: string;
+  kind: "input" | "choice";
   defaultText: string;
+  choices: string[];
+  /** A Google font of config.ts CT_FONTS. */
   font: string;
-  /** "under the characters", "on the left, vertical"… */
-  place: string;
+  /** #rrggbb */
+  color: string;
+  place: CtCharTextPlace;
+  maxChars: number;
+}
+
+/**
+ * A background the customer can pick, drawn behind the characters over the whole piece (asked 2026-10-14: snowflakes,
+ * Halloween icons, cute emoji). The image model draws it from `value` (step 4, server/char/backdrops.ts); the
+ * picture is a ct_char_images row kind "blank", role "backdrop:<id>".
+ */
+export interface CtCharBackdrop {
+  id: string;
+  /** What the customer sees, English: "Snowflakes". */
+  name: string;
+  /** English description for the image model. */
+  value: string;
 }
 
 export interface CtCharBrief {
+  /** What the set is (absent in briefs before 2026-10-15 = "character"). */
+  kind: CtCharSetKind;
   /** The editor's own words (vague is fine — brainstorm turns it into the rest). */
   idea: string;
   product: CtCharProduct;
@@ -111,18 +202,14 @@ export interface CtCharBrief {
   scene: string;
   subjects: CtCharSubject[];
   photoZones: CtCharPhotoZone[];
-  text: CtCharText;
-  /** Background decoration around the characters (separate art, not part of the master). */
-  decor: string;
+  /** A bộ ảnh khách's decorations, bottom → top within their place. */
+  elements: CtCharElement[];
+  /** The texts the customer personalises (names, a slogan), each in its place around the characters. */
+  texts: CtCharTextField[];
+  /** The backgrounds the customer picks from (none = the product's own colour); never part of the master. */
+  backdrops: CtCharBackdrop[];
   /** Lifestyle mockup scenes. */
   mockups: string[];
-  /**
-   * How the clipart files are made (asked 2026-10-10):
-   *   key    one AI picture per clipart — the part kept as drawn, everything else of the figures flat magenta, the
-   *          background transparent; the file is that picture's own non-magenta pixels (lib/char-plan.ts)
-   *   paint  (older projects) magenta regions painted on the master, the pixels cut from the master / base
-   */
-  clips: "key" | "paint";
 }
 
 export type CtCharStatus = "brief" | "master" | "layers" | "product";
@@ -220,6 +307,10 @@ export interface CtCharLayerFile {
   imageId: string;
   url: string;
   thumbUrl: string;
+  /** A part made of a back + a front layer (hair): the option as it is seen — its back, the whole part (thumbnails,
+   * the option's picture in the product). */
+  viewUrl?: string;
+  viewThumbUrl?: string;
   /** Option name (shape / texture / colour). */
   option: string;
   /** Colour name of a recoloured shape ("" otherwise). */
@@ -228,6 +319,34 @@ export interface CtCharLayerFile {
   bbox?: number[];
   /** The plan piece it was cut from (CtCharPiece.key) — its region is where to fix it. */
   piece?: string;
+  /** Its colours over the whole canvas (JPEG): pixels a hand edit adds are painted from these. */
+  plateUrl?: string;
+  /** Edited by hand (server/char/file-edit.ts): the mask it was given (PNG alpha, the set's canvas at `editCrop`),
+   * applied again when the set is cut again — every clipart stays as the editor left it. */
+  editMaskUrl?: string;
+  editCrop?: CtCharCrop;
+  /** What the editor started from (the plain cut), on the same canvas: a new cut gets
+   * only the difference again (what was erased / added), so the rest takes the new cut's edges. */
+  editBaseUrl?: string;
+  /** Moved by hand in the editor: [dx, dy] px on the set's canvas from where it was cut (every colour of the option,
+   * back and front together) — a new cut is moved the same. */
+  offset?: number[];
+  /** Earlier versions of this file (a move: every file it moved), newest last ("Hoàn tác"). */
+  history?: CtCharFileVersion[];
+}
+
+/** Where the set's canvas sits on the master at print size. */
+export interface CtCharCrop {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** One saved state of a file group before a hand edit: each slot key → its file entry then. */
+export interface CtCharFileVersion {
+  at: string;
+  files: Array<{ slot: string; file: Omit<CtCharLayerFile, "history"> }>;
 }
 
 export interface CtCharLayerSlot {
@@ -268,6 +387,10 @@ export interface CtCharLayerSet {
   /** Where the files stacked back differ from the master (red = hole, blue = extra, yellow = colour), same canvas. */
   diffUrl?: string;
   diffPath?: string;
+  /** The canvas on the master (layer-kit crop). */
+  crop?: CtCharCrop;
+  /** The files' colour plates and edit masks on R2 (removed with the next cut). */
+  extraPaths?: string[];
   /** The editor checked the files: final, handed on to the products. */
   approved?: boolean;
 }
@@ -304,24 +427,19 @@ export interface CtCharMatte {
   at: string;
 }
 
-/** A picture layers are cut from, at print size: the master, the base, each shape / texture option. */
+/** A picture layers are cut from, at print size, registered onto the master: the master, unwrap, base, each shape /
+ * texture option (lib/char-plan.ts). Its alpha is gpt-image's own cut-out. */
 export interface CtCharPicture {
-  /** "master" | "base" | "opt.<slot>.<i>" | "tex.<slot>.<i>". */
+  /** "master" | "unwrap" | "base" | "opt.<slot>.<i>" | "tex.<slot>.<i>". */
   id: string;
   label: string;
   colourUrl: string;
   colourPath: string;
   previewUrl: string;
   previewPath: string;
-  /** Its subject alpha as planned (the master's: always the matte's current one). */
+  /** Its alpha (the master's: always the matte's current one — null here). */
   alphaUrl: string | null;
   alphaPath: string | null;
-  /** An edit: its own matte + where it kept its parent — the parent's (hand-fixed) alpha holds there at cut time. */
-  ownUrl: string | null;
-  ownPath: string | null;
-  keepUrl: string | null;
-  keepPath: string | null;
-  parent: string | null;
 }
 
 export type CtCharPieceKind = "body" | "part" | "zone";
@@ -365,8 +483,23 @@ export interface CtCharCutState {
  *   master      the agent writes the master prompt, draws candidates, looks at them, refines in place; the editor
  *               approves one (imageId set = refine that master by `request`)
  *   edits       the agent writes the prompt of every in-place edit the brief needs, runs them, checks, redoes
+ *   chat        the sticky chat of the page: anything the editor asks on any tab (with screenshots / pictures dragged
+ *               in) — the agent gets the whole set (brief, masters, edits, regions, files, products) and every tool
  */
-export type CtCharTaskStep = "brainstorm" | "master" | "edits";
+export type CtCharTaskStep = "brainstorm" | "master" | "edits" | "chat";
+
+/** The tab of the page the editor was on when they wrote a chat request. */
+export type CtCharChatTab = "brief" | "master" | "layers" | "product";
+
+/** A picture sent with a chat request: a screenshot / file pasted or dropped, or a picture of the page dragged in. */
+export interface CtCharChatAttachment {
+  url: string;
+  /** The page's own picture (master, edit, layer file…) when it was dragged from the page. */
+  imageId: string | null;
+  /** What it is, as the page knows it ("Master #2", "Người 1 — hair — lớp sau: Long Wavy · Auburn", "Ảnh chụp màn hình"). */
+  label: string;
+  source: "screenshot" | "file" | "page";
+}
 
 export interface CtCharTaskInput {
   projectId: string;
@@ -377,6 +510,10 @@ export interface CtCharTaskInput {
   imageId: string | null;
   /** edits: only these roles (empty = whatever is missing). */
   roles: string[];
+  /** chat: the tab the editor was on, its section ("3a" | "3b" | "3c" | ""), and the pictures sent with it. */
+  tab?: CtCharChatTab;
+  section?: string;
+  attachments?: CtCharChatAttachment[];
 }
 
 export interface CtCharTaskResult {

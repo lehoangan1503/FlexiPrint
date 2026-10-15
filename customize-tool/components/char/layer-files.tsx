@@ -6,14 +6,17 @@
  */
 
 import { useState } from "react";
-import { Scissors } from "lucide-react";
-import type { CtCharLayerFile, CtCharLayerSet } from "../../types";
-import { CHECKER_STYLE, CtButton, CtModal, cx } from "../ui";
+import { Pencil, Scissors } from "lucide-react";
+import type { CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot } from "../../types";
+import { CHECKER_STYLE, CtButton, CtModal, FLOAT_BTN, cx } from "../ui";
 
-export function LayerFiles({ set, onFix }: { set: CtCharLayerSet; onFix: ((piece: string) => void) | null }) {
+export function LayerFiles({ set, onFix }: { set: CtCharLayerSet; onFix: ((file: CtCharLayerFile) => void) | null }) {
   const [open, setOpen] = useState<CtCharLayerFile | null>(null);
   const [colour, setColour] = useState<Record<string, string>>({});
-  const total = set.slots.reduce((n, s) => n + s.files.length, 0);
+  // A part made of a back + a front layer (hair) is listed once, by its front: the back is the whole part as drawn
+  // (its thumbnail), only the front is edited (asked 2026-10-13).
+  const slots = set.slots.filter((s) => !s.follows);
+  const total = slots.reduce((n, s) => n + s.files.length, 0);
   const colourOf = (key: string, files: CtCharLayerFile[]) => colour[key] ?? colourGroups(files)[0] ?? "";
   return (
     <div className="space-y-3">
@@ -21,24 +24,34 @@ export function LayerFiles({ set, onFix }: { set: CtCharLayerSet; onFix: ((piece
         <h4 className="text-sm font-semibold">Tất cả file ({total})</h4>
         <p className="text-xs text-muted-foreground">Bấm 1 file để xem lớn. File sai thì sửa ở gốc của nó (vùng lớp hoặc nền master) rồi cắt lại — mọi màu / kiểu của lớp đó được sửa cùng lúc.</p>
       </div>
-      {set.slots.map((s) => (
-        <div key={s.key}>
-          <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {s.label} ({s.files.length})
-            <ColourPick colours={colourGroups(s.files)} value={colourOf(s.key, s.files)} onChange={(c) => setColour((cur) => ({ ...cur, [s.key]: c }))} />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {s.files.filter((f) => colourGroups(s.files).length < 2 || f.color === colourOf(s.key, s.files)).map((f) => (
-              <button key={f.imageId} onClick={() => setOpen(f)} className="w-24 overflow-hidden rounded-md border text-left hover:ring-2 hover:ring-orange-400">
-                <div className="aspect-square" style={CHECKER_STYLE}>
-                  <Thumb set={set} file={f} />
+      {slots.map((s) => {
+        const back = set.slots.find((x) => x.follows === s.key);
+        return (
+          <div key={s.key}>
+            <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {s.label} ({s.files.length}){back && <span className="font-normal normal-case tracking-normal">— ảnh: cả bộ (lớp sau đi kèm) · bút: sửa lớp trước</span>}
+              <ColourPick colours={colourGroups(s.files)} value={colourOf(s.key, s.files)} onChange={(c) => setColour((cur) => ({ ...cur, [s.key]: c }))} />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {s.files.filter((f) => colourGroups(s.files).length < 2 || f.color === colourOf(s.key, s.files)).map((f) => (
+                <div key={f.imageId} className="relative">
+                  <button onClick={() => setOpen(f)} className="w-24 overflow-hidden rounded-md border text-left hover:ring-2 hover:ring-orange-400">
+                    <div className="aspect-square" style={CHECKER_STYLE}>
+                      <Thumb set={set} file={backFile(back, f)} />
+                    </div>
+                    <div className="truncate px-1 py-0.5 text-[10px]">{[f.option, f.color].filter(Boolean).join(" · ")}</div>
+                  </button>
+                  {onFix && (
+                    <button title="Sửa clipart này" onClick={() => onFix(f)} className={`absolute right-1 top-1 p-1.5 ${FLOAT_BTN}`}>
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  )}
                 </div>
-                <div className="truncate px-1 py-0.5 text-[10px]">{[f.option, f.color].filter(Boolean).join(" · ")}</div>
-              </button>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
       <CtModal open={!!open} onOpenChange={(o) => !o && setOpen(null)} title={open ? [set.slots.find((s) => s.files.includes(open))?.label, open.option, open.color].filter(Boolean).join(" · ") : ""} wide>
         {open && (
           <div className="space-y-3">
@@ -51,16 +64,16 @@ export function LayerFiles({ set, onFix }: { set: CtCharLayerSet; onFix: ((piece
                   mở PNG gốc
                 </a>
               </span>
-              {onFix && open.piece && (
+              {onFix && (
                 <CtButton
                   onClick={() => {
-                    const piece = open.piece!;
+                    const f = open;
                     setOpen(null);
-                    onFix(piece);
+                    onFix(f);
                   }}
                 >
                   <Scissors className="h-4 w-4" />
-                  Sửa vùng của lớp này
+                  Sửa clipart này
                 </CtButton>
               )}
             </div>
@@ -83,14 +96,22 @@ export function Thumb({ set, file }: { set: CtCharLayerSet; file: CtCharLayerFil
     <div
       className="h-full w-full bg-no-repeat"
       style={{
-        backgroundImage: `url(${file.thumbUrl || file.url})`,
+        backgroundImage: `url(${file.viewThumbUrl || file.thumbUrl || file.url})`,
         backgroundSize: `${(set.width / side) * 100}% ${(set.height / side) * 100}%`,
         backgroundPosition: `${((cx - side / 2) / (set.width - side || 1)) * 100}% ${((cy - side / 2) / (set.height - side || 1)) * 100}%`,
       }}
       role="img"
       aria-label={file.option}
+      // Dragged into the sticky chat (char-chat.tsx reads data-chat-url).
+      draggable
+      data-chat-url={file.url}
     />
   );
+}
+
+/** The file to show for an option of a part made of a back + a front layer: its back (the whole part). */
+export function backFile(back: CtCharLayerSlot | null | undefined, f: CtCharLayerFile): CtCharLayerFile {
+  return back?.files.find((x) => x.option === f.option && x.color === f.color) ?? f;
 }
 
 /** The colours a slot's files come in (a shape part × its colours), in order; empty or one = no colour sets. */

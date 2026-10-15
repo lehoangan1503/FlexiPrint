@@ -64,7 +64,6 @@ import { useImageSize } from "./use-image-size";
 import { defaultRegionSelection, formOrder, hasTestPhoto, isLinkedLayer, isValidDate, linkMismatches, makeRegion, normalizeRegion, textMode, variantsOf, ZONE_TEXT_STYLE_KEYS, zoneSubtree } from "../../lib/design";
 import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
 import { PhotoGuideDialog } from "./photo-guide-dialog";
-import { aiStyleModel } from "../../lib/ai-style-models";
 import { AiStyleDialog } from "./ai-style-dialog";
 import { useAiStyles } from "./ai-styles-store";
 import { processPhoto } from "../../lib/photo-process";
@@ -700,7 +699,9 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
     ctApi.photoCapabilities().then(setCaps).catch(() => setCaps(null));
   }, []);
 
-  const selectedAi = styles.find((s) => isAiStyleRef(s) && ai.styles.some((x) => aiStyleRef(x.id) === s));
+  /** The zone's AI styles still in the library (the first = the default one when none is set). */
+  const pickedAi: CtPhotoStyleRef[] = styles.filter((s) => isAiStyleRef(s) && ai.styles.some((x) => aiStyleRef(x.id) === s));
+  const selectedAi = pickedAi.includes(cfg.photo.defaultStyle) ? cfg.photo.defaultStyle : pickedAi[0];
   /** Built-in "Watercolor + Ink" first, then any built-in, then the first in the library. */
   const defaultAi = (): CtPhotoStyleRef | null => {
     const pick =
@@ -708,7 +709,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
     return pick ? aiStyleRef(pick.id) : null;
   };
 
-  // The AI tab always has exactly one style: the default one as soon as the tab is picked.
+  // The AI tab always has at least one style: the default one as soon as the tab is picked.
   useEffect(() => {
     if (tab !== "ai" || !ai.loaded || selectedAi) return;
     const ref = defaultAi();
@@ -727,7 +728,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
     const same = styles.filter((s) => styleFamily(s) === t);
     if (t === "ai") {
       const ref = selectedAi ?? defaultAi();
-      set(ref ? { mode: t, styles: [ref], defaultStyle: ref } : { mode: t });
+      set(ref ? { mode: t, styles: pickedAi.length ? pickedAi : [ref], defaultStyle: ref } : { mode: t });
     } else {
       const list: CtPhotoStyleRef[] = t === "face" ? CT_FACE_STYLES.map((s) => s.id) : same.length ? same : ["original"];
       // A face is a trimmed head cut-out: "contain" keeps its ears / chin inside the frame, which fits itself to the head.
@@ -737,12 +738,14 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
 
   /**
    * Free styles: any number, customer picks from a dropdown (catalog order).
-   * AI style: exactly one (picked in the AI tab's select), no dropdown for the customer — they upload and wait.
-   * The two modes don't mix (lib/design.ts normalizePhotoConfig enforces it too).
+   * AI styles: any number (≥ 1, library order), customer picks by demo picture.
+   * The families don't mix (lib/design.ts normalizePhotoConfig enforces it too).
    */
   const toggleStyle = (ref: CtPhotoStyleRef, on: boolean) => {
     if (isAiStyleRef(ref)) {
-      set(on ? { styles: [ref], defaultStyle: ref } : { styles: ["original"], defaultStyle: "original" });
+      const next: CtPhotoStyleRef[] = ai.styles.map((x) => aiStyleRef(x.id)).filter((s) => (s === ref ? on : pickedAi.includes(s)));
+      if (next.length === 0) return;
+      set({ mode: "ai", styles: next, defaultStyle: next.includes(cfg.photo.defaultStyle) ? cfg.photo.defaultStyle : next[0] });
       return;
     }
     const family = styleFamily(ref);
@@ -776,7 +779,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
 
   const renderTest = async (sourceUrl: string, style: CtPhotoStyleRef, base: CtPhotoSelection) => {
     setError(null);
-    const text = needsServer(style, cfg.photo.cutout) ? `Đang xử lý ${label(style)}${isAiStyleRef(style) ? " (AI, ~10–20 giây)" : ""}…` : "Đang lọc…";
+    const text = needsServer(style, cfg.photo.cutout) ? `Đang xử lý ${label(style)}${isAiStyleRef(style) ? " (AI, ~30–60 giây)" : ""}…` : "Đang lọc…";
     setWorking(text);
     onPhotoBusy(region.id, text);
     try {
@@ -791,7 +794,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
   };
 
   const warn = [
-    caps && styles.some(isAiStyleRef) && !caps.aiStyles ? "Style AI cần FAL_KEY trên server." : "",
+    caps && styles.some(isAiStyleRef) && !caps.aiStyles ? "Style AI cần CPA_API_KEY trên server." : "",
     caps && cfg.photo.cutout && !caps.cutout ? "Tách nền cần CT_BG_REMOVER_URL, FAL_KEY hoặc 1 AI provider." : "",
     caps && tab === "face" && !caps.faceDetect ? "Face cần service face-detect (CT_FACE_DETECT_URL)." : "",
     ai.error ?? "",
@@ -889,26 +892,38 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
             </div>
             {ai.styles.length === 0 && !ai.loading && <p className="rounded border border-dashed p-2 text-center text-[11px] text-muted-foreground">Chưa có style AI nào.</p>}
             {ai.styles.length > 0 && (
-              <CtSelect<CtPhotoStyleRef>
-                value={selectedAi ?? "original"}
-                onChange={(ref) => set({ styles: [ref], defaultStyle: ref })}
-                options={ai.styles.map((st) => ({ value: aiStyleRef(st.id), label: st.name }))}
-              />
+              <div className="grid grid-cols-3 gap-1.5">
+                {ai.styles.map((st) => {
+                  const ref = aiStyleRef(st.id);
+                  const on = pickedAi.includes(ref);
+                  return (
+                    <div key={st.id} className={cx("relative overflow-hidden rounded-md border text-left", on ? "border-sky-500 ring-1 ring-sky-500" : "opacity-70 hover:opacity-100")}>
+                      <button type="button" className="block w-full" title={on ? "Bỏ style này" : "Cho khách chọn style này"} onClick={() => toggleStyle(ref, !on)}>
+                        <div className="flex aspect-square items-center justify-center bg-[repeating-conic-gradient(#f1f1f1_0_25%,#fff_0_50%)] bg-[length:12px_12px]">
+                          {st.params.demoUrl ? <img src={st.params.demoUrl} alt={st.name} className="h-full w-full object-contain" /> : <span className="px-1 text-center text-[10px] text-muted-foreground">chưa có demo</span>}
+                        </div>
+                        <div className="truncate px-1 py-0.5 text-[10px] font-medium">{st.name}</div>
+                      </button>
+                      {on && <span className="absolute left-1 top-1 rounded bg-sky-500 px-1 text-[9px] font-semibold text-white">{ref === selectedAi ? "Mặc định" : "Bật"}</span>}
+                      <button type="button" className="absolute right-1 top-1 rounded bg-background/80 px-1 text-[9px] hover:bg-background" title={st.can_edit ? "Sửa prompt / tạo ảnh demo" : "Xem style"} onClick={() => setDialog(st)}>
+                        {st.can_edit ? "Sửa" : "Xem"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             )}
-            {(() => {
-              const st = ai.styles.find((x) => aiStyleRef(x.id) === selectedAi);
-              if (!st) return null;
-              return (
-                <button type="button" className="w-full rounded-md border border-sky-500/60 bg-sky-500/5 p-2 text-left" onClick={() => setDialog(st)}>
-                  <div className="line-clamp-2 text-[11px] leading-snug text-muted-foreground">{st.prompt}</div>
-                  <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
-                    <span className="rounded bg-muted px-1">{aiStyleModel(st.model).label}</span>
-                    <span className="rounded bg-muted px-1">{st.owner}</span>
-                    {!st.can_edit && <span className="rounded bg-muted px-1">chỉ xem</span>}
-                  </div>
-                </button>
-              );
-            })()}
+            {pickedAi.length > 1 && (
+              <div className="grid grid-cols-2 gap-2">
+                <CtField label="Nhãn cho khách">
+                  <CtInput value={cfg.photo.styleLabel} placeholder="Choose style" onChange={(e) => set({ styleLabel: e.target.value })} />
+                </CtField>
+                <CtField label="Mặc định">
+                  <CtSelect<CtPhotoStyleRef> value={selectedAi ?? pickedAi[0]} onChange={(defaultStyle) => set({ defaultStyle })} options={pickedAi.map((id) => ({ value: id, label: label(id) }))} />
+                </CtField>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">Bấm ảnh để bật / tắt — khách chọn style theo ảnh demo. GPT Image 2.5, ~30–60 giây mỗi ảnh khách.</p>
           </div>
         )}
 

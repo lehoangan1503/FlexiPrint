@@ -23,7 +23,6 @@
  *   GET    products/:id/shopify          → CtShopifyInfo (shop + the linked Shopify product now)
  *   GET    shopify/products?q=           → { products } Shopify products to deploy onto
  *   GET    shopify/collections · POST {title}  → collections (deploy page badges; the starred one = breadcrumb)
- *   GET    settings/image-model · PUT { model }           model ảnh AI cho cả team (server/settings.ts)
  *   GET    price-tables · POST CtPriceTableBody · PATCH :id · DELETE :id   bảng giá (server/price-tables.ts)
  *   POST   products/:id/assets           multipart: file, role, parent_id?, name?, meta?
  *   PATCH  assets/:id                    CtUpdateAssetBody
@@ -63,6 +62,7 @@
  *   POST   ai-styles                     CtAiStyleBody
  *   PATCH  ai-styles/:id                 CtAiStyleBody
  *   DELETE ai-styles/:id                 → 204
+ *   POST   ai-styles/:id/demo            [form: sample] → { style } with params.demoUrl (the style on a sample photo)
  *
  * Clipart library (global, migration 006; see server/library.ts):
  *   GET    library/categories            → { categories, uncategorized, admin }
@@ -120,7 +120,6 @@ import * as packs from "./mockup-packs";
 import { dispatchChar } from "./char/router";
 import * as packImages from "./pack-images";
 import * as prices from "./price-tables";
-import * as settings from "./settings";
 import { mcpEndpoint } from "./mcp/server";
 import { agentStatus, answerAgentTask, cancelAgentTask, createAgentTask, getAgentTask, listAgentTasks } from "./agent/tasks";
 
@@ -188,10 +187,6 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
   if (head === "shopify" && id === "products" && !sub && method === "GET") return h.shopifySearch(req.nextUrl.searchParams.get("q")?.trim() ?? "");
   if (head === "shopify" && id === "collections" && !sub && method === "GET") return h.shopifyCollections();
   if (head === "shopify" && id === "collections" && !sub && method === "POST") return h.shopifyCreateCollection(await readJson<unknown>(req));
-  if (head === "settings" && id === "image-model" && !sub) {
-    if (method === "GET") return settings.getImageModel();
-    if (method === "PUT") return settings.setImageModel(session, await readJson<{ model?: unknown }>(req));
-  }
   // Khuôn in (server/print-templates.ts) and products made on one (server/print-products.ts).
   if (head === "print-templates" && id === "images" && !sub && method === "POST") return printTpl.uploadTemplateImage(session, await req.formData());
   if (head === "print-templates" && id === "ai" && !sub && method === "POST") return khuonAi(session, await readJson<unknown>(req));
@@ -214,6 +209,10 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
     if (!id && method === "POST") return prices.createPriceTable(session, await readJson<unknown>(req));
     if (id && method === "PATCH") return prices.updatePriceTable(session, id, await readJson<unknown>(req));
     if (id && method === "DELETE") return prices.deletePriceTable(session, id);
+  }
+  if (head === "ai-styles" && id && sub === "demo" && method === "POST") {
+    const form = await req.formData().catch(() => null);
+    return st.makeAiStyleDemo(session, id, form);
   }
   if (head === "ai-styles" && !sub) {
     if (!id && method === "GET") return st.listAiStyles(session);

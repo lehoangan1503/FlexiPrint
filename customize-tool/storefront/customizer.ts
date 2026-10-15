@@ -1018,10 +1018,16 @@ export class Customizer {
     // ---- style swatches (round, the photo in each style once it is ready)
     const swatches = new Map<CtPhotoStyleRef, HTMLButtonElement>();
     const styleRow = el("div", { class: "ct-filters", role: "radiogroup" });
+    // An AI style shows its demo picture (the style on a sample pet) until the customer's own photo is drawn in it.
+    const demoOf = (id: CtPhotoStyleRef) => this.tpl.aiStyles?.find((x) => x.ref === id)?.demoUrl;
+    const emptyDot = (id: CtPhotoStyleRef): HTMLElement => {
+      const demo = demoOf(id);
+      return demo ? el("img", { src: demo, alt: "" }) : el("span", { class: "ct-filter__initial", text: styleLabel(id, this.tpl.aiStyles).slice(0, 1) });
+    };
     for (const id of cfg.styles) {
       const label = styleLabel(id, this.tpl.aiStyles);
-      const b = el("button", { type: "button", class: "ct-filter", role: "radio", title: label }, [
-        el("span", { class: "ct-filter__dot" }, [el("span", { class: "ct-filter__initial", text: label.slice(0, 1) })]),
+      const b = el("button", { type: "button", class: demoOf(id) ? "ct-filter ct-filter--demo" : "ct-filter", role: "radio", title: label }, [
+        el("span", { class: "ct-filter__dot" }, [emptyDot(id)]),
         el("span", { class: "ct-filter__label", text: label }),
       ]);
       b.addEventListener("click", () => void show(id));
@@ -1039,7 +1045,7 @@ export class Customizer {
       dot?.replaceChildren(el("img", { src: url, alt: "" }));
     };
     const clearThumbs = () => {
-      for (const [id, b] of swatches) b.querySelector(".ct-filter__dot")?.replaceChildren(el("span", { class: "ct-filter__initial", text: styleLabel(id, this.tpl.aiStyles).slice(0, 1) }));
+      for (const [id, b] of swatches) b.querySelector(".ct-filter__dot")?.replaceChildren(emptyDot(id));
     };
     /** Cheap styles (Face filters, local ones) get their thumbnail as soon as their base is ready. */
     const warmThumbs = () => {

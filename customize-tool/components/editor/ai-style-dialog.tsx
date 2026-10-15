@@ -2,14 +2,17 @@
 
 /**
  * Create / edit one AI photo style of the global library. The prompt is the
- * main thing; "Nâng cao" holds the model and its params. Read-only unless the
- * user owns the style or is an admin (the server enforces the same).
+ * main thing; every style runs on GPT Image 2.5 (no model picker). "Ảnh demo"
+ * runs the saved style on a sample photo — the picture editors and customers
+ * pick the style by. Read-only unless the user owns the style or is an admin
+ * (the server enforces the same).
  */
 
-import { useState } from "react";
-import { ChevronDown, ChevronRight, Loader2, Trash2 } from "lucide-react";
-import type { CtAiStyle, CtAiStyleBody, CtAiStyleModelId, CtAiStyleParams } from "../../types";
-import { CT_AI_STYLE_DEFAULT_MODEL, CT_AI_STYLE_DEFAULT_PARAMS, CT_AI_STYLE_MODELS, aiStyleModel } from "../../lib/ai-style-models";
+import { useRef, useState } from "react";
+import { ChevronDown, ChevronRight, ImagePlus, Loader2, Sparkles, Trash2 } from "lucide-react";
+import type { CtAiStyle, CtAiStyleBody, CtAiStyleParams } from "../../types";
+import { CT_AI_STYLE_DEFAULT_PARAMS, CT_AI_STYLE_MODEL } from "../../lib/ai-style-models";
+import { imageModelLabel } from "../../lib/image-models";
 import { ctApi } from "../../lib/api-client";
 import { CtButton, CtCheckbox, CtField, CtInput, CtModal, CtSelect, CtTextarea } from "../ui";
 import { dropAiStyle, putAiStyle } from "./ai-styles-store";
@@ -22,7 +25,7 @@ export interface AiStyleDialogProps {
   onSaved?: (style: CtAiStyle) => void;
 }
 
-const EMPTY: CtAiStyleBody = { name: "", prompt: "", model: CT_AI_STYLE_DEFAULT_MODEL, params: { ...CT_AI_STYLE_DEFAULT_PARAMS } };
+const EMPTY: CtAiStyleBody = { name: "", prompt: "", model: CT_AI_STYLE_MODEL, params: { ...CT_AI_STYLE_DEFAULT_PARAMS } };
 
 export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) {
   // Mounted with key = target (see the caller), so this initial state is per style.
@@ -32,11 +35,31 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [demoBusy, setDemoBusy] = useState(false);
+  const sampleInput = useRef<HTMLInputElement>(null);
   const editing = target && target !== "new" ? target : null;
   const readOnly = editing !== null && !editing.can_edit;
 
   const setParams = (patch: Partial<CtAiStyleParams>) => setBody((b) => ({ ...b, params: { ...b.params, ...patch } }));
-  const model = aiStyleModel(body.model);
+
+  // The demo runs the SAVED style (server side): unsaved prompt edits are saved first.
+  const makeDemo = async (sample?: File) => {
+    if (!editing) return;
+    setDemoBusy(true);
+    setError(null);
+    try {
+      const dirty = body.name !== editing.name || body.prompt !== editing.prompt || body.params.aspect !== editing.params.aspect || body.params.removeBackground !== editing.params.removeBackground;
+      if (dirty) putAiStyle(await ctApi.updateAiStyle(editing.id, body));
+      const style = await ctApi.makeAiStyleDemo(editing.id, sample);
+      putAiStyle(style);
+      setBody((b) => ({ ...b, params: { ...b.params, demoUrl: style.params.demoUrl, demoSourceUrl: style.params.demoSourceUrl } }));
+      onSaved?.(style);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không tạo được ảnh demo");
+    } finally {
+      setDemoBusy(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -85,84 +108,72 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
           <CtTextarea value={body.prompt} disabled={readOnly} rows={9} maxLength={4000} className="font-mono text-xs leading-relaxed" onChange={(e) => setBody({ ...body, prompt: e.target.value })} />
         </CtField>
 
+        <div className="space-y-1.5 rounded-md border p-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Ảnh demo</span>
+            <span className="text-[10px] text-muted-foreground">{imageModelLabel(CT_AI_STYLE_MODEL)} · ~30–60 s</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { url: body.params.demoSourceUrl, label: "Ảnh mẫu" },
+              { url: body.params.demoUrl, label: "Kết quả" },
+            ].map((x) => (
+              <div key={x.label} className="space-y-0.5">
+                <div className="flex aspect-square items-center justify-center overflow-hidden rounded border bg-[repeating-conic-gradient(#f1f1f1_0_25%,#fff_0_50%)] bg-[length:16px_16px]">
+                  {x.url ? <img src={x.url} alt={x.label} className="h-full w-full object-contain" /> : <span className="text-[10px] text-muted-foreground">chưa có</span>}
+                </div>
+                <div className="text-center text-[10px] text-muted-foreground">{x.label}</div>
+              </div>
+            ))}
+          </div>
+          {editing ? (
+            !readOnly && (
+              <div className="flex flex-wrap gap-1">
+                <CtButton size="sm" variant="primary" disabled={demoBusy || saving || !body.prompt.trim()} onClick={() => makeDemo()}>
+                  {demoBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} Tạo ảnh demo
+                </CtButton>
+                <CtButton size="sm" variant="ghost" disabled={demoBusy || saving} onClick={() => sampleInput.current?.click()}>
+                  <ImagePlus className="h-3.5 w-3.5" /> Demo với ảnh của tôi
+                </CtButton>
+                <input
+                  ref={sampleInput}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (f) void makeDemo(f);
+                  }}
+                />
+              </div>
+            )
+          ) : (
+            <p className="text-[11px] text-muted-foreground">Tạo style xong, mở lại để tạo ảnh demo (khách chọn style theo ảnh này).</p>
+          )}
+        </div>
+
         <button type="button" className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground" onClick={() => setAdvanced((v) => !v)}>
-          {advanced ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />} Nâng cao — model, chất lượng, nền
+          {advanced ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />} Nâng cao — khung ảnh, nền
         </button>
         {advanced && (
           <div className="space-y-3 rounded-md border p-3">
-            <CtField label="Model (fal.ai)" hint={model.price}>
-              <CtSelect<CtAiStyleModelId>
-                value={body.model}
+            <CtField label="Khung ảnh">
+              <CtSelect<CtAiStyleParams["aspect"]>
+                value={body.params.aspect}
                 disabled={readOnly}
-                onChange={(m) => setBody({ ...body, model: m })}
-                options={CT_AI_STYLE_MODELS.map((m) => ({ value: m.id, label: m.label }))}
+                onChange={(aspect) => setParams({ aspect })}
+                options={[
+                  { value: "1:1", label: "Vuông 1:1" },
+                  { value: "auto", label: "Theo ảnh khách" },
+                ]}
               />
             </CtField>
-            <div className="grid grid-cols-2 gap-2">
-              {model.uses.includes("resolution") && (
-                <CtField label="Độ phân giải">
-                  <CtSelect<CtAiStyleParams["resolution"]>
-                    value={body.params.resolution}
-                    disabled={readOnly}
-                    onChange={(resolution) => setParams({ resolution })}
-                    options={[
-                      { value: "0.5K", label: "0.5K — rẻ nhất, chỉ xem trước" },
-                      { value: "1K", label: "1K — như shop mẫu" },
-                      { value: "2K", label: "2K — in khổ lớn" },
-                    ]}
-                  />
-                </CtField>
-              )}
-              {model.uses.includes("quality") && (
-                <CtField label="Chất lượng">
-                  <CtSelect<CtAiStyleParams["quality"]>
-                    value={body.params.quality}
-                    disabled={readOnly}
-                    onChange={(quality) => setParams({ quality })}
-                    options={[
-                      { value: "low", label: "Low" },
-                      { value: "medium", label: "Medium" },
-                      { value: "high", label: "High (đắt)" },
-                    ]}
-                  />
-                </CtField>
-              )}
-              {model.uses.includes("aspect") && (
-                <CtField label="Khung ảnh">
-                  <CtSelect<CtAiStyleParams["aspect"]>
-                    value={body.params.aspect}
-                    disabled={readOnly}
-                    onChange={(aspect) => setParams({ aspect })}
-                    options={[
-                      { value: "1:1", label: "Vuông 1:1" },
-                      { value: "auto", label: "Theo ảnh khách" },
-                    ]}
-                  />
-                </CtField>
-              )}
-              <CtField label="Định dạng">
-                <CtSelect<CtAiStyleParams["outputFormat"]>
-                  value={body.params.outputFormat}
-                  disabled={readOnly}
-                  onChange={(outputFormat) => setParams({ outputFormat })}
-                  options={[
-                    { value: "png", label: "PNG" },
-                    { value: "jpeg", label: "JPEG (nhẹ hơn)" },
-                  ]}
-                />
-              </CtField>
-            </div>
-            <CtCheckbox
-              checked={body.params.whiteBackground}
-              onChange={(v) => !readOnly && setParams({ whiteBackground: v })}
-              label="Vẽ trên nền trắng"
-              hint="Thêm câu 'nền trắng tinh' vào cuối prompt — tách nền sạch hơn (shop mẫu: keepWhiteBg)."
-            />
             <CtCheckbox
               checked={body.params.removeBackground}
               onChange={(v) => !readOnly && setParams({ removeBackground: v })}
               label="Tách nền kết quả AI"
-              hint="Chạy bg-remover trên ảnh AI trả về, kể cả khi vùng không bật tách nền (shop mẫu: removeAIBg)."
+              hint="Model vẽ thẳng trên nền trong suốt; nếu nó vẽ nền thì bg-remover tách — kể cả khi vùng không bật tách nền."
             />
           </div>
         )}

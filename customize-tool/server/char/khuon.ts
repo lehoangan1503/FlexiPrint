@@ -1,8 +1,8 @@
 /**
  * The khuôn in of a bộ nhân vật (asked 2026-10-10): the brief takes the editor's own khuôn as a picture (and their
  * phôi trơn photo, server/char/blank.ts); when they gave none, the team's image model draws a khuôn that fits the
- * approved master — in the strict green code of server/print-khuon.ts — while the edits (bản sửa) are made, and the
- * AI phôi trơn is then drawn from it. Either way the khuôn is a new ct_print_templates row (Thư viện → Khuôn in /
+ * approved master — in the strict green code of server/print-khuon.ts — when asked in step 4 (nothing runs on its
+ * own since 2026-10-13; the AI phôi trơn has its own button). Either way the khuôn is a new ct_print_templates row (Thư viện → Khuôn in /
  * Phôi show it) and the brief points at it (brief.product.templateId).
  *
  *   POST char/projects/:id/khuon   multipart file, name? → { template }   a khuôn from the editor's picture
@@ -22,12 +22,11 @@ import { drawImage } from "../pack-images";
 import { addTemplateBlank } from "../print-blanks";
 import { fitMask, readGreen, renderFace } from "../print-khuon";
 import { templateRow } from "../print-templates";
-import { currentImageModel } from "../settings";
+import { CT_IMAGE_MODEL } from "../../lib/image-models";
 import { ctUpload } from "../storage";
 import type { CtSession } from "../supabase";
-import { AI_BLANK_ROLE, briefTemplate, startCharBlank } from "./blank";
 import { fetchImage, saveCharFile } from "./files";
-import { jobDb, jsonError, loadImages, loadProject, masterFile, type Db } from "./projects";
+import { jobDb, jsonError, loadImages, loadProject, masterFile, type Db, canEditProject, NOT_YOURS } from "./projects";
 
 export const AI_KHUON_ROLE = "khuon:ai";
 
@@ -194,7 +193,7 @@ function khuonPrompt(p: CtCharProject, hasBlank: boolean): string {
     .join(" ");
 }
 
-/** Start drawing the AI khuôn from the approved master (a running row now; the brief gets it, then the AI phôi). */
+/** Start drawing the AI khuôn from the approved master (a running row now; the brief gets it). */
 export async function startCharKhuon(db: Db, userId: string, p: CtCharProject): Promise<CtCharImage | null> {
   const master = await masterFile(db, p);
   if (!master) return null;
@@ -210,7 +209,7 @@ export async function startCharKhuon(db: Db, userId: string, p: CtCharProject): 
   if (!row) return null;
   void (async () => {
     try {
-      const model = await currentImageModel();
+      const model = CT_IMAGE_MODEL;
       let last = "";
       let read: Read | null = null;
       let drawing: Buffer | null = null;
@@ -231,7 +230,7 @@ export async function startCharKhuon(db: Db, userId: string, p: CtCharProject): 
       const shown = await fetchImage(template.spec.faces[0]?.imageUrl ?? "");
       const saved = await saveCharFile(userId, p.id, "blank", shown);
       await db.from(CT_TABLES.charImages).update({ ...saved, status: "done", error: "", meta: { templateId: template.id } }).eq("id", row.id);
-      await blankFor(db, userId, next, template);
+      await keepUploadedBlank(db, userId, next, template);
     } catch (e) {
       await db.from(CT_TABLES.charImages).update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 1000) }).eq("id", row.id);
     }
@@ -239,43 +238,19 @@ export async function startCharKhuon(db: Db, userId: string, p: CtCharProject): 
   return row;
 }
 
-/** The phôi of a khuôn just linked: the uploaded photo goes with the khuôn, else the AI draws one from it. */
-async function blankFor(db: Db, userId: string, p: CtCharProject, t: CtPrintTemplate): Promise<void> {
-  if (t.spec.blanks.length) return;
+/** The uploaded phôi photo goes with a khuôn just linked (the AI phôi is only drawn when asked, server/char/blank.ts). */
+async function keepUploadedBlank(db: Db, userId: string, p: CtCharProject, t: CtPrintTemplate): Promise<void> {
+  if (t.spec.blanks.length || !p.brief.product.blankId) return;
   const images = await loadImages(db, p.id);
-  const uploaded = p.brief.product.blankId ? images.find((im) => im.id === p.brief.product.blankId && im.status === "done") : undefined;
-  if (uploaded) {
-    await addTemplateBlank(db, userId, t, await fetchImage(uploaded.url), "Phôi upload", false).catch(() => undefined);
-    return;
-  }
-  if (images.some((im) => im.kind === "blank" && im.role === AI_BLANK_ROLE && im.status !== "failed")) return;
-  await startCharBlank(db, userId, p);
-}
-
-/**
- * After the master is approved (the edits start now): no khuôn in → the AI one (then its phôi); a khuôn and no phôi
- * → the uploaded photo is kept with the khuôn, else the AI phôi. Never throws.
- */
-export async function autoCharKit(db: Db, userId: string, p: CtCharProject): Promise<void> {
-  try {
-    if (!p.brief.product.templateId) {
-      const images = await loadImages(db, p.id);
-      if (images.some((im) => im.kind === "blank" && im.role === AI_KHUON_ROLE && im.status === "running")) return;
-      await startCharKhuon(db, userId, p);
-      return;
-    }
-    const t = await briefTemplate(db, p);
-    if (t) await blankFor(db, userId, p, t);
-  } catch (e) {
-    console.warn(`[ct] char kit ${p.id}: ${e instanceof Error ? e.message : String(e)}`);
-  }
+  const uploaded = images.find((im) => im.id === p.brief.product.blankId && im.status === "done");
+  if (uploaded) await addTemplateBlank(db, userId, t, await fetchImage(uploaded.url), "Phôi upload", false).catch(() => undefined);
 }
 
 /** POST char/projects/:id/khuon — multipart = the editor's khuôn picture; JSON = (re)draw the AI one. */
 export async function charKhuonRoute(s: CtSession, id: string, form: FormData | null): Promise<NextResponse> {
   const p = await loadProject(s.supabase, id);
   if (!p) return jsonError("Không tìm thấy bộ nhân vật", 404);
-  if (p.user_id && p.user_id !== s.user.id) return jsonError("Bộ nhân vật của người khác — chỉ xem", 403);
+  if (!(await canEditProject(s, p))) return jsonError(NOT_YOURS, 403);
   if (!form) {
     if (!p.master_id) return jsonError("Duyệt master trước — khuôn AI vẽ theo master", 409);
     const image = await startCharKhuon(jobDb(s), s.user.id, p);

@@ -28,6 +28,9 @@ You help an editor turn an idea into a BRIEF. Every brief is built like this, so
                      description of the shape; "colors" = colour options (hex) each shape comes in (hair colours).
                      First option/colour = the master's. wraps=true when the part is both behind and in front of
                      the body (long hair, scarf).
+- How a set is made: the master → a paper doll (every slot's part taken off) → every option drawn ON the doll; a
+  clipart = what that picture drew anew. So every slot is a part that can be put on / taken off the doll: hair,
+  clothes, shoes, a held item. A garment under a jacket of the same subject is drawn sleeveless.
 - Keep it sellable: 3–8 options per slot, total combinations reasonable.
 - Option "name" values are what the customer sees in a US store: ENGLISH ("Light Brown", "Top Bun"), never Vietnamese.
 - Poses: subjects side by side with a small gap or just touching shoulders — NO hugging, no arms around another
@@ -37,7 +40,12 @@ You help an editor turn an idea into a BRIEF. Every brief is built like this, so
   (fur colour, collar colour…). 1–4 subjects is typical; more makes small figures on the print.
 - photoZones: places the customer fills with their own photo (a framed picture, a pet's face); keep them
   simple shapes in the master (they are drawn empty).
-- text: the personalised name / message; decor: background decoration around the group (separate art).
+- texts: what the customer personalises in words, each in its place around the characters ("top" | "bottom" |
+  "left" | "right"): kind "input" = typed (a name — defaultText is the example), kind "choice" = picked from the
+  shop's list ("choices", English, the first is the default — a slogan). On a round piece a "top" text follows the
+  circle. Names of two characters: one "left", one "right".
+- backdrops: the backgrounds the customer picks from (English name + an English description for the image model),
+  drawn over the whole piece behind the characters — separate art, never part of the master. None = plain piece.
 
 Brainstorm result JSON (submit_result):
 {
@@ -57,8 +65,9 @@ Brainstorm result JSON (submit_result):
                                  "options": [{"name": "...", "value": "#rrggbb or English description"}],
                                  "colors": [{"name": "...", "value": "#rrggbb"}], "wraps": false}]}],
         "photoZones": [{"where": "<English: where in the picture>", "label": "<customer-facing label>"}],
-        "text": {"enabled": true, "defaultText": "...", "font": "<one of: ${CT_FONTS.map((f) => f.family).join(", ")}>", "place": "<English>"},
-        "decor": "<English>",
+        "texts": [{"label": "<English question for the customer>", "kind": "input|choice", "defaultText": "...", "choices": ["..."],
+                   "font": "<one of: ${CT_FONTS.map((f) => f.family).join(", ")}>", "color": "#rrggbb", "place": "top|bottom|left|right", "maxChars": 20}],
+        "backdrops": [{"name": "<English, customer-facing>", "value": "<English description for the image model>"}],
         "mockups": ["<English lifestyle scene for product photos>"]
       }
     }
@@ -79,6 +88,7 @@ export function ideaRoundFrom(raw: Record<string, unknown>, p: CtCharProject, re
       brief.product.templateId = p.brief.product.templateId;
       brief.product.layout = brief.product.layout || p.brief.product.layout;
     }
+    if (p.brief.product.material) brief.product.material = p.brief.product.material;
     brief.refs = p.brief.refs;
     if (!brief.idea) brief.idea = p.brief.idea || request;
     return { id: crypto.randomUUID(), title: typeof o.title === "string" ? o.title.slice(0, 200) : "Hướng", why: typeof o.why === "string" ? o.why.slice(0, 600) : "", brief };

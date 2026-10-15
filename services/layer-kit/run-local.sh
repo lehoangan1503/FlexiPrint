@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run layer-kit on this machine without Docker (Python 3.11–3.13 + uv).
-#   ./run-local.sh            → http://127.0.0.1:7005   (needs bg-remover on :7001)
+#   ./run-local.sh            → http://127.0.0.1:7005
 set -euo pipefail
 cd "$(dirname "$0")"
 if [ ! -x .venv/bin/uvicorn ]; then

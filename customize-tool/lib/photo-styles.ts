@@ -10,12 +10,13 @@
  *     the server cuts the photo out, services/face-detect keeps only the head
  *     (no neck / body), the browser applies `filter`. The 5 are a fixed set:
  *     a Face zone always offers all of them (lib/design.ts).
- *   AI    "ai:<uuid>"        a row of the global ct_ai_styles library (prompt +
- *                            fal.ai model), always run on the server. Only the
- *                            name ever reaches the storefront.
+ *   AI    "ai:<uuid>"        a row of the global ct_ai_styles library (prompt,
+ *                            run on GPT Image 2.5 on the server). A zone offers
+ *                            one or more; only their names + demo pictures reach
+ *                            the storefront.
  */
 
-import type { CtAiStyleRef, CtPhotoMode, CtPhotoStyleId, CtPhotoStyleRef, CtPublicAiStyle } from "../types";
+import type { CtAiStyleRef, CtPhotoConfig, CtPhotoMode, CtPhotoStyleId, CtPhotoStyleRef, CtPublicAiStyle } from "../types";
 
 export type CtPhotoStyleEngine = "none" | "local" | "server";
 
@@ -104,4 +105,15 @@ export function styleFilter(ref: CtPhotoStyleRef | undefined): CtPhotoFilter | u
 /** Does rendering this style (+ cut-out) need the server? */
 export function needsServer(style: CtPhotoStyleRef, cutout: boolean): boolean {
   return cutout || styleEngine(style) === "server";
+}
+
+/**
+ * A photo zone that offers these AI styles (customer picks by demo picture; `defaultRef` pre-selected, else the
+ * first). For code building products (bộ ảnh khách, MCP): the zone gets mode "ai"; cut-out stays on.
+ */
+export function withAiStyles(photo: CtPhotoConfig, refs: CtAiStyleRef[], defaultRef?: CtAiStyleRef, styleLabel = "Choose your style"): CtPhotoConfig {
+  const styles = refs.filter((r, i) => isAiStyleRef(r) && refs.indexOf(r) === i);
+  if (!styles.length) return photo;
+  const def = defaultRef && styles.includes(defaultRef) ? defaultRef : styles[0];
+  return { ...photo, mode: "ai", styles, defaultStyle: def, styleLabel: styles.length > 1 ? styleLabel : photo.styleLabel, cutout: true };
 }

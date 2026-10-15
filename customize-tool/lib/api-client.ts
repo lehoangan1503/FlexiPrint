@@ -3,7 +3,6 @@
  */
 
 import { CT_CONFIG } from "../config";
-import type { CtImageModel } from "./image-models";
 import type { CtPrintTemplate } from "../types/print";
 import type {
   CtPackImage,
@@ -101,8 +100,6 @@ export const ctApi = {
   listCollections: () => call<{ collections: CtShopifyCollection[] }>("shopify/collections").then((r) => r.collections),
   createCollection: (title: string) => call<{ collection: CtShopifyCollection }>("shopify/collections", json("POST", { title })).then((r) => r.collection),
 
-  imageModel: () => call<{ model: string; models: CtImageModel[] }>("settings/image-model"),
-  setImageModel: (model: string) => call<{ model: string; models: CtImageModel[] }>("settings/image-model", json("PUT", { model })),
 
   listPriceTables: () => call<{ tables: CtPriceTable[] }>("price-tables").then((r) => r.tables),
   createPriceTable: (body: CtPriceTableBody) => call<{ table: CtPriceTable }>("price-tables", json("POST", body)).then((r) => r.table),
@@ -135,6 +132,11 @@ export const ctApi = {
   createAiStyle: (body: CtAiStyleBody) => call<{ style: CtAiStyle }>("ai-styles", json("POST", body)).then((r) => r.style),
   updateAiStyle: (id: string, body: CtAiStyleBody) => call<{ style: CtAiStyle }>(`ai-styles/${id}`, json("PATCH", body)).then((r) => r.style),
   deleteAiStyle: (id: string) => call<void>(`ai-styles/${id}`, { method: "DELETE" }),
+  makeAiStyleDemo: (id: string, sample?: File) => {
+    const form = new FormData();
+    if (sample) form.set("sample", sample);
+    return call<{ style: CtAiStyle }>(`ai-styles/${id}/demo`, { method: "POST", body: form }).then((r) => r.style);
+  },
 
   /** The product's folder in the library and the artworks saved into it (server/artworks.ts). */
   productArtworks: (productId: string) => call<CtProductArtworks>(`products/${productId}/artworks`),
@@ -278,6 +280,12 @@ export const charApi = {
     form.append("kind", kind);
     return call<{ image: CtCharImage }>(`char/projects/${id}/files`, { method: "POST", body: form }).then((r) => r.image);
   },
+  /** A screenshot / picture for the sticky chat (stored, no image row) → its url. */
+  chatFile: (id: string, file: Blob) => {
+    const form = new FormData();
+    form.append("file", file, "chat.png");
+    return call<{ url: string; width: number; height: number }>(`char/projects/${id}/chat-files`, { method: "POST", body: form });
+  },
   /** The editor's own khuôn in as a picture → a new khuôn (Thư viện → Khuôn in) the brief can point at. */
   uploadKhuon: (id: string, file: File) => {
     const form = new FormData();
@@ -286,7 +294,7 @@ export const charApi = {
   },
   /** (Re)draw the AI khuôn from the approved master (then its phôi trơn). */
   khuonAi: (id: string) => call<{ image: CtCharImage }>(`char/projects/${id}/khuon`, json("POST", {})).then((r) => r.image),
-  masters: (id: string, body: { prompt?: string; count?: number; aspect?: string }) => call<{ images: CtCharImage[] }>(`char/projects/${id}/masters`, json("POST", body)).then((r) => r.images),
+  masters: (id: string, body: { prompt?: string; count?: number }) => call<{ images: CtCharImage[] }>(`char/projects/${id}/masters`, json("POST", body)).then((r) => r.images),
   refine: (id: string, imageId: string, note: string) => call<{ image: CtCharImage }>(`char/projects/${id}/masters/${imageId}/refine`, json("POST", { note })).then((r) => r.image),
   approve: (id: string, imageId: string | null) => call<{ project: CtCharProject }>(`char/projects/${id}/approve`, json("POST", { imageId })).then((r) => r.project),
   /** Make the planned edits still missing (or `roles` again). */
@@ -294,15 +302,21 @@ export const charApi = {
   createProduct: (id: string, name: string) => call<{ productId: string }>(`char/projects/${id}/products`, json("POST", { name })).then((r) => r.productId),
   /** (Re)make the AI phôi trơn from the brief's khuôn in (server/char/blank.ts). */
   blank: (id: string) => call<{ image: CtCharImage }>(`char/projects/${id}/blank`, json("POST", {})).then((r) => r.image),
-  mockups: (id: string, productId: string, print: Blob) => {
-    const form = new FormData();
-    form.append("productId", productId);
-    form.append("print", print, "print.png");
-    return call<{ images: CtCharImage[] }>(`char/projects/${id}/mockups`, { method: "POST", body: form }).then((r) => r.images);
-  },
+  /** The set's product built again (new backgrounds / texts), replacing the set's products. */
+  remakeProduct: (id: string) => call<{ productId: string }>(`char/projects/${id}/products/remake`, json("POST", {})),
+  /** A bộ ảnh khách: (re)draw element pictures — every missing one, or `roles` (server/char/elements.ts). */
+  elements: (id: string, roles: string[] = [], prompts: Record<string, string> = {}) => call<{ images: CtCharImage[] }>(`char/projects/${id}/elements`, json("POST", { roles, prompts })).then((r) => r.images),
+  /** (Re)draw the brief's backgrounds — all, or `ids` (server/char/backdrops.ts). */
+  backdrops: (id: string, ids: string[] = []) => call<{ images: CtCharImage[] }>(`char/projects/${id}/backdrops`, json("POST", { ids })).then((r) => r.images),
+
   buildLayers: (id: string) => call<{ project: CtCharProject }>(`char/projects/${id}/layers`, json("POST", {})).then((r) => r.project),
   approveLayers: (id: string, approved: boolean) => call<{ project: CtCharProject }>(`char/projects/${id}/layers/approve`, json("POST", { approved })).then((r) => r.project),
   /** The cut reviewed on the master (server/char/cut.ts): step "matte" (the backdrop) or "plan" (layer regions). */
   cut: (id: string, step: "matte" | "plan", action?: "fix" | "region" | "revert" | "approve", body: Record<string, unknown> = {}) =>
     call<{ project: CtCharProject }>(`char/projects/${id}/${step}${action ? `/${action}` : ""}`, json("POST", body)).then((r) => r.project),
+  /** One clipart file edited by hand: its new alpha on the set's canvas → files, thumbnails, products replaced. */
+  /** A hand edit of one clipart: its new mask (null = unchanged) and / or a move of its option (whole px). */
+  editFile: (id: string, imageId: string, mask: string | null, move?: { dx: number; dy: number } | null) =>
+    call<{ project: CtCharProject }>(`char/projects/${id}/layers/file`, json("POST", { imageId, mask, move: move ?? null })).then((r) => r.project),
+  revertFile: (id: string, imageId: string) => call<{ project: CtCharProject }>(`char/projects/${id}/layers/file/revert`, json("POST", { imageId })).then((r) => r.project),
 };

@@ -9,11 +9,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { CT_CONFIG } from "../../config";
-import type { CtCharProject, CtCharStatus } from "../../types";
+import type { CtCharProject, CtCharSetKind, CtCharStatus } from "../../types";
 import { charApi } from "../../lib/api-client";
+import { defaultCharBrief } from "../../lib/char-brief";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
 import { ctConfirm, ctPrompt } from "../dialogs";
-import { ImageModelPicker } from "../image-model-picker";
 
 export const CHAR_STATUS_LABEL: Record<CtCharStatus, string> = { brief: "Brief", master: "Master đã duyệt", layers: "Đã cắt layer", product: "Có sản phẩm" };
 const STATUS_CLASS: Record<CtCharStatus, string> = {
@@ -23,7 +23,7 @@ const STATUS_CLASS: Record<CtCharStatus, string> = {
   product: "bg-emerald-500/15 text-emerald-600",
 };
 
-export function CharList({ currentUserId }: { currentUserId: string }) {
+export function CharList({ currentUserId, admin = false }: { currentUserId: string; admin?: boolean }) {
   const router = useRouter();
   const [projects, setProjects] = useState<CtCharProject[]>([]);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
@@ -49,12 +49,18 @@ export function CharList({ currentUserId }: { currentUserId: string }) {
     return () => clearTimeout(t);
   }, [load]);
 
-  const create = async () => {
-    const name = await ctPrompt({ title: "Bộ nhân vật mới", label: "Tên bộ", defaultValue: "Cô gái + cún — túi mỹ phẩm", confirmLabel: "Tạo" });
+  /** character: drawn characters the customer dresses · photo: the customer's photo + decorations around it. */
+  const create = async (kind: CtCharSetKind) => {
+    const name = await ctPrompt({
+      title: kind === "photo" ? "Bộ ảnh khách mới" : "Bộ nhân vật mới",
+      label: "Tên bộ",
+      defaultValue: kind === "photo" ? "Ornament thú cưng thiên thần" : "Cô gái + cún — túi mỹ phẩm",
+      confirmLabel: "Tạo",
+    });
     if (!name?.trim()) return;
     setCreating(true);
     try {
-      const p = await charApi.create({ name: name.trim() });
+      const p = await charApi.create({ name: name.trim(), brief: defaultCharBrief(kind) });
       router.push(`/v2/${p.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không tạo được");
@@ -63,7 +69,7 @@ export function CharList({ currentUserId }: { currentUserId: string }) {
   };
 
   const remove = async (p: CtCharProject) => {
-    if (!(await ctConfirm({ title: `Xoá “${p.name}”?`, message: "Xoá brief, mọi master, ảnh tô vùng clipart và layer của bộ. Sản phẩm đã tạo từ bộ vẫn giữ.", tone: "danger", confirmLabel: "Xoá" }))) return;
+    if (!(await ctConfirm({ title: `Xoá “${p.name}”?`, message: "Xoá brief, mọi master, ảnh để cắt clipart và layer của bộ. Sản phẩm đã tạo từ bộ vẫn giữ.", tone: "danger", confirmLabel: "Xoá" }))) return;
     try {
       await charApi.remove(p.id);
       setProjects((list) => list.filter((x) => x.id !== p.id));
@@ -82,9 +88,11 @@ export function CharList({ currentUserId }: { currentUserId: string }) {
           <Sparkles className="h-5 w-5 text-orange-500" />
           <h1 className="text-lg font-semibold">Bộ nhân vật v2</h1>
           <div className="ml-auto flex items-center gap-2">
-            <ImageModelPicker />
-            <CtButton variant="primary" onClick={create} disabled={creating}>
-              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Bộ mới
+            <CtButton onClick={() => void create("photo")} disabled={creating} title="Ảnh khách là nhân vật chính (thú cưng thiên thần…): AI vẽ cánh, vòng sáng, mây, nền quanh ảnh">
+              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Bộ ảnh khách
+            </CtButton>
+            <CtButton variant="primary" onClick={() => void create("character")} disabled={creating} title="Nhân vật AI vẽ, khách đổi tóc / quần áo / đồ cầm… (có thể kèm vùng mặt khách: elf)">
+              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Bộ nhân vật
             </CtButton>
           </div>
         </div>
@@ -111,13 +119,13 @@ export function CharList({ currentUserId }: { currentUserId: string }) {
         ) : projects.length === 0 ? (
           <div className="rounded-xl border border-dashed py-20 text-center text-sm text-muted-foreground">
             <Sparkles className="mx-auto mb-3 h-10 w-10 opacity-40" />
-            Chưa có bộ nhân vật nào — bấm “Bộ mới”.
+            Chưa có bộ nào — bấm “Bộ nhân vật” hoặc “Bộ ảnh khách”.
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
             {projects.map((p) => {
               const thumb = thumbs[p.id];
-              const mine = p.user_id === currentUserId;
+              const mine = admin || p.user_id === currentUserId;
               return (
                 <div key={p.id} className="group overflow-hidden rounded-xl border bg-card">
                   <Link href={`/v2/${p.id}`} className="block aspect-square" style={CHECKER_STYLE}>
@@ -131,6 +139,7 @@ export function CharList({ currentUserId }: { currentUserId: string }) {
                   <div className="flex items-center gap-2 p-2.5">
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium">{p.name}</div>
+                      {p.brief.kind === "photo" && <div className="text-[10px] text-sky-600">Bộ ảnh khách</div>}
                       <div className="mt-0.5 flex items-center gap-1.5">
                         <span className={cx("rounded px-1.5 py-0.5 text-[10px] font-medium", STATUS_CLASS[p.status])}>{CHAR_STATUS_LABEL[p.status]}</span>
                         <span className="text-[10px] text-muted-foreground">{new Date(p.updated_at).toLocaleDateString("vi-VN")}</span>

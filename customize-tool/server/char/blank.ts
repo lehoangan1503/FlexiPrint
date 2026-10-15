@@ -1,8 +1,7 @@
 /**
  * The phôi trơn of a bộ nhân vật (asked 2026-10-10): when the brief has a khuôn in but no blank photo was uploaded,
- * the team's image model draws one from the khuôn (its outline, hole, size) once the master is approved (no khuôn
- * either: the AI khuôn is drawn first, server/char/khuon.ts autoCharKit) — it shows in step 3 next to the master, and
- * the products get it for Xem trước and Mockups (server/product-mockups.ts).
+ * the team's image model draws one from the khuôn (its outline, hole, size) when asked in step 4 (never on its own,
+ * since 2026-10-13) — the products get it for Xem trước and Mockups (server/product-mockups.ts).
  *
  *   POST char/projects/:id/blank  → { image } (re)make it now
  *
@@ -11,14 +10,15 @@
 
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
-import type { CtCharImage, CtCharProject } from "../../types";
+import type { CtCharBrief, CtCharImage, CtCharProject } from "../../types";
+import { layoutHint } from "../../lib/print-template";
 import type { CtPrintTemplate } from "../../types/print";
 import { makeBlank } from "../product-mockups";
 import { templateRow } from "../print-templates";
 import { addTemplateBlank } from "../print-blanks";
 import type { CtSession } from "../supabase";
 import { saveCharFile } from "./files";
-import { jobDb, jsonError, loadProject, type Db } from "./projects";
+import { jobDb, jsonError, loadProject, type Db, canEditProject, NOT_YOURS } from "./projects";
 
 export const AI_BLANK_ROLE = "blank:ai";
 
@@ -28,6 +28,28 @@ export async function briefTemplate(db: Db, p: CtCharProject): Promise<CtPrintTe
   if (!id) return null;
   const { data } = await db.from(CT_TABLES.printTemplates).select("*").eq("id", id).maybeSingle<CtPrintTemplate>();
   return data ? templateRow(data) : null;
+}
+
+/** A brief whose product names a khuôn in gets what the page fills in when one is picked (TemplatePick): the cut,
+ * the size, the label and the layout sentence the master prompt carries — so @flexiprint only sets templateId. */
+export async function withTemplateProduct(db: Db, brief: CtCharBrief): Promise<CtCharBrief> {
+  const id = brief.product.templateId;
+  if (!id) return brief;
+  const { data } = await db.from(CT_TABLES.printTemplates).select("*").eq("id", id).maybeSingle<CtPrintTemplate>();
+  if (!data) throw new Error(`No khuôn in ${id} — list_print_templates`);
+  const t = templateRow(data);
+  const p = brief.product;
+  return {
+    ...brief,
+    product: {
+      ...p,
+      label: p.label || t.name,
+      cut: t.kind === "cut" ? "alpha" : t.spec.outline || t.spec.faces.some((f) => f.maskUrl) ? "frame" : "rect",
+      widthMm: t.spec.widthMm || p.widthMm,
+      heightMm: t.spec.heightMm || p.heightMm,
+      layout: p.layout || layoutHint(t.kind, t.spec),
+    },
+  };
 }
 
 /** The phôi a product of the set gets: the uploaded one, else the newest AI one that is done. */
@@ -65,7 +87,7 @@ export async function startCharBlank(db: Db, userId: string, p: CtCharProject): 
 export async function makeCharBlank(s: CtSession, id: string): Promise<NextResponse> {
   const p = await loadProject(s.supabase, id);
   if (!p) return jsonError("Không tìm thấy bộ nhân vật", 404);
-  if (p.user_id && p.user_id !== s.user.id) return jsonError("Bộ nhân vật của người khác — chỉ xem", 403);
+  if (!(await canEditProject(s, p))) return jsonError(NOT_YOURS, 403);
   const image = await startCharBlank(jobDb(s), s.user.id, p);
   return image ? NextResponse.json({ image }, { status: 202 }) : jsonError("Không tạo được", 500);
 }

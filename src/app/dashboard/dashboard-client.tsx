@@ -37,7 +37,7 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
         </div>
       </header>
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <CustomizeProductList currentUserId={profile.user_id} />
+        <CustomizeProductList currentUserId={profile.user_id} admin={isSuperAdmin || profile.role === "admin"} />
       </main>
       <FirstLoginDialog
         open={askNickname}

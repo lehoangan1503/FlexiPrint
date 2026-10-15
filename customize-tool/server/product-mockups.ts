@@ -21,11 +21,12 @@ import type { CtPrintSpec } from "../types/print";
 import { normalizeProductConfig } from "../lib/design";
 import { shapePolygon } from "../lib/material-frame";
 import { shapeBounds } from "../lib/geometry";
+import { isAdmin } from "./ai-styles";
 import { drawImage } from "./pack-images";
-import { currentImageModel } from "./settings";
+import { CT_IMAGE_MODEL } from "../lib/image-models";
 import { ctRemove, ctUpload } from "./storage";
 import { fetchImage } from "./char/files";
-import { frontMockup } from "./char/mockups";
+import { lightOnBlank } from "../lib/blank-shading";
 import { uploadAsset } from "./handlers";
 import { ctServiceClient, type CtSession } from "./supabase";
 
@@ -39,6 +40,35 @@ export const KEEP_PRINT =
   " The printed artwork on the product must stay EXACTLY as in the reference picture: the same characters, the same colours, " +
   "the same text letter for letter, the same size and position on the product. Do not redraw, restyle, crop or change the print. " +
   "Photorealistic product photography, natural soft light.";
+
+// ---- the front mockup: the print laid exactly on the phôi --------------------------------------------------
+
+/** The print on the blank photo, inside `box` (photo px, may reach past the photo), lit by the blank's own shading. */
+export async function frontMockup(blank: Buffer, print: Buffer, box: CtProductScene["box"]): Promise<Buffer> {
+  const meta = await sharp(blank).metadata();
+  const W = meta.width ?? 0;
+  const H = meta.height ?? 0;
+  const bw = Math.max(1, Math.round(box.w));
+  const bh = Math.max(1, Math.round(box.h));
+  const bx = Math.round(box.x);
+  const by = Math.round(box.y);
+  // The part of the box on the photo.
+  const x = Math.max(0, bx);
+  const y = Math.max(0, by);
+  const w = Math.min(W, bx + bw) - x;
+  const hh = Math.min(H, by + bh) - y;
+  if (w <= 0 || hh <= 0) return sharp(blank).removeAlpha().jpeg({ quality: 92 }).toBuffer();
+  const art = await sharp(await sharp(print).resize(bw, bh, { fit: "fill", kernel: "lanczos3" }).ensureAlpha().png().toBuffer())
+    .extract({ left: x - bx, top: y - by, width: w, height: hh })
+    .raw()
+    .toBuffer();
+  // The phôi's own light on the print: its shading darkens it, its gloss highlights lie over it (lib/blank-shading).
+  const under = await sharp(blank).removeAlpha().extract({ left: x, top: y, width: w, height: hh }).raw().toBuffer();
+  const out = Buffer.alloc(w * hh * 4);
+  lightOnBlank(art, under, w, hh, 3, out);
+  const patch = await sharp(out, { raw: { width: w, height: hh, channels: 4 } }).removeAlpha().png().toBuffer();
+  return sharp(blank).removeAlpha().composite([{ input: patch, left: x, top: y }]).jpeg({ quality: 92 }).toBuffer();
+}
 
 // ---- the phôi trơn ------------------------------------------------------------------------------------------
 
@@ -108,15 +138,71 @@ export async function detectPieceBox(photo: Buffer, aspect: number): Promise<CtB
     }
   if (x1 < 0 || n < W * H * 0.03) return null;
   const k = fullW ? fullW / W : 1;
+  if ((x1 - x0 + 1) * (y1 - y0 + 1) > W * H * 0.95) return null;
+  // The printable FACE, not the whole piece: a photo shows the edge's thickness (a light rim on one side, a darker one
+  // on the other — a round ornament's face was ~3 % smaller and off-centre, the print lay over its rim, 2026-10-15).
+  // The face = the pixels of the colour at the piece's middle, connected to it; a face that is not one plain colour
+  // (wood, a pattern) keeps the whole piece.
+  const face = plainFace(data, W, H, ch, { x0, y0, x1, y1 });
+  if (face) ({ x0, y0, x1, y1 } = face);
   let w = x1 - x0 + 1;
   let h = y1 - y0 + 1;
-  if (w * h > W * H * 0.95) return null;
-  // The piece's own aspect: width wins and the top edge holds (the shadow falls below it, nothing hangs above).
   const cx = x0 + w / 2;
-  const want = w / aspect;
-  if (Math.abs(want - h) / Math.max(h, 1) > 0.35) return null;
-  h = want;
+  if (Math.abs(w / aspect - h) / Math.max(h, 1) > 0.35) return null;
+  if (face) {
+    // The face found: the print COVERS it (bleed past the shorter side, never a bare strip), centred on it.
+    const cy = y0 + h / 2;
+    w = Math.max(w, h * aspect);
+    h = w / aspect;
+    return { x: (cx - w / 2) * k, y: (cy - h / 2) * k, w: w * k, h: h * k };
+  }
+  // The whole piece: width wins and the top edge holds (the shadow falls below it, nothing hangs above).
+  h = w / aspect;
   return { x: (cx - w / 2) * k, y: y0 * k, w: w * k, h: h * k };
+}
+
+/** The plain face of a piece inside its box (512 px raw RGB): the middle's colour (median) flooded from the middle,
+ * holes filled by taking the box of what is reached; null when it covers too little of the piece. */
+function plainFace(data: Buffer, W: number, H: number, ch: number, b: { x0: number; y0: number; x1: number; y1: number }): { x0: number; y0: number; x1: number; y1: number } | null {
+  const cx = Math.round((b.x0 + b.x1) / 2);
+  const cy = Math.round((b.y0 + b.y1) / 2);
+  const r = Math.max(2, Math.round((b.x1 - b.x0) * 0.08));
+  const samples: number[][] = [[], [], []];
+  for (let y = cy - r; y <= cy + r; y++)
+    for (let x = cx - r; x <= cx + r; x++) for (let c = 0; c < 3; c++) samples[c].push(data[(y * W + x) * ch + c]);
+  const med = samples.map((v) => v.sort((p, q) => p - q)[v.length >> 1]);
+  // The middle's colour, or the same colour lit brighter: a glossy face has highlights (a ceramic ornament's top
+  // band stopped the flood ~1 % short and the print left a strip bare, 2026-10-15). The rim's edge is darker.
+  const like = (i: number) => {
+    const d = [data[i] - med[0], data[i + 1] - med[1], data[i + 2] - med[2]];
+    if (Math.max(...d.map(Math.abs)) <= 9) return true;
+    return Math.min(...d) >= -4 && Math.max(...d) - Math.min(...d) <= 12;
+  };
+  const seen = new Uint8Array(W * H);
+  const stack = [cy * W + cx];
+  seen[cy * W + cx] = 1;
+  let n = 0;
+  const out = { x0: W, y0: H, x1: -1, y1: -1 };
+  while (stack.length) {
+    const p = stack.pop()!;
+    const x = p % W;
+    const y = (p - x) / W;
+    n++;
+    if (x < out.x0) out.x0 = x;
+    if (x > out.x1) out.x1 = x;
+    if (y < out.y0) out.y0 = y;
+    if (y > out.y1) out.y1 = y;
+    for (const q of [p - 1, p + 1, p - W, p + W]) {
+      const qx = q % W;
+      const qy = (q - qx) / W;
+      if (q < 0 || q >= W * H || seen[q] || Math.abs(qx - x) > 1 || qx < b.x0 || qx > b.x1 || qy < b.y0 || qy > b.y1) continue;
+      seen[q] = 1;
+      if (like(q * ch)) stack.push(q);
+    }
+  }
+  const pieceArea = (b.x1 - b.x0 + 1) * (b.y1 - b.y0 + 1);
+  const faceArea = (out.x1 - out.x0 + 1) * (out.y1 - out.y0 + 1);
+  return n > pieceArea * 0.3 && faceArea > pieceArea * 0.8 ? out : null;
 }
 
 /** The sheet's box on a phôi photo from the piece's box there (the piece = the khuôn outline of the sheet). */
@@ -155,7 +241,7 @@ export async function makeBlank(userId: string, label: string, spec: CtPrintSpec
     guide = `${userId}/${CT_CONFIG.storagePrefix}/blank-guides/${crypto.randomUUID()}.png`;
     refs.push(await ctUpload(guide, await outlineDrawing(spec), "image/png"));
   }
-  const model = await currentImageModel();
+  const model = CT_IMAGE_MODEL;
   let last = "";
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -174,7 +260,7 @@ export async function makeBlank(userId: string, label: string, spec: CtPrintSpec
 
 async function ownedProduct(s: CtSession, id: string): Promise<CtProduct | null> {
   const { data } = await s.supabase.from(CT_TABLES.products).select("*").eq("id", id).maybeSingle<CtProduct>();
-  return data && data.user_id === s.user.id ? data : null;
+  return data && (data.user_id === s.user.id || (await isAdmin(s))) ? data : null;
 }
 
 async function main(s: CtSession, product: CtProduct): Promise<CtAsset | null> {
@@ -248,10 +334,23 @@ export async function makeProductMockups(s: CtSession, productId: string, form: 
   if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
   const file = form.get("print");
   if (!(file instanceof Blob) || !file.size) return jsonError("Thiếu artwork", 400);
-  const print = Buffer.from(await file.arrayBuffer());
+  try {
+    return NextResponse.json(await productMockups(s, product, Buffer.from(await file.arrayBuffer()), parseScenes(form.get("scenes"))), { status: 202 });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không lưu được mockup", 500);
+  }
+}
+
+/**
+ * The mockups of one print of a product (the editor's Mockups tab, a bộ nhân vật's step 4, @flexiprint over MCP —
+ * one pipeline): the front one = the print laid exactly on the phôi with its own light (no AI, done now), + one AI
+ * lifestyle photo per scene made from it (jobs running in the background). `label` names the front when several
+ * prints (option sets) of one product are mocked up ("Christmas — Snowflakes").
+ */
+export async function productMockups(s: CtSession, product: CtProduct, print: Buffer, scenes: string[], label = ""): Promise<{ jobs: CtPackImage[]; front: CtAsset }> {
+  const productId = product.id;
   const config = normalizeProductConfig(product.config);
-  const label = config.print?.name || product.name;
-  const scenes = parseScenes(form.get("scenes"));
+  const piece = config.print?.name || product.name;
   const toProduct = async (data: Buffer, name: string): Promise<CtAsset> => {
     const f = new FormData();
     f.set("file", new Blob([new Uint8Array(data)], { type: "image/jpeg" }), `${name}.jpg`);
@@ -271,25 +370,20 @@ export async function makeProductMockups(s: CtSession, productId: string, form: 
     const pad = Math.round(Math.max(m.width ?? 0, m.height ?? 0) * 0.08);
     front = await sharp(print).flatten({ background: "#ffffff" }).extend({ top: pad, bottom: pad, left: pad, right: pad, background: "#ffffff" }).jpeg({ quality: 92 }).toBuffer();
   }
-  let frontAsset: CtAsset;
-  try {
-    frontAsset = await toProduct(front, "mockup_front");
-  } catch (e) {
-    return jsonError(e instanceof Error ? e.message : "Không lưu được mockup", 500);
-  }
+  const frontAsset = await toProduct(front, label ? `mockup_front_${label.replace(/[^\w]+/g, "_").slice(0, 40)}` : "mockup_front");
   const meta = await sharp(front).metadata();
   const db = ctServiceClient() ?? s.supabase;
   const { data: frontRow } = await db
     .from(CT_TABLES.packImages)
-    .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "done", listed: false, url: frontAsset.url, storage_path: null, mime: "image/jpeg", width: meta.width ?? null, height: meta.height ?? null, description: "Chụp thẳng trên phôi (chính xác)", prompt: "", refs: [], aspect: "", model: "" })
+    .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "done", listed: false, url: frontAsset.url, storage_path: null, mime: "image/jpeg", width: meta.width ?? null, height: meta.height ?? null, description: label ? `Chụp thẳng trên phôi — ${label}` : "Chụp thẳng trên phôi (chính xác)", prompt: "", refs: [], aspect: "", model: "" })
     .select("*")
     .single<CtPackImage>();
 
-  const want = scenes.length ? scenes : [`on a bright minimal surface with soft daylight and a few props that suit a ${label}`];
-  const model = await currentImageModel();
+  const want = scenes.length ? scenes : [`on a bright minimal surface with soft daylight and a few props that suit a ${piece}`];
+  const model = CT_IMAGE_MODEL;
   const rows: CtPackImage[] = [];
   for (const sc of want) {
-    const prompt = `Lifestyle product photo of this exact ${label} ${sc}. The product is shown as a real physical object in a fitting, beautiful setting (the finished product with any hanger, ribbon or stand it would really have).${KEEP_PRINT}`;
+    const prompt = `Lifestyle product photo of this exact ${piece} ${sc}. The product is shown as a real physical object in a fitting, beautiful setting (the finished product with any hanger, ribbon or stand it would really have).${KEEP_PRINT}`;
     const { data: row } = await db
       .from(CT_TABLES.packImages)
       .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: sc, prompt, refs: [frontAsset.url], aspect: "4:5", model })
@@ -314,5 +408,5 @@ export async function makeProductMockups(s: CtSession, productId: string, form: 
       }
       await db.from(CT_TABLES.packImages).update({ status: "failed", error: last.slice(0, 1000) }).eq("id", row.id);
     })();
-  return NextResponse.json({ jobs: [...rows, ...(frontRow ? [frontRow] : [])], front: frontAsset }, { status: 202 });
+  return { jobs: [...rows, ...(frontRow ? [frontRow] : [])], front: frontAsset };
 }

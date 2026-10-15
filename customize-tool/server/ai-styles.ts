@@ -7,7 +7,7 @@
  * tiers as src/lib/auth/roles.ts) edit all. RLS enforces the same rules — the
  * checks here only turn them into readable errors.
  *
- * Abuse guards for the public photo endpoint (every call bills fal.ai):
+ * Abuse guards for the public photo endpoint (every call bills the image API):
  *   - the client sends only file + region + style ref; prompt, model and
  *     params are loaded here from the DB (never from the request, never
  *     published to the storefront)
@@ -23,11 +23,14 @@
 
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
-import { CT_TABLES } from "../config";
+import sharp from "sharp";
+import { CT_CONFIG, CT_TABLES } from "../config";
 import type { CtAiStyle, CtAiStyleBody, CtAiStyleRef, CtPublicAiStyle } from "../types";
-import { CT_AI_STYLE_DEFAULT_MODEL, isAiStyleModel, normalizeAiStyleParams } from "../lib/ai-style-models";
+import { CT_AI_STYLE_MODEL, normalizeAiStyleParams } from "../lib/ai-style-models";
 import { aiStyleId, aiStyleRef } from "../lib/photo-styles";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
+import { ctDownload, ctUpload } from "./storage";
+import { processPhoto } from "./ai/photo";
 
 type CtAiStyleRow = Omit<CtAiStyle, "owner" | "can_edit">;
 
@@ -44,7 +47,7 @@ function missingMigration(message: string): string | null {
 }
 
 function withDefaults(row: CtAiStyleRow): CtAiStyleRow {
-  return { ...row, model: isAiStyleModel(row.model) ? row.model : CT_AI_STYLE_DEFAULT_MODEL, params: normalizeAiStyleParams(row.params) };
+  return { ...row, model: CT_AI_STYLE_MODEL, params: normalizeAiStyleParams(row.params) };
 }
 
 /** Tool admin (user_profiles.role) or superadmin (app_metadata.role). */
@@ -59,12 +62,11 @@ function validBody(body: CtAiStyleBody): string | null {
   const prompt = (body.prompt ?? "").trim();
   if (!name || name.length > 80) return "Tên style 1–80 ký tự";
   if (!prompt || prompt.length > 4000) return "Prompt 1–4000 ký tự";
-  if (!isAiStyleModel(body.model)) return "Model không hỗ trợ";
   return null;
 }
 
 function cleanBody(body: CtAiStyleBody): CtAiStyleBody {
-  return { name: body.name.trim(), prompt: body.prompt.trim(), model: body.model, params: normalizeAiStyleParams(body.params) };
+  return { name: body.name.trim(), prompt: body.prompt.trim(), model: CT_AI_STYLE_MODEL, params: normalizeAiStyleParams(body.params) };
 }
 
 // ---------------------------------------------------------------------------
@@ -153,12 +155,58 @@ export async function loadAiStyle(db: Reader, ref: CtAiStyleRef): Promise<CtAiSt
   return data ? { ...withDefaults(data), owner: "", can_edit: false } : null;
 }
 
-/** Names only, for the published template. Unknown / deleted refs are dropped. */
+/** Names + demo pictures, for the published template. Unknown / deleted refs are dropped. */
 export async function publicAiStyles(db: Reader, refs: CtAiStyleRef[]): Promise<CtPublicAiStyle[]> {
   const ids = [...new Set(refs.map(aiStyleId))];
   if (!ids.length) return [];
-  const { data } = await db.from(CT_TABLES.aiStyles).select("id,name").in("id", ids).returns<Array<{ id: string; name: string }>>();
-  return (data ?? []).map((r) => ({ ref: aiStyleRef(r.id), name: r.name }));
+  const { data } = await db.from(CT_TABLES.aiStyles).select("id,name,params").in("id", ids).returns<Array<Pick<CtAiStyleRow, "id" | "name" | "params">>>();
+  return (data ?? []).map((r) => {
+    const demoUrl = normalizeAiStyleParams(r.params).demoUrl;
+    return { ref: aiStyleRef(r.id), name: r.name, ...(demoUrl ? { demoUrl } : {}) };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Demo pictures (asked 2026-10-15: the editor and the customer pick a style by its picture)
+// ---------------------------------------------------------------------------
+
+/** The stock sample every demo is made from unless the editor uploads their own (a pet photo, made once with
+ * GPT Image 2.5 — scripts in .scratch-e2e, 2026-10-15). */
+export const AI_STYLE_SAMPLE_URL = "https://flexiprint.next.lc/files/shared/customize-tool/ai-styles/sample-pet.jpg";
+
+/** POST ai-styles/:id/demo [file sample] — run the style on the sample photo, store the result as params.demoUrl. */
+export async function makeAiStyleDemo(s: CtSession, id: string, form: FormData | null): Promise<NextResponse> {
+  const row = await editable(s, id);
+  if (row instanceof NextResponse) return row;
+  let sample: { data: Buffer; mime: string };
+  let sourceUrl = AI_STYLE_SAMPLE_URL;
+  const file = form?.get("sample");
+  try {
+    if (file instanceof Blob && file.size > 0) {
+      if (file.size > 12 * 1024 * 1024) return jsonError("Ảnh mẫu tối đa 12 MB", 400);
+      const raw = Buffer.from(await file.arrayBuffer());
+      // ~1600 px like a storefront upload.
+      const data = await sharp(raw).rotate().resize(1600, 1600, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+      sample = { data, mime: "image/jpeg" };
+      sourceUrl = await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/ai-styles/${id}/sample-${crypto.randomUUID()}.jpg`, data, "image/jpeg");
+    } else sample = await ctDownload(sourceUrl);
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không đọc được ảnh mẫu", 400);
+  }
+  const style: CtAiStyle = { ...withDefaults(row), owner: "", can_edit: true };
+  let demoUrl: string;
+  try {
+    const out = await processPhoto({ image: sample, style: aiStyleRef(id), cutout: true, aiStyle: style });
+    const png = await sharp(out.image.data).png().toBuffer();
+    demoUrl = await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/ai-styles/${id}/demo-${crypto.randomUUID()}.png`, png, "image/png");
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không tạo được ảnh demo", 502);
+  }
+  const params = { ...normalizeAiStyleParams(row.params), demoUrl, demoSourceUrl: sourceUrl };
+  const { data, error } = await s.supabase.from(CT_TABLES.aiStyles).update({ params }).eq("id", id).select(COLUMNS).maybeSingle<CtAiStyleRow>();
+  if (error) return jsonError(error.message, 500);
+  if (!data) return jsonError("Không có quyền sửa style này", 403);
+  return NextResponse.json({ style: { ...withDefaults(data), owner: data.user_id === s.user.id ? "Bạn" : data.user_id ? "Người dùng khác" : "Built-in", can_edit: true } satisfies CtAiStyle });
 }
 
 // ---------------------------------------------------------------------------

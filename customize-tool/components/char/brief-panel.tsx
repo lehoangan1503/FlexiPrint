@@ -8,8 +8,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Bot, ImagePlus, Loader2, MessagesSquare, Plus, Send, Trash2, X } from "lucide-react";
-import type { CtCharBrief, CtCharIdea, CtCharImage, CtCharOption, CtCharSlot, CtCharSlotMode, CtCharSubject, CtCharSubjectKind } from "../../types";
-import { briefCombos, newCharOption, newCharSlot, newCharSubject, newPhotoZone } from "../../lib/char-brief";
+import type { CtCharBrief, CtCharElement, CtCharElementPlace, CtCharIdea, CtCharImage, CtCharOption, CtCharPhotoTreat, CtCharSlot, CtCharSlotMode, CtCharSubject, CtCharSubjectKind, CtCharTextField, CtCharTextPlace } from "../../types";
+import { ELEMENT_PLACE_LABEL, PHOTO_TREAT_LABEL, briefCombos, newBackdrop, newCharOption, newCharSlot, newCharSubject, newElement, newPhotoZone, newTextField } from "../../lib/char-brief";
+import { useAiStyles } from "../editor/ai-styles-store";
+import { aiStyleRef } from "../../lib/photo-styles";
+import { CT_FONTS } from "../../config";
+import { CT_MATERIALS } from "../../lib/materials";
 import { charApi } from "../../lib/api-client";
 import { CtButton, CtCheckbox, CtField, CtInput, CtModal, CtSelect, CtTextarea, cx } from "../ui";
 import type { CharCtx } from "./char-project";
@@ -33,10 +37,12 @@ const KINDS: Array<{ value: CtCharSubjectKind; label: string }> = [
 export function BriefPanel(all: CharCtx) {
   // The edits, the plan and the layers hang on the brief's ids: with a master approved the brief is read-only
   // (the server refuses a changed brief too).
-  const locked = !!all.project.master_id;
+  // A bộ ảnh khách freezes only its look (style, references, khuôn): its photo zone and decorations stay editable.
+  const photoSet = all.project.brief.kind === "photo";
+  const locked = !!all.project.master_id && !photoSet;
   const ctx: CharCtx = locked ? { ...all, editable: false } : all;
   // Brainstorm first (a full-width chat); the brief opens once a direction is taken (or there is one already).
-  const chosen = ctx.project.brief.subjects.length > 0;
+  const chosen = photoSet || ctx.project.brief.subjects.length > 0;
   const [view, setView] = useState<"chat" | "brief">(chosen ? "brief" : "chat");
   if (view === "chat") return <IdeaChat {...ctx} onTaken={() => setView("brief")} onBrief={chosen ? () => setView("brief") : null} />;
   return (
@@ -50,10 +56,10 @@ export function BriefPanel(all: CharCtx) {
       <div className="min-w-0 space-y-6 p-6">
         {locked && (
           <p className="rounded-md bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
-            Master đã duyệt — brief bị khoá, chỉ xem. Muốn đổi brief: về bước Master, bỏ duyệt master (các ảnh tô vùng clipart theo brief cũ sẽ không còn khớp).
+            Master đã duyệt — brief bị khoá (chữ, nền, cảnh mockup vẫn sửa được). Muốn đổi phần khác: về bước Master, bỏ duyệt master (các ảnh để cắt clipart theo brief cũ sẽ không còn khớp).
           </p>
         )}
-        <BriefForm {...ctx} />
+        <BriefForm {...ctx} productEditable={all.editable} />
       </div>
     </div>
   );
@@ -289,6 +295,13 @@ function TemplatePick({ ctx, brief, onPick }: { ctx: CharCtx; brief: CtCharBrief
       <CtField label="Khuôn in" hint="Kích thước file in, đường cắt, safe zone — master tự bố cục trong safe zone. Chọn từ thư viện hoặc upload khuôn của xưởng. Không có → AI tạo khuôn khớp master khi duyệt master.">
         <CtSelect<string> value={p.templateId ?? NONE} options={[{ value: NONE, label: "— Chưa có (AI tạo theo master) —" }, ...templates.map((t) => ({ value: t.id, label: t.name }))]} onChange={pick} />
       </CtField>
+      <CtField label="Vật liệu" hint="Chất liệu phôi của sản phẩm (sứ, acrylic…). Trống = theo kiểu cắt.">
+        <CtSelect<string>
+          value={p.material || NONE}
+          options={[{ value: NONE, label: "— Theo kiểu cắt —" }, ...CT_MATERIALS.filter((m) => m.id !== "none").map((m) => ({ value: m.id, label: m.label }))]}
+          onChange={(v) => onPick({ ...p, material: v === NONE ? "" : v })}
+        />
+      </CtField>
       <div className="flex items-start gap-2">
         {current && <PrintSheet spec={current.spec} className="h-36 w-36 rounded border" />}
         <button
@@ -317,6 +330,52 @@ function TemplatePick({ ctx, brief, onPick }: { ctx: CharCtx; brief: CtCharBrief
 
 // ---- the brief ---------------------------------------------------------------------------------------------
 
+const PLACE_LABEL: Record<CtCharTextPlace, string> = { top: "Trên", bottom: "Dưới", left: "Trái", right: "Phải" };
+
+/** One personalised text: what the customer is asked, typed or picked from the list, font, colour, place. */
+function TextFieldRow({ value: t, readOnly, onChange, onRemove }: { value: CtCharTextField; readOnly: boolean; onChange: (v: CtCharTextField) => void; onRemove: () => void }) {
+  const patch = (p: Partial<CtCharTextField>) => onChange({ ...t, ...p });
+  return (
+    <div className="space-y-2 rounded-lg border p-2.5">
+      <div className="grid grid-cols-[1fr_140px_90px_auto] gap-2">
+        <CtInput value={t.label} disabled={readOnly} placeholder="Name on the left" onChange={(e) => patch({ label: e.target.value })} />
+        <CtSelect<CtCharTextField["kind"]>
+          value={t.kind}
+          disabled={readOnly}
+          options={[
+            { value: "input", label: "Khách gõ" },
+            { value: "choice", label: "Chọn từ list" },
+          ]}
+          onChange={(kind) => patch({ kind, choices: kind === "choice" ? (t.choices.length ? t.choices : [t.defaultText].filter(Boolean)) : [] })}
+        />
+        <CtSelect<CtCharTextPlace> value={t.place} disabled={readOnly} options={(Object.keys(PLACE_LABEL) as CtCharTextPlace[]).map((v) => ({ value: v, label: PLACE_LABEL[v] }))} onChange={(place) => patch({ place })} />
+        <CtButton size="icon" variant="ghost" disabled={readOnly} onClick={onRemove}>
+          <Trash2 className="h-4 w-4 text-destructive" />
+        </CtButton>
+      </div>
+      {t.kind === "choice" ? (
+        <CtTextarea
+          rows={3}
+          disabled={readOnly}
+          value={t.choices.join("\n")}
+          placeholder={"Best Friends Forever\nMerry Christmas Besties"}
+          onChange={(e) => {
+            const choices = e.target.value.split("\n").slice(0, 30);
+            patch({ choices, defaultText: choices.find((c) => c.trim()) ?? "" });
+          }}
+        />
+      ) : (
+        <CtInput value={t.defaultText} disabled={readOnly} placeholder="Jessica" onChange={(e) => patch({ defaultText: e.target.value })} />
+      )}
+      <div className="grid grid-cols-[1fr_90px_80px] gap-2">
+        <CtSelect<string> value={t.font} disabled={readOnly} options={CT_FONTS.map((f) => ({ value: f.family, label: f.label }))} onChange={(font) => patch({ font })} />
+        <CtInput value={t.color} disabled={readOnly} placeholder="#1d1d1f" onChange={(e) => patch({ color: e.target.value })} />
+        <CtInput type="number" value={String(t.maxChars)} disabled={readOnly} onChange={(e) => patch({ maxChars: Math.max(1, Math.min(60, Number(e.target.value) || 1)) })} />
+      </div>
+    </div>
+  );
+}
+
 function Section({ title, hint, children, action }: { title: string; hint?: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <section className="rounded-xl border bg-card p-4">
@@ -334,13 +393,17 @@ function Section({ title, hint, children, action }: { title: string; hint?: stri
 
 type OptionView = "edit" | "preview";
 
-function BriefForm(ctx: CharCtx) {
+/** `productEditable`: the texts, backgrounds, mockup scenes and material stay editable once the master is approved
+ * (they are made in step 4 — nothing of the master, the edits or the cut hangs on them). */
+function BriefForm({ productEditable, ...ctx }: CharCtx & { productEditable: boolean }) {
   const { project, editable } = ctx;
   const brief = project.brief;
   const [optionView, setOptionView] = useState<OptionView>("edit");
   const set = (patch: Partial<CtCharBrief>) => ctx.setBrief({ ...brief, ...patch });
   const setSubject = (i: number, sub: CtCharSubject) => set({ subjects: brief.subjects.map((s, j) => (j === i ? sub : s)) });
   const ro = !editable;
+  const roProduct = !productEditable;
+  const photoSet = brief.kind === "photo";
 
   return (
     <div className="space-y-6">
@@ -364,15 +427,20 @@ function BriefForm(ctx: CharCtx) {
             <CtField label="Phong cách">
               <CtTextarea rows={2} value={brief.style} placeholder="Cute stylized 3D-cartoon illustration, soft painterly shading, big friendly eyes" onChange={(e) => set({ style: e.target.value })} />
             </CtField>
-            <CtField label="Bố cục / tư thế chung">
-              <CtTextarea rows={2} value={brief.scene} placeholder="Sitting side by side on the floor, the dog in front of the girls" onChange={(e) => set({ scene: e.target.value })} />
-            </CtField>
+            {!photoSet && (
+              <CtField label="Bố cục / tư thế chung">
+                <CtTextarea rows={2} value={brief.scene} placeholder="Sitting side by side on the floor, the dog in front of the girls" onChange={(e) => set({ scene: e.target.value })} />
+              </CtField>
+            )}
           </div>
         </div>
       </Section>
     </fieldset>
 
+      {photoSet && <PhotoSetSections brief={brief} set={set} readOnly={ro} />}
+
       {/* Outside the read-only fieldset: the Nội dung / Xem trước switch works on a locked brief too. */}
+      {!photoSet && (
       <Section
         title={`Custom option (${brief.subjects.length})`}
         hint="Mỗi mục là 1 thứ trong tranh (người, thú, vật…), thứ tự = từ trái sang phải. Phần khách đổi được ghi bên dưới, lựa chọn ĐẦU TIÊN = như trong master."
@@ -424,7 +492,9 @@ function BriefForm(ctx: CharCtx) {
         </fieldset>
         )}
       </Section>
+      )}
 
+    {!photoSet && (
     <fieldset disabled={ro} className="space-y-6">
       <Section
         title="Ảnh khách tải lên"
@@ -437,9 +507,17 @@ function BriefForm(ctx: CharCtx) {
       >
         <div className="space-y-2">
           {brief.photoZones.map((z, i) => (
-            <div key={z.id} className="grid grid-cols-[1fr_200px_auto] gap-2">
+            <div key={z.id} className="grid grid-cols-[1fr_200px_220px_auto] gap-2">
               <CtInput value={z.where} placeholder="a round photo frame she holds in both hands" onChange={(e) => set({ photoZones: brief.photoZones.map((x, j) => (j === i ? { ...x, where: e.target.value } : x)) })} />
               <CtInput value={z.label} placeholder="Upload your photo" onChange={(e) => set({ photoZones: brief.photoZones.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) })} />
+              <CtSelect<CtCharPhotoTreat>
+                value={z.treat === "face" ? "face" : "photo"}
+                options={[
+                  { value: "photo", label: "Ảnh nguyên (khung ảnh)" },
+                  { value: "face", label: "Chỉ khuôn mặt (elf, ông già Noel…)" },
+                ]}
+                onChange={(treat) => set({ photoZones: brief.photoZones.map((x, j) => (j === i ? { ...x, treat } : x)) })}
+              />
               <CtButton size="icon" variant="ghost" onClick={() => set({ photoZones: brief.photoZones.filter((_, j) => j !== i) })}>
                 <Trash2 className="h-4 w-4 text-destructive" />
               </CtButton>
@@ -448,30 +526,57 @@ function BriefForm(ctx: CharCtx) {
           {!brief.photoZones.length && <p className="text-xs text-muted-foreground">Không có.</p>}
         </div>
       </Section>
+    </fieldset>
+    )}
 
+    <fieldset disabled={roProduct} className="space-y-6">
       <div className="grid gap-6 lg:grid-cols-2">
-        <Section title="Chữ / tên">
-          <CtCheckbox checked={brief.text.enabled} onChange={(enabled) => set({ text: { ...brief.text, enabled } })} label="Có chữ cá nhân hoá" />
-          {brief.text.enabled && (
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <CtField label="Chữ mặc định">
-                <CtInput value={brief.text.defaultText} placeholder="Jessica" onChange={(e) => set({ text: { ...brief.text, defaultText: e.target.value } })} />
-              </CtField>
-              <CtField label="Font (Google Fonts)">
-                <CtInput value={brief.text.font} placeholder="Great Vibes" onChange={(e) => set({ text: { ...brief.text, font: e.target.value } })} />
-              </CtField>
-              <div className="sm:col-span-2">
-                <CtField label="Đặt ở đâu">
-                  <CtInput value={brief.text.place} placeholder="under the characters, centred" onChange={(e) => set({ text: { ...brief.text, place: e.target.value } })} />
-                </CtField>
-              </div>
-            </div>
-          )}
+        <Section
+          title="Chữ cá nhân hoá"
+          hint="Khách gõ (tên) hoặc chọn từ danh sách của shop (slogan). Vị trí quanh nhân vật; trên khuôn tròn chữ ở trên chạy theo vòng."
+          action={
+            !roProduct && (
+              <span className="flex gap-1">
+                <CtButton size="sm" variant="outline" onClick={() => set({ texts: [...brief.texts, newTextField("left")] })}>
+                  <Plus className="h-3.5 w-3.5" /> Khách gõ
+                </CtButton>
+                <CtButton size="sm" variant="outline" onClick={() => set({ texts: [...brief.texts, newTextField("top", "choice")] })}>
+                  <Plus className="h-3.5 w-3.5" /> Chọn từ list
+                </CtButton>
+              </span>
+            )
+          }
+        >
+          <div className="space-y-3">
+            {brief.texts.map((t, i) => (
+              <TextFieldRow key={t.id} value={t} readOnly={roProduct} onChange={(v) => set({ texts: brief.texts.map((x, j) => (j === i ? v : x)) })} onRemove={() => set({ texts: brief.texts.filter((_, j) => j !== i) })} />
+            ))}
+            {!brief.texts.length && <p className="text-xs text-muted-foreground">Không có chữ.</p>}
+          </div>
         </Section>
-        <Section title="Trang trí nền & mockup">
-          <CtField label="Trang trí quanh nhân vật (không bắt buộc)">
-            <CtInput value={brief.decor} placeholder="small butterflies and a peach peony" onChange={(e) => set({ decor: e.target.value })} />
-          </CtField>
+        <Section
+          title="Nền & mockup"
+          hint="Mỗi nền là 1 option khách chọn, AI vẽ ở bước 4 (phủ cả mặt phôi, sau nhân vật). Không bao giờ vẽ vào master."
+          action={
+            !roProduct && (
+              <CtButton size="sm" variant="outline" onClick={() => set({ backdrops: [...brief.backdrops, newBackdrop()] })}>
+                <Plus className="h-3.5 w-3.5" /> Nền
+              </CtButton>
+            )
+          }
+        >
+          <div className="space-y-2">
+            {brief.backdrops.map((b, i) => (
+              <div key={b.id} className="grid grid-cols-[140px_1fr_auto] gap-2">
+                <CtInput value={b.name} disabled={roProduct} placeholder="Snowflakes" onChange={(e) => set({ backdrops: brief.backdrops.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
+                <CtInput value={b.value} disabled={roProduct} placeholder="cream background with small gold snowflakes scattered" onChange={(e) => set({ backdrops: brief.backdrops.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)) })} />
+                <CtButton size="icon" variant="ghost" disabled={roProduct} onClick={() => set({ backdrops: brief.backdrops.filter((_, j) => j !== i) })}>
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </CtButton>
+              </div>
+            ))}
+            {!brief.backdrops.length && <p className="text-xs text-muted-foreground">Không có nền (màu phôi).</p>}
+          </div>
           <div className="mt-3">
             <CtField label="Cảnh mockup (mỗi dòng 1 cảnh)">
               <CtTextarea rows={3} value={brief.mockups.join("\n")} placeholder={"on a marble vanity with makeup brushes\nflat lay with flowers and a mirror"} onChange={(e) => set({ mockups: e.target.value.split("\n").slice(0, 6) })} />
@@ -479,14 +584,120 @@ function BriefForm(ctx: CharCtx) {
           </div>
         </Section>
       </div>
+    </fieldset>
 
       <div className="flex justify-end">
-        <CtButton variant="primary" disabled={!brief.subjects.length} onClick={() => ctx.goto("master")}>
+        <CtButton variant="primary" disabled={photoSet ? !brief.photoZones.length : !brief.subjects.length} onClick={() => ctx.goto("master")}>
           Sang bước Master <ArrowRight className="h-4 w-4" />
         </CtButton>
       </div>
-    </fieldset>
     </div>
+  );
+}
+
+/**
+ * A bộ ảnh khách's own sections (asked 2026-10-15): the customer's photo (how it is shown — AI styles the customer
+ * picks, the head only, or as uploaded) and the decorations around it, each with its options.
+ */
+function PhotoSetSections({ brief, set, readOnly }: { brief: CtCharBrief; set: (patch: Partial<CtCharBrief>) => void; readOnly: boolean }) {
+  const ai = useAiStyles();
+  const zone = brief.photoZones[0];
+  const setZone = (patch: Partial<NonNullable<typeof zone>>) => set({ photoZones: [{ ...(zone ?? newPhotoZone("the customer's pet, sitting", "Upload your pet's photo", "ai")), ...patch }, ...brief.photoZones.slice(1)] });
+  const setElement = (i: number, e: CtCharElement) => set({ elements: brief.elements.map((x, j) => (j === i ? e : x)) });
+  const styles = zone?.styles ?? [];
+  return (
+    <fieldset disabled={readOnly} className="space-y-6">
+      <Section title="Ảnh khách tải lên" hint="Nhân vật chính là ảnh của khách. Master vẽ một mẫu (thú cưng mẫu) đúng phong cách; khách upload thì ảnh của họ thay vào.">
+        {!zone ? (
+          <CtButton size="sm" onClick={() => setZone({})}>
+            <Plus className="h-3.5 w-3.5" /> Thêm vùng ảnh khách
+          </CtButton>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid gap-2 md:grid-cols-[1fr_220px_260px]">
+              <CtField label="Ảnh khách là gì (tiếng Anh cho AI)">
+                <CtInput value={zone.where} placeholder="the customer's pet, sitting" onChange={(e) => setZone({ where: e.target.value })} />
+              </CtField>
+              <CtField label="Khách thấy">
+                <CtInput value={zone.label} placeholder="Upload your pet's photo" onChange={(e) => setZone({ label: e.target.value })} />
+              </CtField>
+              <CtField label="Ảnh được xử lý">
+                <CtSelect<CtCharPhotoTreat> value={zone.treat ?? "photo"} options={(Object.keys(PHOTO_TREAT_LABEL) as CtCharPhotoTreat[]).map((value) => ({ value, label: PHOTO_TREAT_LABEL[value] }))} onChange={(treat) => setZone({ treat })} />
+              </CtField>
+            </div>
+            {zone.treat === "ai" && (
+              <div>
+                <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Style khách chọn (style đầu = mặc định) — thư viện style AI chung</div>
+                <div className="flex flex-wrap gap-2">
+                  {ai.styles.map((st) => {
+                    const ref = aiStyleRef(st.id);
+                    const on = styles.includes(ref);
+                    const demo = st.params.demoUrl;
+                    return (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => setZone({ styles: on ? styles.filter((x) => x !== ref) : [...styles, ref] })}
+                        className={cx("flex w-28 flex-col items-center gap-1 rounded-lg border p-1.5 text-[11px]", on ? "border-sky-500 bg-sky-500/10" : "hover:bg-accent")}
+                      >
+                        {demo ? <img src={demo} alt="" className="h-20 w-full rounded object-contain" /> : <span className="flex h-20 w-full items-center justify-center rounded bg-muted text-muted-foreground">chưa có demo</span>}
+                        <span className="line-clamp-2 text-center">{on ? `${styles.indexOf(ref) + 1}. ` : ""}{st.name}</span>
+                      </button>
+                    );
+                  })}
+                  {!ai.styles.length && <p className="text-xs text-muted-foreground">{ai.loading ? "Đang tải…" : "Chưa có style AI nào (Editor → vùng ảnh → tab AI)."}</p>}
+                </div>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">Vị trí và hình dạng vùng ảnh sửa trực tiếp trong editor sản phẩm (kéo khung) — dựng lại sản phẩm vẫn giữ chỉnh tay đó.</p>
+          </div>
+        )}
+      </Section>
+      <Section
+        title={`Phần tử trang trí (${brief.elements.length})`}
+        hint="Mỗi phần tử là 1 lớp khách chọn (cánh, vòng sáng…). Mỗi lựa chọn AI vẽ riêng, nguyên vẹn, nền trong suốt, theo phong cách master. Dải dưới (mây) che phần thân ảnh khách bị cắt và nằm dưới chữ."
+        action={
+          !readOnly && (
+            <span className="flex flex-wrap gap-1">
+              {(Object.keys(ELEMENT_PLACE_LABEL) as CtCharElementPlace[]).map((place) => (
+                <CtButton key={place} size="sm" variant="outline" onClick={() => set({ elements: [...brief.elements, newElement("", place)] })}>
+                  <Plus className="h-3.5 w-3.5" /> {ELEMENT_PLACE_LABEL[place].split(" (")[0]}
+                </CtButton>
+              ))}
+            </span>
+          )
+        }
+      >
+        <div className="space-y-3">
+          {brief.elements.map((e, i) => (
+            <div key={e.id} className="rounded-md bg-muted/40 p-2.5">
+              <div className="grid grid-cols-[1fr_230px_170px_auto] items-center gap-2">
+                <CtInput value={e.name} placeholder="Wings / Halo / Clouds" onChange={(ev) => setElement(i, { ...e, name: ev.target.value })} />
+                <CtSelect<CtCharElementPlace> value={e.place} options={(Object.keys(ELEMENT_PLACE_LABEL) as CtCharElementPlace[]).map((value) => ({ value, label: ELEMENT_PLACE_LABEL[value] }))} onChange={(place) => setElement(i, { ...e, place })} />
+                <CtSelect<"shape" | "color">
+                  value={e.mode}
+                  options={[
+                    { value: "shape", label: "Đổi kiểu" },
+                    { value: "color", label: "Đổi màu" },
+                  ]}
+                  onChange={(mode) => setElement(i, { ...e, mode, perBackdrop: mode === "color" ? false : e.perBackdrop, options: e.options.map((o) => (mode === "color" && !/^#/.test(o.value) ? { ...o, value: "#d4af37" } : o)) })}
+                />
+                <CtButton size="icon" variant="ghost" onClick={() => set({ elements: brief.elements.filter((_, j) => j !== i) })} title="Xoá phần tử">
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </CtButton>
+              </div>
+              {e.mode === "shape" && (
+                <div className="mt-2">
+                  <CtCheckbox checked={e.perBackdrop} onChange={(perBackdrop) => setElement(i, { ...e, perBackdrop })} label="Mỗi nền 1 bản, theo màu của nền (đi theo nền khách chọn)" hint="Dải mây hợp màu với từng nền. Khi bật, chỉ cần 1 mô tả." />
+                </div>
+              )}
+              <OptionList mode={e.mode} label={e.perBackdrop ? "Mô tả (1 dòng cho mọi nền)" : e.mode === "color" ? "Màu" : "Kiểu"} options={e.perBackdrop ? e.options.slice(0, 1) : e.options} onChange={(options) => setElement(i, { ...e, options: e.perBackdrop ? options.slice(0, 1) : options })} />
+            </div>
+          ))}
+          {!brief.elements.length && <p className="text-xs text-muted-foreground">Chưa có — ví dụ: Wings (sau ảnh, 3 kiểu), Halo (trên đầu, 2 màu), Clouds (dải dưới, theo nền).</p>}
+        </div>
+      </Section>
+    </fieldset>
   );
 }
 
@@ -701,17 +912,29 @@ function OptionsPreview({ ctx }: { ctx: CharCtx }) {
             <span className="inline-flex rounded-md border border-dashed bg-white px-3 py-2 text-xs text-[#8a7f73]">Upload photo</span>
           </div>
         ))}
-        {brief.text.enabled && (
+        {brief.backdrops.length > 0 && (
           <div className="space-y-1.5">
-            <div className="text-sm font-medium">
-              Enter name <span className="text-[#c0392b]">*</span>
-            </div>
-            <div className="rounded-md border bg-white px-3 py-2 text-sm" style={{ fontFamily: brief.text.font || undefined }}>
-              {brief.text.defaultText || "Jessica"}
+            <div className="text-sm font-medium">Background</div>
+            <div className="flex flex-wrap gap-1.5">
+              {brief.backdrops.map((b) => (
+                <span key={b.id} className="rounded-md border bg-white px-2.5 py-1 text-xs">
+                  {b.name}
+                </span>
+              ))}
             </div>
           </div>
         )}
-        {!brief.subjects.some((x) => x.slots.length) && !brief.text.enabled && !brief.photoZones.length && <p className="text-xs text-[#8a7f73]">Chưa có option nào cho khách.</p>}
+        {brief.texts.map((t) => (
+          <div key={t.id} className="space-y-1.5">
+            <div className="text-sm font-medium">
+              {t.label} <span className="text-[#c0392b]">*</span>
+            </div>
+            <div className="rounded-md border bg-white px-3 py-2 text-sm" style={{ fontFamily: t.font || undefined }}>
+              {t.kind === "choice" ? `${t.choices[0] ?? ""} ▾` : t.defaultText || "Jessica"}
+            </div>
+          </div>
+        ))}
+        {!brief.subjects.some((x) => x.slots.length) && !brief.texts.length && !brief.photoZones.length && <p className="text-xs text-[#8a7f73]">Chưa có option nào cho khách.</p>}
         <div className="rounded-md bg-[#d9814a] py-2 text-center text-sm font-semibold text-white opacity-80">Add to cart</div>
         <p className="text-[11px] text-[#8a7f73]">Chỉ để nhìn trực quan — chưa bấm chọn được.</p>
       </div>

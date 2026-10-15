@@ -53,3 +53,13 @@ export async function fetchImage(url: string): Promise<Buffer> {
   if (!res.ok) throw new Error(`Không tải được ảnh (${res.status})`);
   return Buffer.from(await res.arrayBuffer());
 }
+
+/** A picture sent with a sticky-chat request (screenshot / file): `<folder>/chat/<uuid>.png`, no image row — the
+ * agent task keeps its url. Screenshots are PNG; a big one is scaled to ≤ 2400 px. */
+export async function saveChatFile(userId: string, projectId: string, data: Buffer): Promise<{ url: string; width: number; height: number }> {
+  const img = sharp(data, { limitInputPixels: 20000 * 20000 }).rotate();
+  const out = await img.resize({ width: 2400, height: 2400, fit: "inside", withoutEnlargement: true }).png({ compressionLevel: 9 }).toBuffer({ resolveWithObject: true });
+  if (!out.info.width || !out.info.height) throw new Error("Ảnh không đọc được");
+  const url = await ctUpload(`${charFolder(userId, projectId)}/chat/${crypto.randomUUID()}.png`, out.data, "image/png");
+  return { url, width: out.info.width, height: out.info.height };
+}

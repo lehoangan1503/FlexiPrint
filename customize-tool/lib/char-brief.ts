@@ -3,8 +3,15 @@
  * the LLM and the agent), and the ONE master prompt assembled from a brief. Edit prompts live in server/char.
  */
 
+import { CT_FONTS } from "../config";
 import type {
+  CtCharBackdrop,
+  CtCharBox,
   CtCharBrief,
+  CtCharElement,
+  CtCharElementPlace,
+  CtCharPhotoTreat,
+  CtCharSetKind,
   CtCharCut,
   CtCharOption,
   CtCharPhotoZone,
@@ -14,6 +21,8 @@ import type {
   CtCharSlotMode,
   CtCharSubject,
   CtCharSubjectKind,
+  CtCharTextField,
+  CtCharTextPlace,
 } from "../types";
 
 const uid = (): string => crypto.randomUUID();
@@ -34,8 +43,9 @@ export const REF_USE_INFO: Record<CtCharRefUse, { label: string; take: string | 
   avoid: { label: "Tránh", take: null },
 };
 
-export function defaultCharBrief(): CtCharBrief {
+export function defaultCharBrief(kind: CtCharSetKind = "character"): CtCharBrief {
   return {
+    kind,
     idea: "",
     product: { label: "", cut: "rect", widthMm: 0, heightMm: 0, blankId: null },
     style: "",
@@ -43,10 +53,10 @@ export function defaultCharBrief(): CtCharBrief {
     scene: "",
     subjects: [],
     photoZones: [],
-    text: { enabled: false, defaultText: "", font: "Great Vibes", place: "" },
-    decor: "",
+    elements: [],
+    texts: [],
+    backdrops: [],
     mockups: [],
-    clips: "key",
   };
 }
 
@@ -62,9 +72,36 @@ export function newCharSubject(kind: CtCharSubjectKind = "person", description =
   return { id: uid(), kind, description, slots: [] };
 }
 
-export function newPhotoZone(where = "", label = "Your photo"): CtCharPhotoZone {
-  return { id: uid(), where, label };
+export function newTextField(place: CtCharTextPlace = "bottom", kind: CtCharTextField["kind"] = "input"): CtCharTextField {
+  return { id: uid(), label: kind === "choice" ? "Choose your text" : "Enter name", kind, defaultText: kind === "input" ? "Jessica" : "", choices: [], font: "Great Vibes", color: "#1d1d1f", place, maxChars: 20 };
 }
+
+export function newBackdrop(name = "", value = ""): CtCharBackdrop {
+  return { id: uid(), name, value };
+}
+
+export function newPhotoZone(where = "", label = "Your photo", treat: CtCharPhotoTreat = "photo"): CtCharPhotoZone {
+  return { id: uid(), where, label, treat, styles: [], box: null };
+}
+
+export function newElement(name = "", place: CtCharElementPlace = "behind"): CtCharElement {
+  return { id: uid(), name, place, mode: "shape", options: [], perBackdrop: place === "bottom", box: null };
+}
+
+/** Vietnamese labels of a bộ ảnh khách's element places. */
+export const ELEMENT_PLACE_LABEL: Record<CtCharElementPlace, string> = {
+  behind: "Sau ảnh khách (cánh)",
+  above: "Trên đầu (vòng sáng, vương miện)",
+  bottom: "Dải dưới che phần cắt (mây, hoa)",
+  free: "Tự đặt",
+};
+
+/** Vietnamese labels of how a zone shows the customer's photo. */
+export const PHOTO_TREAT_LABEL: Record<CtCharPhotoTreat, string> = {
+  ai: "AI vẽ lại theo style khách chọn",
+  face: "Chỉ lấy khuôn mặt (tự tìm mặt)",
+  photo: "Giữ nguyên ảnh",
+};
 
 // ---- tolerant parsing -------------------------------------------------------------------------------------
 
@@ -80,6 +117,66 @@ const idOf = (v: unknown): string => (typeof v === "string" && /^[\w-]{1,64}$/.t
 const uuidOrNull = (v: unknown): string | null => (typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v) ? v : null);
 
 const CUTS: CtCharCut[] = ["rect", "alpha", "frame"];
+const ELEMENT_PLACES: CtCharElementPlace[] = ["behind", "above", "bottom", "free"];
+const TREATS: CtCharPhotoTreat[] = ["ai", "face", "photo"];
+const AI_REF = /^ai:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A box of shares (0–1), clamped; null when it is not a usable one. */
+function parseBox(raw: unknown): CtCharBox | null {
+  const o = rec(raw);
+  const f = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.min(1.2, Math.max(-0.2, v)) : NaN);
+  const b = { x: f(o.x), y: f(o.y), w: f(o.w), h: f(o.h) };
+  return [b.x, b.y, b.w, b.h].every(Number.isFinite) && b.w > 0.02 && b.h > 0.02 ? b : null;
+}
+
+function parsePhotoZone(raw: unknown): CtCharPhotoZone | null {
+  const r = rec(raw);
+  const where = s(r.where, 300);
+  if (!where) return null;
+  const treat = TREATS.includes(r.treat as CtCharPhotoTreat) ? (r.treat as CtCharPhotoTreat) : "photo";
+  const styles = arr(r.styles).filter((x): x is string => typeof x === "string" && AI_REF.test(x)).slice(0, 12);
+  return { id: idOf(r.id), where, label: s(r.label, 80) || "Your photo", treat, styles: treat === "ai" ? styles : [], box: parseBox(r.box) };
+}
+
+function parseElement(raw: unknown): CtCharElement | null {
+  const o = rec(raw);
+  const name = s(o.name, 80);
+  if (!name) return null;
+  const place = ELEMENT_PLACES.includes(o.place as CtCharElementPlace) ? (o.place as CtCharElementPlace) : "free";
+  const mode = o.mode === "color" ? "color" : "shape";
+  const perBackdrop = o.perBackdrop === true;
+  return {
+    id: idOf(o.id),
+    name,
+    place,
+    mode: perBackdrop ? "shape" : mode,
+    options: arr(o.options).map((x) => parseOption(x, mode)).filter((x): x is CtCharOption => x !== null).slice(0, 12),
+    perBackdrop,
+    box: parseBox(o.box),
+  };
+}
+const PLACES: CtCharTextPlace[] = ["top", "bottom", "left", "right"];
+
+function parseTextField(raw: unknown): CtCharTextField | null {
+  const o = rec(raw);
+  const choices = arr(o.choices).map((c) => s(c, 120)).filter(Boolean).slice(0, 30);
+  const kind = o.kind === "choice" || (o.kind === undefined && choices.length > 0) ? "choice" : "input";
+  const defaultText = s(o.defaultText, 120) || (kind === "choice" ? (choices[0] ?? "") : "");
+  if (kind === "choice" ? !choices.length : !defaultText && !s(o.label)) return null;
+  const font = s(o.font, 80);
+  const color = hexOr(s(o.color, 20));
+  return {
+    id: idOf(o.id),
+    label: s(o.label, 80) || (kind === "choice" ? "Choose your text" : "Enter name"),
+    kind,
+    defaultText,
+    choices: kind === "choice" ? choices : [],
+    font: CT_FONTS.some((f) => f.family === font) ? font : "Great Vibes",
+    color: /^#[0-9a-f]{6}$/.test(color) ? color : "#1d1d1f",
+    place: PLACES.includes(o.place as CtCharTextPlace) ? (o.place as CtCharTextPlace) : "bottom",
+    maxChars: Math.min(60, Math.max(1, Math.round(num(o.maxChars)) || Math.max(20, ...choices.map((c) => c.length)))),
+  };
+}
 const MODES: CtCharSlotMode[] = ["color", "texture", "shape"];
 const KINDS: CtCharSubjectKind[] = ["person", "pet", "object"];
 
@@ -133,6 +230,7 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
   const p = rec(o.product);
   const t = rec(o.text);
   return {
+    kind: o.kind === "photo" ? "photo" : "character",
     idea: s(o.idea, 4000),
     product: {
       label: s(p.label, 200),
@@ -142,6 +240,7 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
       blankId: uuidOrNull(p.blankId),
       templateId: uuidOrNull(p.templateId),
       layout: s(p.layout, 600),
+      material: s(p.material, 40),
     },
     style: s(o.style, 1000),
     refs: arr(o.refs)
@@ -155,23 +254,29 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
     scene: s(o.scene, 1000),
     subjects: arr(o.subjects).map(parseSubject).filter((x): x is CtCharSubject => x !== null).slice(0, 8),
     photoZones: arr(o.photoZones)
-      .map((z) => {
-        const r = rec(z);
-        const where = s(r.where, 300);
-        return where ? { id: idOf(r.id), where, label: s(r.label, 80) || "Your photo" } : null;
-      })
+      .map(parsePhotoZone)
       .filter((x): x is CtCharPhotoZone => x !== null)
       .slice(0, 4),
-    text: {
-      enabled: t.enabled === true || (t.enabled === undefined && !!s(t.defaultText)),
-      defaultText: s(t.defaultText, 80),
-      font: s(t.font, 80) || d.text.font,
-      place: s(t.place, 200),
-    },
-    decor: s(o.decor, 1000),
+    elements: arr(o.elements).map(parseElement).filter((x): x is CtCharElement => x !== null).slice(0, 10),
+    // Older briefs had one name ("text") and a decor sentence: read as one text field / one backdrop.
+    texts: (Array.isArray(o.texts)
+      ? arr(o.texts).map(parseTextField)
+      : t.enabled === true || (t.enabled === undefined && !!s(t.defaultText))
+        ? [parseTextField({ label: "Enter name", kind: "input", defaultText: s(t.defaultText) || "Jessica", font: t.font, place: "bottom" })]
+        : []
+    )
+      .filter((x): x is CtCharTextField => x !== null)
+      .slice(0, 6),
+    backdrops: (Array.isArray(o.backdrops) ? arr(o.backdrops) : s(o.decor) ? [{ name: "Background", value: s(o.decor, 1000) }] : [])
+      .map((x) => {
+        const r = rec(x);
+        const name = s(r.name, 80);
+        const value = s(r.value, 1000);
+        return name || value ? { id: idOf(r.id), name: name || "Background", value: value || name } : null;
+      })
+      .filter((x): x is CtCharBackdrop => x !== null)
+      .slice(0, 8),
     mockups: arr(o.mockups).map((m) => s(m, 300)).filter(Boolean).slice(0, 6),
-    // A brief saved before "key" existed keeps its painted regions.
-    clips: o.clips === "key" ? "key" : "paint",
   };
 }
 
@@ -224,11 +329,22 @@ function slotLook(slot: CtCharSlot): string {
 }
 
 /**
+ * Every part must cut clean (asked 2026-10-10: loose strands and fussy garments are what made the cut files dirty).
+ * Hair is sculpted solid locks with a clean outline; clothes are simple shapes with continuous outlines.
+ */
+export const CLEAN_PARTS =
+  "Clean cut-out-friendly drawing: hair is drawn as smooth, solid, sculpted locks with one clean continuous outline — " +
+  "no loose flyaway strands, no single hairs or wisps sticking out or floating apart from the hair mass, no see-through hair ends. " +
+  "Clothes are simple shapes with clean continuous outlines: no lace, fringe, ruffles, see-through fabric, dangling straps, " +
+  "tassels or tiny loose details. Every part (hair, top, bottoms, shoes) is clearly separated from its neighbours.";
+
+/**
  * ONE prompt for the master, from the brief. Everything the layers need is asked here once: every subject full,
  * on flat white, customizable parts plain and readable, photo zones left empty — the later steps are in-place
  * edits of this picture, never new pictures.
  */
 export function masterPrompt(brief: CtCharBrief): string {
+  if (brief.kind === "photo") return photoMasterPrompt(brief);
   const lines: string[] = [];
   lines.push(brief.style ? `${brief.style.replace(/\.$/, "")}.` : "Cute stylized cartoon illustration, soft painterly 3D-cartoon rendering, premium personalized gift print.");
   if (brief.subjects.length > 1) {
@@ -241,23 +357,135 @@ export function masterPrompt(brief: CtCharBrief): string {
   });
   if (brief.scene) lines.push(`Arrangement: ${brief.scene.replace(/\.$/, "")}.`);
   if (brief.product.layout) lines.push(`On the product: ${brief.product.layout.replace(/\.$/, "")}.`);
-  for (const z of brief.photoZones) lines.push(`${z.where}: an empty plain light-grey area with a clean edge (a photo goes there later).`);
+  for (const z of brief.photoZones)
+    lines.push(
+      z.treat === "face"
+        ? `${z.where}: no face drawn — an empty plain light-grey oval with a clean edge where the face is (the customer's own face photo goes there later); the hat, the hair edge and the collar are drawn around it, slightly over its edge.`
+        : `${z.where}: an empty plain light-grey area with a clean edge (a photo goes there later).`,
+    );
   lines.push(
     brief.subjects.length > 1
-      ? "Everyone fully visible head to toe, nobody cropped, the group centred with a generous empty margin all around; they may touch, but no one hides another one's clothes, hair or face."
-      : "Full body, fully visible, not cropped, centred with a generous empty margin all around.",
+      ? "A square picture: everyone fully visible head to toe INSIDE the square, nobody cropped, the group centred with a generous empty margin all around (scale the group down to fit); they may touch, but no one hides another one's clothes, hair or face."
+      : "A square picture: the full body fully visible head to toe INSIDE the square, not cropped, centred with a generous empty margin all around (scale the figure down to fit).",
   );
   lines.push("No accessories or props unless described. No text, no logo, no watermark.");
+  lines.push(CLEAN_PARTS);
   lines.push(
-    brief.clips === "key"
-      ? "A fully transparent background (the characters alone, cut out), no floor, no cast shadow, no scenery."
-      : "Pure flat white background (#FFFFFF), no floor, no cast shadow, no scenery.",
+    "A fully transparent background (the characters alone, cut out), no floor, no cast shadow, no scenery.",
   );
   return lines.join("\n");
 }
 
+/**
+ * What the master, the 3b pictures and the cut hang on — frozen once a master is approved. The texts, backgrounds,
+ * mockup scenes and the material are made in step 4 (the product) and stay editable.
+ */
+export function masterBriefKey(brief: CtCharBrief): string {
+  const { texts: _t, backdrops: _b, mockups: _m, product, ...rest } = brief;
+  const { material: _mat, ...piece } = product;
+  // A bộ ảnh khách's pieces are each drawn on their own from the master's look: only the look is frozen — the
+  // photo zone, the decorations and their options stay editable after the master (adding a wing style later).
+  if (brief.kind === "photo") return JSON.stringify({ kind: brief.kind, style: brief.style, refs: brief.refs, product: piece });
+  return JSON.stringify({ ...rest, product: piece });
+}
+
+// ---- bộ ảnh khách (kind "photo") ------------------------------------------------------------------------------
+
+/** What the customer's photo shows, in the prompts ("the customer's pet"). */
+export function photoSubject(brief: CtCharBrief): string {
+  // The words before the first comma outside brackets: "the customer's pet (a Shih Tzu), sitting" → "the customer's pet (a Shih Tzu)".
+  return (brief.photoZones[0]?.where || "the customer's pet").split(/,(?![^(]*\))/)[0].replace(/\.$/, "").trim();
+}
+
+/** Where an element sits, said to the image model. */
+function elementPlaceLine(brief: CtCharBrief, e: CtCharElement, look: string): string {
+  const who = photoSubject(brief);
+  switch (e.place) {
+    case "behind":
+      return `Behind ${who}: ${look}, spread wide to both sides and partly hidden behind ${who}.`;
+    case "above":
+      return `Above the head of ${who}: ${look}.`;
+    case "bottom":
+      return `Across the bottom of the picture, over the lower part of the body of ${who}: ${look} — a soft band that hides where the body ends; the lettering sits on it.`;
+    default:
+      return `${e.name}: ${look}.`;
+  }
+}
+
+/** The look of an element's first option. */
+function elementLook(e: CtCharElement): string {
+  const o = e.options[0];
+  if (!o) return e.name.toLowerCase();
+  if (e.mode === "color") return `${e.name.toLowerCase()} in ${o.name.toLowerCase()}${/^#[0-9a-f]{6}$/i.test(o.value) ? ` (${o.value})` : ""}`;
+  return o.value || o.name;
+}
+
+/**
+ * The master of a bộ ảnh khách: the finished product's whole flat design drawn once — with a sample of what the
+ * customer's photo will show — so every piece drawn after it has its look. Opaque, the background included.
+ */
+export function photoMasterPrompt(brief: CtCharBrief): string {
+  const who = photoSubject(brief);
+  const lines: string[] = [];
+  lines.push(brief.style ? `${brief.style.replace(/\.$/, "")}.` : "Soft dreamy watercolor illustration, premium personalized memorial gift print.");
+  lines.push(`The finished flat printable design of a ${brief.product.label || "personalised gift"}, filling the whole square picture edge to edge.`);
+  if (brief.product.layout) lines.push(`On the product: ${brief.product.layout.replace(/\.$/, "")}.`);
+  if (brief.backdrops[0]) lines.push(`Background: ${(brief.backdrops[0].value || brief.backdrops[0].name).replace(/\.$/, "")}.`);
+  lines.push(`In the middle: ${(brief.photoZones[0]?.where || who).replace(/\.$/, "")} — drawn as a sample in the same style (the customer's own photo replaces it later), centred, a little above the middle.`);
+  for (const e of brief.elements) lines.push(elementPlaceLine(brief, e, elementLook(e)));
+  const words = brief.texts.map((t) => (t.kind === "choice" ? t.choices[0] : t.defaultText)).filter(Boolean);
+  if (words.length) lines.push(`Lettering at the bottom, centred, elegant: ${words.map((w) => `"${w}"`).join(" / ")}.`);
+  lines.push("No frame, no border, no product shape, no hanging hole, no mockup, no watermark — only the flat artwork.");
+  return lines.join("\n");
+}
+
+/** The aspect an element's picture is drawn at. */
+export function elementAspect(e: CtCharElement): string {
+  return e.place === "behind" || e.place === "bottom" || e.place === "above" ? "3:2" : "1:1";
+}
+
+/**
+ * The prompt of one element picture: the decoration ALONE, whole, on transparency, in the master's look
+ * (reference picture 1 = the approved master; a per-background band also gets that background as picture 2).
+ */
+export function elementPrompt(brief: CtCharBrief, e: CtCharElement, look: string, backdrop?: CtCharBackdrop): string {
+  const who = photoSubject(brief);
+  const shape: Record<CtCharElementPlace, string> = {
+    behind: `Draw it as it is seen behind ${who}: symmetric, spread wide to the left and right, with the empty middle where ${who} sits (the middle part may be simple — it is hidden). Both sides complete.`,
+    above: "Seen slightly from the front, flat and wide, floating.",
+    bottom: `A wide horizontal band filling the whole width of the picture edge to edge: its top edge soft and organic, its bottom straight along the picture's bottom edge, about half of the picture tall — it is laid over the bottom of the body of ${who} and over the piece's bottom edge, the lettering is printed on it, so it is solid and calm (no holes, no gaps) with nothing busy in it.`,
+    free: "",
+  };
+  return [
+    `Reference picture 1 is the finished design: match its drawing style, colours, line work and lighting exactly.`,
+    backdrop ? `Reference picture 2 is the background it lies on (${backdrop.name}): use ITS colours so the two blend.` : "",
+    `Draw ONLY this one element: ${look}.`,
+    shape[e.place],
+    "It is alone, complete and whole — nothing cut off by the picture's edge (except a band's sides and bottom), nothing in front of it — centred, as large as fits.",
+    `No ${who}, no people, no animals, no background, no text, no frame. A fully transparent background around it.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** What a bộ ảnh khách lacks before its master (shown on the master step). */
+function photoBriefProblems(brief: CtCharBrief): string[] {
+  const out: string[] = [];
+  if (!brief.photoZones.length) out.push("Chưa có vùng ảnh khách.");
+  brief.photoZones.forEach((z) => {
+    if (z.treat === "ai" && !(z.styles ?? []).length) out.push(`Vùng "${z.label}": AI vẽ lại nhưng chưa chọn style nào.`);
+  });
+  brief.elements.forEach((e) => {
+    if (e.perBackdrop && !brief.backdrops.length) out.push(`"${e.name}" vẽ theo từng nền nhưng chưa có nền nào.`);
+    if (!e.perBackdrop && !e.options.length) out.push(`"${e.name}" chưa có lựa chọn nào.`);
+    if (e.mode === "color" && e.options.some((o) => !/^#[0-9a-f]{6}$/.test(o.value))) out.push(`"${e.name}" đổi màu — mỗi màu cần mã #rrggbb.`);
+  });
+  return out;
+}
+
 /** Problems that would make layers impossible or wrong — shown before the master is made. */
 export function briefProblems(brief: CtCharBrief): string[] {
+  if (brief.kind === "photo") return photoBriefProblems(brief);
   const out: string[] = [];
   if (!brief.subjects.length) out.push("Chưa có nhân vật nào.");
   brief.subjects.forEach((sub, i) => {
@@ -269,13 +497,20 @@ export function briefProblems(brief: CtCharBrief): string[] {
         out.push(`Nhân vật ${i + 1}: màu của "${slot.part}" cần mã #rrggbb.`);
     });
   });
-  if (brief.product.cut === "alpha" && brief.decor) out.push("Sản phẩm cắt viền (alpha): trang trí nền sẽ nằm trong đường cắt — chắc chắn muốn vậy?");
+  if (brief.product.cut === "alpha" && brief.backdrops.length) out.push("Sản phẩm cắt viền (alpha): nền sẽ nằm trong đường cắt — chắc chắn muốn vậy?");
+  brief.texts.forEach((t, i) => {
+    if (t.kind === "choice" && !t.choices.length) out.push(`Chữ ${i + 1} (${t.label}): chưa có câu nào cho khách chọn.`);
+  });
   return out;
 }
 
 /** Number of finished files the set will have (what the customer can combine). */
 export function briefCombos(brief: CtCharBrief): number {
   let n = 1;
+  if (brief.kind === "photo") {
+    for (const e of brief.elements) n *= e.perBackdrop ? 1 : Math.max(1, e.options.length);
+    return n * Math.max(1, brief.backdrops.length);
+  }
   for (const sub of brief.subjects)
     for (const slot of sub.slots) n *= Math.max(1, slot.options.length) * (slot.mode === "shape" ? Math.max(1, slot.colors.length) : 1);
   return n;

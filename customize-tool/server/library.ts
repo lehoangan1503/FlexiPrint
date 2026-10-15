@@ -597,7 +597,7 @@ export async function replaceClipart(s: CtSession, id: string, withId: string, k
 export async function promoteAsset(s: CtSession, id: string, categoryId: string | null): Promise<NextResponse> {
   const { data: asset } = await s.supabase.from(CT_TABLES.assets).select("*").eq("id", id).maybeSingle<CtAsset>();
   if (!asset) return jsonError("Không tìm thấy asset", 404);
-  if (asset.user_id !== s.user.id) return jsonError("Chỉ người tạo mới đưa được vào thư viện", 403);
+  if (asset.user_id !== s.user.id && !(await isAdmin(s))) return jsonError("Chỉ người tạo hoặc admin mới đưa được vào thư viện", 403);
   if (asset.product_id === null) return jsonError("Đã nằm trong thư viện", 400);
   if (asset.parent_id || (asset.role !== "main" && asset.role !== "sub")) return jsonError("Chỉ main / sub gốc mới đưa được vào thư viện", 400);
   if (categoryId) {
@@ -607,7 +607,7 @@ export async function promoteAsset(s: CtSession, id: string, categoryId: string 
   const productId = asset.product_id;
   const kids = await descendants(s.supabase, [id]);
   const ids = [id, ...kids.map((k) => k.id)];
-  const { error } = await s.supabase.from(CT_TABLES.assets).update({ product_id: null, category_id: categoryId }).in("id", ids).eq("user_id", s.user.id);
+  const { error } = await s.supabase.from(CT_TABLES.assets).update({ product_id: null, category_id: categoryId }).in("id", ids);
   if (error) return jsonError(missingMigration(error.message), 500);
   if (asset.role === "main") {
     await s.supabase.from(CT_TABLES.productMains).upsert({ product_id: productId, asset_id: id, sort_order: asset.sort_order });
@@ -622,7 +622,7 @@ export async function promoteAsset(s: CtSession, id: string, categoryId: string 
 
 async function ownedProduct(s: CtSession, productId: string): Promise<CtProduct | null> {
   const { data } = await s.supabase.from(CT_TABLES.products).select("*").eq("id", productId).maybeSingle<CtProduct>();
-  return data && data.user_id === s.user.id ? data : null;
+  return data && (data.user_id === s.user.id || (await isAdmin(s))) ? data : null;
 }
 
 /**

@@ -30,7 +30,6 @@ import {
   Pentagon,
   Plus,
   Redo2,
-  Printer,
   Rocket,
   Save,
   Scissors,
@@ -1206,11 +1205,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             <CtButton variant={design.dirty ? "primary" : "outline"} size="sm" onClick={() => void save()} disabled={saving}>
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
               {design.dirty ? "Lưu thiết kế" : "Đã lưu"}
-            </CtButton>
-          </CtTooltip>
-          <CtTooltip label="Thông số phôi in (acrylic, sứ, nhôm, gỗ…) + xuất file in và đường cắt laser">
-            <CtButton size="sm" variant="outline" onClick={() => setMaterialOpen(true)} disabled={!main}>
-              <Printer className="h-3.5 w-3.5" /> File in
             </CtButton>
           </CtTooltip>
           <CtTooltip label="Deploy sản phẩm lên Shopify: bảng giá (Size / Pack), variants, ảnh + template custom">

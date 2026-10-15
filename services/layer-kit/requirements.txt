@@ -5,6 +5,7 @@ pillow>=11,<13
 requests>=2.32,<3
 fastapi>=0.128,<0.129
 uvicorn[standard]>=0.40,<0.41
-# Print upscale (upscale.py). The Dockerfile installs the CPU-only torch wheel first.
+# Print upscale (upscale.py). The Dockerfile installs the CPU-only torch / torchvision first.
 torch>=2.5
+torchvision>=0.20
 spandrel>=0.4,<1

@@ -8,12 +8,21 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, X } from "lucide-react";
-import type { CtAgentTask, CtCharTaskResult, CtCharTaskStep } from "../../types";
+import type { CtAgentTask, CtCharChatAttachment, CtCharChatTab, CtCharTaskResult, CtCharTaskStep } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { defaultCategoryRules } from "../../lib/library";
 import { AgentBadge, AgentProgress, useAgentStatus } from "../library/agent-brain";
 
 const isOpen = (t: CtAgentTask) => t.status === "pending" || t.status === "running" || t.status === "waiting";
+
+/** What a step's task carries besides the request (chat: where the editor was and what they sent). */
+export interface CharAgentExtra {
+  imageId?: string | null;
+  roles?: string[];
+  tab?: CtCharChatTab;
+  section?: string;
+  attachments?: CtCharChatAttachment[];
+}
 
 export interface CharAgent {
   /** The task being worked on (null = idle). */
@@ -21,7 +30,7 @@ export interface CharAgent {
   /** The last task that ended (its summary / error is shown until dismissed). */
   last: CtAgentTask | null;
   busy: boolean;
-  start: (step: CtCharTaskStep, request: string, extra?: { imageId?: string | null; roles?: string[] }) => Promise<void>;
+  start: (step: CtCharTaskStep, request: string, extra?: CharAgentExtra) => Promise<boolean>;
 }
 
 export function useCharAgent(projectId: string, onChange: () => Promise<void>, onError: (msg: string | null) => void) {
@@ -84,13 +93,22 @@ export function useCharAgent(projectId: string, onChange: () => Promise<void>, o
           note: "",
           images: [],
           refUrls: [],
-          char: { projectId, step, request, imageId: extra?.imageId ?? null, roles: extra?.roles ?? [] },
+          char: {
+            projectId,
+            step,
+            request,
+            imageId: extra?.imageId ?? null,
+            roles: extra?.roles ?? [],
+            ...(step === "chat" ? { tab: extra?.tab ?? "brief", section: extra?.section ?? "", attachments: extra?.attachments ?? [] } : {}),
+          },
         },
       });
       setLast(null);
       void follow(t);
+      return true;
     } catch (e) {
       onError(e instanceof Error ? e.message : "Không gửi được cho @flexiprint");
+      return false;
     }
   };
 
@@ -113,13 +131,15 @@ export function useCharAgent(projectId: string, onChange: () => Promise<void>, o
   return { agent, cancel, answer, dismiss: () => setLast(null) };
 }
 
-const STEP_LABEL: Record<CtCharTaskStep, string> = { brainstorm: "Brainstorm", master: "Master", edits: "Tô vùng clipart" };
+const STEP_LABEL: Record<CtCharTaskStep, string> = { brainstorm: "Brainstorm", master: "Master", edits: "Ảnh để cắt clipart", chat: "Chat" };
 
 /** Under the header: what @flexiprint is doing now, or what it said when it finished. */
 export function CharAgentBar(props: ReturnType<typeof useCharAgent>) {
   const status = useAgentStatus();
   const { task, last } = props.agent;
+  // Chat requests show in the sticky chat (char-chat.tsx).
   if (!task && !last) return null;
+  if ((task ?? last)?.input.char?.step === "chat") return null;
   const result = last?.result && "step" in last.result ? (last.result as CtCharTaskResult) : null;
   return (
     <div className="mx-4 mt-3 space-y-2 rounded-lg border border-violet-500/30 bg-violet-500/5 p-3">

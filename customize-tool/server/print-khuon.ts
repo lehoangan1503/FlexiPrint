@@ -22,7 +22,7 @@ import { newId } from "../lib/geometry";
 import { shapePolygon } from "../lib/material-frame";
 import { drawImage } from "./pack-images";
 import { getTemplate } from "./print-templates";
-import { currentImageModel } from "./settings";
+import { CT_IMAGE_MODEL } from "../lib/image-models";
 import { ctRemove, ctUpload } from "./storage";
 import type { CtSession } from "./supabase";
 
@@ -215,7 +215,7 @@ export async function khuonAi(s: CtSession, raw: unknown): Promise<NextResponse>
   // The faces to draw: as asked, else those of the round / template being changed, else one.
   const current: CtPrintFace[] = base.length ? base : (template?.spec.faces ?? []);
   const faceNames = req.faces.length ? req.faces : current.length ? current.map((f) => f.name) : ["Mặt in"];
-  const model = await currentImageModel();
+  const model = CT_IMAGE_MODEL;
   const temp: string[] = [];
   try {
     const drawings = await Promise.all(

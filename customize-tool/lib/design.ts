@@ -224,18 +224,19 @@ export function regionForSelection(region: CtRegion, sel: CtSelection[string] | 
 
 /**
  * Drop unknown styles and keep defaultStyle inside the offered list.
- * A zone offers either free styles (customer picks) or exactly one AI style.
+ * A zone offers styles of ONE family, customer picks: free filters, face
+ * filters, or AI styles (several since 2026-10-15, each with a demo picture).
  * Cut-out + cropped-edge fade are always on (no longer a per-zone choice), so
  * zones saved with them off pick them up too.
  */
 function normalizePhotoConfig(p: CtPhotoConfig): CtPhotoConfig {
   const styles = p.styles.filter((id, i, all) => isPhotoStyleRef(id) && all.indexOf(id) === i);
-  // An AI style is used alone (no customer dropdown); free or face styles combine within their family.
+  // Families never mix: any AI style makes it an AI zone (its AI styles only); free or face styles combine within theirs.
   const aiStyle = styles.find(isAiStyleRef);
   const family = aiStyle ? "ai" : styles[0] ? styleFamily(styles[0]) : "free";
   const same = styles.filter((s) => styleFamily(s) === family);
   // Face is a fixed set: every filter, whichever were stored.
-  const list: CtPhotoStyleRef[] = aiStyle ? [aiStyle] : family === "face" ? CT_FACE_STYLES.map((s) => s.id) : same.length ? same : ["original"];
+  const list: CtPhotoStyleRef[] = aiStyle ? styles.filter(isAiStyleRef) : family === "face" ? CT_FACE_STYLES.map((s) => s.id) : same.length ? same : ["original"];
   const mode: CtPhotoMode | undefined = p.mode === "free" || p.mode === "ai" || p.mode === "face" ? p.mode : undefined;
   const f: Partial<CtPhotoFrame> = p.frame ?? {};
   const num = (v: unknown, fallback: number, lo: number, hi: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback);

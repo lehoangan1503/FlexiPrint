@@ -1,28 +1,25 @@
 """
-Pixel-registered layer set from ONE master and its in-place edits (flexiprint://guide/layer-rules).
+Pixel-registered layer set of a v2 bộ nhân vật (flexiprint://guide/layer-rules), rebuilt 2026-10-14 ("xoá mọi logic
+chắp vá"): the paper doll and the parts drawn on it, cut by DIFFERENCE — pixel lock.
 
-Three steps, each reviewed (and fixed by hand) on the page before the next:
-  1. matte   the master without its backdrop (matte_white) — the editor fixes the alpha
-  2. plan    the region of every layer on its picture (regions_*) — the editor fixes the regions
-  3. cut     the files: region × the picture's subject alpha, recolours, back / front of wrapping parts (cut)
+gpt-image draws the paper doll (every part the customer changes taken off) and then every option of every part ON that
+doll, in place, on a transparent background. Every option picture is registered onto the doll (affine + smoothed local
+flow, ≤ 0.5 px). Then:
 
-Inputs (all the same canvas once resized to the master — every edit is an in-place edit):
-  master   the working master (approved master, upscaled)
-  base     the master with every "shape" part removed (bald heads, no hats…); = master when there is none
-  per slot:
-    color    mask   magenta edit of the BASE → which pixels are the part; options = hex → recolour base pixels
-    texture  mask   (same); options[0] = base pixels, options[i] = the texture edit's pixels inside the mask
-    shape    part   magenta edit of the MASTER = the region of the master's own part (options[0]); without it
-             master − base. options[i] = edit − base; colours = recolours;
-             wraps → back (whole part, under the body) + front (the part lying over the body, on top)
-  photo zones: magenta edit of the base → polygon (the customer photo is clipped to it)
+  body file    = the doll, pixel for pixel
+  option file  = the option picture's pixels where it differs from the doll (its colour, or new figure past the doll's
+                 outline) — nothing else, so stacked on the doll it IS the option picture there, and the doll's own
+                 pixels are never touched (what the AI re-drew a little elsewhere is dropped)
+  hair (wraps) = back: the whole hair of its picture · front: that same hair where it lies on the doll's figure
+                 (its outline included)
+  colours      = the option file recoloured where it has the part's own hue (an outline, a button, skin keep theirs)
 
-KEY mode (every new project, 2026-10-10 — customize-tool lib/char-plan.ts): no region is worked out. Each clipart is
-its own AI picture (the part kept, everything else flat magenta, background transparent): key_part takes its
-non-magenta pixels, register_key places it by the silhouette, match_colours fits a master part back to the master;
-the transparent paper-doll base is the body file as drawn.
+Nothing is segmented, guessed or grown: the regions are exactly what the AI drew anew. A region the editor finds wrong
+is fixed by hand (the region / file editor) or by drawing that 3b picture again.
 
-Every file is cropped by ONE common rectangle; transparent pixels carry no colour.
+  1. matte  the master's own cut-out at print size (the editor can erase specks: erase_at)
+  2. plan   every option registered onto the doll and upscaled; each option's region = what it changed (part_region)
+  3. cut    the files (cut)
 """
 
 from __future__ import annotations
@@ -73,33 +70,13 @@ def hex_rgb(h: str) -> np.ndarray:
     return np.array([int(h[i:i + 2], 16) for i in (0, 2, 4)], np.float32) / 255
 
 
-def recolor(colour: np.ndarray, alpha: np.ndarray, target_hex: str | None, tint: float = 0.4, spread: float = 1.0) -> np.ndarray:
-    """Keep the part's own shading (L around its mean), move its colour to the target. Same alpha → same pixels."""
-    if not target_hex:
-        return colour
-    tl = to_lab(hex_rgb(target_hex)[None, None])[0, 0]
-    lab = to_lab(colour)
-    sel = alpha > 0.5
-    if sel.sum() < 10:
-        return colour
-    lm, am, bm = (lab[..., i][sel].mean() for i in range(3))
-    # Dark targets: less spread, or the shadows go to pure black.
-    if spread == 1.0 and tl[0] < 30:
-        spread = 0.85
-    out = lab.copy()
-    out[..., 0] = np.clip(tl[0] + (lab[..., 0] - lm) * spread, 0, 100)
-    out[..., 1] = tl[1] + (lab[..., 1] - am) * tint
-    out[..., 2] = tl[2] + (lab[..., 2] - bm) * tint
-    return from_lab(out)
-
-
-def magenta(rgb: np.ndarray) -> np.ndarray:
-    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-    return (r > 0.7) & (b > 0.7) & (g < 0.35) & (np.abs(r - b) < 0.3)
+def on_white(col: np.ndarray, a: np.ndarray) -> np.ndarray:
+    return col * a[..., None] + (1 - a[..., None])
 
 
 def _fill(col: np.ndarray, w: np.ndarray, sigmas: tuple[float, ...] = (1.5, 3, 6, 12, 24)) -> np.ndarray:
-    """Colours of the weighted pixels spread to their neighbours (normalized convolution, finest scale first)."""
+    """Colours of the weighted pixels spread to their neighbours (normalized convolution, finest scale first) — the
+    colour under a cut-out's transparent edge before the print upscale (no dark rim)."""
     out = np.zeros_like(col)
     have = np.zeros(w.shape, np.float32)
     for s in sigmas:
@@ -112,122 +89,35 @@ def _fill(col: np.ndarray, w: np.ndarray, sigmas: tuple[float, ...] = (1.5, 3, 6
     return out
 
 
-def background_of(rgb: np.ndarray) -> tuple[np.ndarray, float]:
-    """The flat backdrop the master is drawn on (never exactly #FFFFFF from an image model) and its noise."""
-    b = max(4, min(rgb.shape[:2]) // 100)
-    border = np.concatenate([rgb[:b].reshape(-1, 3), rgb[-b:].reshape(-1, 3), rgb[:, :b].reshape(-1, 3), rgb[:, -b:].reshape(-1, 3)])
-    bg = np.median(border, 0)
-    noise = float(np.percentile(np.abs(border - bg).max(1), 99))
-    return bg.astype(np.float32), max(0.012, min(noise, 0.06))
+def magenta(rgb: np.ndarray) -> np.ndarray:
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    return (r > 0.7) & (b > 0.7) & (g < 0.35) & (np.abs(r - b) < 0.3)
 
+
+def region_zone(mask_pic: np.ndarray) -> np.ndarray:
+    return clean(magenta(mask_pic), close_r=6).astype(np.float32)
+
+
+def polygon_of(mask: np.ndarray, eps: float = 1.5) -> list[list[float]]:
+    m = (mask * 255).astype(np.uint8)
+    cs, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not cs:
+        return []
+    c = max(cs, key=cv2.contourArea)
+    c = cv2.approxPolyDP(c, eps, True)
+    return [[float(p[0][0]), float(p[0][1])] for p in c]
+
+
+# ---- 1. matte: specks the editor marks --------------------------------------------------------------------
 
 def ink_of(rgb: np.ndarray, bg: np.ndarray) -> np.ndarray:
     """The least alpha that explains each pixel as some colour laid over the backdrop (colour-to-alpha): 0 = backdrop."""
     lo = np.clip((bg - rgb) / np.maximum(bg, 1e-3), 0, 1)
-    hi = np.clip((rgb - bg) / np.maximum(1 - bg, 1e-3), 0, 1)
+    # Nothing is drawn lighter than white paper: on a near-white backdrop (254 from gpt-image, its grain 253–255) a
+    # pixel above the paper is grain, not paint — dividing by 1 − bg (1/255) made every 255 pixel "full ink" and the
+    # paper a field of specks (found 2026-10-10: the outside fell apart, gaps were never cut).
+    hi = np.clip((rgb - bg) / np.maximum(1 - bg, 1e-3), 0, 1) * (1 - bg > 0.1)
     return np.maximum(lo, hi).max(2)
-
-
-def backdrop_of(native: np.ndarray, coarse: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Where the paper shows, decided on the picture as the image model drew it (before the upscale, whose paper is
-    no longer flat). Paper is 254–255 there; even white hair is cream, ≥ ~8 levels darker. The segmentation
-    (`coarse`, BiRefNet) only votes on the ambiguous bits — it never draws the edge.
-      - outside: paper connected to the picture's border;
-      - gaps: enclosed paper (between curls, under an arm). One is cut when BiRefNet calls it backdrop and it is near
-        the outside or walled only by light paint, or when it sits within a few px of the outside and is walled
-        only by light paint (a light strand). A pure-white highlight, teeth, the inside of a glass stay: deeper, or
-        walled by a dark outline;
-      - tinted paper: near-white pixels (grain, a paper tint in a tight gap) reached from either, where BiRefNet
-        calls it backdrop.
-    → (outside, gaps, tinted) masks at the native size."""
-    H, W = native.shape[:2]
-    bg, noise = background_of(native)
-    ink = ink_of(native, bg)
-    eight = np.ones((3, 3))
-    lab, n = ndi.label(ink <= noise + 0.004, structure=eight)
-    border = np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))
-    border = border[border > 0]
-    outside = np.isin(lab, border)
-    gaps = np.zeros_like(outside)
-    if n:
-        idx = np.arange(1, n + 1)
-        near = ndi.minimum(cv2.distanceTransform((~outside).astype(np.uint8), cv2.DIST_L2, 5), lab, idx)
-        seg = ndi.mean(coarse, lab, idx)
-        # walled only by light paint = still connected to the border through pixels lighter than an outline
-        lw, _ = ndi.label(ink <= 0.36, structure=eight)
-        lb = np.unique(np.concatenate([lw[0], lw[-1], lw[:, 0], lw[:, -1]]))
-        light = ndi.maximum(np.isin(lw, lb[lb > 0]), lab, idx) > 0
-        fringe = max(6, round(max(H, W) * 0.025))
-        tight = max(4, round(max(H, W) * 0.006))
-        cut = ~np.isin(idx, border) & (((seg < 0.5) & ((near <= fringe) | light)) | ((near <= tight) & light))
-        gaps = np.isin(lab, idx[cut])
-    back = outside | gaps
-    tinted = ndi.binary_propagation(back, mask=((ink <= 0.04) & (coarse < 0.5)) | ((ink <= 0.07) & (coarse < 0.1))) & ~back
-    return outside, gaps, tinted
-
-
-def matte_white(native: np.ndarray, white: np.ndarray, coarse: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Alpha + un-mixed colours of a picture on a known flat backdrop, at the size of `white` (the print upscale of
-    `native`, or `native` itself). Where the paper is comes from backdrop_of; the edge is solved from the pixels:
-      - paper → 0; everything more than a few px from the paper → 1 (white paint inside the art stays opaque);
-      - edge: colour-to-alpha (watercolour = paint over paper), raised to a·F + (1−a)·backdrop where F, the colour of
-        the solid pixels next to it, is known — never on pixels within the paper's grain (upscale noise would turn
-        into faint dots of the neighbour's colour);
-      - strand tips past the segmentation are kept: anything drawn that is not paper has alpha;
-      - then the colour is un-mixed (no white or grey halo)."""
-    Hn, Wn = native.shape[:2]
-    h, w = white.shape[:2]
-    k = w / Wn
-    outside_n, gaps_n, tinted_n = backdrop_of(native, coarse)
-
-    def to_size(m: np.ndarray) -> np.ndarray:
-        return cv2.resize(m.astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR) > 0.5 if (h, w) != (Hn, Wn) else m
-
-    outside, gaps, tinted = to_size(outside_n), to_size(gaps_n), to_size(tinted_n)
-    back = outside | gaps
-    outside_seg = to_size(coarse < 0.5)
-    bg, noise = background_of(white)
-    ink = ink_of(white, bg)
-
-    # Edge band: a few px around the paper outside, 1 px around gaps and tinted paper (their walls are often a light
-    # strand that must stay opaque).
-    band = cv2.dilate(outside.astype(np.uint8), kernel(max(2, round(3 * k)))).astype(bool)
-    band |= cv2.dilate((gaps | tinted).astype(np.uint8), kernel(max(1, round(k)))).astype(bool)
-    solid = ~band & ~tinted
-    F = _fill(white, (solid & (ink > 0.05)).astype(np.float32))
-
-    # Paper grain beside the art is ≤ ~16/255: below that there is nothing drawn where BiRefNet says backdrop.
-    floor = np.where(outside_seg, max(noise, 0.065), noise)
-    a_c2a = np.clip((ink - floor) / (1 - floor), 0, 1)
-    d = F - bg[None, None]
-    den = (d * d).sum(2)
-    a_solve = np.clip(((white - bg[None, None]) * d).sum(2) / (den + 1e-6), 0, 1)
-    a_edge = np.where((den > 0.004) & (a_c2a > 0) & ~tinted, np.maximum(a_c2a, a_solve), a_c2a)
-    alpha = np.where(solid, 1.0, a_edge).astype(np.float32)
-    alpha[cv2.erode(back.astype(np.uint8), kernel(1)).astype(bool)] = 0
-    # Specks and faint grain: islands left in the backdrop that are tiny or never more than faint.
-    isl, m = ndi.label(alpha > 0.02)
-    if m:
-        idx = np.arange(1, m + 1)
-        drop = (ndi.sum(np.ones_like(alpha), isl, idx) < 12 * k * k) | (ndi.maximum(alpha, isl, idx) < 0.12)
-        alpha[np.isin(isl, idx[drop])] = 0
-
-    # Colours: un-mixed from the backdrop where the edge is thin; the neighbours' colour where it is almost gone.
-    safe = np.maximum(alpha, 1e-3)[..., None]
-    unmixed = np.clip((white - (1 - alpha[..., None]) * bg[None, None]) / safe, 0, 1)
-    t = np.clip((alpha - 0.15) / 0.5, 0, 1)[..., None]
-    col = np.where((~solid)[..., None], unmixed * t + F * (1 - t), white)
-    col = np.where(alpha[..., None] > 0, col, 1.0)
-    return alpha, np.clip(col, 0, 1).astype(np.float32)
-
-
-def cut_of(native: np.ndarray, white: np.ndarray, coarse: np.ndarray) -> np.ndarray:
-    """RGBA of a picture on its white backdrop at the size of `white` (`native` or its print upscale): the paper is
-    found on `native`, the segmentation alpha (any size — a uniform scale of the same canvas) only votes."""
-    h, w = native.shape[:2]
-    c = cv2.resize(coarse, (w, h), interpolation=cv2.INTER_LINEAR) if coarse.shape != (h, w) else coarse
-    a, col = matte_white(native, white, np.clip(c, 0, 1))
-    return np.dstack([col, a])
 
 
 def erase_at(white: np.ndarray, alpha: np.ndarray, points: list[tuple[float, float]]) -> tuple[np.ndarray, list[int]]:
@@ -254,7 +144,6 @@ def erase_at(white: np.ndarray, alpha: np.ndarray, points: list[tuple[float, flo
             continue
         x0, y0, x1, y1 = max(0, x - R), max(0, y - R), min(W, x + R + 1), min(H, y + R + 1)
         a = out[y0:y1, x0:x1]
-        cx, cy = x - x0, y - y0
         yy, xx = np.mgrid[y0:y1, x0:x1]
         disc = (xx - x) ** 2 + (yy - y) ** 2 <= R * R
         near = (xx - x) ** 2 + (yy - y) ** 2 <= seed_r * seed_r
@@ -285,6 +174,8 @@ def erase_at(white: np.ndarray, alpha: np.ndarray, points: list[tuple[float, flo
         removed.append(n)
     return out, removed
 
+
+# ---- registration: every edit back onto the master's pixels ------------------------------------------------
 
 def align(ref: np.ndarray, img: np.ndarray) -> dict:
     """How far an in-place edit moved the unchanged pixels (layer-rules: ≤ 0.5 px)."""
@@ -351,13 +242,21 @@ def _local(ref: np.ndarray, img: np.ndarray, sigma: float = 24) -> tuple[np.ndar
     return np.clip(out, 0, 1), float(np.hypot(fx, fy).max())
 
 
-def _local_flow(ref: np.ndarray, img: np.ndarray, sigma: float = 24) -> tuple[np.ndarray, np.ndarray]:
+def _local_flow(ref: np.ndarray, img: np.ndarray, sigma: float = 24, exclude: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
     g1 = _gray(ref).clip(0, 255).astype(np.uint8)
     g2 = _gray(img).clip(0, 255).astype(np.uint8)
     dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_ULTRAFAST)
     dis.setFinestScale(0)
     f = dis.calc(g1, g2, None)
-    same = (np.abs(g1.astype(np.float32) - g2) < 14) & (np.abs(cv2.Laplacian(g1, cv2.CV_32F)) > 4) & (np.hypot(f[..., 0], f[..., 1]) < 2.5)
+    # Trusted where the picture, moved by the flow, matches the reference there (textured pixels): an unchanged part the
+    # AI shifted by a few px (a pair of legs moved 3–4 px while a cardigan was added, 2026-10-14) is moved back; a part
+    # that changed does not match and takes the flow of what is around it.
+    h, w = g1.shape
+    xs, ys = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
+    back = cv2.remap(g2.astype(np.float32), xs + f[..., 0], ys + f[..., 1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    same = (np.abs(g1.astype(np.float32) - back) < 14) & (np.abs(cv2.Laplacian(g1, cv2.CV_32F)) > 4) & (np.hypot(f[..., 0], f[..., 1]) < 8)
+    if exclude is not None:
+        same &= ~exclude
     w = same.astype(np.float32)
     k = lambda a: cv2.GaussianBlur(a, (0, 0), sigma)
     den = k(w)
@@ -387,14 +286,6 @@ def register(ref: np.ndarray, img: np.ndarray) -> tuple[np.ndarray, dict]:
     return out, {**before, "before": p90(t0), "residual": p90(t1), "max": round(float(t1.max()), 3) if len(t1) else 0.0, "local": round(moved, 2)}
 
 
-# ---- key mode: one AI picture per clipart --------------------------------------------------------------------
-# A clip keeps ONE part as drawn; everything else of the figures is a flat magenta silhouette, the background is
-# transparent (customize-tool lib/char-plan.ts KEY). The file is the clip's own non-magenta pixels: its colours and
-# its cut line come from the same picture, so no neighbour sticks to the edge.
-
-MAGENTA = np.array([1.0, 0.0, 1.0], np.float32)
-
-
 def _premul_warp(rgba: np.ndarray, fn) -> np.ndarray:
     """Move an RGBA picture without dragging transparent (or magenta) colours into the edge: colours premultiplied."""
     a = rgba[..., 3:4]
@@ -404,9 +295,10 @@ def _premul_warp(rgba: np.ndarray, fn) -> np.ndarray:
     return np.dstack([np.clip(col, 0, 1), out_a]).astype(np.float32)
 
 
-def register_rgba(ref: np.ndarray, rgba: np.ndarray) -> tuple[np.ndarray, dict]:
-    """`register` for a picture with its own alpha (the key-mode base): measured on its colours over white, the same
-    affine + local flow applied to colours and alpha."""
+def register_rgba(ref: np.ndarray, rgba: np.ndarray, exclude: np.ndarray | None = None, local: bool = True) -> tuple[np.ndarray, dict]:
+    """`register` for a picture with its own alpha: measured on its colours over white, the same affine + local flow
+    applied to colours and alpha. `exclude`: pixels the local flow must not learn from (what the picture drew anew);
+    `local` False: the affine alone."""
     rgb = on_white(rgba[..., :3], rgba[..., 3])
     before = align(ref, rgb)
     t0 = tile_shifts(ref, rgb)
@@ -418,7 +310,11 @@ def register_rgba(ref: np.ndarray, rgba: np.ndarray) -> tuple[np.ndarray, dict]:
     aff = lambda x: cv2.warpAffine(x, warp, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
     rgba1 = _premul_warp(rgba, aff)
     rgb1 = on_white(rgba1[..., :3], rgba1[..., 3])
-    fx, fy = _local_flow(ref, rgb1)
+    if not local:
+        t1 = tile_shifts(ref, rgb1)
+        p90 = lambda t: round(float(np.percentile(t, 90)), 3) if len(t) else 0.0
+        return rgba1, {**before, "before": p90(t0), "residual": p90(t1), "max": round(float(t1.max()), 3) if len(t1) else 0.0, "local": 0.0}
+    fx, fy = _local_flow(ref, rgb1, exclude=exclude)
     xs, ys = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
     rgba2 = _premul_warp(rgba1, lambda x: cv2.remap(x, xs + fx, ys + fy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0))
     t1 = tile_shifts(ref, on_white(rgba2[..., :3], rgba2[..., 3]))
@@ -426,311 +322,140 @@ def register_rgba(ref: np.ndarray, rgba: np.ndarray) -> tuple[np.ndarray, dict]:
     return rgba2, {**before, "before": p90(t0), "residual": p90(t1), "max": round(float(t1.max()), 3) if len(t1) else 0.0, "local": round(float(np.hypot(fx, fy).max()), 2)}
 
 
-def key_magenta(col: np.ndarray, a: np.ndarray) -> np.ndarray:
-    """The magenta silhouettes of a clip (a little looser than `magenta`: the fill is never exactly #FF00FF), as big
-    blobs only — a magenta-ish speck inside the part stays the part's."""
-    r, g, b = col[..., 0], col[..., 1], col[..., 2]
-    # Strict: the fill comes back within a few levels of #FF00FF; a purple / lilac / pink garment must not match
-    # (a looser test punched holes in a royal-purple dress, 2026-10-10).
-    m = (r > 0.8) & (b > 0.8) & (g < 0.3) & (np.abs(r - b) < 0.15) & (a > 0.3)
-    # Every bit counts, however small: the magenta showing through the gaps between hair strands is a few px each
-    # (dropping islands < 400 px left pink streaks in the hair, 2026-10-10). Then the shaded magenta right beside it
-    # (a strand's shadow on the fill): magenta hue, r ≈ b, little green — within 5 px of the true fill only.
-    loose = (r > 0.4) & (b > 0.4) & (g < 0.55 * np.minimum(r, b)) & (np.abs(r - b) < 0.1) & (a > 0.3)
-    near = cv2.dilate(m.astype(np.uint8), kernel(5)).astype(bool)
-    return m | (loose & near)
+# ---- 2. plan: what an option drew anew on the doll -------------------------------------------------------------
+
+# Lab ΔE above which a pixel counts as re-coloured (gpt-image keeps an unchanged area within ~3–6, its new part is
+# far beyond it).
+CHANGED_DE = 12.0
 
 
-def key_part(rgba: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """A clip → (colours, the part's alpha, the whole silhouette's alpha). Where the part meets the magenta the edge
-    pixels are part colour mixed with magenta: un-mixed (alpha by projection on the line magenta → the part's own
-    colour nearby, colour = what is left), so no pink rim."""
-    col, a = rgba[..., :3], rgba[..., 3]
-    mag = key_magenta(col, a)
-    near = cv2.dilate(mag.astype(np.uint8), kernel(3)).astype(bool) & ~mag
-    inner = (a > 0.9) & ~cv2.dilate(mag.astype(np.uint8), kernel(3)).astype(bool)
-    own = _fill(col, inner.astype(np.float32))
-    d = own - MAGENTA
-    t = np.clip(((col - MAGENTA) * d).sum(2) / np.maximum((d * d).sum(2), 1e-3), 0, 1)
-    part_a = np.where(mag, 0.0, np.where(near, a * t, a)).astype(np.float32)
-    # The silhouettes' own rim (magenta fading into the transparent background) is no part: half-transparent pixels
-    # beside the magenta go. Then only the part's real pieces stay — crumbs along the silhouettes are dropped.
-    part_a[near & (a < 0.95)] = 0
-    # The silhouettes' outline (a dark line between the magenta and the transparent background — the model draws one
-    # now and then): what touches both is no part.
-    clear = cv2.dilate((a < 0.1).astype(np.uint8), kernel(3)).astype(bool)
-    part_a[clear & cv2.dilate(mag.astype(np.uint8), kernel(3)).astype(bool)] = 0
-    lab, n = ndi.label(part_a > 0.3)
+# A pixel whose HUE (Lab a·b, lightness left out: the AI shades the underwear darker along a jacket's opening) is this
+# close to the doll's underwear colour is the doll showing, never the part (chroma key). The key is a strong magenta:
+# lilac, plum, fuchsia, red, skin are all > 50 from it. A teal key failed (2026-10-14): an emerald dress was 10–16 from
+# it, the teal shading along a cardigan 3–12 — no threshold told them apart.
+KEY_AB = 25.0
+
+
+def territory(doll_a: np.ndarray, subject: int, count: int) -> np.ndarray | None:
+    """The pixels closer to figure `subject` (left → right) of the doll than to any other: where a part of that subject
+    can be. None when the doll's figures cannot be told apart (they touch)."""
+    if count < 2:
+        return None
+    lab, n = ndi.label(doll_a > 0.5)
+    if n < count:
+        return None
+    sizes = ndi.sum(np.ones_like(doll_a), lab, range(1, n + 1))
+    figs = sorted(np.argsort(sizes)[::-1][:count] + 1, key=lambda i: float(np.where(lab == i)[1].mean()))
+    if sizes[figs[-1] - 1] < 0.05 * sizes.sum() or subject >= count:
+        return None
+    dists = [cv2.distanceTransform((lab != i).astype(np.uint8), cv2.DIST_L2, 5) for i in figs]
+    return np.argmin(np.stack(dists), axis=0) == subject
+
+
+def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
+    """The pixels an option picture (registered onto the doll, both RGBA on one canvas) drew anew: a clearly different
+    colour where both are figure, or figure where the doll has none (hair past the head, a skirt past the legs).
+    The re-drawn outlines (a 1–2 px line where a contour moved a fraction of a pixel) and specks are not the part;
+    changes on another subject (`own`: this subject's territory) or far from the part's main piece neither; nor
+    anything in the doll's underwear colour `key` (the AI
+    re-draws the underwear a little where a jacket opens — a line along its edge, 2026-10-14).
+    → (region, {px, lost}): `lost` = doll figure the picture took away (an arm moved, a hand erased) — a layer can only
+    add, so that picture must be drawn again."""
+    H, W = doll.shape[:2]
+    s = max(H, W) / 1024
+    da, oa = doll[..., 3], opt[..., 3]
+    lab_o = to_lab(on_white(opt[..., :3], oa))
+    de = np.linalg.norm(lab_o - to_lab(on_white(doll[..., :3], da)), axis=2)
+    keyed = np.linalg.norm(lab_o[..., 1:] - to_lab(hex_rgb(key)[None, None])[0, 0][1:], axis=2) < KEY_AB if key else np.zeros(de.shape, bool)
+    near_doll = cv2.dilate((da > 0.5).astype(np.uint8), kernel(max(2, round(2 * s)))).astype(bool)
+    # New figure away from the doll's own outline (along it the outline only moved a little).
+    grown = ((oa - da) > 0.3) & ~near_doll
+    changed = (de > CHANGED_DE) & (oa > 0.5) & ~grown & ~keyed
+    changed = cv2.morphologyEx(changed.astype(np.uint8), cv2.MORPH_OPEN, kernel(max(1, round(1.5 * s)))).astype(bool)
+    m = cv2.morphologyEx((changed | grown).astype(np.uint8), cv2.MORPH_CLOSE, kernel(max(2, round(3 * s)))).astype(bool) & (oa > 0.02)
+    if own is not None:
+        m &= own
+    # A part is one subject's and lies together: its biggest piece and what is near it (the two fronts of an open jacket,
+    # a bun and its locks, a glass and the fingers round it). Changes elsewhere are the AI re-drawing a little — the other
+    # woman's legs re-drawn while a glass was put in this one's hand came along as dark dots (2026-10-14).
+    lab, n = ndi.label(m)
     if n:
-        sizes = ndi.sum(np.ones_like(part_a), lab, range(1, n + 1))
-        keep = [i + 1 for i, z in enumerate(sizes) if z >= max(150.0, 0.01 * float(sizes.max()))]
-        part_a = np.where(np.isin(lab, keep) | ((part_a <= 0.3) & cv2.dilate(np.isin(lab, keep).astype(np.uint8), kernel(2)).astype(bool)), part_a, 0).astype(np.float32)
-    un = (col - (1 - t[..., None]) * MAGENTA) / np.maximum(t[..., None], 0.15)
-    colour = np.where(near[..., None], np.clip(un, 0, 1), col)
-    # Colours under transparent / magenta pixels: the part's own, spread (an upscale or a resize never pulls pink in).
-    solid = (part_a > 0.9).astype(np.float32)
-    colour = np.where(part_a[..., None] > 0.9, colour, _fill(colour, solid))
-    return colour.astype(np.float32), part_a, a.astype(np.float32)
-
-
-def warp_rgba(rgba: np.ndarray, warp: np.ndarray) -> np.ndarray:
-    h, w = rgba.shape[:2]
-    return _premul_warp(rgba, lambda x: cv2.warpAffine(x, warp, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_CONSTANT, borderValue=0))
-
-
-def register_key(ref_a: np.ndarray, rgba: np.ndarray, part_a: np.ndarray) -> tuple[np.ndarray, dict]:
-    """→ (the affine warp to apply with warp_rgba, how well the outlines meet)."""
-    """Put a clip on the master's canvas by its SILHOUETTE (magenta + part): the model re-draws everything, so there
-    are no unchanged pixels to measure — the outline of the figures is what stayed. The part itself is left out of
-    the measure (an option's new hair has another outline than the master's). ECC affine on the blurred alphas."""
-    h, w = ref_a.shape
-    b1 = cv2.GaussianBlur(ref_a.astype(np.float32), (0, 0), 2.0)
-    b2 = cv2.GaussianBlur(rgba[..., 3].astype(np.float32), (0, 0), 2.0)
-    away = ~cv2.dilate((part_a > 0.05).astype(np.uint8), kernel(18)).astype(bool)
-    edge = cv2.dilate((np.abs(cv2.Laplacian(b1, cv2.CV_32F)) > 0.002).astype(np.uint8), kernel(4)).astype(bool)
-    mask = (away & edge).astype(np.uint8)
-    win = cv2.createHanningWindow((w, h), cv2.CV_32F)
-    (dx, dy), _ = cv2.phaseCorrelate(b1, b2, win)
-    warp = np.float32([[1, 0, dx], [0, 1, dy]])
-    before = float(np.abs(b1 - b2)[mask > 0].mean()) if mask.any() else 0.0
-    if abs(dx) > 40 or abs(dy) > 40:
-        warp = np.float32([[1, 0, 0], [0, 1, 0]])
-    try:
-        crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
-        _, found = cv2.findTransformECC(b1, b2, warp.copy(), cv2.MOTION_AFFINE, crit, mask, 5)
-        # A clip is the same canvas: a few px and a fraction of a percent at most — anything else is ECC lost.
-        if abs(found[0, 2]) < 40 and abs(found[1, 2]) < 40 and np.all(np.abs(found[:, :2] - np.eye(2)) < 0.03):
-            warp = found
-    except cv2.error:
-        pass
-    out = warp_rgba(rgba, warp)
-    after = cv2.GaussianBlur(out[..., 3], (0, 0), 2.0)
-    resid = float(np.abs(b1 - after)[mask > 0].mean()) if mask.any() else 0.0
-    # Mean alpha error on the outline band ≈ how far the outlines sit apart (px, roughly: a 1 px shift of a blurred
-    # edge ≈ 0.2).
-    return warp, {"dx": round(float(warp[0, 2]), 2), "dy": round(float(warp[1, 2]), 2), "sx": round(float(warp[0, 0]), 4), "sy": round(float(warp[1, 1]), 4), "before": round(before / 0.2, 2), "residual": round(resid / 0.2, 2)}
-
-
-def match_colours(colour: np.ndarray, part_a: np.ndarray, master: np.ndarray, master_a: np.ndarray) -> np.ndarray:
-    """A clip of the master's own part re-drawn by the model drifts in colour (silver hair came back golden): its
-    colours are fitted back to the master's on the same pixels (per Lab channel gain + offset, on the part's core)."""
-    core = cv2.erode(((part_a > 0.95) & (master_a > 0.95)).astype(np.uint8), kernel(3)).astype(bool)
-    if core.sum() < 500:
-        return colour
-    a, b = to_lab(colour), to_lab(master)
-    out = a.copy()
-    for c in range(3):
-        x, y = a[..., c][core], b[..., c][core]
-        sx = float(x.std())
-        gain = float(np.clip(y.std() / sx, 0.7, 1.4)) if sx > 1e-3 else 1.0
-        out[..., c] = (a[..., c] - x.mean()) * gain + y.mean()
-    return from_lab(out)
-
-
-def polygon_of(mask: np.ndarray, eps: float = 1.5) -> list[list[float]]:
-    m = (mask * 255).astype(np.uint8)
-    cs, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    if not cs:
-        return []
-    c = max(cs, key=cv2.contourArea)
-    c = cv2.approxPolyDP(c, eps, True)
-    return [[float(p[0][0]), float(p[0][1])] for p in c]
-
-
-# ---- 2. plan: where every layer is --------------------------------------------------------------------------
-# A region says WHICH part of a picture a layer is (soft 0–1, generous is fine); the picture's subject alpha says
-# where the picture has anything at all. A file = region × subject alpha, so a region never brings back backdrop
-# and the edge always comes from the matte.
-
-def keep_of(img: np.ndarray, ref: np.ndarray, thr: float = 0.08) -> np.ndarray:
-    """Where an in-place edit left its reference as it was (soft 0–1). There the reference's subject alpha — the
-    master's, fixed by hand — holds for the edit too; elsewhere the edit's own matte."""
-    changed = clean(np.abs(img - ref).max(2) > thr, open_r=1, close_r=3, min_px=30)
-    changed = cv2.dilate(changed.astype(np.uint8), kernel(6)).astype(bool)
-    return cv2.GaussianBlur((~changed).astype(np.float32), (0, 0), 2.0)
-
-
-def mix(keep: np.ndarray, parent: np.ndarray, own: np.ndarray) -> np.ndarray:
-    k = keep if parent.ndim == 2 else keep[..., None]
-    return parent * k + own * (1 - k)
-
-
-def on_white(col: np.ndarray, a: np.ndarray) -> np.ndarray:
-    return col * a[..., None] + (1 - a[..., None])
-
-
-def regions_colour(base: np.ndarray, base_a: np.ndarray, masks: dict[str, tuple[str, np.ndarray]]) -> tuple[dict[str, np.ndarray], list[dict]]:
-    """Colour / texture parts on the base: the magenta core the AI painted, grown a little to take the part's own
-    outline, never skin or another part. masks = {slot key: (label, registered magenta picture)}."""
-    lab = to_lab(base)
-    L_, a_, b_ = lab[..., 0], lab[..., 1], lab[..., 2]
-    skin = (a_ > 6) & (b_ > 8) & (L_ > 35)
-    cores = {k: clean(magenta(m)) for k, (_, m) in masks.items()}
-    out: dict[str, np.ndarray] = {}
-    checks: list[dict] = []
-    for key, (label, _) in masks.items():
-        core = cores[key]
-        if core.sum() < 300:
-            checks.append({"name": f"Vùng {label}", "ok": False, "detail": "AI không tô được phần này — tô vùng bằng tay hoặc làm lại bản tô.", "piece": key})
-            out[key] = np.zeros(core.shape, np.float32)
-            continue
-        others = np.zeros_like(core)
-        for k, c in cores.items():
-            if k != key:
-                others |= c
-        grown = cv2.dilate(core.astype(np.uint8), kernel(3)).astype(bool)
-        ref = core & (base_a > 0.5)
-        near = np.zeros_like(core)
-        if ref.sum() > 100:
-            med = np.array([np.median(lab[..., i][ref]) for i in range(3)], np.float32)
-            de = np.sqrt(((lab - med) ** 2).sum(2))
-            near = cv2.dilate(core.astype(np.uint8), kernel(4)).astype(bool) & (de < 10)
-        part = clean(((core & ~others) | (grown & ~skin & ~others) | (near & ~others)) & (base_a > 0.02), open_r=1, close_r=2, min_px=200)
-        part = fill_small_holes(part, 2500)
-        kept = float(part.sum()) / max(1.0, float(core.sum()))
-        checks.append({"name": f"Vùng {label}", "ok": kept > 0.8, "detail": f"{int(part.sum()):,} px ({kept * 100:.0f}% phần AI tô)", "piece": key})
-        out[key] = soft(part, grow=2, blur=0.7)
-    return out, checks
-
-
-def fill_small_holes(m: np.ndarray, max_px: int) -> np.ndarray:
-    """Holes inside the region smaller than max_px are filled (a pixel threshold leaves pin-holes in flat fills).
-    A big hole (a face ringed by hair) stays: it is not part of the region."""
+        sizes = ndi.sum(m, lab, range(1, n + 1))
+        main = lab == int(np.argmax(sizes)) + 1
+        dist = cv2.distanceTransform((~main).astype(np.uint8), cv2.DIST_L2, 5)
+        near = ndi.minimum(dist, lab, range(1, n + 1))
+        keep = [i + 1 for i in range(n) if sizes[i] >= 300 * s * s and near[i] <= 0.08 * max(H, W)]
+        m = np.isin(lab, keep)
+    # A small hole inside the part where it happens to match the doll (a highlight on a white collar) is the part's.
     inv = ~m
     lab, n = ndi.label(inv)
-    if not n:
-        return m
-    sizes = ndi.sum(inv, lab, range(1, n + 1))
-    outer = set(np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]])).tolist())
-    fill = [i + 1 for i, s in enumerate(sizes) if s <= max_px and (i + 1) not in outer]
-    return m | np.isin(lab, fill) if fill else m
+    if n:
+        sizes = ndi.sum(inv, lab, range(1, n + 1))
+        border = set(np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]])).tolist())
+        holes = [i + 1 for i, v in enumerate(sizes) if v <= 1500 * s * s and (i + 1) not in border]
+        if holes:
+            m |= np.isin(lab, holes)
+    # The part's own drawn outline round it: one px more (never past the picture's own alpha).
+    m = cv2.dilate(m.astype(np.uint8), kernel(1)).astype(bool) & (oa > 0.02) & ~keyed
+    lost = clean((da - oa) > 0.5, open_r=1, close_r=1, min_px=round(150 * s * s))
+    return m, {"px": int(m.sum()), "lost": int(lost.sum())}
 
 
-def tidy(part: np.ndarray, allow: np.ndarray, sigma: float, close_r: int = 7, max_hole: int = 2500) -> np.ndarray:
-    """A thresholded region made clean: small holes filled, narrow gaps closed, the edge smoothed (blur + re-threshold).
-    What closing / smoothing ADDS is limited to `allow` (pixels that really belong to the part); what the region
-    already had is kept, except for the smoothing's own rounding of its edge."""
-    m = part.astype(bool)
-    if not m.any():
-        return m
-    m = fill_small_holes(m, max_hole)
-    closed = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_CLOSE, kernel(close_r)).astype(bool)
-    m = m | (closed & allow)
-    if sigma > 0:
-        m = (cv2.GaussianBlur(m.astype(np.float32), (0, 0), sigma) > 0.5) & (m | allow)
-    return m
-
-
-def region_shape(white: np.ndarray, cut_a: np.ndarray, base: np.ndarray, base_a: np.ndarray, region: np.ndarray | None, hairlike: bool) -> np.ndarray:
-    """A shape option's part: what differs from the base (inside `region` when the master's parts are split
-    between slots). Hair: only the hair's own colours; on the body only pixels that look more like the part than
-    like the base there (bangs over a forehead yes, a re-drawn ear or outline no)."""
-    diff = np.abs(white - base).max(2)
-    changed = (diff > 0.12) & (cut_a > 0.3)
-    # Where closing / smoothing may ADD pixels: inside the picture's subject, and on the body only where the picture
-    # really differs from the base (a looser test than `changed`) — never plain skin.
-    allow = (cut_a > 0.3) & ((base_a < 0.5) | (diff > 0.04))
-    if region is not None:
-        changed &= region
-        allow &= region
-    if hairlike:
-        lab = to_lab(white)
-        base_lab = to_lab(base)
-        ref = changed & (base_a < 0.05)
-        if ref.sum() > 400:
-            ha, hb = np.median(lab[..., 1][ref]), np.median(lab[..., 2][ref])
-            hl = np.median(lab[..., 0][ref])
-            hair_hue = np.hypot(lab[..., 1] - ha, lab[..., 2] - hb) < 26
-            d_part = np.sqrt(((lab[..., 0] - hl) * 0.5) ** 2 + (lab[..., 1] - ha) ** 2 + (lab[..., 2] - hb) ** 2)
-            d_base = np.sqrt(((lab[..., 0] - base_lab[..., 0]) * 0.5) ** 2 + (lab[..., 1] - base_lab[..., 1]) ** 2 + (lab[..., 2] - base_lab[..., 2]) ** 2)
-            hair_like = hair_hue & ((base_a < 0.5) | (d_part < d_base))
-            changed &= hair_like
-            allow &= hair_like  # smoothing may not pull skin into a hair file (recolouring would tint it)
-    part = clean(changed, open_r=2, close_r=5, min_px=1500)
-    # Pixel-threshold leftovers: pin-holes, notched edges. Hair keeps its strands (light smoothing only).
-    part = clean(tidy(part, allow, sigma=1.0 if hairlike else 2.2), open_r=0, close_r=0, min_px=1500)
-    return soft(part, grow=1, blur=1.2)
-
-
-def region_painted(core: np.ndarray, white: np.ndarray, cut_a: np.ndarray, base: np.ndarray, base_a: np.ndarray, others: np.ndarray, grow: int) -> np.ndarray:
-    """A part the AI painted flat magenta on the picture itself (3b "Tô …", registered): the paint IS the region —
-    no diff against the base decides it. Grown by `grow` px only to take the part's own outline / strand tips the
-    paint stopped short of: there a pixel joins when the picture really differs from the base or lies off the
-    base's body. Never into another slot's paint."""
-    core = clean(core, open_r=1, close_r=4, min_px=300) & ~others
-    if not core.any():
-        return np.zeros(core.shape, np.float32)
-    near = cv2.dilate(core.astype(np.uint8), kernel(max(1, grow))).astype(bool) & ~others
-    diff = np.abs(white - base).max(2)
-    edge = near & (cut_a > 0.1) & ((diff > 0.06) | (base_a < 0.5))
-    part = fill_small_holes(core | edge, 2500)
-    return soft(part, grow=1, blur=0.8)
-
-
-def claim_orphans(regions: list[np.ndarray], subject_a: np.ndarray, base_a: np.ndarray, max_d: float) -> list[np.ndarray]:
-    """Pixels a picture has outside the base's silhouette belong to a part the base removed (hair, a hat). Those
-    no region took (fringe strands, a dark outline) go to the nearest region within max_d px — else they would be
-    in no file at all (a hole when the layers are stacked)."""
-    if not regions:
-        return regions
-    taken = np.zeros(subject_a.shape, bool)
-    for r in regions:
-        taken |= r > 0.5
-    orphan = (subject_a > 0.3) & (base_a < 0.5) & ~taken
-    if not orphan.any():
-        return regions
-    dists = [cv2.distanceTransform((~(r > 0.5)).astype(np.uint8), cv2.DIST_L2, 5) for r in regions]
-    d = np.stack(dists)
-    near = d.argmin(0)
-    near_d = d.min(0)
-    ok = orphan & (near_d <= max_d)
-    # Loose bits: a dot floating off the figure (AI noise) is not a part of any region. Only pieces that touch a
-    # region (≤ 3 px) or are sizeable (≥ 400 px: a strand, a curl) are taken.
-    lab_o, n_o = ndi.label(ok)
-    if n_o:
-        sizes = ndi.sum(ok, lab_o, range(1, n_o + 1))
-        touch = ndi.minimum(near_d, lab_o, range(1, n_o + 1))
-        drop = [i + 1 for i in range(n_o) if sizes[i] < 400 and touch[i] > 3]
-        if drop:
-            ok &= ~np.isin(lab_o, drop)
-    out = []
-    for i, r in enumerate(regions):
-        add = ok & (near == i)
-        out.append(np.maximum(r, soft(add, grow=1, blur=0.8)) if add.any() else r)
-    return out
-
-
-def region_zone(mask_pic: np.ndarray) -> np.ndarray:
-    return clean(magenta(mask_pic), close_r=6).astype(np.float32)
-
-
-def region_body(base_a: np.ndarray) -> np.ndarray:
-    """The body file = the whole base: its region covers the subject with room (the editor erases from it)."""
-    return cv2.dilate((base_a > 0.02).astype(np.uint8), kernel(8)).astype(np.float32)
+def register_option(doll: np.ndarray, rgba: np.ndarray, key: str | None, own: np.ndarray | None) -> tuple[np.ndarray, dict]:
+    """An option picture onto the doll. The local flow learns ONLY from the doll pixels it kept: its solid new areas
+    (found on the affine-registered picture) are left out — learnt from re-drawn fingers round a new glass, the flow
+    bent the glass (2026-10-15). Thin difference bands (an outline the AI shifted a few px — a pair of legs) stay in, so
+    the flow moves them back."""
+    white = on_white(doll[..., :3], doll[..., 3])
+    s = max(doll.shape[:2]) / 1024
+    reg0, _ = register_rgba(white, rgba, local=False)
+    rough, _ = part_region(doll, reg0, key, own)
+    solid = cv2.morphologyEx(rough.astype(np.uint8), cv2.MORPH_OPEN, kernel(max(4, round(6 * s))))
+    exclude = cv2.dilate(solid, kernel(max(6, round(10 * s)))).astype(bool)
+    return register_rgba(white, rgba, exclude=exclude)
 
 
 # ---- 3. cut: the files ---------------------------------------------------------------------------------------
 
+def recolor(colour: np.ndarray, alpha: np.ndarray, target_hex: str | None, tint: float = 0.15) -> np.ndarray:
+    """The part in another colour: where the file has the part's own hue (its median), the lightness keeps its shading
+    around the target's and the hue moves to the target; an outline, a button, a bit of skin (another hue) keep theirs."""
+    if not target_hex:
+        return colour
+    sel = alpha > 0.5
+    if sel.sum() < 10:
+        return colour
+    lab = to_lab(colour)
+    ab = lab[..., 1:]
+    ab0 = np.median(ab[sel], axis=0)
+    dist = np.linalg.norm(ab - ab0, axis=2)
+    w = np.clip(1 - (dist - 18) / 12, 0, 1)
+    own = sel & (dist < 18)
+    lm = float(lab[..., 0][own].mean()) if own.sum() >= 10 else float(lab[..., 0][sel].mean())
+    tl = to_lab(hex_rgb(target_hex)[None, None])[0, 0]
+    out = lab.copy()
+    out[..., 0] = np.clip(tl[0] + (lab[..., 0] - lm) * (0.85 if tl[0] < 30 else 1.0), 0, 100)
+    out[..., 1:] = tl[1:] + (ab - ab0) * tint
+    return colour * (1 - w[..., None]) + from_lab(out) * w[..., None]
+
+
 @dataclass
 class Option:
     name: str
-    hex: str | None = None
-    col: np.ndarray | None = None       # shape / texture: the option's colours (None = the base's)
-    alpha: np.ndarray | None = None     # shape: the option picture's subject alpha
-    region: np.ndarray | None = None    # shape: the option's region
+    col: np.ndarray | None = None       # the option picture's colours (registered onto the doll, print size)
+    alpha: np.ndarray | None = None     # … its alpha
+    region: np.ndarray | None = None    # what it drew anew (part_region), maybe fixed by hand
 
 
 @dataclass
 class Slot:
     key: str
     label: str
-    mode: str                                # color | texture | shape
-    region: np.ndarray | None = None         # color / texture: the part on the base
-    col: np.ndarray | None = None            # key mode, color / texture: the part's own clip (colours …)
-    alpha: np.ndarray | None = None          # … and alpha) — the base has no such part
+    mode: str                                # shape | texture: each option its own picture · color: one picture, recoloured
     options: list[Option] = field(default_factory=list)
-    colors: list[Option] = field(default_factory=list)
-    wraps: bool = False
+    colors: list[tuple[str, str]] = field(default_factory=list)   # (name, hex): shape colours (the first = as drawn)
+    hexes: list[str | None] = field(default_factory=list)         # color mode: each option's hex (the first = as drawn)
+    wraps: bool = False                      # back (the whole part) + front (where it lies on the doll's figure)
 
 
 @dataclass
@@ -747,173 +472,112 @@ class Out:
     color: str
     rgba: np.ndarray
     piece: str = ""
+    plate: str = ""         # key of its colours over the whole canvas (cut()["plates"])
 
 
-def over(dst: np.ndarray, src: np.ndarray) -> np.ndarray:
-    a = src[..., 3:4]
-    out = dst.copy()
-    out[..., :3] = src[..., :3] * a + dst[..., :3] * (1 - a)
-    out[..., 3:] = a + dst[..., 3:] * (1 - a)
-    return out
-
-
-def drop_specks(a: np.ndarray, min_px: int = 40) -> tuple[np.ndarray, int]:
-    """Islands smaller than min_px are dust: removed. Returns the alpha and how many small islands remain (< 0.05 %
-    of the canvas — worth a look: a stray bit of another part, or a strand tip)."""
-    lab, n = ndi.label(a > 0.02)
-    if not n:
-        return a, 0
-    sizes = ndi.sum(np.ones_like(a), lab, range(1, n + 1))
-    dust = [i + 1 for i, s in enumerate(sizes) if s < min_px]
-    if dust:
-        a = np.where(np.isin(lab, dust), 0, a).astype(np.float32)
-    small = int(sum(1 for s in sizes if min_px <= s < a.size * 0.0005))
-    return a, small
-
-
-def cut(master: np.ndarray, master_a: np.ndarray, base: np.ndarray, base_a: np.ndarray, body_region: np.ndarray, slots: list[Slot], zones: list[Zone], redrawn: bool = False) -> dict:
-    """The layer files from the reviewed regions. base / base_a: the base's colours + subject alpha (the master's
-    where the base kept it). Every file is region × its picture's alpha; colours un-mixed already (matte_white)."""
-    H, W = master.shape[:2]
-    A_B = base_a * np.clip(body_region, 0, 1)
+def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zone]) -> dict:
+    """The layer files. body / body_a: the doll × the body region. Every part file = its region × its own picture's
+    alpha, in its own picture's colours (recoloured for another colour). Cropped by ONE common rectangle, 8-bit."""
+    H, W = body.shape[:2]
     checks: list[dict] = []
-    files: list[Out] = []
-    backs: list[dict] = []
-    tops: list[dict] = []
-    middle: list[dict] = []
-    middle_parts: list[np.ndarray] = []
-    body_cover = soft(A_B > 0.5, grow=2, blur=1.0)
 
+    alphas: dict[str, np.ndarray] = {}
     for s in slots:
-        if s.mode not in ("color", "texture") or s.region is None:
-            continue
-        own = s.col if s.col is not None else base
-        alpha = np.clip(s.region, 0, 1) * (s.alpha if s.alpha is not None else A_B)
-        if (alpha > 0.5).sum() < 200:
-            checks.append({"name": f"{s.label}", "ok": False, "detail": "Vùng trống — tô lại vùng ở bước phác thảo.", "piece": s.key})
-            continue
         for i, o in enumerate(s.options):
-            a_o = alpha
-            if s.mode == "color":
-                col = recolor(own, alpha, o.hex if i > 0 else None)
-            else:
-                col = own if (i == 0 or o.col is None) else np.clip(o.col, 0, 1)
-                if i > 0 and o.alpha is not None and s.alpha is not None:
-                    a_o = np.clip(s.region, 0, 1) * o.alpha
-            files.append(Out(s.key, s.label, o.name, "", np.dstack([col, a_o]), s.key))
-            if i == 0:
-                middle_parts.append(np.dstack([col, a_o]))
-        middle.append({"key": s.key, "label": s.label, "follows": None})
-
-    first_parts: list[tuple[np.ndarray, np.ndarray]] = []
-    for s in slots:
-        if s.mode != "shape":
-            continue
-        made = 0
-        for i, o in enumerate(s.options):
-            if o.region is None or o.col is None or o.alpha is None:
+            if o.region is None or o.alpha is None or o.col is None:
                 continue
-            piece = f"{s.key}#{i}"
-            a_part = np.clip(o.region, 0, 1) * o.alpha
-            if (a_part > 0.5).sum() < 300:
-                checks.append({"name": f"{s.label}: {o.name}", "ok": False, "detail": "Vùng trống — tô lại vùng ở bước phác thảo.", "piece": piece})
+            a = np.clip(o.region, 0, 1) * np.clip(o.alpha, 0, 1)
+            if (a > 0.5).sum() < 300:
+                checks.append({"name": f"{s.label}: {o.name}", "ok": False, "detail": "Vùng trống — AI không vẽ gì khác búp bê (vẽ lại ảnh 3b này).", "piece": f"{s.key}#{i}"})
                 continue
-            made += 1
-            a_front = a_part * body_cover if s.wraps else a_part
-            for c in s.colors or [Option("", None)]:
-                first_colour = s.colors[0] if s.colors else None
-                col = recolor(o.col, a_part, c.hex, tint=0.12, spread=0.9) if c.hex and c is not first_colour else o.col
-                if s.wraps:
-                    files.append(Out(f"{s.key}:back", f"{s.label} — lớp sau", o.name, c.name, np.dstack([col, a_part]), piece))
-                    files.append(Out(f"{s.key}:front", f"{s.label} — lớp trước", o.name, c.name, np.dstack([col, a_front]), piece))
-                else:
-                    files.append(Out(s.key, s.label, o.name, c.name, np.dstack([col, a_part]), piece))
-            if i == 0:
-                first_parts.append((np.dstack([o.col, a_part]), np.dstack([o.col, a_front])))
-        if not made:
-            continue
-        if s.wraps:
-            backs.append({"key": f"{s.key}:back", "label": f"{s.label} — lớp sau", "follows": f"{s.key}:front"})
-            tops.append({"key": f"{s.key}:front", "label": f"{s.label} — lớp trước", "follows": None})
-        else:
-            tops.append({"key": s.key, "label": s.label, "follows": None})
-
-    B = np.dstack([base, A_B])
-    files.append(Out("body", "Thân", "Body", "", B.copy(), "body"))
-    order = backs + [{"key": "body", "label": "Thân", "follows": None}] + middle + tops
-
-    # Dust off every file; small islands left are counted (a stray bit of another part?).
-    stray: dict[str, int] = {}
-    for f in files:
-        a, small = drop_specks(f.rgba[..., 3])
-        f.rgba[..., 3] = a
-        if small:
-            stray[f.piece] = max(stray.get(f.piece, 0), small)
-    labels = {f.piece: f"{f.label}: {f.option}" if f.piece != "body" else "Thân" for f in files}
-    for piece, n in stray.items():
-        checks.append({"name": f"Mảnh rời — {labels.get(piece, piece)}", "ok": n <= 6, "detail": f"{n} mảnh nhỏ tách rời", "piece": piece})
-
-    # Rebuild: back parts + body + front parts = the master (the default choice of every slot).
-    canvas = np.zeros((H, W, 4), np.float32)
-    for back, _ in first_parts:
-        canvas = over(canvas, back)
-    canvas = over(canvas, B)
-    for m in middle_parts:
-        canvas = over(canvas, m)
-    for _, front in first_parts:
-        canvas = over(canvas, front)
-    vis = master_a > 0.9
-    d = float(np.abs(canvas[..., :3] - master[..., :3])[vis].mean() * 255) if vis.any() else 0.0
-    checks.append({"name": "Ráp lại = master", "ok": d < (20 if redrawn else 12), "detail": f"lệch màu trung bình {d:.1f}/255" + (" (vẽ lại bởi AI — chỉ để tham khảo)" if redrawn else "")})
-    holes = (master_a > 0.5) & (canvas[..., 3] < 0.5)
-    extra = (master_a < 0.2) & (canvas[..., 3] > 0.5)
-    off = (np.abs(canvas[..., :3] - master[..., :3]).max(2) > 0.25) & (master_a > 0.9) & (canvas[..., 3] > 0.9)
-    if redrawn:
-        # Key mode: every file is the model's own re-drawing — its lines sit a px or three off the master's. Only
-        # what is more than that apart counts (a real hole, a part left out, a stray piece).
-        tol = max(2, round(min(H, W) / 700))
-        holes = cv2.erode(holes.astype(np.uint8), kernel(tol)).astype(bool)
-        extra = cv2.erode(extra.astype(np.uint8), kernel(tol)).astype(bool)
-        off = cv2.erode(off.astype(np.uint8), kernel(tol)).astype(bool)
-    n_holes, n_extra, n_off = int(clean(holes, 1, 1, 30).sum()), int(clean(extra, 1, 1, 30).sum()), int(clean(off, 1, 1, 30).sum())
-    checks.append({"name": "Lỗ hổng (master có, ráp lại thiếu)", "ok": n_holes < 400, "detail": f"{n_holes:,} px — vùng đỏ"})
-    checks.append({"name": "Thừa (ráp lại có, master là nền)", "ok": n_extra < 400, "detail": f"{n_extra:,} px — vùng xanh"})
-    checks.append({"name": "Khác màu rõ so với master", "ok": n_off < 2000, "detail": f"{n_off:,} px — vùng vàng"})
-    diff = np.zeros((H, W, 4), np.float32)
-    for m, rgb in ((clean(off, 1, 1, 30), (1, 0.8, 0)), (clean(extra, 1, 1, 30), (0, 0.6, 1)), (clean(holes, 1, 1, 30), (1, 0, 0))):
-        m = cv2.dilate(m.astype(np.uint8), kernel(2)).astype(bool)
-        diff[m] = (*rgb, 0.85)
+            alphas[f"{s.key}#{i}"] = a
 
     zone_out = []
     for z in zones:
         m = clean(np.clip(z.region, 0, 1) > 0.5, close_r=6)
         if m.sum() < 500:
-            checks.append({"name": f"Vùng ảnh {z.id}", "ok": False, "detail": "Vùng ảnh khách trống — tô lại ở bước phác thảo.", "piece": f"zone:{z.id}"})
+            checks.append({"name": f"Vùng ảnh {z.id}", "ok": False, "detail": "Vùng ảnh khách trống — tô lại.", "piece": f"zone:{z.id}"})
             continue
-        zone_out.append({"id": z.id, "mask": m.astype(np.float32)})
+        zone_out.append({"id": z.id, "mask": m})
 
-    # One common crop for every file.
-    union = np.zeros((H, W), bool)
-    for f in files:
-        union |= f.rgba[..., 3] > 0.01
+    union = body_a > 0.01
+    for a in alphas.values():
+        union |= a > 0.01
     for z in zone_out:
-        union |= z["mask"] > 0
+        union |= z["mask"]
     ys, xs = np.where(union)
     pad = 48
     x0, y0 = max(0, int(xs.min()) - pad), max(0, int(ys.min()) - pad)
     x1, y1 = min(W, int(xs.max()) + pad + 1), min(H, int(ys.max()) + pad + 1)
-    for f in files:
-        px = (np.clip(f.rgba[y0:y1, x0:x1], 0, 1) * 255).round().astype(np.uint8)
-        px[px[..., 3] == 0] = 0
-        f.rgba = px
+    c = (slice(y0, y1), slice(x0, x1))
+    # Where the hair lies in front: over the doll's figure INCLUDING its drawn outline — times the doll's own soft alpha,
+    # the outline of the bald head showed half through the hair (a grey arc across the bangs, 2026-10-15).
+    aa = max(1.0, max(H, W) / 1024)
+    fig = soft((body_a[c] > 0.02), grow=max(2, round(2 * aa)), blur=0.8 * aa)
+
+    files: list[Out] = []
+    views: list[Out] = []
+    plates: dict[str, np.ndarray] = {}
+
+    def plate_of(col: np.ndarray) -> str:
+        name = f"p{len(plates)}"
+        plates[name] = (np.clip(col, 0, 1) * 255).round().astype(np.uint8)
+        return name
+
+    def px(col: np.ndarray, a: np.ndarray) -> np.ndarray:
+        out = (np.clip(np.dstack([col, a]), 0, 1) * 255).round().astype(np.uint8)
+        out[out[..., 3] == 0] = 0
+        return out
+
+    backs: list[dict] = []
+    parts: list[dict] = []
+    fronts: list[dict] = []
+    for s in slots:
+        made = False
+        for i, o in enumerate(s.options):
+            piece = f"{s.key}#{i}"
+            if piece not in alphas:
+                continue
+            made = True
+            a = alphas[piece][c]
+            col0 = o.col[c]
+            if s.mode == "color":
+                # One drawing, one file per colour option.
+                for k, (name, hex_) in enumerate(zip([x.name for x in s.options], s.hexes)):
+                    col = col0 if k == 0 else recolor(col0, a, hex_)
+                    files.append(Out(s.key, s.label, name, "", px(col, a), piece, plate_of(col)))
+                break
+            for k, (cname, hex_) in enumerate(s.colors or [("", None)]):
+                col = col0 if k == 0 else recolor(col0, a, hex_)
+                plate = plate_of(col)
+                if s.wraps:
+                    whole = px(col, a)
+                    files.append(Out(f"{s.key}:back", f"{s.label} — lớp sau", o.name, cname, whole, piece, plate))
+                    views.append(Out(f"{s.key}:back", s.label, o.name, cname, whole, piece, plate))
+                    files.append(Out(f"{s.key}:front", f"{s.label} — lớp trước", o.name, cname, px(col, a * fig), piece, plate))
+                else:
+                    files.append(Out(s.key, s.label, o.name, cname, px(col, a), piece, plate))
+        if not made:
+            continue
+        if s.wraps:
+            backs.append({"key": f"{s.key}:back", "label": f"{s.label} — lớp sau", "follows": f"{s.key}:front"})
+            fronts.append({"key": f"{s.key}:front", "label": f"{s.label} — lớp trước", "follows": None})
+        else:
+            parts.append({"key": s.key, "label": s.label, "follows": None})
+    files.append(Out("body", "Thân", "Body", "", px(body[c], body_a[c]), "body", plate_of(body[c])))
+    order = backs + [{"key": "body", "label": "Thân", "follows": None}] + parts + fronts
+    checks.append({"name": "Cắt theo phần khác búp bê", "ok": True, "detail": f"{len(files)} file — mỗi file là đúng pixel ảnh 3b của nó, thân là búp bê nguyên vẹn"})
+    h, w = y1 - y0, x1 - x0
     return {
-        "width": x1 - x0,
-        "height": y1 - y0,
-        "crop": {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0},
+        "width": w,
+        "height": h,
+        "crop": {"x": x0, "y": y0, "w": w, "h": h},
         "master": {"w": W, "h": H},
         "order": order,
         "files": files,
-        "zones": [{"id": z["id"], "polygon": polygon_of(z["mask"][y0:y1, x0:x1])} for z in zone_out],
+        "views": views,
+        "plates": plates,
+        "zones": [{"id": z["id"], "polygon": polygon_of(z["mask"][c].astype(np.float32))} for z in zone_out],
         "checks": checks,
-        "diff": (np.clip(diff[y0:y1, x0:x1], 0, 1) * 255).round().astype(np.uint8),
+        "diff": np.zeros((h, w, 4), np.uint8),
     }

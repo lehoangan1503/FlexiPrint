@@ -27,8 +27,8 @@ interface KitJobState<T> {
 /** Start a job and wait for its result (≤ 60 min: a plan of 40+ pictures is slow). The job stays on layer-kit (its files) until kitForget. */
 export async function kitJob<T>(path: "/matte" | "/plan" | "/cut", body: unknown): Promise<{ job: string; result: T }> {
   const { job } = await kitPost<{ job: string }>(path, body, 60_000);
-  const until = Date.now() + 60 * 60_000;
-  while (Date.now() < until) {
+  // Counted in polls, not by the clock: a laptop that sleeps (or a clock that jumps) made a running plan "too long".
+  for (let poll = 0; poll < (60 * 60_000) / 4_000; poll++) {
     await new Promise((r) => setTimeout(r, 4_000));
     const st = await fetch(`${kitUrl()}/jobs/${job}`, { headers: kitHeaders(), signal: AbortSignal.timeout(120_000) }).catch(() => null);
     if (!st) continue;

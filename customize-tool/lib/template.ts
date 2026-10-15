@@ -50,7 +50,9 @@ export function buildTemplate(args: {
   // this product (flatIds) stay flat. Print files use the flat art (lib/materials, not this template).
   // A mockup edit draws the design in the vật liệu version its tổ hợp shows ("có dây"), like the tổ hợp itself.
   const assets = displayAssets(args.assets, "rendition", config.material.flatIds, config.mockupEdit?.materialVersion ?? config.material.version);
-  const flatUrl = new Map(args.assets.map((a) => [a.id, a.url]));
+  // An option's tile: the clipart's own thumbnail when it has one (a part that is only seen in part on the
+  // character — the front half of hair — shows its whole clipart, server/char/product.ts), else the flat clipart.
+  const flatUrl = new Map(args.assets.map((a) => [a.id, a.meta?.thumb || a.url]));
   const main = assets.find((a) => a.id === product.main_asset_id && a.role === "main");
   if (!main) throw new Error("Chưa có main object — không publish được");
 

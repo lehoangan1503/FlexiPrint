@@ -2,23 +2,24 @@
  * The cut of a bộ nhân vật, reviewed on the master before any file is made (asked 2026-10-09: fixing 100 files one
  * by one does not work — fix the master's backdrop once, then each layer's region once).
  *
- *   POST char/projects/:id/matte                    → { project } the master at print size without its backdrop
- *                                                     (layer-kit /matte, background job; redo = start again)
- *   POST char/projects/:id/matte/fix {points}       → { project } "Sửa nền": backdrop left over at the points marked
- *                                                     on the page is removed (layer-kit /matte/fix); un-approves
+ *   POST char/projects/:id/matte                    → { project } the master's own cut-out (gpt-image drew it on a
+ *                                                     transparent background) at print size (layer-kit /matte, job)
+ *   POST char/projects/:id/matte/fix {points}       → { project } "Sửa nền": specks left at the points marked on the
+ *                                                     page are removed (layer-kit /matte/fix); un-approves
  *   POST char/projects/:id/matte/revert             → { project } back to the previous alpha
  *   POST char/projects/:id/matte/approve {approved} → { project }
- *   POST char/projects/:id/plan {auto?}             → { project } every layer's region on its picture (layer-kit
- *                                                     /plan: edits registered + upscaled, regions found) — needs the
- *                                                     matte approved and every planned edit made; hand-fixed regions
- *                                                     of unchanged pictures are kept (piece.sig). auto: then approves
- *                                                     the plan and cuts the files (no products made yet)
+ *   POST char/projects/:id/plan {auto?}             → { project } every option's region on the doll (layer-kit
+ *                                                     /plan: options registered onto the doll + upscaled, region =
+ *                                                     what each drew anew) — needs every planned edit made;
+ *                                                     hand-fixed regions of unchanged pictures are kept (piece.sig).
+ *                                                     auto: then approves the plan, cuts the files, makes the product
  *   POST char/projects/:id/plan/region {key, mask}  → { project } one region fixed by hand; un-approves
  *   POST char/projects/:id/plan/revert {key}        → { project }
  *   POST char/projects/:id/plan/approve {approved}  → { project }
  *
- * The layer files are then cut from both (server/char/layers.ts, layer-kit /cut): region × the picture's subject
- * alpha, so a region never brings back backdrop, and a hand fix of the backdrop holds in every file.
+ * The layer files are then cut (server/char/layers.ts, layer-kit /cut): region × the option picture's own alpha, in its
+ * own colours — the doll + a file is exactly that 3b picture there (lib/char-plan.ts). The master at print size (3a)
+ * is not cut any more; it stays for the page.
  */
 
 import { NextResponse } from "next/server";
@@ -30,7 +31,7 @@ import { ctRemove } from "../storage";
 import { saveCharRaw } from "./files";
 import { kitFile, kitForget, kitJob, kitPost } from "./kit";
 import { kitPlanInput, latestEdits, startBuild } from "./layers";
-import { cutPaths, jobDb, jsonError, loadImages, loadProject, maskPaths, projectRow, type Db } from "./projects";
+import { cutPaths, jobDb, jsonError, loadImages, loadProject, maskPaths, projectRow, type Db, canEditProject, NOT_YOURS } from "./projects";
 
 const HISTORY = 5;
 
@@ -111,7 +112,7 @@ async function runMatte(db: Db, userId: string, projectId: string, masterUrl: st
     job = r.job;
     const [colour, alpha] = await Promise.all([kitFile(job, r.result.files.colour), kitFile(job, r.result.files.alpha)]);
     const [c, a] = await Promise.all([savePicture(userId, projectId, colour), saveCharRaw(userId, projectId, "cut", alpha, "image/png")]);
-    const matte: CtCharMatte = { status: "done", error: "", width: r.result.width, height: r.result.height, colourUrl: c.url, colourPath: c.path, previewUrl: c.previewUrl, previewPath: c.previewPath, alpha: { url: a.url, path: a.path, edited: false, history: [] }, approved: false, at: new Date().toISOString() };
+    const matte: CtCharMatte = { status: "done", error: "", width: r.result.width, height: r.result.height, colourUrl: c.url, colourPath: c.path, previewUrl: c.previewUrl, previewPath: c.previewPath, alpha: { url: a.url, path: a.path, edited: false, history: [] }, approved: true, at: new Date().toISOString() };
     const p = await fresh(db, projectId);
     await saveCut(db, projectId, { ...cutState(p), matte });
     if (old) await ctRemove([old.colourPath, old.previewPath, ...maskPaths(old.alpha)].filter(Boolean));
@@ -172,57 +173,30 @@ export async function revertMatte(db: Db, p: CtCharProject): Promise<CtCharProje
 interface KitPlan {
   width: number;
   height: number;
-  pictures: Array<{ id: string; label: string; parent: string | null; colour?: string; alpha?: string; own?: string; keep?: string }>;
+  pictures: Array<{ id: string; label: string; colour?: string; alpha?: string }>;
   pieces: Array<{ key: string; slot: string; kind: CtCharPieceKind; label: string; option: string; index: number; picture: string; region: string }>;
   checks: CtCharLayerCheck[];
   align: Record<string, { dx: number; dy: number; unchanged: number; before: number; residual: number; max: number }>;
 }
 
-interface PlanInputSlot {
-  key: string;
-  mode: string;
-  mask: string | null;
-  options: Array<{ url: string | null }>;
-}
-
-/**
- * What each region is found from: the picture(s) it is looked for on + the matte. The same again after a re-plan
- * means the region would come out the same — so a hand-fixed one is kept (an editor's fix is not thrown away because
- * ONE other option was redone).
- */
-function pieceSigs(input: { base: string | null; slots: unknown[]; zones: unknown[] }, masterUrl: string, alphaUrl: string): (key: string) => string {
-  const slots = input.slots as PlanInputSlot[];
-  const zones = input.zones as Array<{ id: string; mask: string | null }>;
-  const base = input.base ?? masterUrl;
-  return (key: string) => {
-    if (key === "body") return [base, alphaUrl].join("|");
-    if (key.startsWith("zone:")) return [zones.find((z) => z.id === key.slice(5))?.mask ?? "", base, alphaUrl].join("|");
-    const hash = key.lastIndexOf("#");
-    const slot = slots.find((x) => x.key === (hash < 0 ? key : key.slice(0, hash)));
-    if (!slot) return "";
-    if (hash < 0) return [slot.mask ?? "", ...slot.options.map((o) => o.url ?? ""), base, alphaUrl].join("|");
-    const i = Number(key.slice(hash + 1));
-    return [i === 0 && !slot.options[0]?.url ? masterUrl : (slot.options[i]?.url ?? ""), slot.mask ?? "", base, alphaUrl].join("|");
-  };
-}
-
 /** `auto` ("Tạo bộ custom"): when the plan is done, approve it, cut the files and make the set's product from them
  * (it replaces the one made before — the page warns). */
 export async function startPlan(db: Db, userId: string, p: CtCharProject, auto = false): Promise<CtCharProject> {
-  const m = doneMatte(p);
-  if (!m.approved) throw new Error("Duyệt phần tách nền trước");
-  if (p.cut?.plan?.status === "running") throw new Error("Đang phác thảo");
+  // A plan whose server went away (a restart kills the background job) is "running" for ever: after 30 min it may run again.
+  const live = p.cut?.plan?.status === "running" && Date.now() - Date.parse(p.cut.plan.at) < 30 * 60_000;
+  if (live) throw new Error("Đang phác thảo");
   if (p.layers?.status === "building") throw new Error("Đang cắt layer — chờ xong");
   const images = await loadImages(db, p.id);
   const input = kitPlanInput(p, latestEdits(images));
-  if ("missing" in input) throw new Error(`Chưa đủ ảnh tô vùng (3b): ${input.missing.join(", ")}`);
-  const { data: master } = await db.from(CT_TABLES.charImages).select("url").eq("id", p.master_id!).single<{ url: string }>();
-  if (!master) throw new Error("Không thấy master đã duyệt");
+  if ("missing" in input) throw new Error(`Chưa đủ ảnh (3b): ${input.missing.join(", ")}`);
   const old = p.cut?.plan ?? null;
   const running: CtCharPlan = { status: "running", error: "", width: old?.width ?? 0, height: old?.height ?? 0, pictures: old?.pictures ?? [], pieces: old?.pieces ?? [], checks: [], approved: false, at: new Date().toISOString() };
   const project = await saveCut(db, p.id, { ...cutState(p), plan: running });
-  const sigOf = pieceSigs(input.plan, master.url, m.alpha.url);
-  void runPlan(db, userId, p.id, { source: master.url, colour: m.colourUrl, alpha: m.alpha.url, ...input.plan }, old, sigOf, auto);
+  // What each region is found from: the same again keeps a hand-fixed region (an editor's fix is not thrown away
+  // because ONE other option was redone).
+  const { sigs, ...plan } = input.plan;
+  const sigOf = (key: string) => sigs[key] ?? "";
+  void runPlan(db, userId, p.id, plan as unknown as Record<string, unknown>, old, sigOf, auto);
   return project;
 }
 
@@ -239,21 +213,15 @@ async function runPlan(db: Db, userId: string, projectId: string, body: Record<s
       saved.push(s.path);
       return s;
     };
-    const p0 = await fresh(db, projectId);
-    const matte = doneMatte(p0);
-    // Every picture / region to our storage, a few at a time (≈ 40 files of a few MB).
+    // Every picture / region to our storage, a few at a time.
     const pictures: Array<CtCharPicture | null> = r.result.pictures.map(() => null);
     await pool(r.result.pictures.map((_, i) => i), 4, async (i) => {
       const pic = r.result.pictures[i];
-      if (pic.id === "master") {
-        pictures[i] = { id: "master", label: pic.label, colourUrl: matte.colourUrl, colourPath: "", previewUrl: matte.previewUrl, previewPath: "", alphaUrl: null, alphaPath: null, ownUrl: null, ownPath: null, keepUrl: null, keepPath: null, parent: null };
-        return;
-      }
       if (!pic.colour) return;
       const colour = await savePicture(userId, projectId, await kitFile(job, pic.colour));
       saved.push(colour.path, colour.previewPath);
-      const [alpha, own, keep] = await Promise.all([store(pic.alpha), store(pic.own), store(pic.keep)]);
-      pictures[i] = { id: pic.id, label: pic.label, colourUrl: colour.url, colourPath: colour.path, previewUrl: colour.previewUrl, previewPath: colour.previewPath, alphaUrl: alpha?.url ?? null, alphaPath: alpha?.path ?? null, ownUrl: own?.url ?? null, ownPath: own?.path ?? null, keepUrl: keep?.url ?? null, keepPath: keep?.path ?? null, parent: pic.parent };
+      const alpha = await store(pic.alpha);
+      pictures[i] = { id: pic.id, label: pic.label, colourUrl: colour.url, colourPath: colour.path, previewUrl: colour.previewUrl, previewPath: colour.previewPath, alphaUrl: alpha?.url ?? null, alphaPath: alpha?.path ?? null };
     });
     const pieces: Array<CtCharPiece | null> = r.result.pieces.map(() => null);
     await pool(r.result.pieces.map((_, i) => i), 6, async (i) => {
@@ -270,7 +238,7 @@ async function runPlan(db: Db, userId: string, projectId: string, body: Record<s
       const region = await store(pc.region);
       if (region) pieces[i] = { ...head, region: { url: region.url, path: region.path, edited: false, history: [] } };
     });
-    // The plan measures every edit on the model's own canvas: keep that number on the edit.
+    // The plan measures every edit on the master's canvas: keep that number on the edit.
     const { data: edits } = await db.from(CT_TABLES.charImages).select("id, url, meta").eq("project_id", projectId).eq("kind", "edit").returns<Array<Pick<CtCharImage, "id" | "url" | "meta">>>();
     for (const e of edits ?? []) {
       const a = r.result.align[e.url];
@@ -345,7 +313,7 @@ export async function revertPiece(db: Db, p: CtCharProject, body: unknown): Prom
 async function own(s: CtSession, id: string): Promise<CtCharProject | NextResponse> {
   const p = await loadProject(s.supabase, id);
   if (!p) return jsonError("Không tìm thấy bộ nhân vật", 404);
-  if (p.user_id !== s.user.id) return jsonError("Bộ nhân vật của người khác — chỉ xem", 403);
+  if (!(await canEditProject(s, p))) return jsonError(NOT_YOURS, 403);
   return p;
 }
 

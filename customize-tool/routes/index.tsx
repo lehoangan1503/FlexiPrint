@@ -19,6 +19,7 @@ import { DeployPage } from "../components/deploy/deploy-page";
 import { LibraryManager } from "../components/library/library-manager";
 import { CharList } from "../components/char/char-list";
 import { CharProjectView } from "../components/char/char-project";
+import { isAdmin } from "../server/ai-styles";
 
 export async function CustomizeListPage() {
   const session = await ctSession();
@@ -34,7 +35,7 @@ export async function CustomizeListPage() {
         </div>
       </header>
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <CustomizeProductList currentUserId={session.user.id} />
+        <CustomizeProductList currentUserId={session.user.id} admin={await isAdmin(session)} />
       </main>
     </div>
   );
@@ -70,12 +71,12 @@ export async function CustomizeLibraryPage() {
 export async function CharListPage() {
   const session = await ctSession();
   if (!session) redirect(CT_CONFIG.loginPath);
-  return <CharList currentUserId={session.user.id} />;
+  return <CharList currentUserId={session.user.id} admin={await isAdmin(session)} />;
 }
 
 export async function CharProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await ctSession();
   if (!session) redirect(CT_CONFIG.loginPath);
   const { id } = await params;
-  return <CharProjectView projectId={id} currentUserId={session.user.id} />;
+  return <CharProjectView projectId={id} currentUserId={session.user.id} admin={await isAdmin(session)} />;
 }

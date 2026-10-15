@@ -14,6 +14,7 @@ import { CT_TABLES } from "../config";
 import type { CtArtworkMeta, CtAsset, CtClipartCategory, CtProduct, CtProductArtworks, CtSelection } from "../types";
 import { defaultCategoryRules, normalizeCategoryRules } from "../lib/library";
 import { normalizeSamples } from "../lib/design";
+import { isAdmin } from "./ai-styles";
 import { readImageInfo } from "./image-size";
 import { insertClipart } from "./library";
 import { ctLibraryPath, ctRemove, ctUpload } from "./storage";
@@ -56,7 +57,7 @@ export async function renameProductFolder(db: Db, productId: string, name: strin
 
 async function ownedProduct(s: CtSession, id: string): Promise<CtProduct | null> {
   const { data } = await s.supabase.from(CT_TABLES.products).select("*").eq("id", id).maybeSingle<CtProduct>();
-  return data && data.user_id === s.user.id ? data : null;
+  return data && (data.user_id === s.user.id || (await isAdmin(s))) ? data : null;
 }
 
 /** The artworks saved from product `productId` (in its folder, or moved elsewhere since). */

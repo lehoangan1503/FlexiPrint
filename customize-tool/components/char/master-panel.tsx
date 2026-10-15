@@ -193,7 +193,7 @@ function MasterCard(props: { ctx: CharCtx; image: CtCharImage; number: number; p
   };
   return (
     <div className={cx("overflow-hidden rounded-xl border bg-card", approved && "ring-2 ring-emerald-500")}>
-      <button className="block aspect-[4/5] w-full bg-white" onClick={props.onZoom} disabled={m.status !== "done"}>
+      <button className="block aspect-square w-full" style={CHECKER_STYLE} onClick={props.onZoom} disabled={m.status !== "done"}>
         {m.status === "done" ? (
           // eslint-disable-next-line @next/next/no-img-element -- our R2 WebP preview
           <img src={m.thumb_url || m.url} alt={`master ${props.number}`} className="h-full w-full object-contain" />

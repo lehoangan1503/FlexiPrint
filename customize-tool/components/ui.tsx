@@ -422,6 +422,10 @@ export function CtModal({
   );
 }
 
+/** A round action button floating on a picture (pencil on a clipart, ← → on a photo): coloured with a dark shadow so
+ * it shows on any picture — dark ones disappeared on dark hair / the checker (asked 2026-10-13). */
+export const FLOAT_BTN = "rounded-full bg-orange-500 text-white ring-1 ring-black/30 shadow-[0_2px_8px_rgba(0,0,0,0.75)] hover:bg-orange-600";
+
 /** Checkerboard backdrop so transparency is visible. */
 export const CHECKER_STYLE: React.CSSProperties = {
   backgroundImage:

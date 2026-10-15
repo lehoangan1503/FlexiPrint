@@ -255,8 +255,9 @@ async function drawRegion(
       const img = await loadImage(asset.url);
       drawPlaced(ctx, img, bounds, item.transform, "contain", asset.meta?.pad);
     }
-  } else if (region.kind === "photo" && sel.kind === "photo" && sel.url) {
-    const img = await loadImage(sel.url);
+  } else if (region.kind === "photo" && sel.kind === "photo" && (sel.url || region.config.photo.sampleUrl)) {
+    // No photo yet: the zone's sample (types CtPhotoConfig.sampleUrl).
+    const img = await loadImage(sel.url ?? region.config.photo.sampleUrl!);
     // The photo lives in the zone's child frame (moved / resized / tilted — or fitted to this photo), clipped to it and to the zone.
     const f = photoFrameBox(bounds, resolvePhotoFrame(region.config.photo, region.shape, { width: img.naturalWidth, height: img.naturalHeight }));
     ctx.translate(f.cx, f.cy);

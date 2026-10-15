@@ -10,7 +10,7 @@
  * drawImage (one picture from the team's image model) lives here too: the v2 bộ nhân vật draws its masters with it
  * (server/char/projects.ts).
  *
- * Env: FAL_KEY (fal image models), CPA_API_KEY / CPA_BASE_URL (company image API).
+ * Env: CPA_API_KEY / CPA_BASE_URL (company image API).
  */
 
 import { NextResponse } from "next/server";
@@ -108,11 +108,6 @@ export async function deletePackImage(s: CtSession, id: string): Promise<NextRes
 // One picture from an image model (v2 bộ nhân vật masters)
 // ---------------------------------------------------------------------------
 
-interface FalImageResponse {
-  images?: Array<{ url?: string; content_type?: string }>;
-  detail?: string | Array<{ msg?: string }>;
-}
-
 interface CpaImageResponse {
   data?: Array<{ b64_json?: string; url?: string }>;
   error?: { message?: string } | string;
@@ -136,13 +131,20 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
       const r = await fetch(u, { signal: AbortSignal.timeout(60_000) });
       if (!r.ok) throw new Error(`Ảnh tham khảo ${r.status}`);
       const mime = r.headers.get("content-type")?.split(";")[0] ?? "image/png";
-      return { image_url: `data:${mime};base64,${Buffer.from(await r.arrayBuffer()).toString("base64")}` };
+      const raw = Buffer.from(await r.arrayBuffer());
+      // A cut-out picture edited into an opaque one: on white. Sent transparent, gpt-image paints the empty canvas
+      // black with a glow of the figure's colours (tested 2026-10-10) — the edit then no longer matches the master.
+      if (!transparent && (await sharp(raw).metadata()).hasAlpha) {
+        const flat = await sharp(raw).flatten({ background: "#ffffff" }).png().toBuffer();
+        return { image_url: `data:image/png;base64,${flat.toString("base64")}` };
+      }
+      return { image_url: `data:${mime};base64,${raw.toString("base64")}` };
     }),
   );
   const res = await fetch(`${base}/images/${images.length ? "edits" : "generations"}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, prompt, size, ...(transparent ? { background: "transparent", output_format: "png" } : {}), ...(images.length ? { images } : {}) }),
+    body: JSON.stringify({ model, prompt, size, quality: "high", ...(transparent ? { background: "transparent", output_format: "png" } : {}), ...(images.length ? { images } : {}) }),
     signal: AbortSignal.timeout(300_000),
   });
   const json = (await res.json().catch(() => ({}))) as CpaImageResponse;
@@ -154,9 +156,13 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
   if (!b64) throw new Error("cpa không trả ảnh");
   // Cropped (centre) to the exact aspect the frame wants — or, for a picture nothing may be cut from (a master
   // character sheet on white), padded with white to it.
-  const img = sharp(Buffer.from(b64, "base64"));
+  let raw: Buffer = Buffer.from(b64, "base64");
+  if (transparent) {
+    await assertTransparent(raw);
+    raw = await solidAlpha(raw);
+  }
+  const img = sharp(raw);
   const meta = await img.metadata();
-  if (transparent) await assertTransparent(Buffer.from(b64, "base64"));
   const W = meta.width ?? 1024;
   const H = meta.height ?? 1024;
   if (fit === "pad") {
@@ -164,13 +170,41 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
     const h = Math.max(H, Math.round(W / ratio));
     const left = Math.floor((w - W) / 2);
     const top = Math.floor((h - H) / 2);
-    const data = await img.extend({ left, right: w - W - left, top, bottom: h - H - top, background: transparent ? { r: 0, g: 0, b: 0, alpha: 0 } : "#ffffff" }).png().toBuffer();
-    return { data, mime: "image/png" };
+    const padded = await img.extend({ left, right: w - W - left, top, bottom: h - H - top, background: transparent ? { r: 0, g: 0, b: 0, alpha: 0 } : "#ffffff" }).png().toBuffer();
+    return { data: await exactSquare(padded, ratio), mime: "image/png" };
   }
   const w = Math.min(W, Math.round(H * ratio));
   const h = Math.min(H, Math.round(W / ratio));
   const data = await img.extract({ left: Math.floor((W - w) / 2), top: Math.floor((H - h) / 2), width: w, height: h }).png().toBuffer();
-  return { data, mime: "image/png" };
+  return { data: await exactSquare(data, ratio), mime: "image/png" };
+}
+
+/** A square picture is exactly 1024×1024 (gpt-image hands back 1027² now and then): every picture of a set on one
+ * canvas, so registration only undoes the model's own drift (asked 2026-10-12). */
+async function exactSquare(png: Buffer, ratio: number): Promise<Buffer> {
+  if (ratio !== 1) return png;
+  const m = await sharp(png).metadata();
+  if (m.width === SQUARE && m.height === SQUARE) return png;
+  return sharp(png).resize(SQUARE, SQUARE, { fit: "fill", kernel: "lanczos3" }).png().toBuffer();
+}
+
+const SQUARE = 1024;
+
+/**
+ * gpt-image's cut-outs are not quite opaque inside: alpha 253 all over the figure (measured 2026-10-12) — a checker
+ * showed faintly through every face. The figure's own level becomes 255; the soft edge is scaled with it.
+ */
+async function solidAlpha(png: Buffer): Promise<Buffer> {
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const hist = new Array<number>(256).fill(0);
+  for (let i = 3; i < data.length; i += 4) hist[data[i]]++;
+  // The figure's level: the most common alpha above 200.
+  let level = 255;
+  for (let v = 201, best = 0; v < 256; v++) if (hist[v] > best) (best = hist[v]), (level = v);
+  if (level >= 255) return png;
+  const k = 255 / level;
+  for (let i = 3; i < data.length; i += 4) data[i] = Math.min(255, Math.round(data[i] * k));
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
 }
 
 /**
@@ -184,42 +218,8 @@ async function assertTransparent(png: Buffer): Promise<void> {
   if (clear < info.width * info.height * 0.02) throw new Error("Ảnh không có nền trong suốt thật (model vẽ nền) — chạy lại");
 }
 
-/** Models that can draw a transparent background (lib/image-models ids). */
-export const supportsTransparent = (model: string) => model.startsWith("cpa:");
-
-/** One photo with `model` (a lib/image-models id: "cpa:<model>" or "fal:<endpoint>/edit"). */
+/** One picture with `model` (lib/image-models CT_IMAGE_MODEL, "cpa:<model>" — the only one). */
 export async function drawImage(model: string, prompt: string, refs: string[], aspect: string, fit: "crop" | "pad" = "crop", transparent = false): Promise<{ data: Buffer; mime: string }> {
-  if (model.startsWith("cpa:")) return drawCpa(model.slice(4), prompt, refs, aspect, fit, transparent);
-  if (transparent) throw new Error(`${model} không vẽ được nền trong suốt`);
-  return drawFal(model.replace(/^fal:/, "").replace(/\/edit$/, ""), prompt, refs, aspect);
-}
-
-async function drawFal(model: string, prompt: string, refs: string[], aspect: string): Promise<{ data: Buffer; mime: string }> {
-  const key = process.env.FAL_KEY;
-  if (!key) throw new Error("Chưa cấu hình FAL_KEY");
-  const endpoint = refs.length ? `${model}/edit` : model;
-  // "auto" (an in-place edit): the model keeps the input picture's own size and framing.
-  const input: Record<string, unknown> = { prompt, num_images: 1, ...(aspect === "auto" ? {} : { aspect_ratio: aspect }), output_format: "png", ...(refs.length ? { image_urls: refs } : {}) };
-  if (model === "fal-ai/nano-banana-2") input.resolution = "2K";
-  const res = await fetch(`https://fal.run/${endpoint}`, {
-    method: "POST",
-    headers: { Authorization: `Key ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-    signal: AbortSignal.timeout(240_000),
-  });
-  const json = (await res.json().catch(() => ({}))) as FalImageResponse;
-  if (!res.ok) {
-    const d = json.detail;
-    const msg = typeof d === "string" ? d : Array.isArray(d) ? d.map((x) => x.msg ?? "").join("; ") : "";
-    throw new Error(`fal.ai ${res.status}: ${(msg || "lỗi").slice(0, 300)}`);
-  }
-  const out = json.images?.[0];
-  if (!out?.url) throw new Error("fal.ai không trả ảnh");
-  if (out.url.startsWith("data:")) {
-    const [head, b64] = out.url.split(",", 2);
-    return { data: Buffer.from(b64 ?? "", "base64"), mime: head.slice(5).split(";")[0] || "image/png" };
-  }
-  const file = await fetch(out.url, { signal: AbortSignal.timeout(60_000) });
-  if (!file.ok) throw new Error(`fal.ai output ${file.status}`);
-  return { data: Buffer.from(await file.arrayBuffer()), mime: file.headers.get("content-type")?.split(";")[0] ?? out.content_type ?? "image/png" };
+  if (!model.startsWith("cpa:")) throw new Error(`Model ảnh không hỗ trợ: ${model}`);
+  return drawCpa(model.slice(4), prompt, refs, aspect, fit, transparent);
 }

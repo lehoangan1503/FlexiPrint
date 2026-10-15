@@ -57,38 +57,45 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
 
 ## 9. AI-made parts
 - An AI-made option is an in-place edit of the master canvas (same size, same base) and the part is extracted on that
-  canvas (difference / alpha). Never generate a part alone and scale it into the slot.
+  canvas (§9b). Never generate a part alone and scale it into the slot (the 2026-10-13 "whole" pictures did exactly
+  that — re-framed ×3–5 and re-drawn, they never matched; removed 2026-10-14).
 
-## 9a. Key mode — one AI picture per clipart (every new project, asked 2026-10-10)
-- The master is drawn on a TRANSPARENT background (gpt-image background "transparent"): step 3a takes its own alpha.
-- Each clipart is ONE picture made from the master: the part kept as drawn, everything else of every character a
-  flat magenta (#FF00FF) silhouette with no lines, the background transparent. The file = that picture's non-magenta
-  pixels — its colours and its cut line come from the SAME picture, so nothing of a neighbour sticks to the edge
-  (painting a region on one picture and taking the pixels from another left skin on hair, cardigans and glasses).
-- Ask "turn EVERYTHING magenta except the <part>", naming every other part with its colour. Never ask for a part
-  alone on an empty canvas: the model then invents a new part anywhere — the silhouettes are what hold it in place.
-- Every clip is made FROM THE MASTER, options too ("take OFF the wrap dress, give her a completely different skater
-  dress — no belt, no bow …, then everything magenta except it"). Drawn on the transparent paper doll the model
-  re-framed the figures ~10 % bigger and moved the arms (a mug beside the hand); "replace with X" alone kept the old
-  garment's details.
-- The body is the PAPER DOLL (every changeable part removed, skin-tone bodysuit, empty hands) drawn transparent and
-  used as it is — nothing is cut from it. Word it as a "family-friendly paper-doll dress-up base" (a plain "remove
-  her dress" is refused by the safety filter).
-- Placement: layer-kit registers each clip by its silhouette on the master's (ECC on the alphas, the part itself
-  left out; an ECC that wanders off is dropped), and fits a master part's colours back to the master. The magenta is
-  strict (#FF00FF ± a few levels, + its shaded edge within 5 px): purple / lilac / pink garments are never keyed out.
-- Checks: "ráp lại = master" allows ~2–3 px (every file is the model's own re-drawing); a clip placed more than that
-  off is flagged "Khớp clipart … làm lại".
-- A picture asked transparent that comes back with a painted background (checkerboard / white) is refused and
-  drawn again.
+## 9-clean. A master that cuts clean (asked 2026-10-10)
+- Hair is drawn as smooth, solid, sculpted locks with ONE continuous outline: no flyaway strands, no single hairs
+  or wisps apart from the hair mass, no see-through hair ends. Clothes are simple shapes with continuous outlines:
+  no lace, fringe, ruffles, see-through fabric, dangling straps or tassels. Every master prompt carries this
+  (lib/char-brief.ts CLEAN_PARTS), every hair / garment option drawn in place too. A master with loose strands is
+  refined or redrawn BEFORE it is approved — strands never cut clean afterwards.
 
-## 9b. The cut follows the AI-painted regions (bước 3b — asked 2026-10-10; paint mode, older projects)
-- Step 3b ("AI tô vùng clipart") makes, on the approved master, one in-place picture per clipart: the part painted
-  flat magenta (its exact region), or another shape / colour / material drawn in place. Those pictures ARE the cut:
-  a part's file is cut by its painted region (or by its own picture against the base), never guessed from the
-  master alone. A region that comes out wrong is fixed by painting that picture again, not by cutting looser.
-- "Tạo bộ custom" (3c) = cut every clipart from those regions → the cliparts in the product's library folder → ONE
-  finished product built from them, ready in the editor (it replaces the set's previous product).
+## 9b. Pixel lock — THE way a v2 set is cut (approved by the user 2026-10-15: "cách này ngon, lưu vào system rule")
+- One image model only: GPT Image 2.5 (company API, quality high). Every picture a file is cut from is drawn on a
+  TRANSPARENT background — its alpha is the cut-out; nothing is matted afterwards. Never ask GPT to "remove the
+  background" of an existing picture (tested 2026-10-12: it re-framed the figure ~20 %).
+- Pictures (lib/char-plan.ts): base = the PAPER DOLL drawn from the master (every part the customer changes taken
+  off: bald, flat magenta #D81BD8 tank top + shorts, empty hands) · EVERY option drawn ON the doll, in place (all
+  options of a shape / texture part, the first option of a colour part — its other colours are recolours of that
+  file) · zones painted magenta on the doll. No other picture. The doll is the canvas: fix the doll (legs, body) and
+  every option is drawn again on it.
+- Every option is registered onto the doll: affine + local flow trusted where the moved picture matches (≤ 8 px — the
+  AI shifts a pair of legs 3–4 px now and then), residual ≤ 0.6 px.
+- The body file IS the doll. An option file = its picture's pixels where they differ from the doll (layer-kit
+  part_region): colour ΔE > 12 or figure past the doll's outline, minus the 1–2 px lines where an outline only moved,
+  minus the magenta key by hue (the doll's underwear never belongs to a part), only on its own subject's side of the
+  doll and near its main piece (the AI re-draws the other figure a little). So doll + file = exactly that 3b picture.
+- Hair: back = the whole hair of its picture, front = the same hair over the doll's figure (front ⊂ back, same
+  pixels). Colours: the file recoloured where it has the part's own hue.
+- A layer can only ADD to the doll: a picture that erased or moved doll pixels (checks "Khớp", "xoá / dời … px của
+  búp bê") is drawn again — never patched in the cut.
+- Prompts: garments in SOLID opaque fabric ("knit" alone gave openwork mesh), covering the magenta wherever worn; a
+  garment under a jacket is sleeveless; an item goes in the doll's empty hand; nothing else of the doll moves.
+- NEVER again (all tried until 2026-10-14, all gave seams and clipart unlike 3b): a segmentation model choosing edges
+  (SAM), seeds / paint pictures, "unwrap" pictures, a part drawn alone and fitted ("whole"), per-case heuristics in
+  the cut (trim / grow / fill-by-colour / front_of / lock_reach …). A wrong file → draw its 3b picture again, or fix
+  it by hand in the file editor.
+- Option thumbnails: a part a hand partly hides (a glass, a cane) gets a 3b picture "thumb:<slot>:<option>" — the
+  object alone and complete — used ONLY as the option's thumbnail in the shop (asset meta.thumb); its clipart stays the cut.
+- "Tạo bộ custom" = plan (regions) → cut → the cliparts in the product's library folder → ONE finished product, its
+  layers in the cut's order (a recoloured jacket lies over the dress).
 
 ## 10. Checks before a set is used
 - Every file of a slot has the same pixel size.

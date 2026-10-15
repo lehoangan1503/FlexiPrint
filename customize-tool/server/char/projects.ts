@@ -9,40 +9,35 @@
  *   DELETE char/projects/:id                 (files stay on R2 only until the cleanup — rows cascade)
  *   POST   char/projects/:id/files     multipart file, kind (ref|blank) → { image }
  *   brainstorm, the master prompt and the edit prompts: @flexiprint (agent task kind "char", server/mcp/char-tools.ts)
- *   POST   char/projects/:id/masters   {prompt?, count?, aspect?} → { images } status running, then done / failed
+ *   POST   char/projects/:id/masters   {prompt?, count?} → { images } (1024×1024) status running, then done / failed
  *   POST   char/projects/:id/masters/:imageId/refine {note} → { image } an in-place edit of that master
  *   POST   char/projects/:id/approve   {imageId | null} → { project } the master every layer is cut from
  *   POST   char/projects/:id/khuon     server/char/khuon.ts — the editor's khuôn picture → a khuôn; {} → the AI one
  *   POST   char/projects/:id/edits     server/char/layers.ts — in-place edits the brief needs
  *   POST   char/projects/:id/layers    server/char/layers.ts — cut the layer set (services/layer-kit)
- *   POST   char/projects/:id/layers/:imageId[/revert]  server/char/layer-edit.ts — fix one file by hand / undo
  *   POST   char/projects/:id/products  server/char/product.ts — a draft product from the set (one set, many products)
- *   POST   char/projects/:id/mockups   server/char/mockups.ts — front mockup (exact) + AI lifestyle scenes
+ *   (mockups of a set's product: the product's own, server/product-mockups.ts — POST products/:id/mockups)
  *
- * Every picture — masters, refinements, layer edits, mockup scenes — uses the team's image model (home page, default
- * GPT Image 2.5). GPT Image moves what it keeps (≈ 0.2 % scale per axis + up to ~0.7 px per character): layer-kit
+ * Every picture — masters, refinements, layer edits, mockup scenes — is GPT Image 2.5 on the company API, no other
+ * model; masters and the edits layers are cut from come on a transparent background (the AI's cut-out is the matte). GPT Image moves what it keeps (≈ 0.2 % scale per axis + up to ~0.7 px per character): layer-kit
  * registers every edit back onto the master (affine + smoothed local flow, ≤ 0.4 px left — measured 2026-10-08).
  */
 
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
 import type { CtCharBrief, CtCharCutState, CtCharIdeaRound, CtCharImage, CtCharImageKind, CtCharMask, CtCharProject, CtCharRef, CtCharRefUse } from "../../types";
-import { REF_USE_INFO, masterPrompt, parseCharBrief } from "../../lib/char-brief";
-import { CT_IMAGE_MODELS } from "../../lib/image-models";
-import { drawImage, supportsTransparent } from "../pack-images";
-import { currentImageModel } from "../settings";
+import { REF_USE_INFO, masterBriefKey, masterPrompt, parseCharBrief } from "../../lib/char-brief";
+import { CT_IMAGE_MODEL } from "../../lib/image-models";
+import { drawImage } from "../pack-images";
 import { ctServiceClient, type CtSession } from "../supabase";
 import { ctRemove } from "../storage";
-import { fetchImage, saveCharFile } from "./files";
+import { fetchImage, saveCharFile, saveChatFile } from "./files";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_FILE = 30 * 1024 * 1024;
 
-/** In-place edits use the team's model too (asked 2026-10-08), tried twice — never a silent switch to another one. */
-export async function editModels(): Promise<string[]> {
-  const picked = await currentImageModel();
-  return [picked, picked];
-}
+/** Every picture: GPT Image 2.5, tried twice — no other model (asked 2026-10-12). */
+export const DRAW_MODELS = [CT_IMAGE_MODEL, CT_IMAGE_MODEL];
 
 export function jsonError(message: string, status: number): NextResponse {
   return NextResponse.json({ error: message }, { status });
@@ -74,7 +69,7 @@ export function cutPaths(cut: CtCharCutState | null): string[] {
   const out: string[] = [];
   if (cut.matte) out.push(cut.matte.colourPath, cut.matte.previewPath, ...maskPaths(cut.matte.alpha));
   if (cut.plan) {
-    for (const pic of cut.plan.pictures) if (pic.id !== "master") out.push(pic.colourPath, pic.previewPath, pic.alphaPath ?? "", pic.ownPath ?? "", pic.keepPath ?? "");
+    for (const pic of cut.plan.pictures) if (pic.id !== "master") out.push(pic.colourPath, pic.previewPath, pic.alphaPath ?? "");
     for (const pc of cut.plan.pieces) out.push(...maskPaths(pc.region));
   }
   return out.filter(Boolean);
@@ -91,14 +86,20 @@ export async function loadImages(db: Db, projectId: string): Promise<CtCharImage
   return data ?? [];
 }
 
-/** The project when the caller may change it (owner; RLS lets admins too). */
+/** Whether the caller may change the set: its owner, or an admin (RLS ct_is_admin lets admins write too). */
+export async function canEditProject(s: CtSession, p: CtCharProject): Promise<boolean> {
+  if (!p.user_id || p.user_id === s.user.id) return true;
+  const { data: admin } = await s.supabase.rpc("ct_is_admin");
+  return admin === true;
+}
+
+export const NOT_YOURS = "Bộ nhân vật của người khác — chỉ xem";
+
+/** The project when the caller may change it (owner or admin). */
 async function ownProject(s: CtSession, id: string): Promise<CtCharProject | NextResponse> {
   const p = await loadProject(s.supabase, id);
   if (!p) return jsonError("Không tìm thấy bộ nhân vật", 404);
-  if (p.user_id && p.user_id !== s.user.id) {
-    const { data: admin } = await s.supabase.rpc("ct_is_admin");
-    if (admin !== true) return jsonError("Bộ nhân vật của người khác — chỉ xem", 403);
-  }
+  if (!(await canEditProject(s, p))) return jsonError(NOT_YOURS, 403);
   return p;
 }
 
@@ -130,7 +131,7 @@ export async function createCharProject(s: CtSession, body: unknown): Promise<Ne
   const name = typeof b.name === "string" && b.name.trim() ? b.name.trim().slice(0, 200) : "Bộ nhân vật mới";
   const { data, error } = await s.supabase
     .from(CT_TABLES.charProjects)
-    .insert({ user_id: s.user.id, name, brief: { ...parseCharBrief(b.brief), clips: "key" } })
+    .insert({ user_id: s.user.id, name, brief: parseCharBrief(b.brief) })
     .select("*")
     .single<CtCharProject>();
   if (error || !data) return jsonError(error?.message ?? "Không tạo được", 500);
@@ -152,10 +153,10 @@ export async function updateCharProject(s: CtSession, id: string, body: unknown)
   const patch: { name?: string; brief?: CtCharBrief } = {};
   if (typeof b.name === "string" && b.name.trim()) patch.name = b.name.trim().slice(0, 200);
   if (b.brief !== undefined) {
-    // How the cliparts are made is the project's, not the editor's: a brief taken from an idea keeps it.
-    patch.brief = { ...parseCharBrief(b.brief), clips: parseCharBrief(p.brief).clips };
-    // The edits, the plan and the layers hang on the brief's slot / option ids: once a master is approved the brief is frozen.
-    if (p.master_id && JSON.stringify(patch.brief) !== JSON.stringify(parseCharBrief(p.brief))) return jsonError("Master đã duyệt — brief bị khoá. Bỏ duyệt master (về bước Master) nếu muốn đổi brief", 409);
+    patch.brief = parseCharBrief(b.brief);
+    // The edits, the plan and the layers hang on the brief's slot / option ids: once a master is approved that part
+    // is frozen (texts, backgrounds, mockup scenes, material — step 4 — stay editable).
+    if (p.master_id && masterBriefKey(patch.brief) !== masterBriefKey(parseCharBrief(p.brief))) return jsonError("Master đã duyệt — brief bị khoá (trừ chữ, nền, mockup, vật liệu). Bỏ duyệt master (về bước Master) nếu muốn đổi brief", 409);
   }
   const { data, error } = await s.supabase.from(CT_TABLES.charProjects).update(patch).eq("id", id).select("*").single<CtCharProject>();
   if (error || !data) return jsonError(error?.message ?? "Không lưu được", 500);
@@ -171,6 +172,20 @@ export async function deleteCharProject(s: CtSession, id: string): Promise<NextR
   if (error) return jsonError(error.message, 500);
   await ctRemove([...images.flatMap((im) => [im.storage_path, im.thumb_path]), ...cutPaths(p.cut), p.layers?.diffPath ?? ""].filter(Boolean));
   return NextResponse.json({ ok: true });
+}
+
+/** POST char/projects/:id/chat-files — a screenshot / picture for the sticky chat → { url, width, height }. */
+export async function uploadChatFile(s: CtSession, id: string, form: FormData): Promise<NextResponse> {
+  const p = await ownProject(s, id);
+  if (p instanceof NextResponse) return p;
+  const file = form.get("file");
+  if (!(file instanceof Blob) || file.size === 0) return jsonError("Thiếu ảnh", 400);
+  if (file.size > MAX_FILE) return jsonError("Ảnh quá lớn (tối đa 30 MB)", 413);
+  try {
+    return NextResponse.json(await saveChatFile(s.user.id, id, Buffer.from(await file.arrayBuffer())), { status: 201 });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Upload thất bại", 400);
+  }
 }
 
 /** POST char/projects/:id/files — a reference picture or the blank product photo. */
@@ -199,10 +214,9 @@ export async function uploadCharFile(s: CtSession, id: string, form: FormData): 
 
 // ---- pictures ---------------------------------------------------------------------------------------------
 
-/** "w:h" of a picture, for a model that needs it; fal edits keep the input's own framing ("auto"). */
-function editAspect(model: string, w: number | null, h: number | null): string {
-  if (model.startsWith("fal:")) return "auto";
-  return w && h ? `${w}:${h}` : "2:3";
+/** "w:h" of the picture an edit is made from (gpt-image picks its canvas from it). */
+function editAspect(w: number | null, h: number | null): string {
+  return w && h ? `${w}:${h}` : SET_ASPECT;
 }
 
 export interface CharDraw {
@@ -212,21 +226,18 @@ export interface CharDraw {
   /** Fixed aspect (new picture) or null (an edit: keep the first ref's). */
   aspect: string | null;
   refSize: { w: number | null; h: number | null };
-  /** Models to try in order. */
-  models: string[];
-  /** A transparent background (key-mode clips, the base): only models that can, each tried twice. */
+  /** A transparent background: the picture comes cut out (no matting of ours — asked 2026-10-12). */
   transparent?: boolean;
 }
 
 /** Draw one picture into an existing running row → done / failed. Never throws. */
 export async function runCharDraw(db: Db, userId: string, row: CtCharImage, d: CharDraw): Promise<CtCharImage | null> {
   let lastError = "";
-  // Transparent: gpt-image now and then paints the background anyway — each model gets three tries.
-  const models = d.transparent ? d.models.filter(supportsTransparent).flatMap((m) => [m, m, m]) : d.models;
-  if (!models.length) lastError = "Model ảnh của team không vẽ được nền trong suốt — chọn GPT Image";
+  // Transparent: gpt-image now and then paints the background anyway (refused by drawImage) — three tries then.
+  const models = d.transparent ? [...DRAW_MODELS, CT_IMAGE_MODEL] : DRAW_MODELS;
   for (const model of models) {
     try {
-      const out = await drawImage(model, d.prompt, d.refs, d.aspect ?? editAspect(model, d.refSize.w, d.refSize.h), "pad", d.transparent === true);
+      const out = await drawImage(model, d.prompt, d.refs, d.aspect ?? editAspect(d.refSize.w, d.refSize.h), "pad", d.transparent === true);
       const saved = await saveCharFile(userId, row.project_id, row.kind, out.data);
       const { data } = await db
         .from(CT_TABLES.charImages)
@@ -242,12 +253,6 @@ export async function runCharDraw(db: Db, userId: string, row: CtCharImage, d: C
   }
   await db.from(CT_TABLES.charImages).update({ status: "failed", error: lastError.slice(0, 1000) }).eq("id", row.id);
   return null;
-}
-
-/** Team model first, then the others (a new picture: registration does not matter). */
-async function newPictureModels(): Promise<string[]> {
-  const picked = await currentImageModel();
-  return [picked, ...CT_IMAGE_MODELS.map((m) => m.id).filter((m) => m !== picked)];
 }
 
 /** The brief's reference pictures the image model gets (≤ 4, style first), and the lines that say what each is
@@ -268,19 +273,14 @@ export function modelRefs(brief: CtCharBrief, images: CtCharImage[]): { urls: st
   };
 }
 
-/** The image model's own canvases (GPT Image: 1024×1536, 1536×1024, 1024²): edits of a master drawn on one come
- * back on the same canvas, nothing padded or stretched. */
-function masterAspect(brief: CtCharBrief): string {
-  return brief.subjects.length <= 2 ? "2:3" : "3:2";
-}
-
-const ASPECTS = ["2:3", "3:2", "1:1"];
+/** Every picture of a set is 1024×1024 (asked 2026-10-12: one canvas, one ratio — whoever is tall or short fits in it):
+ * the master and every edit of it land on the same pixels; layer-kit only undoes the model's own drift. */
+const SET_ASPECT = "1:1";
 
 export interface MasterDrawArgs {
   /** The full prompt (the style-reference line is added here); "" = assembled from the brief. */
   prompt: string;
   count: number;
-  aspect: string | null;
   /** The @flexiprint task that asked for it (shown with the image, its progress lists it). */
   taskId?: string | null;
 }
@@ -289,9 +289,8 @@ export interface MasterDrawArgs {
 export async function drawMasters(db: Db, userId: string, p: CtCharProject, a: MasterDrawArgs): Promise<CtCharImage[]> {
   if (p.master_id) throw new Error("Master đã duyệt — bỏ duyệt trước khi tạo master mới");
   const prompt = a.prompt.trim().slice(0, 8000) || masterPrompt(p.brief);
-  if (!p.brief.subjects.length && !a.prompt.trim()) throw new Error("Brief chưa có nhân vật");
+  if (p.brief.kind !== "photo" && !p.brief.subjects.length && !a.prompt.trim()) throw new Error("Brief chưa có nhân vật");
   const count = Math.min(Math.max(Math.round(a.count) || 2, 1), 4);
-  const aspect = a.aspect && ASPECTS.includes(a.aspect) ? a.aspect : masterAspect(p.brief);
   const images = await loadImages(db, p.id);
   const { urls: refs, text } = modelRefs(p.brief, images);
   const full = text + prompt;
@@ -299,10 +298,9 @@ export async function drawMasters(db: Db, userId: string, p: CtCharProject, a: M
   const rows = Array.from({ length: count }, (_, i) => ({ project_id: p.id, user_id: userId, kind: "master" as CtCharImageKind, role: "master", status: "running", prompt: full, meta: meta(i) }));
   const { data, error } = await db.from(CT_TABLES.charImages).insert(rows).select("*").returns<CtCharImage[]>();
   if (error || !data) throw new Error(error?.message ?? "Không tạo được");
-  const models = await newPictureModels();
-  // Key mode: the master is drawn cut out (transparent) — step 3a takes its own alpha.
-  const transparent = p.brief.clips === "key";
-  for (const row of data) void runCharDraw(db, userId, row, { prompt: full, refs, aspect, refSize: { w: null, h: null }, models, transparent });
+  // Drawn cut out (transparent): the AI's own cut-out is the matte (step 3a) — no bg-remover (asked 2026-10-12).
+  // A bộ ảnh khách's master is the whole flat design, its background included.
+  for (const row of data) void runCharDraw(db, userId, row, { prompt: full, refs, aspect: SET_ASPECT, refSize: { w: null, h: null }, transparent: p.brief.kind !== "photo" });
   return data;
 }
 
@@ -314,18 +312,17 @@ export async function drawMasters(db: Db, userId: string, p: CtCharProject, a: M
 export async function drawIdeaPreviews(db: Db, userId: string, p: CtCharProject, round: CtCharIdeaRound): Promise<CtCharImage[]> {
   if (!round.ideas.length) return [];
   const images = await loadImages(db, p.id);
-  const models = await newPictureModels();
   const rows = round.ideas.map((idea) => {
-    const brief = { ...idea.brief, refs: p.brief.refs, clips: p.brief.clips };
+    const brief = { ...idea.brief, refs: p.brief.refs };
     const { text } = modelRefs(brief, images);
     return { project_id: p.id, user_id: userId, kind: "master" as CtCharImageKind, role: `idea:${idea.id}`, status: "running", prompt: text + masterPrompt(brief), note: idea.title, meta: { ideaId: idea.id, roundId: round.id } };
   });
   const { data, error } = await db.from(CT_TABLES.charImages).insert(rows).select("*").returns<CtCharImage[]>();
   if (error || !data) throw new Error(error?.message ?? "Không tạo được");
   data.forEach((row, i) => {
-    const brief = { ...round.ideas[i].brief, refs: p.brief.refs, clips: p.brief.clips };
+    const brief = { ...round.ideas[i].brief, refs: p.brief.refs };
     const { urls } = modelRefs(brief, images);
-    void runCharDraw(db, userId, row, { prompt: row.prompt, refs: urls, aspect: masterAspect(brief), refSize: { w: null, h: null }, models, transparent: brief.clips === "key" });
+    void runCharDraw(db, userId, row, { prompt: row.prompt, refs: urls, aspect: SET_ASPECT, refSize: { w: null, h: null }, transparent: brief.kind !== "photo" });
   });
   return data;
 }
@@ -344,9 +341,9 @@ export async function adoptMaster(s: CtSession, id: string, imageId: string): Pr
 export async function generateMasters(s: CtSession, id: string, body: unknown): Promise<NextResponse> {
   const p = await ownProject(s, id);
   if (p instanceof NextResponse) return p;
-  const b = (body && typeof body === "object" ? body : {}) as { prompt?: unknown; count?: unknown; aspect?: unknown };
+  const b = (body && typeof body === "object" ? body : {}) as { prompt?: unknown; count?: unknown };
   try {
-    const images = await drawMasters(jobDb(s), s.user.id, p, { prompt: typeof b.prompt === "string" ? b.prompt : "", count: Number(b.count) || 2, aspect: typeof b.aspect === "string" ? b.aspect : null });
+    const images = await drawMasters(jobDb(s), s.user.id, p, { prompt: typeof b.prompt === "string" ? b.prompt : "", count: Number(b.count) || 2 });
     return NextResponse.json({ images }, { status: 202 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không tạo được", 400);
@@ -355,13 +352,11 @@ export async function generateMasters(s: CtSession, id: string, body: unknown): 
 
 export const KEEP_REFINE =
   " Change ONLY what is asked. Keep everything else exactly as it is: the same characters, faces, poses, clothes, colours, " +
-  "composition, position, size, framing, art style and the flat white background. Do not move, zoom or crop.";
+  "composition, position, size, framing, art style and the fully transparent background. Do not move, zoom or crop.";
 
 /** An in-place edit of a master candidate: `prompt` as the model gets it, `note` what the editor asked. */
 export async function refineMasterImage(db: Db, userId: string, p: CtCharProject, imageId: string, prompt: string, note: string, taskId?: string | null): Promise<CtCharImage> {
   if (p.master_id) throw new Error("Master đã duyệt — bỏ duyệt trước khi sửa");
-  // Key mode: the master is cut out — it stays transparent.
-  if (p.brief.clips === "key") prompt = prompt.replace("the flat white background", "the fully transparent background");
   const images = await loadImages(db, p.id);
   const parent = images.find((im) => im.id === imageId && im.kind === "master" && im.status === "done");
   if (!parent) throw new Error("Không tìm thấy master");
@@ -371,7 +366,7 @@ export async function refineMasterImage(db: Db, userId: string, p: CtCharProject
     .select("*")
     .single<CtCharImage>();
   if (error || !row) throw new Error(error?.message ?? "Không tạo được");
-  void runCharDraw(db, userId, row, { prompt, refs: [parent.url], aspect: null, refSize: { w: parent.width, h: parent.height }, models: await editModels(), transparent: p.brief.clips === "key" });
+  void runCharDraw(db, userId, row, { prompt, refs: [parent.url], aspect: null, refSize: { w: parent.width, h: parent.height }, transparent: p.brief.kind !== "photo" });
   return row;
 }
 
@@ -401,14 +396,25 @@ export async function approveMaster(s: CtSession, id: string, body: unknown): Pr
     return NextResponse.json({ project: data ? projectRow(data) : p });
   }
   if (typeof imageId !== "string" || !UUID.test(imageId)) return jsonError("imageId không hợp lệ", 400);
-  const { data: im } = await s.supabase.from(CT_TABLES.charImages).select("*").eq("id", imageId).eq("project_id", id).maybeSingle<CtCharImage>();
-  if (!im || im.kind !== "master" || im.status !== "done") return jsonError("Chỉ duyệt được master đã tạo xong", 400);
+  try {
+    return NextResponse.json({ project: await setApprovedMaster(s.supabase, p, imageId) });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không lưu được", 400);
+  }
+}
+
+/** Approve a finished master of the set (the page's "Duyệt", or @flexiprint when the editor handed it the whole set).
+ * Throws a message when it cannot. */
+export async function setApprovedMaster(db: Db, p: CtCharProject, imageId: string): Promise<CtCharProject> {
+  if (p.master_id !== imageId && (p.status === "layers" || p.status === "product")) throw new Error("Đã cắt layer từ master khác — tạo bộ mới để đổi master");
+  const { data: im } = await db.from(CT_TABLES.charImages).select("*").eq("id", imageId).eq("project_id", p.id).maybeSingle<CtCharImage>();
+  if (!im || im.kind !== "master" || im.status !== "done") throw new Error("Chỉ duyệt được master đã tạo xong");
   // Another master: the backdrop / regions reviewed on the old one no longer fit.
   const changed = p.master_id !== im.id;
-  const { data, error } = await s.supabase.from(CT_TABLES.charProjects).update({ master_id: im.id, status: "master", ...(changed ? { cut: null } : {}) }).eq("id", id).select("*").single<CtCharProject>();
-  if (error || !data) return jsonError(error?.message ?? "Không lưu được", 500);
+  const { data, error } = await db.from(CT_TABLES.charProjects).update({ master_id: im.id, status: p.status === "brief" ? "master" : p.status, ...(changed ? { cut: null, status: "master" } : {}) }).eq("id", p.id).select("*").single<CtCharProject>();
+  if (error || !data) throw new Error(error?.message ?? "Không lưu được");
   if (changed) await ctRemove(cutPaths(p.cut));
-  return NextResponse.json({ project: projectRow(data) });
+  return projectRow(data);
 }
 
 /** The approved master's pixels (layers, align checks). */

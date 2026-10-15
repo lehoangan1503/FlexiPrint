@@ -902,7 +902,9 @@ export function Stage(props: StageProps) {
             </g>
           )}
           {props.showOverlay &&
-            shownRegions.map((r) => {
+            // The selected layer's outline is drawn last, so a press anywhere inside it drags IT — character layers all
+            // share one frame, and the topmost layer used to catch every drag even with another one active (2026-10-12).
+            [...shownRegions.filter((r) => r.id !== selectedRegionId), ...shownRegions.filter((r) => r.id === selectedRegionId)].map((r) => {
               const isSel = r.id === selectedRegionId;
               return (
                 <path

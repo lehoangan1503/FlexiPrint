@@ -40,7 +40,7 @@ import { PhotoConfigError, cachedAiResult, photoCapabilities, processPhoto, type
 import { sweepPhotoCache } from "./photo-cache";
 import { isAiStyleRef, isPhotoStyleRef } from "../lib/photo-styles";
 import { isAdmin, loadAiStyle, originAllowed, publicAiStyles, takeAiQuota } from "./ai-styles";
-import { falConfigured } from "./ai/fal-style";
+import { aiStylesConfigured } from "./ai/style-run";
 import { printPack, readPrintPackForm } from "./material";
 import { deleteClipart, loadProductAssets } from "./library";
 import { renameProductFolder } from "./artworks";
@@ -56,7 +56,8 @@ export function jsonError(message: string, status: number): NextResponse {
 
 async function ownedProduct(s: CtSession, productId: string): Promise<CtProduct | null> {
   const { data } = await s.supabase.from(CT_TABLES.products).select("*").eq("id", productId).maybeSingle<CtProduct>();
-  if (!data || data.user_id !== s.user.id) return null;
+  // Admins have full rights on every product (RLS ct_*_admin_all, migration 026).
+  if (!data || (data.user_id !== s.user.id && !(await isAdmin(s)))) return null;
   return data;
 }
 
@@ -557,7 +558,7 @@ export async function publicPhoto(productId: string, form: FormData, ip: string,
   if (parsed.cutout && !cfg.cutout) return publicError("Vùng này không bật tách nền", 400);
   if (!isAiStyleRef(style)) return photoResponse(parsed, CORS_HEADERS);
 
-  if (!falConfigured()) return publicError("AI styles are not configured (FAL_KEY)", 501);
+  if (!aiStylesConfigured()) return publicError("AI styles are not configured (CPA_API_KEY)", 501);
   const aiStyle = await loadAiStyle(db, style);
   if (!aiStyle) return publicError("This style is no longer available", 410);
   const job = { image: { data: parsed.data, mime: parsed.mime }, style: style as CtAiStyleRef, cutout: parsed.cutout, aiStyle };
@@ -571,7 +572,7 @@ export async function publicPhoto(productId: string, form: FormData, ip: string,
   return photoResponse(parsed, CORS_HEADERS, aiStyle);
 }
 
-/** Editor "try a customer photo" — any style (the library is global), owner of the product only. */
+/** Editor "try a customer photo" — any style (the library is global), owner of the product or an admin. */
 export async function editorPhoto(s: CtSession, productId: string, form: FormData): Promise<NextResponse> {
   if (!(await ownedProduct(s, productId))) return jsonError("Không có quyền sửa sản phẩm này", 403);
   const parsed = await readPhotoRequest(form);
@@ -583,7 +584,7 @@ export async function editorPhoto(s: CtSession, productId: string, form: FormDat
   return photoResponse(parsed, {}, aiStyle);
 }
 
-/** Editor "Xuất file in": print files + cut path for the product's material (owner only). */
+/** Editor "Xuất file in": print files + cut path for the product's material (owner or admin). */
 export async function editorPrintPack(s: CtSession, productId: string, form: FormData): Promise<NextResponse> {
   if (!(await ownedProduct(s, productId))) return jsonError("Không có quyền sửa sản phẩm này", 403);
   const parsed = readPrintPackForm(form);
@@ -715,8 +716,8 @@ export async function uploadAsset(s: CtSession, productId: string, form: FormDat
 
 export async function updateAsset(s: CtSession, assetId: string, body: CtUpdateAssetBody): Promise<NextResponse> {
   const { data: cur } = await s.supabase.from(CT_TABLES.assets).select("*").eq("id", assetId).maybeSingle<CtAsset>();
-  // Library cliparts are shared: admins edit them too.
-  if (!cur || (cur.user_id !== s.user.id && !(cur.product_id === null && (await isAdmin(s))))) return jsonError("Không có quyền sửa asset này", 403);
+  // Admins edit anyone's asset.
+  if (!cur || (cur.user_id !== s.user.id && !(await isAdmin(s)))) return jsonError("Không có quyền sửa asset này", 403);
   const patch: CtUpdateAssetBody = {};
   if (typeof body.name === "string") patch.name = body.name;
   if (typeof body.sort_order === "number") patch.sort_order = body.sort_order;
@@ -741,7 +742,7 @@ export async function updateAsset(s: CtSession, assetId: string, body: CtUpdateA
 export async function replaceAssetFile(s: CtSession, assetId: string, form: FormData): Promise<NextResponse> {
   const { data: asset } = await s.supabase.from(CT_TABLES.assets).select("*").eq("id", assetId).maybeSingle<CtAsset>();
   if (!asset) return jsonError("Không tìm thấy asset", 404);
-  if (asset.user_id !== s.user.id && !(asset.product_id === null && (await isAdmin(s)))) return jsonError("Không có quyền sửa asset này", 403);
+  if (asset.user_id !== s.user.id && !(await isAdmin(s))) return jsonError("Không có quyền sửa asset này", 403);
   const file = form.get("file");
   if (!(file instanceof Blob)) return jsonError("Thiếu file", 400);
   if (file.size > CT_CONFIG.maxUploadBytes) return jsonError("File quá lớn", 413);
@@ -775,7 +776,7 @@ export async function deleteAsset(s: CtSession, assetId: string): Promise<NextRe
   if (!asset) return jsonError("Không tìm thấy asset", 404);
   // Library cliparts: refused while a product still uses them.
   if (asset.product_id === null) return deleteClipart(s, assetId);
-  if (asset.user_id !== s.user.id) return jsonError("Không có quyền xoá asset này", 403);
+  if (asset.user_id !== s.user.id && !(await isAdmin(s))) return jsonError("Không có quyền xoá asset này", 403);
   // Variants cascade in the DB; collect their files first.
   const { data: children } = await s.supabase.from(CT_TABLES.assets).select("storage_path").eq("parent_id", assetId);
   const { error } = await s.supabase.from(CT_TABLES.assets).delete().eq("id", assetId);

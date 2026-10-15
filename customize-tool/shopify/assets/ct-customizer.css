@@ -199,6 +199,9 @@
 .ct-filter__dot img { width: 100%; height: 100%; object-fit: cover; }
 .ct-filter__initial { font-weight: 700; font-size: 18px; color: rgba(0, 0, 0, 0.45); }
 .ct-filter__label { font-size: 12px; line-height: 1.2; text-align: center; color: rgba(0, 0, 0, 0.65); }
+.ct-filter--demo { width: 84px; }
+.ct-filter--demo .ct-filter__dot { width: 76px; height: 76px; border-radius: 12px; background: #f6f6f4; }
+.ct-filter--demo .ct-filter__dot img { object-fit: contain; }
 .ct-filter:hover .ct-filter__dot { border-color: color-mix(in srgb, var(--ct-accent, #e5793b) 50%, rgba(0, 0, 0, 0.12)); }
 .ct-filter.is-selected .ct-filter__dot { border-color: var(--ct-accent, #e5793b); box-shadow: 0 0 0 2px #fff inset, 0 0 0 1px var(--ct-accent, #e5793b); }
 .ct-filter.is-selected .ct-filter__label { color: var(--ct-accent, #e5793b); font-weight: 600; }

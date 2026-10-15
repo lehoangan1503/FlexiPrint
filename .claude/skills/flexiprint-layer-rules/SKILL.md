@@ -18,5 +18,22 @@ Read it before touching layered-art code. Code consequences:
   parts.
 - AI-made parts: in-place edit on the master canvas, extract on that canvas; never generate standalone and scale in.
 
+## Pixel lock — THE way a v2 character set is cut (approved by the user 2026-10-15: "cách này ngon, lưu vào system rule")
+
+1. gpt-image draws ONE paper doll from the master (every part the customer changes taken off: bald, flat magenta
+   #D81BD8 underwear, empty hands), then EVERY option of every part drawn ON that doll, in place, transparent
+   background (a colour-only part: one drawing, its other colours are recolours of that file).
+2. Each option is registered onto the doll (affine + local flow trusted where the warped picture matches, ≤ 8 px).
+3. Body file = the doll, pixel for pixel. An option file = ONLY the pixels where its picture differs from the doll
+   (colour ΔE > 12, or figure past the doll's outline), minus 1–2 px outline-shift lines, minus the magenta key (by
+   hue), kept on its own subject's side of the doll, near its main piece. Doll + file = exactly that 3b picture.
+4. Hair: back = the whole hair of its picture, front = the same pixels over the doll's figure (front ⊂ back).
+5. A layer can only ADD to the doll: a picture that erased / moved doll pixels (check "lost") is drawn again.
+
+Never: a segmentation model choosing edges (SAM), seeds/paint pictures, "unwrap" pictures, parts drawn alone and
+fitted ("whole"), per-case post-processing heuristics (trim / grow / fill-by-colour / front_of …). Every one of those
+was tried until 2026-10-14 and produced seams and clipart that did not match 3b. A wrong file is fixed by drawing its
+3b picture again (or by hand in the file editor) — not by another rule in the cut.
+
 Background: research of macorner's dress-up products (2026-10-07). Every option file is the full master canvas;
 hair = full "back" layer + "front" layer with the face/neck erased, the back one following the front choice.

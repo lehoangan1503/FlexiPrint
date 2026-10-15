@@ -3,13 +3,14 @@
 /**
  * Step 4 — products from the layer set. One set → many products (each its own print size / blank photo is set in
  * the editor). Per product: open it in the editor, and make mockups: the print file is rendered here exactly as the
- * editor's "File in" tab does, then the server puts it on the blank photo (exact) and has AI make lifestyle scenes.
+ * editor's "File in" tab does, then the product's mockups (server/product-mockups.ts — the same as the editor's
+ * Mockups tab and @flexiprint's make_product_mockups) put it on the phôi (exact) and have AI make lifestyle scenes.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ExternalLink, ImageIcon, Loader2, Package, Plus } from "lucide-react";
-import type { CtCharImage, CtProductBundle } from "../../types";
+import type { CtPackImage, CtProductBundle } from "../../types";
 import { charApi, ctApi } from "../../lib/api-client";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
 import { defaultSelection } from "../../lib/design";
@@ -17,9 +18,10 @@ import { displayAssets } from "../../lib/library";
 import { CT_CONFIG, ctGoogleFontsHref } from "../../config";
 import { CtButton, CtInput } from "../ui";
 import type { CharCtx } from "./char-project";
+import { BackdropSection, BlankSection } from "./blank-section";
 
 export function ProductStep(ctx: CharCtx) {
-  const { project, images, editable } = ctx;
+  const { project, editable } = ctx;
   const [name, setName] = useState(project.name);
   const [busy, setBusy] = useState(false);
   const [bundles, setBundles] = useState<Record<string, CtProductBundle>>({});
@@ -43,8 +45,25 @@ export function ProductStep(ctx: CharCtx) {
     return () => clearTimeout(t);
   }, [loadBundles]);
 
-  if (project.layers?.status !== "done") return <div className="p-10 text-center text-sm text-muted-foreground">Cắt layer ở bước 3 trước.</div>;
-  if (!project.layers.approved) return <div className="p-10 text-center text-sm text-muted-foreground">Bấm “Tạo bộ custom” ở bước 3c — nó cắt clipart và tạo luôn sản phẩm.</div>;
+  // The phôi / khuôn and the backgrounds do not need the cut: they are made here any time.
+  const waiting =
+    project.brief.kind === "photo"
+      ? project.product_ids.length
+        ? null
+        : "Vẽ đủ phần tử ở bước 3 rồi bấm “Tạo sản phẩm”."
+      : project.layers?.status !== "done"
+        ? "Cắt layer ở bước 3 trước — sản phẩm được tạo từ bộ file."
+        : !project.layers.approved
+          ? "Bấm “Tạo bộ custom” ở bước 3c — nó cắt clipart và tạo luôn sản phẩm."
+          : null;
+  if (waiting)
+    return (
+      <div className="space-y-6 p-6">
+        <BlankSection {...ctx} />
+        <BackdropSection {...ctx} />
+        <p className="p-6 text-center text-sm text-muted-foreground">{waiting}</p>
+      </div>
+    );
 
   const create = async () => {
     setBusy(true);
@@ -63,6 +82,8 @@ export function ProductStep(ctx: CharCtx) {
     <div className="space-y-6 p-6">
       {/* The text layer is drawn with the product's font. */}
       <link rel="stylesheet" href={ctGoogleFontsHref()} />
+      <BlankSection {...ctx} />
+      <BackdropSection {...ctx} />
       <section className="rounded-xl border bg-card p-4">
         <h3 className="text-sm font-semibold">Tạo sản phẩm từ bộ layer</h3>
         <p className="mb-3 text-xs text-muted-foreground">
@@ -76,15 +97,35 @@ export function ProductStep(ctx: CharCtx) {
         </div>
       </section>
       {project.product_ids.map((pid) => (
-        <ProductCard key={pid} ctx={ctx} productId={pid} bundle={bundles[pid]} mockups={images.filter((im) => im.kind === "mockup" && im.role.endsWith(pid))} />
+        <ProductCard key={pid} ctx={ctx} productId={pid} bundle={bundles[pid]} />
       ))}
     </div>
   );
 }
 
-function ProductCard({ ctx, productId, bundle, mockups }: { ctx: CharCtx; productId: string; bundle: CtProductBundle | undefined; mockups: CtCharImage[] }) {
+function ProductCard({ ctx, productId, bundle }: { ctx: CharCtx; productId: string; bundle: CtProductBundle | undefined }) {
   const [busy, setBusy] = useState(false);
   const [print, setPrint] = useState<string | null>(null);
+  const [mockups, setMockups] = useState<CtPackImage[]>([]);
+
+  const load = useCallback(async () => {
+    try {
+      setMockups(await ctApi.mockupJobs(productId));
+    } catch {
+      // A product that is gone has no mockups.
+    }
+  }, [productId]);
+  useEffect(() => {
+    const t = setTimeout(() => void load(), 0);
+    return () => clearTimeout(t);
+  }, [load]);
+  // While AI photos are drawn, look again now and then.
+  const drawing = mockups.some((m) => m.status === "running");
+  useEffect(() => {
+    if (!drawing) return;
+    const t = setInterval(() => void load(), 5000);
+    return () => clearInterval(t);
+  }, [drawing, load]);
 
   const make = async () => {
     if (!bundle) return;
@@ -99,7 +140,8 @@ function ProductCard({ ctx, productId, bundle, mockups }: { ctx: CharCtx; produc
       const canvas = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts: product.config?.layouts ?? {}, cutToFrame: true });
       const blob = await canvasToBlob(canvas, "image/png");
       setPrint(URL.createObjectURL(blob));
-      ctx.addImages(await charApi.mockups(ctx.project.id, productId, blob));
+      await ctApi.makeMockups(productId, blob, ctx.project.brief.mockups.filter((x) => x.trim()).slice(0, 3));
+      await load();
     } catch (e) {
       ctx.error(e instanceof Error ? e.message : "Không tạo được mockup");
     } finally {
@@ -133,10 +175,10 @@ function ProductCard({ ctx, productId, bundle, mockups }: { ctx: CharCtx; produc
           )}
           {mockups.map((m) => (
             <figure key={m.id} className="overflow-hidden rounded-lg border bg-white">
-              {m.status === "done" ? (
+              {m.status === "done" && m.url ? (
                 <a href={m.url} target="_blank" rel="noreferrer">
-                  {/* eslint-disable-next-line @next/next/no-img-element -- WebP preview */}
-                  <img src={m.thumb_url || m.url} alt={m.note} className="aspect-[4/5] w-full object-cover" />
+                  {/* eslint-disable-next-line @next/next/no-img-element -- our R2 picture */}
+                  <img src={m.url} alt={m.description} className="aspect-[4/5] w-full object-cover" />
                 </a>
               ) : m.status === "running" ? (
                 <div className="flex aspect-[4/5] items-center justify-center">
@@ -145,8 +187,8 @@ function ProductCard({ ctx, productId, bundle, mockups }: { ctx: CharCtx; produc
               ) : (
                 <div className="flex aspect-[4/5] items-center justify-center p-2 text-[11px] text-destructive">{m.error}</div>
               )}
-              <figcaption className="truncate p-1.5 text-[11px] text-muted-foreground" title={m.note}>
-                {m.note}
+              <figcaption className="truncate p-1.5 text-[11px] text-muted-foreground" title={m.description}>
+                {m.description}
               </figcaption>
             </figure>
           ))}

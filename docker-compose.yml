@@ -34,12 +34,10 @@ services:
     command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7004", "--workers", "2"]
 
   # v2 bộ nhân vật — cuts pixel-registered layer sets from one AI master + its in-place edits (OpenCV, no model;
-  # matting goes to bg-remover). One build at a time, a few GB of RAM while it runs.
+  # every picture comes cut out from gpt-image — no matting). One build at a time, a few GB of RAM while it runs.
   layer-kit:
     build: ./services/layer-kit
     restart: unless-stopped
-    environment:
-      BG_REMOVER_URL: http://bg-remover:7001
     # It downloads the project's files from the app's public /files/ URLs: resolve the domain to the host's nginx.
     extra_hosts:
       - "${APP_DOMAIN:-flexiprint.next.lc}:host-gateway"

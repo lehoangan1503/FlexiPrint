@@ -1,5 +1,5 @@
 /**
- * Customer-photo processing: AI styles (ct_ai_styles rows on fal.ai), face
+ * Customer-photo processing: AI styles (ct_ai_styles rows on GPT Image 2.5), face
  * crops, and subject cut-out. Browser-side styles ("pixel") and the final trim happen in
  * lib/photo-process.ts; this file only does what needs a model.
  *
@@ -13,11 +13,10 @@
  *                 the browser keys out (backdrop: "white"). Good for painted
  *                 styles, but a "Real photo" gets subtly regenerated.
  *
- * AI styles ("ai:<id>", server/ai/fal-style.ts): the stored prompt + model run
- * on fal.ai on the ORIGINAL photo, then the result is cut out — the same order
- * as a redraw needs. A model that can output alpha (GPT Image) is asked for a
- * transparent background instead, and when its result really is see-through
- * the bg-remover pass is skipped. Results and cut-outs are cached by
+ * AI styles ("ai:<id>", server/ai/style-run.ts): the stored prompt runs on the
+ * team's GPT Image 2.5 (company API) on the ORIGINAL photo, asked for a
+ * transparent background; when its result really is see-through the
+ * bg-remover pass is skipped, otherwise the style is drawn on white and cut out. Results and cut-outs are cached by
  * (photo hash, style id, style updated_at) in server/photo-cache.ts — memory +
  * Storage for 24 h — so re-asking never re-bills.
  *
@@ -28,10 +27,10 @@
 
 import type { CtAiProviderId, CtAiStyle, CtAspectRatio, CtPhotoCapabilities, CtPhotoStyleRef } from "../../types";
 import { isAiStyleRef, photoStyle } from "../../lib/photo-styles";
-import { aiStyleModel, normalizeAiStyleParams } from "../../lib/ai-style-models";
+import { normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { cachedPhoto, peekPhotoCache, photoCacheKey } from "../photo-cache";
 import { pngHasTransparency } from "../png-alpha";
-import { falConfigured, runFalStyle } from "./fal-style";
+import { aiStylesConfigured, isNotTransparentError, runStyleModel } from "./style-run";
 import { readImageInfo } from "../image-size";
 import { getProvider, type ProviderImage } from "./providers";
 
@@ -329,7 +328,7 @@ function matting(): ((image: ProviderImage) => Promise<ProviderImage>) | null {
 
 export function photoCapabilities(): CtPhotoCapabilities {
   const ai = aiProvider() !== null;
-  return { ai, cutout: matting() !== null || ai, aiStyles: falConfigured(), faceDetect: faceCrop() !== null };
+  return { ai, cutout: matting() !== null || ai, aiStyles: aiStylesConfigured(), faceDetect: faceCrop() !== null };
 }
 
 /** AI results by (photo, style version, cut-out) — see server/photo-cache.ts. */
@@ -350,15 +349,24 @@ export async function cachedAiResult(job: PhotoJob): Promise<PhotoResult | null>
 async function runAiStyle(job: PhotoJob, style: CtAiStyle): Promise<PhotoResult> {
   const params = normalizeAiStyleParams(style.params);
   const wantCut = job.cutout || params.removeBackground;
-  const transparent = wantCut && Boolean(aiStyleModel(style.model).transparent);
-  let image = await runFalStyle(style, job.image, { transparent });
+  // A cut-out is asked of the model itself (GPT Image draws real alpha); when it paints a backdrop anyway, the
+  // style runs again on flat white and the bg-remover lifts the subject out.
+  let image: ProviderImage;
+  if (wantCut) {
+    try {
+      image = await runStyleModel(style, job.image, true);
+    } catch (e) {
+      if (!isNotTransparentError(e)) throw e;
+      image = await runStyleModel(style, job.image, false);
+    }
+  } else image = await runStyleModel(style, job.image, false);
   let backdrop: PhotoResult["backdrop"] = null;
   // The model already removed the background: no second model pass.
   const alreadyCut = image.mime === "image/png" && pngHasTransparency(image.data);
   if (wantCut && !alreadyCut) {
     const matte = matting();
     if (matte) image = await matte(image);
-    else if (params.whiteBackground) backdrop = "white"; // the browser keys out the flat white
+    else backdrop = "white"; // the browser keys out the flat white
   }
   return { image, backdrop };
 }
@@ -374,8 +382,7 @@ export async function processPhoto(job: PhotoJob): Promise<PhotoResult> {
     const style = job.aiStyle;
     if (!style) throw new PhotoConfigError("Style AI không tồn tại");
     // Only finished results are cached. Without a matting model the browser still has to key out
-    // a white backdrop, so that result is recomputed (AI styles need FAL_KEY, which also mattes,
-    // so in practice this branch never runs).
+    // a white backdrop, so that result is recomputed (rare: GPT Image hands back real alpha).
     if (!matting()) return runAiStyle(job, style);
     const image = await cachedPhoto(aiCacheKey(job, style), async () => (await runAiStyle(job, style)).image);
     return { image, backdrop: null };

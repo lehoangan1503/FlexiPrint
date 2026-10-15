@@ -1,18 +1,20 @@
 /**
- * A server-side picture of a product on a khuôn in, for the @flexiprint agent to look at what it laid out
- * (MCP render_artwork) — sharp, no browser. Close to the storefront's drawing, not identical: text is plain SVG text,
- * a customer photo zone is a labelled placeholder, rotation of a picture is approximated. The print file itself is
- * always made by lib/compositor (editor / storefront), never here.
- *
- * Over the artwork: the cut line (green), the safe zone (dashed green), the parts cut out (red), the names of the
- * zones, and a red box round every main element outside the safe zone.
+ * A server-side picture of a product on a khuôn in — sharp, no browser:
+ *   guides  for the @flexiprint agent to look at what it laid out (MCP render_artwork): over the artwork the cut line
+ *           (green), the safe zone (dashed green), the parts cut out (red), the names of the zones, and a red box
+ *           round every main element outside the safe zone; a customer photo zone is a labelled placeholder
+ *   print   the print file as the storefront makes it (MCP make_product_mockups): the sheet, transparent, cut to the
+ *           khuôn, nothing drawn over
+ * Text is drawn with its real font, letter by letter like lib/compositor (server/print-text.ts); a rotated picture is
+ * approximated. The customer's print file is still made by lib/compositor at add-to-cart.
  */
 
 import sharp, { type OverlayOptions } from "sharp";
 import { CT_TABLES } from "../config";
 import type { CtAsset, CtProduct, CtRegion, CtRegionItem, CtSelection, CtShape } from "../types";
 import type { CtPrintSpec } from "../types/print";
-import { defaultRegionSelection, normalizeProductConfig, normalizeRegion, textMode } from "../lib/design";
+import { defaultRegionSelection, normalizeProductConfig, normalizeRegion, resolveLinked, textMode } from "../lib/design";
+import { loadFont, textSvg } from "./print-text";
 import { itemPlacement, shapeBounds, shapeToSvgPath, translateShape } from "../lib/geometry";
 import { boundsInSafe, safeShapes } from "../lib/print-template";
 import type { PrintDb } from "./print-products";
@@ -61,8 +63,9 @@ function maskSvg(w: number, h: number, shape: CtShape): Buffer {
   return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><path d="${shapeToSvgPath(shape)}" fill="#fff"/></svg>`);
 }
 
-/** The artwork (default options, or `selection`) at long side ≤ maxSide, with the khuôn in drawn over it. */
-export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {}, maxSide = 1400): Promise<Buffer> {
+/** The artwork (default options, or `selection`) at long side ≤ maxSide, with the khuôn in drawn over it ("guides"),
+ * or as the print file ("print": transparent, cut to the khuôn's outline, nothing over it). */
+export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {}, maxSide = 1400, mode: "guides" | "print" = "guides"): Promise<Buffer> {
   const main = b.assets.find((a) => a.id === b.product.main_asset_id);
   const W = b.spec?.width ?? main?.width ?? 1000;
   const H = b.spec?.height ?? main?.height ?? 1000;
@@ -70,9 +73,14 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
   const layers: OverlayOptions[] = [];
   const svgs: string[] = [];
 
+  const guides = mode === "guides";
+  // Every layer's choice (the defaults where none is given), linked layers (a back half of hair) following theirs.
+  const picked: CtSelection = {};
+  for (const r of b.regions) picked[r.id] = selection[r.id] ?? defaultRegionSelection(r, b.items, b.assets);
+  const chosen = resolveLinked(b.regions, b.items, b.assets, picked);
   for (const r of [...b.regions].sort((x, y) => x.sort_order - y.sort_order)) {
     if (r.config.materialFrame) continue;
-    const sel = selection[r.id] ?? defaultRegionSelection(r, b.items, b.assets);
+    const sel = chosen[r.id];
     const bounds = shapeBounds(r.shape);
     if (r.kind === "image" && sel.kind === "image" && sel.assetId) {
       const asset = byId.get(sel.assetId);
@@ -106,6 +114,12 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
     } else if (r.kind === "text") {
       const t = r.config.text;
       const raw = sel.kind === "text" && sel.text ? sel.text : t.defaultText;
+      const font = await loadFont(t.fontFamily, t.fontWeight);
+      if (font) {
+        svgs.push(textSvg(font, raw, t, bounds));
+        if (guides && textMode(r) === "input") svgs.push(`<rect x="${bounds.x}" y="${bounds.y}" width="${bounds.w}" height="${bounds.h}" fill="none" stroke="#0ea5e9" stroke-width="2" stroke-dasharray="8 6"/>`);
+        continue;
+      }
       const text = t.uppercase ? raw.toUpperCase() : raw;
       const size = Math.min(t.fontSize, bounds.h * 0.9);
       const x = t.align === "left" ? bounds.x : t.align === "right" ? bounds.x + bounds.w : bounds.x + bounds.w / 2;
@@ -115,7 +129,18 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
         `<text x="${x}" y="${bounds.y + bounds.h / 2}" font-family="${esc(t.fontFamily)}, serif" font-weight="${t.fontWeight}" font-size="${size}" fill="${esc(t.color)}" text-anchor="${anchor}" dominant-baseline="middle"${fit}${t.strokeWidth ? ` stroke="${esc(t.strokeColor)}" stroke-width="${t.strokeWidth}"` : ""}>${esc(text)}</text>`,
       );
       if (textMode(r) === "input") svgs.push(`<rect x="${bounds.x}" y="${bounds.y}" width="${bounds.w}" height="${bounds.h}" fill="none" stroke="#0ea5e9" stroke-width="2" stroke-dasharray="8 6"/>`);
-    } else if (r.kind === "photo") {
+    } else if (r.kind === "photo" && sel.kind === "photo" && (sel.url || r.config.photo.sampleUrl)) {
+      // The customer's photo (a rendered one), else the zone's sample: fitted in the zone like the editor does.
+      const buf = await fetchBuffer(sel.url ?? r.config.photo.sampleUrl!);
+      if (!buf) continue;
+      const m0 = await sharp(buf).metadata();
+      const p = itemPlacement(bounds, m0.width ?? 1, m0.height ?? 1, sel.transform, r.config.photo.fit);
+      let pic = await sharp(buf).resize(Math.max(1, Math.round(p.w)), Math.max(1, Math.round(p.h)), { fit: "fill" }).png().toBuffer();
+      const left = Math.round(p.cx - p.w / 2);
+      const top = Math.round(p.cy - p.h / 2);
+      if (r.config.clip) pic = await sharp(pic).composite([{ input: maskSvg(Math.round(p.w), Math.round(p.h), translateShape(r.shape, -left, -top)), blend: "dest-in" }]).png().toBuffer();
+      layers.push({ input: pic, left, top });
+    } else if (r.kind === "photo" && guides) {
       svgs.push(
         `<path d="${shapeToSvgPath(r.shape)}" fill="#bae6fd" fill-opacity="0.6" stroke="#0284c7" stroke-width="3"/><text x="${bounds.x + bounds.w / 2}" y="${bounds.y + bounds.h / 2}" font-family="sans-serif" font-size="${Math.max(16, bounds.w / 10)}" fill="#075985" text-anchor="middle" dominant-baseline="middle">ẢNH KHÁCH</text>`,
       );
@@ -123,7 +148,7 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
   }
 
   // The khuôn in over the artwork.
-  if (b.spec) {
+  if (b.spec && guides) {
     const sw = Math.max(2, Math.min(W, H) / 300);
     if (b.spec.outline) svgs.push(`<path d="${shapeToSvgPath(b.spec.outline)}" fill="none" stroke="#15803d" stroke-width="${sw}"/>`);
     for (const s of safeShapes(b.spec)) svgs.push(`<path d="${shapeToSvgPath(s)}" fill="none" stroke="#16a34a" stroke-width="${sw}" stroke-dasharray="${sw * 6} ${sw * 4}"/>`);
@@ -137,7 +162,10 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
   }
   if (svgs.length) layers.push({ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${svgs.join("")}</svg>`), left: 0, top: 0 });
 
-  const canvas = sharp({ create: { width: W, height: H, channels: 4, background: { r: 236, g: 236, b: 236, alpha: 1 } } }).composite(layers);
+  if (!guides && b.spec?.outline) layers.push({ input: maskSvg(W, H, b.spec.outline), blend: "dest-in", left: 0, top: 0 });
+  // The print has the piece's holes (the hanging hole) cut out, like the storefront's print file.
+  if (!guides) for (const c of b.spec?.cuts ?? []) layers.push({ input: maskSvg(W, H, c), blend: "dest-out", left: 0, top: 0 });
+  const canvas = sharp({ create: { width: W, height: H, channels: 4, background: guides ? { r: 236, g: 236, b: 236, alpha: 1 } : { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(layers);
   const full = await canvas.png().toBuffer();
   const k = Math.min(1, maxSide / Math.max(W, H));
   return sharp(full).resize(Math.round(W * k), Math.round(H * k)).png().toBuffer();

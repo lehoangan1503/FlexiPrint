@@ -58,5 +58,5 @@ export function useAiStyles(): AiStylesState & { reload: () => Promise<void>; na
     if (!state.loaded && !state.loading) void reloadAiStyles();
   }, []);
   const reload = useCallback(() => reloadAiStyles(), []);
-  return { ...snap, reload, names: snap.styles.map((s) => ({ ref: aiStyleRef(s.id), name: s.name })) };
+  return { ...snap, reload, names: snap.styles.map((s) => ({ ref: aiStyleRef(s.id), name: s.name, ...(s.params.demoUrl ? { demoUrl: s.params.demoUrl } : {}) })) };
 }

@@ -157,7 +157,7 @@ export type CtPhotoStyleId = "original" | "pixel" | "face" | "face_bw" | "face_s
 /**
  * Which kind of styles a photo zone offers — the inspector's tabs. Families never mix:
  *   free  no-AI filters ("original", "pixel"), customer picks
- *   ai    exactly one AI style
+ *   ai    one or more AI styles (each with a demo picture), customer picks
  *   face  face-detect crop + colour filter ("face*"), customer picks
  */
 export type CtPhotoMode = "free" | "ai" | "face";
@@ -168,27 +168,20 @@ export type CtAiStyleRef = `ai:${string}`;
 /** Any style a photo zone can offer. */
 export type CtPhotoStyleRef = CtPhotoStyleId | CtAiStyleRef;
 
-/** fal.ai edit endpoint ids we support (catalog + prices in lib/ai-style-models.ts). */
-export type CtAiStyleModelId =
-  | "fal-ai/nano-banana/edit"
-  | "fal-ai/nano-banana-2/edit"
-  | "fal-ai/bytedance/seedream/v4.5/edit"
-  | "fal-ai/flux-pro/kontext"
-  | "fal-ai/gpt-image-1.5/edit"
-  | "fal-ai/qwen-image-edit-2511";
+/** The model an AI style runs on: always the team's image model (lib/image-models CT_IMAGE_MODEL, asked 2026-10-12 /
+ * 2026-10-15 — no fal, no Nano Banana, no picker). Older rows' fal ids read as it. */
+export type CtAiStyleModelId = "cpa:gpt-image-2.5";
 
 export interface CtAiStyleParams {
-  /** Nano Banana 2 output size. */
-  resolution: "0.5K" | "1K" | "2K";
-  /** GPT Image quality. */
-  quality: "low" | "medium" | "high";
-  /** Output shape: square like the reference store, or follow the photo. */
+  /** Output shape: square, or follow the photo. */
   aspect: "1:1" | "auto";
-  /** Append "on a pure white background" to the prompt (cut-out friendly). */
-  whiteBackground: boolean;
-  /** Cut the subject out of the AI result (bg-remover), even if the zone's cut-out is off. */
+  /** Cut the subject out of the AI result even if the zone's cut-out is off (the model is asked for alpha; the
+   * bg-remover runs when it hands back an opaque picture). */
   removeBackground: boolean;
-  outputFormat: "png" | "jpeg";
+  /** The style run on a sample photo — the picture the editor and the customer pick the style by ("" = none yet). */
+  demoUrl: string;
+  /** The sample photo that demo was made from. */
+  demoSourceUrl: string;
 }
 
 /** A row of ct_ai_styles, as the editor sees it. Never sent to the storefront. */
@@ -215,10 +208,12 @@ export interface CtAiStyleBody {
   params: CtAiStyleParams;
 }
 
-/** What the published template says about an AI style: its name only (prompt/model stay on the server). */
+/** What the published template says about an AI style: its name and demo picture (prompt/model stay on the server). */
 export interface CtPublicAiStyle {
   ref: CtAiStyleRef;
   name: string;
+  /** The style's demo picture (params.demoUrl), shown on the customer's style tile. */
+  demoUrl?: string;
 }
 
 /**
@@ -286,6 +281,12 @@ export interface CtPhotoConfig {
    * blends into the product artwork.
    */
   fadeCrop: boolean;
+  /**
+   * A sample of what a customer's photo becomes (a bộ ảnh khách: the pet of the master, alone, in the style): shown
+   * in the zone until the customer uploads theirs — the editor, the storefront preview, the mockups. Never printed
+   * for an order (the zone is required).
+   */
+  sampleUrl?: string;
 }
 
 /**

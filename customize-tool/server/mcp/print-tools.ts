@@ -6,8 +6,12 @@
  *   create_artwork_product                       a product on a template with its layers (cliparts, texts, photo
  *                                                zones, fills) → product id + where each main element sits
  *   set_artwork_layers                           replace a product's layers (the khuôn layer stays)
- *   render_artwork                               a picture of it with the khuôn drawn over (server/print-render.ts)
+ *   render_artwork                               a picture of it with the khuôn drawn over, or its print file
+ *                                                (server/print-render.ts) — default options or the ones named
  *   check_artwork                                every main element inside the safe zone?
+ *   list_product_options                         the layers the customer picks in, with their options / text lists
+ *   make_product_mockups / wait_product_mockups  the print (chosen options) on the phôi + AI lifestyle photos, the
+ *                                                same pipeline as the editor's Mockups tab (server/product-mockups.ts)
  *
  * Coordinates are the template's sheet px (x, y = top-left). A layer with several asset_ids offers them as the
  * customer's options (first = default). A flat design generated with the template drawn in it and cut into cliparts
@@ -15,15 +19,22 @@
  */
 
 import { CT_CONFIG, CT_FONTS, CT_TABLES } from "../../config";
-import type { CtAsset, CtRegion, CtRegionItem, CtShape } from "../../types";
+import type { CtAiStyleParams, CtAsset, CtRegion, CtRegionItem, CtShape } from "../../types";
 import type { CtPrintSpec, CtPrintTemplate } from "../../types/print";
 import { defaultRegionConfig } from "../../lib/design";
 import { newId, shapeBounds } from "../../lib/geometry";
 import { safeShapes } from "../../lib/print-template";
 import { str } from "../ai/llm";
+import { aiStyleRef, isAiStyleRef, withAiStyles } from "../../lib/photo-styles";
+import { normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { ctLibraryPath, ctUpload } from "../storage";
 import { frameRegion, makeTemplateProduct, productPrintOf, type PrintDb } from "../print-products";
 import { loadArtwork, renderArtwork, safeReport } from "../print-render";
+import { productOptions, selectionFromNames } from "../product-options";
+import { productMockups } from "../product-mockups";
+import { serviceSession } from "../char/product";
+import type { CtPackImage } from "../../types";
+import type { CtSession } from "../supabase";
 import { templateRow } from "../print-templates";
 import { json } from "./task-common";
 import type { CtMcpContext, CtMcpTool } from "./tools";
@@ -48,6 +59,8 @@ interface LayerArg {
   font_size?: unknown;
   color?: unknown;
   shape?: unknown;
+  styles?: unknown;
+  default_style?: unknown;
   zone?: unknown;
   mode?: unknown;
   tile?: unknown;
@@ -60,7 +73,7 @@ const LAYERS_DOC =
   'Layers, bottom first. Each: {"type": "clipart" | "text" | "photo" | "fill", "name": "…", "label": customer-facing question ("Choose your dog")}. ' +
   'clipart: "asset_ids" (library clipart ids — several = the customer picks one, first is the default), "x","y","w","h" (the box the picture is fitted into, sheet px), optional "rotation" (deg). ' +
   'text: "text", box x/y/w/h, "editable" (true = the customer types it, e.g. a name; false = fixed), "max_chars", "font" (Google font family), "font_size" px, "color" "#rrggbb". ' +
-  'photo: a customer photo zone, box x/y/w/h, "shape" "rect"|"ellipse". ' +
+  'photo: a customer photo zone, box x/y/w/h, "shape" "rect"|"ellipse", optional "styles" (AI style refs "ai:<id>" from list_ai_styles — the customer\'s photo is redrawn in the one they pick, by its demo picture) + "default_style". ' +
   'fill: covers a zone with a picture — "zone" (a template zone id, or "sheet" = the whole cut piece), "asset_ids" (options), "mode" "cover" (one picture, e.g. a background) | "tile" (a repeated pattern, "tile" px wide), "print_only" (true: printed but not drawn on the product photo — a background whose options each have their own mockup photo).';
 
 async function ownerOf(ctx: CtMcpContext, args: Record<string, unknown>, fallback: string | null): Promise<string> {
@@ -166,6 +179,9 @@ async function buildLayers(db: PrintDb, productId: string, spec: CtPrintSpec, ra
     } else if (type === "photo") {
       const config = defaultRegionConfig("photo");
       config.photo.label = str(l.label) || "Upload your photo";
+      const refs = (Array.isArray(l.styles) ? l.styles : []).map((x) => (UUID.test(str(x)) ? aiStyleRef(str(x)) : str(x))).filter(isAiStyleRef);
+      const def = str(l.default_style);
+      if (refs.length) config.photo = withAiStyles(config.photo, refs, isAiStyleRef(def) ? def : UUID.test(def) ? aiStyleRef(def) : undefined);
       const shape: CtShape = str(l.shape) === "ellipse" ? { type: "ellipse", cx: box.x + box.w / 2, cy: box.y + box.h / 2, rx: box.w / 2, ry: box.h / 2 } : box;
       regions.push({ id, product_id: productId, name, kind: "photo", shape, config, sort_order: order });
     } else {
@@ -181,9 +197,37 @@ async function saveLayers(db: PrintDb, productId: string, frame: CtRegion | null
   if (error) throw new Error(error.message);
 }
 
+/** Who the mockups are made as: the signed-in editor, or (agent) the product's owner. */
+async function sessionFor(ctx: CtMcpContext, ownerId: string | null): Promise<CtSession> {
+  if (ctx.caller === "user") {
+    const { data } = await ctx.db.auth.getUser();
+    if (!data.user) throw new Error("Not signed in");
+    return { supabase: ctx.db as CtSession["supabase"], user: data.user };
+  }
+  if (!ctx.service || !ownerId) throw new Error("The product has no owner");
+  return serviceSession(ctx.service, ownerId);
+}
+
 const editorUrl = (id: string) => `${process.env.NEXT_PUBLIC_SITE_URL ?? "https://flexiprint.next.lc"}${CT_CONFIG.basePath}/${id}`;
 
 export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
+  {
+    name: "list_ai_styles",
+    description:
+      "AI photo styles of the global library: the customer's uploaded photo is redrawn in the style they pick (GPT Image 2.5, ~30–60 s). Each has a demo picture (the style on a sample pet photo) — view_image it to choose. Offer them on a photo zone: create_artwork_product / set_artwork_layers photo layer \"styles\": [ref, …].",
+    inputSchema: { type: "object", properties: {} },
+    callers: ["agent", "user"],
+    run: async (ctx) => {
+      const { data, error } = await ctx.db.from(CT_TABLES.aiStyles).select("id,name,prompt,params").order("sort_order").order("created_at").returns<Array<{ id: string; name: string; prompt: string; params: Partial<CtAiStyleParams> | null }>>();
+      if (error) throw new Error(error.message);
+      return json({
+        styles: (data ?? []).map((r) => {
+          const p = normalizeAiStyleParams(r.params);
+          return { id: r.id, ref: aiStyleRef(r.id), name: r.name, demoUrl: p.demoUrl || null, prompt: r.prompt };
+        }),
+      });
+    },
+  },
   {
     name: "list_print_templates",
     description: "Khuôn in: the pieces products are printed on (ornament, tile, poster, sticker, all-over-print trousers…): sheet px, cut line, safe zone (main elements must stay inside), holes, named zones (fills), sizes.",
@@ -270,15 +314,97 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
   },
   {
     name: "render_artwork",
-    description: "A picture of a khuôn in product (default options) with the cut line, safe zone (dashed), holes and zones drawn over; red boxes = main elements outside the safe zone. Text is approximate (plain SVG text).",
+    description:
+      'A picture of a product. mode "guides" (default): the cut line, safe zone (dashed), holes and zones drawn over; red boxes = main elements outside the safe zone. mode "print": the print file as the storefront makes it (transparent, cut to the khuôn). "options" picks the customer\'s choices by name (list_product_options), else the defaults. Text is drawn with its real font.',
+    inputSchema: {
+      type: "object",
+      properties: {
+        product_id: { type: "string", description: "The product." },
+        mode: { type: "string", description: '"guides" (default) or "print".' },
+        options: { type: "object", description: '{"<layer name or label>": "<option name / text>"} — e.g. {"Background": "Halloween", "Choose your slogan": "Best Friends Forever"}.' },
+      },
+      required: ["product_id"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const bundle = await loadArtwork(ctx.db, str(args.product_id));
+      if (!bundle) throw new Error("No such product");
+      const options = args.options && typeof args.options === "object" ? (args.options as Record<string, unknown>) : {};
+      const selection = selectionFromNames(bundle, Object.fromEntries(Object.entries(options).map(([k, v]) => [k, str(v)])));
+      const png = await renderArtwork(bundle, selection, 1400, str(args.mode) === "print" ? "print" : "guides");
+      const url = await ctUpload(ctLibraryPath(bundle.product.user_id, null, "artwork-render", "image/png"), png, "image/png");
+      return { images: [{ data: png.toString("base64"), mimeType: "image/png", url }] };
+    },
+  },
+  {
+    name: "list_product_options",
+    description: "The layers of a product the customer picks in (backgrounds, hair, clothes, held items, texts…) with every option's name and which is the default — the names render_artwork / make_product_mockups take.",
     inputSchema: { type: "object", properties: { product_id: { type: "string", description: "The product." } }, required: ["product_id"] },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
       const bundle = await loadArtwork(ctx.db, str(args.product_id));
       if (!bundle) throw new Error("No such product");
-      const png = await renderArtwork(bundle);
-      const url = await ctUpload(ctLibraryPath(bundle.product.user_id, null, "artwork-render", "image/png"), png, "image/png");
-      return { images: [{ data: png.toString("base64"), mimeType: "image/png", url }] };
+      return json({ product_id: bundle.product.id, name: bundle.product.name, editor: editorUrl(bundle.product.id), layers: productOptions(bundle) });
+    },
+  },
+  {
+    name: "make_product_mockups",
+    description:
+      "Mockups of a product, one set per entry: the print with those options (rendered on the server exactly, text in its font) laid on the product's phôi (exact, done at once) + one AI lifestyle photo per scene made from it (~1 min, in the background). They are added to the product (editor → Mockups). → job ids; then wait_product_mockups and view_image every photo.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        product_id: { type: "string", description: "The product." },
+        mockups: {
+          type: "array",
+          items: { type: "object" },
+          description: '[{"label": "Christmas", "options": {"<layer>": "<option>"}, "scenes": ["<English: where the product is and what is around it — e.g. hanging on a decorated Christmas tree with warm bokeh lights>"]}] — 1–4 entries, 1–3 scenes each.',
+        },
+        task_id: { type: "string", description: "Agent: the task it is for (its user owns the mockups)." },
+      },
+      required: ["product_id", "mockups"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const bundle = await loadArtwork(ctx.db, str(args.product_id));
+      if (!bundle) throw new Error("No such product");
+      const list = (Array.isArray(args.mockups) ? args.mockups : []).slice(0, 4).map((x) => (x && typeof x === "object" ? (x as Record<string, unknown>) : {}));
+      if (!list.length) throw new Error('"mockups" must list at least one {label, options, scenes}');
+      const s = await sessionFor(ctx, bundle.product.user_id);
+      const out: Array<{ label: string; front: string; jobs: Array<{ id: string; scene: string; status: string }> }> = [];
+      for (const m of list) {
+        const options = m.options && typeof m.options === "object" ? (m.options as Record<string, unknown>) : {};
+        const selection = selectionFromNames(bundle, Object.fromEntries(Object.entries(options).map(([k, v]) => [k, str(v)])));
+        const scenes = (Array.isArray(m.scenes) ? m.scenes : []).map(str).filter(Boolean).slice(0, 3);
+        const print = await renderArtwork(bundle, selection, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print");
+        const label = str(m.label).slice(0, 60);
+        const r = await productMockups(s, bundle.product, print, scenes, label);
+        out.push({ label, front: r.front.url, jobs: r.jobs.filter((j) => j.status === "running").map((j) => ({ id: j.id, scene: j.description, status: j.status })) });
+      }
+      return json({ mockups: out, next: "wait_product_mockups with the job ids, then view_image each photo (the print must be unchanged on it)." });
+    },
+  },
+  {
+    name: "wait_product_mockups",
+    description: "Wait (up to ~3 min per call) for mockup jobs of a product → each one's status and url. \"still running\" → call again.",
+    inputSchema: {
+      type: "object",
+      properties: { product_id: { type: "string", description: "The product." }, job_ids: { type: "array", items: { type: "string" }, description: "From make_product_mockups." } },
+      required: ["product_id", "job_ids"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const ids = (Array.isArray(args.job_ids) ? args.job_ids : []).map(str).filter((x) => UUID.test(x)).slice(0, 20);
+      if (!ids.length) throw new Error("job_ids is required");
+      const read = async () => (await ctx.db.from(CT_TABLES.packImages).select("*").in("id", ids).eq("name", `mockup:${str(args.product_id)}`).returns<CtPackImage[]>()).data ?? [];
+      const deadline = Date.now() + 170_000;
+      let rows = await read();
+      while (rows.some((r) => r.status === "running") && Date.now() + 4000 < deadline) {
+        await new Promise((r) => setTimeout(r, 4000));
+        rows = await read();
+      }
+      const still = rows.filter((r) => r.status === "running").length;
+      return json({ jobs: rows.map((r) => ({ id: r.id, scene: r.description, status: r.status, url: r.url, error: r.error || undefined })), ...(still ? { message: `${still} still running — call again.` } : {}) });
     },
   },
 ];

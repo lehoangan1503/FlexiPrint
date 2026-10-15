@@ -16,6 +16,9 @@ import { BriefPanel } from "./brief-panel";
 import { MasterPanel } from "./master-panel";
 import { LayersPanel } from "./layers-panel";
 import { CharAgentBar, useCharAgent, type CharAgent } from "./char-agent";
+import { CharChat } from "./char-chat";
+import { ElementsPanel } from "./elements-panel";
+import { ProductStep } from "./product-step";
 
 type Step = "brief" | "master" | "layers" | "product";
 
@@ -23,6 +26,14 @@ const STEPS: Array<{ id: Step; label: string }> = [
   { id: "brief", label: "1. Brief" },
   { id: "master", label: "2. Master" },
   { id: "layers", label: "3. Layer" },
+  { id: "product", label: "4. Sản phẩm" },
+];
+
+/** A bộ ảnh khách (brief.kind "photo"): no cut — step 3 draws the pieces around the customer's photo. */
+const PHOTO_STEPS: Array<{ id: Step; label: string }> = [
+  { id: "brief", label: "1. Brief" },
+  { id: "master", label: "2. Master" },
+  { id: "layers", label: "3. Phần tử" },
   { id: "product", label: "4. Sản phẩm" },
 ];
 
@@ -42,12 +53,15 @@ export interface CharCtx {
   agent: CharAgent;
   goto: (s: Step) => void;
   error: (msg: string | null) => void;
+  /** The open section of the step ("3a" | "3b" | "3c"): the sticky chat says where a request was written. */
+  setSection: (s: string) => void;
 }
 
-export function CharProjectView({ projectId, currentUserId }: { projectId: string; currentUserId: string }) {
+export function CharProjectView({ projectId, currentUserId, admin = false }: { projectId: string; currentUserId: string; admin?: boolean }) {
   const [project, setProject] = useState<CtCharProject | null>(null);
   const [images, setImages] = useState<CtCharImage[]>([]);
   const [step, setStep] = useState<Step>("brief");
+  const [section, setSection] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<"idle" | "pending" | "saved">("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -125,7 +139,8 @@ export function CharProjectView({ projectId, currentUserId }: { projectId: strin
       </div>
     );
 
-  const editable = project.user_id === currentUserId;
+  // Admins change any set (the server lets them too: server/char/projects.ts canEditProject).
+  const editable = admin || project.user_id === currentUserId;
   const ctx: CharCtx = {
     project,
     images,
@@ -141,9 +156,11 @@ export function CharProjectView({ projectId, currentUserId }: { projectId: strin
     agent: agentKit.agent,
     goto: setStep,
     error: setError,
+    setSection,
   };
+  const photoSet = project.brief.kind === "photo";
   const done: Record<Step, boolean> = {
-    brief: project.brief.subjects.length > 0,
+    brief: photoSet ? project.brief.photoZones.length > 0 : project.brief.subjects.length > 0,
     master: !!project.master_id,
     layers: project.status === "layers" || project.status === "product",
     product: project.product_ids.length > 0,
@@ -170,7 +187,7 @@ export function CharProjectView({ projectId, currentUserId }: { projectId: strin
           />
           <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{CHAR_STATUS_LABEL[project.status]}</span>
           <nav className="ml-4 flex gap-1">
-            {STEPS.map((s) => (
+            {(photoSet ? PHOTO_STEPS : STEPS).map((s) => (
               <button
                 key={s.id}
                 onClick={() => setStep(s.id)}
@@ -198,8 +215,11 @@ export function CharProjectView({ projectId, currentUserId }: { projectId: strin
       <main className="min-h-0 flex-1">
         {step === "brief" && <BriefPanel {...ctx} />}
         {step === "master" && <MasterPanel {...ctx} />}
-        {(step === "layers" || step === "product") && <LayersPanel {...ctx} step={step} />}
+        {photoSet && step === "layers" && <ElementsPanel {...ctx} />}
+        {photoSet && step === "product" && <ProductStep {...ctx} />}
+        {!photoSet && (step === "layers" || step === "product") && <LayersPanel {...ctx} step={step} />}
       </main>
+      <CharChat project={project} images={images} tab={step} section={step === "layers" ? section : ""} editable={editable} kit={agentKit} flush={ctx.flush} />
     </div>
   );
 }

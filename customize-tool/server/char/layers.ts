@@ -2,14 +2,14 @@
  * Layers of a bộ nhân vật, from the approved master (layer-rules: one canvas, in-place edits, nothing re-drawn).
  *
  *   POST char/projects/:id/edits  {roles?} → { images } the planned edits (lib/char-plan.ts) still missing — or
- *                                 the given roles again — made in the background: work master (the master), base,
- *                                 then the rest from it; each edit's registration is measured (layer-kit /align)
+ *                                 the given roles again — made in the background, in waves (work → base → every
+ *                                 option on the doll); each edit's registration is measured (layer-kit /align)
  *   POST char/projects/:id/layers → { project } layers.status "building", then "done" / "failed": layer-kit /cut
- *                                 cuts the set from the reviewed matte + regions (server/char/cut.ts); every file
+ *                                 cuts the set from the plan's pictures + regions (server/char/cut.ts); every file
  *                                 is stored (PNG original + WebP preview) as kind "layer"
  *   POST char/projects/:id/layers/approve {approved} → { project } the editor checked the files (final)
  *
- * Redoing "work" redoes everything; redoing "base" redoes every edit made from it (they share its pixels).
+ * Redoing a picture redoes every edit made from it (they share its pixels).
  *
  * Env: CT_LAYER_KIT_URL (services/layer-kit, default http://127.0.0.1:7005), CT_LAYER_KIT_TOKEN.
  */
@@ -17,18 +17,21 @@
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
 import type { CtAsset, CtCharAlign, CtCharCutState, CtCharImage, CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject } from "../../types";
-import { planEdits, slotLabel, type CtCharEditPlan } from "../../lib/char-plan";
+import { DOLL_COLOUR, isThumbRole, optionPictures, planEdits, slotLabel, type CtCharEditPlan } from "../../lib/char-plan";
 import { latestEditsOf } from "../../lib/char-images";
 import type { CtSession } from "../supabase";
-import { ctRemove, ctStoragePath, ctUpload } from "../storage";
+import { ctLibraryPath, ctRemove, ctStoragePath, ctUpload } from "../storage";
+import { findProductFolder } from "../artworks";
 import { fetchImage, saveCharFile, saveCharRaw } from "./files";
 import { kitForget, kitJob, kitPost } from "./kit";
 import { remakeSetProduct } from "./product";
-import { editModels, jobDb, jsonError, loadImages, loadProject, projectRow, runCharDraw } from "./projects";
+import { jobDb, jsonError, loadImages, loadProject, projectRow, runCharDraw, canEditProject, NOT_YOURS } from "./projects";
+import { editLayerFile, reapplyEdits, revertLayerFile } from "./file-edit";
 
 type Db = ReturnType<typeof jobDb>;
 
-const EDIT_CONCURRENCY = 4;
+// Every option is drawn from the doll in one wave: as many at once as the image API takes comfortably.
+const EDIT_CONCURRENCY = 6;
 
 
 async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>): Promise<void> {
@@ -60,10 +63,18 @@ function rolesToRun(plan: CtCharEditPlan[], latest: Map<string, CtCharImage>, as
   if (!asked) return plan.filter((e) => latest.get(e.role)?.status !== "done" && latest.get(e.role)?.status !== "running").map((e) => e.role);
   const set = new Set(asked.filter((r) => plan.some((e) => e.role === r)));
   // What was already made from a redone picture is stale: redone too. What does not exist yet is left for its own
-  // prompt (the agent runs base first, then writes the rest).
+  // prompt (the agent runs the pictures others are made from first, then writes the rest).
   const made = (e: CtCharEditPlan) => latest.has(e.role);
   if (set.has("work")) plan.filter(made).forEach((e) => set.add(e.role));
-  if (set.has("base")) plan.filter((e) => e.source === "base" && made(e)).forEach((e) => set.add(e.role));
+  // Everything made from a redone picture, down the chain (base → an option).
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const e of plan)
+      if (!set.has(e.role) && made(e) && set.has(e.source)) {
+        set.add(e.role);
+        grew = true;
+      }
+  }
   return plan.filter((e) => set.has(e.role)).map((e) => e.role);
 }
 
@@ -91,8 +102,11 @@ export async function runEditRoles(db: Db, userId: string, p: CtCharProject, a: 
   const rows = roles.map((role) => {
     const e = plan.find((x) => x.role === role);
     const last = latest.get(role);
-    const prompt = a.prompts?.[role]?.trim() || (last?.meta.taskId && last.prompt) || e?.prompt || "";
-    const byAgent = !!a.prompts?.[role]?.trim() || !!(last?.meta.taskId && last.prompt);
+    // The agent's last prompt is kept for a redo — unless the option it was written for changed since (its label is
+    // the option's name: "Side Braid" renamed "Chin Bob" was drawn again as a braid, 2026-10-14).
+    const agentLast = last?.meta.taskId && last.prompt && (!e || last.note === e.label) ? last.prompt : "";
+    const prompt = a.prompts?.[role]?.trim() || agentLast || e?.prompt || "";
+    const byAgent = !!a.prompts?.[role]?.trim() || !!agentLast;
     const taskId = a.prompts?.[role]?.trim() ? a.taskId : last?.meta.taskId;
     return { project_id: p.id, user_id: userId, kind: "edit", role, status: "running", prompt: prompt.slice(0, 8000), note: e?.label ?? "", meta: byAgent && taskId ? { taskId } : {} };
   });
@@ -106,7 +120,7 @@ export async function runEditRoles(db: Db, userId: string, p: CtCharProject, a: 
 export async function startEdits(s: CtSession, id: string, body: unknown): Promise<NextResponse> {
   const p = await loadProject(s.supabase, id);
   if (!p) return jsonError("Không tìm thấy bộ nhân vật", 404);
-  if (p.user_id !== s.user.id) return jsonError("Bộ nhân vật của người khác — chỉ xem", 403);
+  if (!(await canEditProject(s, p))) return jsonError(NOT_YOURS, 403);
   const asked = body && typeof body === "object" && Array.isArray((body as { roles?: unknown }).roles) ? ((body as { roles: unknown[] }).roles.filter((r) => typeof r === "string") as string[]) : null;
   try {
     const images = await runEditRoles(jobDb(s), s.user.id, p, { roles: asked });
@@ -121,11 +135,11 @@ async function failRow(db: Db, row: CtCharImage, msg: string): Promise<void> {
 }
 
 async function runEdits(db: Db, userId: string, p: CtCharProject, plan: CtCharEditPlan[], rows: CtCharImage[], before: Map<string, CtCharImage>): Promise<void> {
-  const byRole = new Map(rows.map((r) => [r.role, r]));
-  let work = before.get("work")?.status === "done" ? before.get("work")! : null;
-  let base = before.get("base")?.status === "done" ? before.get("base")! : null;
+  // What each edit can be drawn from: the done pictures not made again in this run, then what this run makes.
+  const have = new Map<string, CtCharImage>([...before].filter(([role, im]) => im.status === "done" && !rows.some((r) => r.role === role)));
+  const sourceOf = (row: CtCharImage) => plan.find((e) => e.role === row.role)?.source ?? "work";
   try {
-    const workRow = byRole.get("work");
+    const workRow = rows.find((r) => r.role === "work");
     if (workRow) {
       const { data: master } = await db.from(CT_TABLES.charImages).select("*").eq("id", p.master_id!).single<CtCharImage>();
       if (!master) throw new Error("Không thấy master đã duyệt");
@@ -136,34 +150,38 @@ async function runEdits(db: Db, userId: string, p: CtCharProject, plan: CtCharEd
         .eq("id", workRow.id)
         .select("*")
         .single<CtCharImage>();
-      work = data ?? null;
+      if (data) have.set("work", data);
     }
-    if (!work) throw new Error("Chưa có master làm việc");
-    const models = await editModels();
+    if (!have.has("work")) throw new Error("Chưa có master làm việc");
     const draw = async (row: CtCharImage, src: CtCharImage) => {
-      // The source is written before drawing: a measure that hangs (the VPS swapping) must not leave a finished
-      // edit without it — the plan step would call it "made from an old base".
+      // The source is written before drawing: a measure that hangs must not leave a finished edit without it — the
+      // plan step would call it "made from an old picture".
       const meta = { ...row.meta, sourceId: src.id };
       await db.from(CT_TABLES.charImages).update({ parent_id: src.id, meta }).eq("id", row.id);
       const transparent = plan.find((e) => e.role === row.role)?.transparent === true;
-      const done = await runCharDraw(db, userId, { ...row, parent_id: src.id, meta }, { prompt: row.prompt, refs: [src.url], aspect: null, refSize: { w: src.width, h: src.height }, models, transparent });
+      const done = await runCharDraw(db, userId, { ...row, parent_id: src.id, meta }, { prompt: row.prompt, refs: [src.url], aspect: null, refSize: { w: src.width, h: src.height }, transparent });
       if (!done) return null;
-      // A key-mode clip is mostly magenta: nothing of its source is left to measure it on (layer-kit registers it
-      // by its silhouette when it plans).
-      if (row.role.startsWith("clip:")) return done;
+      // A thumbnail is drawn alone and re-framed: nothing to measure.
+      if (isThumbRole(row.role)) return done;
       const align = await measure(src.url, done.url);
       if (!align) return done;
       const { data } = await db.from(CT_TABLES.charImages).update({ meta: { ...meta, ...done.meta, align } }).eq("id", done.id).select("*").single<CtCharImage>();
       return data ?? done;
     };
-    const baseRow = byRole.get("base");
-    if (baseRow) base = await draw(baseRow, work);
-    const rest = rows.filter((r) => r.role !== "work" && r.role !== "base");
-    await pool(rest, EDIT_CONCURRENCY, async (row) => {
-      const src = plan.find((e) => e.role === row.role)?.source === "base" ? base : work;
-      if (!src) return failRow(db, row, "Thiếu bản gốc bỏ phần đổi kiểu (base) — làm lại base");
-      await draw(row, src);
-    });
+    // In waves: every edit whose source picture is there (work → base → the options).
+    let pending = rows.filter((r) => r.role !== "work");
+    while (pending.length) {
+      const ready = pending.filter((r) => have.has(sourceOf(r)) && !pending.some((x) => x.role === sourceOf(r)));
+      if (!ready.length) {
+        for (const r of pending) await failRow(db, r, `Thiếu ảnh nguồn (${plan.find((e) => e.role === sourceOf(r))?.label ?? sourceOf(r)}) — làm lại ảnh đó trước`);
+        break;
+      }
+      await pool(ready, EDIT_CONCURRENCY, async (row) => {
+        const done = await draw(row, have.get(sourceOf(row))!);
+        if (done) have.set(row.role, done);
+      });
+      pending = pending.filter((r) => !ready.includes(r));
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     for (const r of rows) {
@@ -183,9 +201,22 @@ interface KitFile {
   piece: string;
   png: string;
   bbox: number[];
+  /** Key of its colour plate (KitCut.plates). */
+  plate?: string;
+}
+
+interface KitView {
+  slot: string;
+  option: string;
+  color: string;
+  png: string;
 }
 
 interface KitCut {
+  views?: KitView[];
+  /** Colour plates (JPEG base64) by key: each file's colours over the whole canvas. */
+  plates?: Record<string, string>;
+  crop?: { x: number; y: number; w: number; h: number };
   width: number;
   height: number;
   order: Array<{ key: string; label: string; follows: string | null }>;
@@ -196,72 +227,56 @@ interface KitCut {
   files: KitFile[];
 }
 
-/** The edits the plan step needs (layer-kit /plan), or why it can't run yet. */
-export function kitPlanInput(p: CtCharProject, latest: Map<string, CtCharImage>): { plan: { key?: boolean; base: string | null; slots: unknown[]; zones: unknown[] } } | { missing: string[] } {
-  const plan = planEdits(p.brief);
-  const missing = plan.filter((e) => latest.get(e.role)?.status !== "done").map((e) => e.label);
-  if (missing.length) return { missing };
-  const work = latest.get("work")!;
-  const base = latest.get("base") ?? null;
-  // Every edit must come from the CURRENT work / base (redone ones invalidate what was made from the old pixels).
-  const stale = plan
-    .filter((e) => e.role !== "work")
-    .filter((e) => {
-      const im = latest.get(e.role)!;
-      const src = e.source === "base" ? base : work;
-      return (im.meta as { sourceId?: string }).sourceId !== src?.id;
-    })
-    .map((e) => e.label);
-  if (stale.length) return { missing: stale.map((l) => `${l} (làm từ bản gốc cũ — làm lại)`) };
-  const url = (role: string) => latest.get(role)?.url ?? null;
-  const zones = p.brief.photoZones.map((z) => ({ id: z.id, label: z.label, mask: url(`zone:${z.id}`) }));
-  if (p.brief.clips === "key") {
-    // Key mode: every option has its own clip picture (a colour slot one, recoloured by code); the base is the body.
-    const slots = p.brief.subjects.flatMap((sub, i) =>
-      sub.slots.map((slot) => ({
-        key: slot.id,
-        label: slotLabel(p.brief, i, slot),
-        mode: slot.mode,
-        mask: slot.mode === "shape" ? null : url(`clip:${slot.id}`),
-        options: slot.options.map((o, j) => ({
-          name: o.name,
-          hex: slot.mode === "color" ? o.value : null,
-          url: slot.mode === "shape" ? url(`clip:${slot.id}:${o.id}`) : slot.mode === "texture" && j > 0 ? url(`clip:${slot.id}:${o.id}`) : null,
-        })),
-        colors: slot.mode === "shape" ? slot.colors.map((c) => ({ name: c.name, hex: c.value })) : [],
-        wraps: slot.mode === "shape" && slot.wraps,
-      })),
-    );
-    return { plan: { key: true, base: base?.url ?? null, slots, zones } };
-  }
-  const slots = p.brief.subjects.flatMap((sub, i) =>
-    sub.slots.map((slot) => ({
-      key: slot.id,
-      label: slotLabel(p.brief, i, slot),
-      mode: slot.mode,
-      mask: slot.mode === "shape" ? url(`part:${slot.id}`) : url(`mask:${slot.id}`),
-      options: slot.options.map((o, j) => ({
-        name: o.name,
-        hex: slot.mode === "color" ? o.value : null,
-        url: j === 0 ? null : slot.mode === "shape" ? url(`shape:${slot.id}:${o.id}`) : slot.mode === "texture" ? url(`texture:${slot.id}:${o.id}`) : null,
-      })),
-      colors: slot.mode === "shape" ? slot.colors.map((c) => ({ name: c.name, hex: c.value })) : [],
-      wraps: slot.mode === "shape" && slot.wraps,
-    })),
-  );
-  return { plan: { base: base?.url ?? null, slots, zones } };
+/** layer-kit /plan input: the doll and every option drawn on it. */
+export interface KitPlanInput {
+  doll: string;
+  /** The doll's underwear colour: a chroma key, never part of an option. */
+  key: string;
+  /** How many figures the doll has (subjects, left → right). */
+  subjects: number;
+  options: Array<{ key: string; slot: string; label: string; option: string; index: number; picture: string; url: string; subject: number }>;
+  zones: Array<{ id: string; label: string; mask: string }>;
+  /** Per piece: the urls its region comes from — the same again keeps a hand-fixed region on a re-plan. */
+  sigs: Record<string, string>;
 }
 
-/** layer-kit /cut input: the reviewed matte + regions, slots as the brief has them. */
+/** The picture id of option `index` of a slot (layer-kit). */
+const optionId = (slotId: string, index: number): string => `opt.${slotId}.${index}`;
+
+/** The edits the plan step needs (layer-kit /plan), or why it can't run yet. */
+export function kitPlanInput(p: CtCharProject, latest: Map<string, CtCharImage>): { plan: KitPlanInput } | { missing: string[] } {
+  // Thumbnail pictures are never cut: the set can be cut without them.
+  const plan = planEdits(p.brief).filter((e) => !isThumbRole(e.role));
+  const missing = plan.filter((e) => latest.get(e.role)?.status !== "done").map((e) => e.label);
+  if (missing.length) return { missing };
+  // Every edit must come from the CURRENT picture it names (a redone doll invalidates what was drawn on the old one).
+  const stale = plan
+    .filter((e) => e.role !== "work")
+    .filter((e) => (latest.get(e.role)!.meta as { sourceId?: string }).sourceId !== latest.get(e.source)?.id)
+    .map((e) => e.label);
+  if (stale.length) return { missing: stale.map((l) => `${l} (làm từ ảnh nguồn cũ — làm lại)`) };
+  const url = (role: string) => latest.get(role)!.url;
+  const doll = url("base");
+  const sigs: Record<string, string> = { body: doll };
+  const options = optionPictures(p.brief).map((x) => {
+    const o = x.slot.options[x.index];
+    const key = `${x.slot.id}#${x.index}`;
+    sigs[key] = [url(x.role), doll].join("|");
+    return { key, slot: x.slot.id, label: `${slotLabel(p.brief, x.subject, x.slot)}: ${o.name}`, option: o.name, index: x.index, picture: optionId(x.slot.id, x.index), url: url(x.role), subject: x.subject };
+  });
+  const zones = p.brief.photoZones.map((z) => ({ id: z.id, label: z.label, mask: url(`zone:${z.id}`) }));
+  for (const z of zones) sigs[`zone:${z.id}`] = [z.mask, doll].join("|");
+  return { plan: { doll, key: DOLL_COLOUR.hex, subjects: p.brief.subjects.length, options, zones, sigs } };
+}
+
+/** layer-kit /cut input: the doll, every option picture + its region, slots as the brief has them. */
 function cutInput(p: CtCharProject): Record<string, unknown> {
-  const matte = p.cut?.matte;
   const plan = p.cut?.plan;
-  if (!matte?.alpha || matte.status !== "done" || !plan || plan.status !== "done") throw new Error("Cần tách nền và phác thảo lớp xong trước");
+  if (!plan || plan.status !== "done") throw new Error("Cần phác thảo lớp xong trước");
   if (!plan.approved) throw new Error("Duyệt phần phác thảo lớp trước");
-  const pictures: Record<string, { colour: string; alpha?: string | null; own?: string | null; keep?: string | null; parent?: string | null }> = {
-    master: { colour: matte.colourUrl, alpha: matte.alpha.url },
-  };
-  for (const pic of plan.pictures) if (pic.id !== "master") pictures[pic.id] = { colour: pic.colourUrl, alpha: pic.alphaUrl, own: pic.ownUrl, keep: pic.keepUrl, parent: pic.parent };
+  const pictures: Record<string, { colour: string; alpha: string }> = {};
+  for (const pic of plan.pictures) if (pic.alphaUrl) pictures[pic.id] = { colour: pic.colourUrl, alpha: pic.alphaUrl };
+  if (!pictures.base) throw new Error("Phác thảo thiếu búp bê — phác thảo lại");
   const piece = (key: string) => plan.pieces.find((x) => x.key === key);
   const body = piece("body");
   if (!body) throw new Error("Phác thảo thiếu vùng thân — phác thảo lại");
@@ -271,22 +286,16 @@ function cutInput(p: CtCharProject): Record<string, unknown> {
       label: slotLabel(p.brief, i, slot),
       mode: slot.mode,
       wraps: slot.mode === "shape" && slot.wraps,
-      region: slot.mode === "shape" ? null : (piece(slot.id)?.region.url ?? null),
-      // Key mode: a colour / texture part has its own clip (the base has no such part).
-      picture: slot.mode !== "shape" && p.brief.clips === "key" ? (piece(slot.id)?.picture ?? null) : null,
+      // A colour slot: one drawing (its first option), the other options are its recolours.
       options: slot.options.map((o, j) => {
-        if (slot.mode === "shape") {
-          const pc = piece(`${slot.id}#${j}`);
-          return { name: o.name, hex: null, picture: pc?.picture ?? null, region: pc?.region.url ?? null };
-        }
-        const tex = `tex.${slot.id}.${j}`;
-        return { name: o.name, hex: slot.mode === "color" ? o.value : null, picture: slot.mode === "texture" && j > 0 && pictures[tex] ? tex : null, region: null };
+        const pc = slot.mode === "color" && j > 0 ? undefined : piece(`${slot.id}#${j}`);
+        return { name: o.name, hex: slot.mode === "color" ? o.value : null, picture: pc?.picture ?? null, region: pc?.region.url ?? null };
       }),
       colors: slot.mode === "shape" ? slot.colors.map((c) => ({ name: c.name, hex: c.value })) : [],
     })),
   );
   const zones = plan.pieces.filter((x) => x.kind === "zone").map((x) => ({ id: x.key.slice(5), region: x.region.url }));
-  return { key: p.brief.clips === "key", pictures, body_picture: body.picture, body_region: body.region.url, slots, zones };
+  return { pictures, body_picture: "base", body_region: body.region.url, slots, zones };
 }
 
 /**
@@ -296,7 +305,8 @@ function cutInput(p: CtCharProject): Record<string, unknown> {
 export async function startBuild(db: Db, userId: string, p: CtCharProject, cut?: CtCharCutState, product = false): Promise<CtCharProject> {
   if (!p.master_id) throw new Error("Duyệt master trước");
   if (p.layers?.status === "building") throw new Error("Đang cắt layer");
-  const input = cutInput(p);
+  // The cut state given (a plan approved with this build — MCP char_cut "build" after a region fix) is the one cut.
+  const input = cutInput(cut ? { ...p, cut } : p);
   const images = await loadImages(db, p.id);
   const building: CtCharLayerSet = { status: "building", error: "", width: 0, height: 0, slots: p.layers?.slots ?? [], zones: [], checks: [], builtAt: "" };
   // `cut` (the plan just approved, server/char/cut.ts) is saved in the same write: the page never sees a finished plan with nothing running.
@@ -311,7 +321,7 @@ export async function startBuild(db: Db, userId: string, p: CtCharProject, cut?:
 export async function buildCharLayers(s: CtSession, id: string, _body: unknown): Promise<NextResponse> {
   const p = await loadProject(s.supabase, id);
   if (!p) return jsonError("Không tìm thấy bộ nhân vật", 404);
-  if (p.user_id !== s.user.id) return jsonError("Bộ nhân vật của người khác — chỉ xem", 403);
+  if (!(await canEditProject(s, p))) return jsonError(NOT_YOURS, 403);
   if (!p.master_id) return jsonError("Duyệt master trước", 409);
   if (p.layers?.status === "building") return jsonError("Đang cắt layer", 409);
   try {
@@ -321,11 +331,25 @@ export async function buildCharLayers(s: CtSession, id: string, _body: unknown):
   }
 }
 
+/** POST char/projects/:id/layers/file[/revert] {imageId, mask} — one clipart edited by hand (server/char/file-edit.ts). */
+export async function layerFileRoute(s: CtSession, id: string, action: string | undefined, body: unknown): Promise<NextResponse> {
+  const p = await loadProject(s.supabase, id);
+  if (!p) return jsonError("Không tìm thấy bộ nhân vật", 404);
+  if (!(await canEditProject(s, p))) return jsonError(NOT_YOURS, 403);
+  if (p.layers?.status === "building") return jsonError("Đang cắt layer — đợi xong rồi sửa", 409);
+  try {
+    const project = action === "revert" ? await revertLayerFile(jobDb(s), p, body) : await editLayerFile(jobDb(s), s.user.id, p, body);
+    return NextResponse.json({ project });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không sửa được file", 400);
+  }
+}
+
 /** POST char/projects/:id/layers/approve {approved} */
 export async function approveCharLayers(s: CtSession, id: string, body: unknown): Promise<NextResponse> {
   const p = await loadProject(s.supabase, id);
   if (!p) return jsonError("Không tìm thấy bộ nhân vật", 404);
-  if (p.user_id !== s.user.id) return jsonError("Bộ nhân vật của người khác — chỉ xem", 403);
+  if (!(await canEditProject(s, p))) return jsonError(NOT_YOURS, 403);
   if (p.layers?.status !== "done") return jsonError("Chưa cắt xong", 409);
   const approved = (body as { approved?: unknown } | null)?.approved !== false;
   const { data, error } = await s.supabase.from(CT_TABLES.charProjects).update({ layers: { ...p.layers, approved } }).eq("id", id).select("*").single<CtCharProject>();
@@ -349,7 +373,23 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
         .single<CtCharImage>();
       if (data) stored.push({ file: f, image: data });
     });
+    // A wrapping part as it is seen, per option × colour (kind "layer" too: replaced with the files on the next cut).
+    const views = new Map<string, CtCharImage>();
+    await pool(kit.views ?? [], 6, async (v) => {
+      const saved = await saveCharFile(userId, p.id, "layer", Buffer.from(v.png, "base64"));
+      const { data } = await db
+        .from(CT_TABLES.charImages)
+        .insert({ project_id: p.id, user_id: userId, kind: "layer", role: `${v.slot}|${v.option}|${v.color}|view`, status: "done", note: "view", ...saved, meta: {} })
+        .select("*")
+        .single<CtCharImage>();
+      if (data) views.set(`${v.slot.split(":")[0]}|${v.option}|${v.color}`, data);
+    });
     const diff = await saveCharRaw(userId, p.id, "cut", Buffer.from(kit.diff, "base64"), "image/png");
+    // Each file's colour plate (what a hand edit paints added pixels from, server/char/file-edit.ts).
+    const plates = new Map<string, { url: string; path: string }>();
+    await pool(Object.entries(kit.plates ?? {}), 6, async ([key, b64]) => {
+      plates.set(key, await saveCharRaw(userId, p.id, "cut", Buffer.from(b64, "base64"), "image/jpeg"));
+    });
     const order = new Map(kit.files.map((f, i) => [f, i]));
     stored.sort((a, b) => (order.get(a.file) ?? 0) - (order.get(b.file) ?? 0));
     const slots: CtCharLayerSlot[] = kit.order.map((o) => ({
@@ -358,7 +398,11 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
       follows: o.follows,
       files: stored
         .filter((x) => x.file.slot === o.key)
-        .map((x): CtCharLayerFile => ({ imageId: x.image.id, url: x.image.url, thumbUrl: x.image.thumb_url, option: x.file.option, color: x.file.color, bbox: x.file.bbox, piece: x.file.piece })),
+        .map((x): CtCharLayerFile => {
+          const view = views.get(`${x.file.slot.split(":")[0]}|${x.file.option}|${x.file.color}`);
+          const plate = x.file.plate ? plates.get(x.file.plate) : undefined;
+          return { imageId: x.image.id, url: x.image.url, thumbUrl: x.image.thumb_url, ...(view ? { viewUrl: view.url, viewThumbUrl: view.thumb_url || view.url } : {}), option: x.file.option, color: x.file.color, bbox: x.file.bbox, piece: x.file.piece, ...(plate ? { plateUrl: plate.url } : {}) };
+        }),
     }));
     const plan = p.cut?.plan;
     const layers: CtCharLayerSet = {
@@ -374,7 +418,11 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
       diffUrl: diff.url,
       diffPath: diff.path,
       approved: false,
+      ...(kit.crop ? { crop: kit.crop } : {}),
+      extraPaths: [...plates.values()].map((x) => x.path),
     };
+    // The files the editor had edited by hand get their edits again (each clipart stays as they left it).
+    layers.extraPaths!.push(...(await reapplyEdits(db, userId, p, oldSet, layers)));
     if (product) {
       // "Tạo bộ custom": the cliparts + the finished product, made from this set (the old product goes with the old files).
       const now = (await loadProject(db, p.id)) ?? p;
@@ -388,11 +436,17 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
     } else await db.from(CT_TABLES.charProjects).update({ layers, status: p.status === "product" ? "product" : "layers" }).eq("id", p.id);
     // The previous build's files are replaced — in the products made from them too.
     if (oldLayers.length) {
-      if (!product) await relinkProducts(db, p, oldLayers, stored.map((x) => x.image)).catch((e: Error) => console.warn("[ct] char relink products", e.message));
+      if (!product) {
+        // The files the set ends with (an edit applied again replaced the plain cut of its file).
+        const ids = layers.slots.flatMap((sl) => sl.files.map((f) => f.imageId));
+        const urls = layers.slots.flatMap((sl) => sl.files.map((f) => f.viewUrl ?? "")).filter(Boolean);
+        const { data: finals } = await db.from(CT_TABLES.charImages).select("*").eq("project_id", p.id).or([`id.in.(${ids.join(",")})`, ...(urls.length ? [`url.in.(${urls.map((u) => `"${u}"`).join(",")})`] : [])].join(",")).returns<CtCharImage[]>();
+        await relinkProducts(db, p, oldLayers, finals ?? stored.map((x) => x.image)).catch((e: Error) => console.warn("[ct] char relink products", e.message));
+      }
       await db.from(CT_TABLES.charImages).delete().in("id", oldLayers.map((x) => x.id));
       await ctRemove([...new Set(oldLayers.flatMap((x) => [x.storage_path, x.thumb_path]))]);
     }
-    if (oldSet?.diffPath) await ctRemove([oldSet.diffPath]);
+    if (oldSet?.diffPath || oldSet?.extraPaths?.length) await ctRemove([oldSet.diffPath ?? "", ...(oldSet.extraPaths ?? [])].filter(Boolean));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const failed: CtCharLayerSet = { ...(p.layers ?? { width: 0, height: 0, slots: [], zones: [], checks: [], builtAt: "" }), status: "failed", error: msg.slice(0, 1000) };
@@ -406,6 +460,9 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
  * option and colour (and the link to it). Old files with no counterpart leave their assets as they are. */
 export async function relinkProducts(db: Db, p: CtCharProject, oldFiles: CtCharImage[], newFiles: CtCharImage[]): Promise<number> {
   if (!p.product_ids.length) return 0;
+  // A product's cliparts live in its folder of the library (product_id null), its own assets on the product.
+  const folders = (await Promise.all(p.product_ids.map((pid) => findProductFolder(db, pid)))).filter((f): f is NonNullable<typeof f> => !!f).map((f) => f.id);
+  const scope = [`product_id.in.(${p.product_ids.join(",")})`, ...(folders.length ? [`category_id.in.(${folders.join(",")})`] : [])].join(",");
   const byRole = new Map(newFiles.map((f) => [f.role, f]));
   let n = 0;
   for (const old of oldFiles) {
@@ -413,14 +470,14 @@ export async function relinkProducts(db: Db, p: CtCharProject, oldFiles: CtCharI
     if (!next) continue;
     // A front half's options are shown by their back half (meta.thumb, server/char/product.ts): that link too.
     for (const was of [old.thumb_url, old.url].filter((u): u is string => !!u)) {
-      const { data: shown } = await db.from(CT_TABLES.assets).select("id, meta").in("product_id", p.product_ids).eq("meta->>thumb", was).returns<Array<Pick<CtAsset, "id" | "meta">>>();
+      const { data: shown } = await db.from(CT_TABLES.assets).select("id, meta").or(scope).eq("meta->>thumb", was).returns<Array<Pick<CtAsset, "id" | "meta">>>();
       for (const a of shown ?? []) await db.from(CT_TABLES.assets).update({ meta: { ...a.meta, thumb: next.thumb_url || next.url } }).eq("id", a.id);
     }
-    const { data: assets } = await db.from(CT_TABLES.assets).select("*").in("product_id", p.product_ids).eq("meta->>charLayerId", old.id).returns<CtAsset[]>();
+    const { data: assets } = await db.from(CT_TABLES.assets).select("*").or(scope).eq("meta->>charLayerId", old.id).returns<CtAsset[]>();
     if (!assets?.length) continue;
     const data = await fetchImage(next.url);
     for (const a of assets) {
-      const path = ctStoragePath(a.user_id, a.product_id ?? "library", a.role, "image/png");
+      const path = a.product_id ? ctStoragePath(a.user_id, a.product_id, a.role, "image/png") : ctLibraryPath(a.user_id, a.category_id, a.role, "image/png");
       const url = await ctUpload(path, data, "image/png");
       await db.from(CT_TABLES.assets).update({ url, storage_path: path, width: next.width ?? a.width, height: next.height ?? a.height, meta: { ...a.meta, charLayerId: next.id } }).eq("id", a.id);
       await ctRemove([a.storage_path]);

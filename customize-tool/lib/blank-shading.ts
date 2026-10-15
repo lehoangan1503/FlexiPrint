@@ -21,6 +21,9 @@ const HIGHLIGHT_RANGE = 14;
 /** Below this share of the surface's brightness a pixel is the backdrop (the print fades out over 0.1 above it). */
 const OFF_PIECE = 0.66;
 
+/** Mean fine-scale contrast (share of the surface's brightness) from which the phôi counts as patterned. */
+const PATTERN = 0.06;
+
 /** Plain-surface brightness from which the phôi counts as a white substrate (full tint at +80). */
 const WHITE_FROM = 150;
 
@@ -87,13 +90,32 @@ export function lightOnBlank(art: Pixels, under: Pixels, w: number, h: number, u
     }
     return fallback;
   };
-  const ref = median(hist, 255);
+  const ref0 = median(hist, 255);
+  // A patterned phôi (seersucker stripes, gingham): its pattern is not light. Read pixel by pixel, a red stripe is
+  // a "shadow" darker than the backdrop cut-off and the print vanished on every stripe (tested 2026-10-10). There
+  // the light is taken from a wide blur (folds and puckering only) and the print keeps its own colours.
+  const fine = lightOf(under, w, h, uc, Math.round(Math.max(w, h) / 600));
+  const wide = lightOf(under, w, h, uc, Math.max(4, Math.round(Math.max(w, h) / 40)));
+  let dev = 0;
+  let seen = 0;
+  for (let i = 0; i < n; i += 7) {
+    if (art[i * 4 + 3] < 128) continue;
+    dev += Math.abs(fine[i] - wide[i]);
+    seen++;
+  }
+  const patterned = seen > 0 && dev / seen > ref0 * PATTERN;
+  const light = patterned ? wide : fine;
+  let ref = ref0;
+  if (patterned) {
+    const hw = new Uint32Array(256);
+    for (let i = 0; i < n; i++) if (art[i * 4 + 3] >= 128) hw[Math.max(0, Math.min(255, Math.round(light[i])))]++;
+    ref = median(hw, ref0);
+  }
   // The phôi's own colour on the print: full on a light substrate (the ink is seen through the glaze / on the
-  // fabric's white), none on a dark one (the print's colours are kept, only its light is taken).
-  const white = Math.max(0, Math.min(1, (ref - WHITE_FROM) / 80));
+  // fabric's white), none on a dark one (the print's colours are kept, only its light is taken) or a patterned one.
+  const white = patterned ? 0 : Math.max(0, Math.min(1, (ref - WHITE_FROM) / 80));
   const tint = chan.map((h) => (median(h, 255) / 255) ** white);
   const room = Math.min(HIGHLIGHT_RANGE, Math.max(4, 255 - ref));
-  const light = lightOf(under, w, h, uc, Math.round(Math.max(w, h) / 600));
   for (let i = 0; i < n; i++) {
     const j = i * uc;
     const L = light[i];
@@ -112,10 +134,11 @@ export function lightOnBlank(art: Pixels, under: Pixels, w: number, h: number, u
       out[o + 3] = ua;
       continue;
     }
-    const shade = Math.max(MIN_SHADE, Math.min(1, (L / ref) ** SHADE_GAMMA));
-    const hl = Math.max(0, Math.min(1, (L - ref - 1) / room)) ** 0.8 * HIGHLIGHT;
+    // Fabric (patterned): only its soft puckering light, both ways, no gloss (the demo mockups' 0.75–1.1 light).
+    const shade = patterned ? Math.max(0.75, Math.min(1.1, (L / ref) ** 0.7)) : Math.max(MIN_SHADE, Math.min(1, (L / ref) ** SHADE_GAMMA));
+    const hl = patterned ? 0 : Math.max(0, Math.min(1, (L - ref - 1) / room)) ** 0.8 * HIGHLIGHT;
     for (let c = 0; c < 3; c++) {
-      let v = art[i * 4 + c] * shade * tint[c];
+      let v = Math.min(255, art[i * 4 + c] * shade * tint[c]);
       v += (255 - v) * hl;
       out[o + c] = Math.round(v * a + under[j + c] * (1 - a));
     }

@@ -27,10 +27,24 @@ this MCP. Everything you read here is live production data.
 ## Tools
 - Library reads: list_categories, get_category, list_cliparts, get_history, view_image.
 - Tasks from the web app: get_task, report_progress, ask_user, submit_result, fail_task.
-- v2 bộ nhân vật: the char_* tools (see flexiprint://guide/layer-rules).
+- v2 bộ nhân vật: the char_* tools (see flexiprint://guide/layer-rules). Chat requests (step "chat", the sticky chat
+  of the set's page, any tab, with screenshots): char_update_brief, char_cut, char_status besides
+  the master / edits tools; char_approve_master (only when the editor hands you the whole set), char_draw_backdrops
+  and char_remake_product for step 4 — get_task gives the whole set.
+- Products: list_print_templates / get_print_template (khuôn in), create_artwork_product / set_artwork_layers /
+  check_artwork (a product laid out from library cliparts), render_artwork (guides, or the print file with chosen
+  options), list_product_options, make_product_mockups → wait_product_mockups (the print on the phôi + AI photos).
+
+## A bộ nhân vật from idea to Shopify
+1 Brief (idea, product = khuôn in + material, style, references, subjects + slots, photo zones, texts, backdrops,
+mockup scenes) → 2 Master (one picture, approved) → 3 Layer: 3a the master at print size, 3b the pictures the files
+are cut from (the paper doll + every option drawn on it), 3c regions (what each option drew anew) → files ("Tạo bộ custom" cuts them AND builds the product: clipart
+folder + layers + texts + background + phôi) → 4 Sản phẩm: phôi / khuôn, backgrounds, mockups → the editor
+(Thiết kế / Xem trước = main-product.liquid / File in / Mockups) → Deploy (Shopify product + template).
 
 ## Tasks from the web app
-kind "content" (deploy page: Shopify title + description) and kind "char" (a step of a v2 bộ nhân vật).
+kind "content" (deploy page: Shopify title + description) and kind "char" (a step of a v2 bộ nhân vật, or a chat
+request written on its page).
 You get a message with a task id. Then: get_task → work (report_progress now and then, in Vietnamese, one short
 line each) → submit_result with the JSON the task's "instructions" describe, or fail_task with the reason. Always
 finish with one of the two — and only when the work is COMPLETELY over. Your result's "summary" (Vietnamese) tells

@@ -1,10 +1,11 @@
-# layer-kit — layer sets from one AI master + in-place edits (OpenCV/numpy), print upscale (Real-ESRGAN on CPU).
-# Matting via bg-remover.
+# layer-kit — layer sets from a paper doll + options drawn on it (OpenCV/numpy, cut by difference), print upscale
+# (Real-ESRGAN), all on CPU.
+# No matting: gpt-image draws every picture on a transparent background.
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 # Real-ESRGAN realesr-animevideov3 (BSD-3).

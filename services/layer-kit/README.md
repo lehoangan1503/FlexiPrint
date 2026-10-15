@@ -1,33 +1,20 @@
 # layer-kit
 
-Cuts a **pixel-registered layer set** out of one AI master and its in-place edits — the v2 bộ nhân vật
-(`/v2` pages, `customize-tool/server/char/layers.ts`). Rules: `customize-tool/server/mcp/layer-rules.ts`.
+Cuts a **pixel-registered layer set** of a v2 bộ nhân vật (`/v2` pages, `customize-tool/server/char/`). Rules:
+`customize-tool/server/mcp/layer-rules.ts`. Endpoints: see the top of `app.py`.
 
-```
-POST /align   {"ref": url, "url": url}  → shift of an edit against its source (on the edit's own canvas)
-POST /build   plan JSON                 → layer PNGs (base64) + order + photo-zone polygons + checks
-GET  /health
-```
+How a set is cut (rebuilt 2026-10-14, "pixel lock" — `layers.py`):
 
-What `/build` does (layers.py):
+- gpt-image draws the **paper doll** (every part the customer changes taken off) and then **every option drawn on
+  that doll**, in place, on a transparent background.
+- `/plan`: each option picture is registered onto the doll (affine + smoothed local flow, ≤ 0.5 px) and upscaled ×2
+  (Real-ESRGAN realesr-animevideov3, CPU). Its region = the pixels it drew anew: a clearly different colour (Lab ΔE >
+  12) or figure past the doll's outline, minus the 1–2 px lines where an outline only moved (`part_region`). Checks:
+  registration, region size, doll figure the picture erased (a layer can only add — draw it again).
+- `/cut`: body file = the doll; an option file = region × its picture's alpha in its picture's colours, so the doll +
+  that file IS the option picture there. Hair (`wraps`): back = the whole hair, front = the same hair over the doll's
+  figure. Other colours = the file recoloured where it has the part's own hue.
 
-- **Canvas** = the edits' own size (the image model's native one). The working master is mapped onto it with ONE
-  uniform scale + centre crop — exactly what nano-banana-2 does to its input (a plain resize stretches the axes
-  differently: ~0.7 px).
-- **Registration**: every edit is measured against its source (phase correlation) and moved back by that sub-pixel
-  shift — a translation, nothing redrawn. Checked again: ≤ 0.1 px or the check fails.
-- **Colour slots**: mask = the magenta edit (+ the part's own outline, + same-colour bits next to it); options are
-  recolours of the base's own pixels in Lab → identical alpha.
-- **Texture slots**: the texture edit's pixels inside that same mask.
-- **Shape slots**: the first option (the master's own part) = its magenta paint on the master ("Tô …", 3b) grown a few px for the outline; other options = edit − base, hair-colour guard; colours = recolours;
-  `wraps` → back (whole part, under the body) + front (the part over the body + 2 px).
-- **Photo zones**: magenta edit → polygon.
-- Checks: registration, masks kept, front ⊆ back, back + body + front = master.
+No segmentation model, no guessing: a wrong region is fixed by hand in the page or by drawing that picture again.
 
-Matting (alpha of the master, the base and each shape edit) is pixel keying on the white paper, no paid API
-(`layers.backdrop_of` / `matte_white`): the paper is found on the picture as the model drew it (before the print
-upscale — paper is 254–255 there, white hair is cream): paper reachable from the border, plus enclosed gaps
-between strands. bg-remover (`BG_REMOVER_URL`, BiRefNet) only votes on the ambiguous gaps; it never draws the edge,
-so strand tips it misses are kept. The edge is colour-to-alpha at print size, colours un-mixed from the paper.
-
-Local: `./run-local.sh` (needs bg-remover on :7001). Docker: `docker compose up -d --build layer-kit`.
+Local: `./run-local.sh`. Docker: `docker compose up -d --build layer-kit`.

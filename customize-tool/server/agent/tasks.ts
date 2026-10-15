@@ -23,7 +23,7 @@
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
 import { defaultCategoryRules } from "../../lib/library";
-import type { CtAgentQuestion, CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress, CtCharTaskStep } from "../../types";
+import type { CtAgentQuestion, CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress, CtCharChatAttachment, CtCharChatTab, CtCharTaskStep } from "../../types";
 import { isOwnUploadUrl } from "../library";
 import type { CtSession } from "../supabase";
 import { clip, jsonError, record, str } from "../ai/llm";
@@ -112,13 +112,27 @@ function parseContentInput(raw: unknown): CtAgentTaskInput | null {
   };
 }
 
-const CHAR_STEPS: CtCharTaskStep[] = ["brainstorm", "master", "edits"];
+const CHAR_STEPS: CtCharTaskStep[] = ["brainstorm", "master", "edits", "chat"];
+const CHAT_TABS: CtCharChatTab[] = ["brief", "master", "layers", "product"];
+
+/** The pictures of a chat request: our own uploads only (screenshots / page pictures on R2). */
+function chatAttachments(raw: unknown): CtCharChatAttachment[] {
+  return (Array.isArray(raw) ? raw : [])
+    .map((v) => {
+      const a = record(v);
+      const source = a.source === "page" || a.source === "file" ? a.source : "screenshot";
+      return { url: str(a.url), imageId: UUID.test(str(a.imageId)) ? str(a.imageId) : null, label: clip(str(a.label), 200), source } as CtCharChatAttachment;
+    })
+    .filter((a) => isOwnUploadUrl(a.url))
+    .slice(0, 12);
+}
 
 /** A step of a bộ nhân vật (v2): the project, the step, what the editor wants. */
 function parseCharInput(raw: unknown): CtAgentTaskInput | null {
   const o = record(raw);
   const c = record(o.char);
   if (!UUID.test(str(c.projectId)) || !CHAR_STEPS.includes(str(c.step) as CtCharTaskStep)) return null;
+  const step = str(c.step) as CtCharTaskStep;
   return {
     category: { id: null, name: "", spec: "", rules: defaultCategoryRules() },
     note: "",
@@ -126,10 +140,14 @@ function parseCharInput(raw: unknown): CtAgentTaskInput | null {
     refUrls: [],
     char: {
       projectId: str(c.projectId),
-      step: str(c.step) as CtCharTaskStep,
-      request: clip(str(c.request), 4000),
+      step,
+      // A chat request is kept whole (asked 2026-10-12: nothing of what the editor wrote is cut).
+      request: clip(str(c.request), step === "chat" ? 20000 : 4000),
       imageId: UUID.test(str(c.imageId)) ? str(c.imageId) : null,
       roles: (Array.isArray(c.roles) ? c.roles : []).map(str).filter(Boolean).slice(0, 60),
+      ...(step === "chat"
+        ? { tab: CHAT_TABS.includes(str(c.tab) as CtCharChatTab) ? (str(c.tab) as CtCharChatTab) : "brief", section: clip(str(c.section), 10), attachments: chatAttachments(c.attachments) }
+        : {}),
     },
   };
 }
@@ -137,8 +155,11 @@ function parseCharInput(raw: unknown): CtAgentTaskInput | null {
 const CHAR_STEP_TEXT: Record<CtCharTaskStep, string> = {
   brainstorm: "Brainstorm 3 hướng brief",
   master: "Viết prompt master, tạo và tự duyệt master",
-  edits: "Viết prompt ảnh AI tô vùng clipart (3b), chạy và kiểm tra",
+  edits: "Viết prompt các ảnh AI để cắt clipart (3b), chạy và kiểm tra",
+  chat: "Yêu cầu từ ô chat",
 };
+
+export const CHAT_TAB_TEXT: Record<CtCharChatTab, string> = { brief: "1. Brief", master: "2. Master", layers: "3. Layer", product: "4. Sản phẩm" };
 
 /** The turn's message: short — the agent reads the task itself over the MCP. */
 function turnPrompt(task: CtAgentTask): string {
@@ -151,6 +172,16 @@ function turnPrompt(task: CtAgentTask): string {
     ]
       .filter(Boolean)
       .join("\n");
+  }
+  if (task.kind === "char" && task.input.char?.step === "chat") {
+    const c = task.input.char;
+    const where = `${CHAT_TAB_TEXT[c.tab ?? "brief"]}${c.section ? ` → ${c.section}` : ""}`;
+    return [
+      `[FlexiPrint task ${task.id}] Bộ nhân vật v2 — yêu cầu từ ô chat, người dùng đang ở tab ${where}.`,
+      `Người dùng viết:\n${c.request}`,
+      ...(c.attachments?.length ? [`Ảnh gửi kèm (xem bằng view_image):`, ...c.attachments.map((a, i) => `${i + 1}. ${a.label || (a.source === "page" ? "Ảnh trên trang" : "Ảnh chụp màn hình")}${a.imageId ? ` (image ${a.imageId})` : ""}: ${a.url}`)] : []),
+      `Gọi mcp__flexiprint__get_task với task_id "${task.id}" — có toàn bộ bộ nhân vật (brief, master, ảnh 3b, vùng 3c, file layer, sản phẩm, các yêu cầu trước) và "instructions". Làm đúng yêu cầu bằng các tool char_*, xem lại kết quả bằng view_image, rồi kết thúc bằng mcp__flexiprint__submit_result {summary} hoặc fail_task.`,
+    ].join("\n");
   }
   if (task.kind === "char") {
     const c = task.input.char;

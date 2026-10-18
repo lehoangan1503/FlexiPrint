@@ -51,9 +51,42 @@ finish with one of the two — and only when the work is COMPLETELY over. Your r
 the editor what you did.
 A choice that is the editor's (two good directions, a taste call, missing information): ask_user with options, then
 END YOUR TURN. Their answer comes back as a new message in the same session — continue the task from there.
+
+## Someone asks you directly on agent_ide
+To make a whole new product (idea / reference pictures → product + mockups) follow flexiprint://guide/whole-set.
+`;
+
+const WHOLE_SET = `# A whole bộ from one agent_ide session
+
+Someone in the company asks you, in the agent_ide chat, for a new custom product. You do every step in THIS
+session; they follow on the set's page and answer you here. Write to them in Vietnamese, short. Image prompts in
+English. Read flexiprint://guide/layer-rules first.
+
+1. Read the request and LOOK at every picture they sent. Missing a deciding fact (what product, real size, how many
+   characters, what the customer can change)? Ask once, briefly, and end your turn.
+2. char_create_set {name, idea} → PRINT the set url (https://flexiprint.next.lc/v2/<id>). Their pictures →
+   char_add_reference (url, or image_base64 of a file in the session; use sample/style/…; note = what to take).
+3. Khuôn in: list_print_templates. None at the real size → create_print_template (a 120×40 cm rug at 150 dpi, a
+   die-cut acrylic square…) — never a small khuôn for a big product.
+4. Brief: get_task (its briefRules say how) → char_update_brief: subjects + slots (hair / top / pants / glasses…, mode
+   color / texture / shape), lineup (the customer picks one character / how many people), choosers (boy/girl per
+   grandchild, hat / no hat…) + shownWhen, slot follows (sweater and hat follow the Theme), optional (a NO choice),
+   elements (decorations: front, follows, box), texts (input / choice / fixed; top / bottom / left / right / under /
+   free / on), backdrops (tile for repeat patterns), charactersBox, mockups. Sum the brief up for them (Vietnamese,
+   short) and ask whether an option is missing. END YOUR TURN and wait.
+5. Master: char_draw_masters (2) → char_wait → view_image → refine / redraw → show them (url + numbers) and END YOUR
+   TURN: they choose. Then char_approve_master with their choice.
+6. After approval do all of step "auto" (get_task instructions): 3b char_run_edits → check every picture (exactly one
+   part added to the doll; no background; no magenta left; thin parts bold) → 3c char_cut what "plan" → char_status
+   (every check passes) → step 4 char_draw_backdrops + char_draw_elements → char_remake_product → render_artwork a few
+   combinations → fix the layout (boxes) if it does not look like the reference → make_product_mockups → look.
+   A short progress line (with the url) at each stage. Something wrong at a stage: fix it at that stage.
+7. Done: the set url + the product (list_product_options has the editor url) + a few mockups, and what is still worth
+   a second look. submit_result on the open task. They want changes later: char_open_task (or the open task).
 `;
 
 export const CT_MCP_RESOURCES: CtMcpResource[] = [
   { uri: "flexiprint://guide/overview", name: "FlexiPrint — how the system works", description: "Records, tools, tasks. Read first.", text: () => OVERVIEW },
   { uri: "flexiprint://guide/layer-rules", name: "Layered art — pixel-registration rules", description: "MANDATORY for any design built from swappable parts (character skin / clothes / hair): one master canvas, full-canvas exports, one box per slot, hair back/front split, linked slots.", text: () => LAYER_RULES },
+  { uri: "flexiprint://guide/whole-set", name: "A whole bộ from one agent_ide session", description: "Someone asks you directly (not from the web app) for a new custom product: create the set, brief, master (they approve), auto steps, product, mockups — all in one session.", text: () => WHOLE_SET },
 ];

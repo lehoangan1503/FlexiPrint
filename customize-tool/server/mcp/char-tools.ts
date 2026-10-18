@@ -466,7 +466,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const { data: p, error } = await db.from(CT_TABLES.charProjects).insert({ user_id: owner, name: clip(str(args.name), 200) || "Bộ mới", brief }).select("*").single<CtCharProject>();
       if (error || !p) throw new Error(error?.message ?? "Could not create the set");
       const task = await selfTask(db, owner, p.id, str(args.idea) || str(args.name));
-      return json({ project_id: p.id, task_id: task.id, url: setUrl(p.id), next: "Print the url. char_add_reference (their pictures) → char_update_brief → get_task → char_draw_masters." });
+      return json({ project_id: p.id, task_id: task.id, url: setUrl(p.id), next: "Print the url. Follow flexiprint://guide/whole-set. char_add_reference (their pictures) → char_update_brief → get_task → char_draw_masters." });
     },
   },
   {

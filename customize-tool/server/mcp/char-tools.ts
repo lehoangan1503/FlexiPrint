@@ -112,6 +112,14 @@ async function charOf(db: CtServiceClient, task: CtAgentTask): Promise<{ project
   return { project, images: await loadImages(db, id) };
 }
 
+/** One starting prompt per kind of edit (base, shape, zone): the others follow the same pattern. */
+function startingPromptExamples(brief: CtCharBrief): Array<{ role: string; prompt: string }> {
+  const seen = new Set<string>();
+  return planEdits(brief)
+    .filter((e) => e.prompt && !seen.has(e.role.split(":")[0]) && seen.add(e.role.split(":")[0]))
+    .map((e) => ({ role: e.role, prompt: withoutKeep(e.prompt) }));
+}
+
 function picture(im: CtCharImage, numbers?: Map<string, number>) {
   return {
     id: im.id,
@@ -203,12 +211,25 @@ function chatView(task: CtAgentTask, p: CtCharProject, images: CtCharImage[], nu
       blankProduct: images.find((im) => im.id === p.brief.product.blankId && im.status === "done")?.url ?? null,
       masters: images.filter((im) => im.kind === "master").map((m) => ({ ...picture(m, numbers), approved: m.id === p.master_id })),
       assembledMasterPrompt: masterPrompt(p.brief),
+      // Compact (a 5-character set has 130+ edits and the agent's tool output is capped): no starting prompt per role
+      // (char_run_edits uses it; startingPromptExamples shows one per kind), a picture's prompt only when it differs.
       edits: p.master_id && p.brief.kind !== "photo"
         ? planEdits(p.brief).map((e) => {
             const im = latest.get(e.role);
-            return { role: e.role, label: e.label, source: e.source, startingPrompt: e.prompt, current: im ? { ...picture(im), role: im.role } : null };
+            const current = im
+              ? {
+                  id: im.id,
+                  status: im.status,
+                  url: im.url,
+                  ...(im.prompt && withoutKeep(im.prompt) !== withoutKeep(e.prompt) ? { prompt: clip(withoutKeep(im.prompt), 600) } : {}),
+                  ...(im.meta.align ? { align: im.meta.align } : {}),
+                  ...(im.error ? { error: clip(im.error, 300) } : {}),
+                }
+              : null;
+            return { role: e.role, label: e.label, source: e.source, current };
           })
         : [],
+      startingPromptExamples: p.master_id && p.brief.kind !== "photo" ? startingPromptExamples(p.brief) : [],
       masterAtPrintSize: p.cut?.matte ? { status: p.cut.matte.status, error: p.cut.matte.error, url: p.cut.matte.colourUrl, alphaUrl: p.cut.matte.alpha?.url ?? null, width: p.cut.matte.width, height: p.cut.matte.height } : null,
       plan: plan
         ? {
@@ -348,10 +369,7 @@ export async function charTaskView(db: CtServiceClient, task: CtAgentTask): Prom
     });
     // One starting prompt per kind of edit (base, shape, zone): the others follow the same
     // pattern; char_run_edits with "roles" runs any role with its own starting prompt.
-    const seen = new Set<string>();
-    out.startingPromptExamples = planEdits(p.brief)
-      .filter((e) => e.prompt && !seen.has(e.role.split(":")[0]) && seen.add(e.role.split(":")[0]))
-      .map((e) => ({ role: e.role, prompt: withoutKeep(e.prompt) }));
+    out.startingPromptExamples = startingPromptExamples(p.brief);
     if (c.roles.length) out.what = `Only these roles were asked: ${c.roles.join(", ")}.`;
   }
   return out;
@@ -630,16 +648,34 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     },
   },
   {
+    name: "char_get_brief",
+    description: "Bộ nhân vật: just the set's brief (CtCharBrief JSON) — small, unlike get_task which carries the whole set. Read it before char_update_brief.",
+    inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { project } = await openCharTask(ctx, args.task_id);
+      return json({ brief: project.brief, masterApproved: !!project.master_id });
+    },
+  },
+  {
     name: "char_update_brief",
     description:
-      "Bộ nhân vật (chat): save the whole brief (get_task set.brief with your change). After a master is approved only additions are allowed — a new option / colour / slot / photo zone; existing ids and every slot's first option stay.",
-    inputSchema: { type: "object", properties: { ...TASK_ARG, brief: { type: "object", description: "The full CtCharBrief." } }, required: ["task_id", "brief"] },
+      "Bộ nhân vật (chat): save the brief — either `brief` (the whole CtCharBrief) or `patch` (only the top-level keys you change, e.g. {subjects, choosers, texts}: each replaces that key of the current brief, the rest stays; char_get_brief to read it). After a master is approved only additions are allowed — a new option / colour / slot / photo zone; existing ids and every slot's first option stay.",
+    inputSchema: {
+      type: "object",
+      properties: { ...TASK_ARG, brief: { type: "object", description: "The full CtCharBrief." }, patch: { type: "object", description: "Top-level keys of CtCharBrief to replace." } },
+      required: ["task_id"],
+    },
     callers: ["agent"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_update_brief is for chat requests");
+      const patch = record(args.patch);
+      const whole = record(args.brief);
+      if (!Object.keys(patch).length && !Object.keys(whole).length) throw new Error("char_update_brief: give `brief` or `patch`");
+      const next = Object.keys(whole).length ? whole : { ...project.brief, ...patch };
       // A khuôn in named by templateId fills the cut, size and layout sentence like the page does.
-      const brief = await withTemplateProduct(db, parseCharBrief(args.brief));
+      const brief = await withTemplateProduct(db, parseCharBrief(next));
       if (project.master_id) {
         const lost = briefLosses(project.brief, brief);
         if (lost.length) throw new Error(`Master approved — only additions: ${lost.join("; ")}`);

@@ -57,7 +57,7 @@ cd /opt/flexi2/app && git pull && docker compose up -d --build
 2. Supabase: VPS `/opt/flexiprint/supabase` copied without data / `.env`; `.env` from `.env.example` +
    `sh utils/generate-keys.sh --update-env` + the values in deploy/README.md §1 with `flexi2` domains; `docker compose up -d`;
    every `supabase/migrations/*.sql` in order; `docker compose restart rest`.
-3. App `.env`: the VPS one with `flexi2` URLs, the new Supabase keys, `R2_KEY_PREFIX=flexi2`, new `CT_CRON_SECRET` and
+3. App `.env`: the VPS one with `flexi2` URLs, the new Supabase keys, `R2_KEY_PREFIX=flexi2`, a new
    `CT_CRON_SECRET`; `AGENT_IDE_*` and `CT_AGENT_TOKEN` as the VPS + `CT_AGENT_MCP=flexi2`: the same @flexiprint agent
    serves both — its `flexiprint` capability needs an MCP server `flexi2` (integrations/agent-ide/flexiprint-capability.json).
 4. nginx: `deploy/flexi2/nginx-flexi2.conf` → `/etc/nginx/sites-available/flexi2`, linked into sites-enabled.

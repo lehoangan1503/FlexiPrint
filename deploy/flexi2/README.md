@@ -1,7 +1,11 @@
 # flexi2 — an-vm (company machine) runbook
 
-A second, independent FlexiPrint next to the VPS (deploy/README.md): same GitHub repo, its own Supabase (own DB, own
-keys), its own R2 prefix (`R2_KEY_PREFIX=flexi2`, same bucket). Reached through Cloudflare Tunnel — no open port.
+A second FlexiPrint next to the VPS (deploy/README.md), **independent since 2026-10-19**: its own Supabase (own DB, own
+keys) and R2 prefix (`R2_KEY_PREFIX=flexi2`, same bucket); no data flows between the two — only the GitHub repo is
+shared (each updates when someone pulls on that machine). Reached through Cloudflare Tunnel — no open port.
+
+It started as a copy of the VPS data (2026-10-19: DB rows + auth users, R2 `flexiprint/` → `flexi2/`, URLs rewritten
+`https://flexiprint.next.lc/` → `https://flexi2.next.lc/`; `/opt/flexi2/restore-vps.sh`) — a one-off, not repeated.
 
 | | |
 |---|---|
@@ -54,7 +58,7 @@ cd /opt/flexi2/app && git pull && docker compose up -d --build
    `sh utils/generate-keys.sh --update-env` + the values in deploy/README.md §1 with `flexi2` domains; `docker compose up -d`;
    every `supabase/migrations/*.sql` in order; `docker compose restart rest`.
 3. App `.env`: the VPS one with `flexi2` URLs, the new Supabase keys, `R2_KEY_PREFIX=flexi2`, new `CT_CRON_SECRET` and
-   `CT_AGENT_TOKEN`, `AGENT_IDE_*` empty (the @flexiprint agent's MCP capability points at the VPS; flexi2 needs its own
-   on agent_ide: url `https://flexi2.next.lc/api/customize-tool/mcp`, Bearer `CT_AGENT_TOKEN`).
+   `CT_CRON_SECRET`; `AGENT_IDE_*` and `CT_AGENT_TOKEN` as the VPS + `CT_AGENT_MCP=flexi2`: the same @flexiprint agent
+   serves both — its `flexiprint` capability needs an MCP server `flexi2` (integrations/agent-ide/flexiprint-capability.json).
 4. nginx: `deploy/flexi2/nginx-flexi2.conf` → `/etc/nginx/sites-available/flexi2`, linked into sites-enabled.
 5. Cron (`/etc/cron.d/flexi2`): hourly cache cleanup, nightly `pg_dump` to `/var/backups/flexi2`.

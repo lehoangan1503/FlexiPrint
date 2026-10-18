@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import threading
 import tempfile
 import base64
 import io
@@ -53,6 +54,9 @@ log = logging.getLogger("layer-kit")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 app = FastAPI(title="layer-kit")
 _lock = asyncio.Lock()
+# The quick calls (/align, /matte/fix) are sync endpoints: FastAPI runs up to 40 at once in its thread pool. 47 edits
+# finishing together were 47 registrations at once — the 1.6 GB VPS swapped to death (2026-10-18). Two at a time.
+_quick = threading.BoundedSemaphore(2)
 
 
 def auth(h: str | None) -> None:
@@ -159,10 +163,11 @@ class AlignBody(BaseModel):
 @app.post("/align")
 def align_edit(body: AlignBody, authorization: str | None = Header(default=None)) -> dict:
     auth(authorization)
-    ref = rgb_on_white(fetch(body.ref))
-    img = rgb_on_white(fetch(body.url))
-    h, w = img.shape[:2]
-    _, out = register(fit(ref, w, h), img)
+    with _quick:
+        ref = rgb_on_white(fetch(body.ref))
+        img = rgb_on_white(fetch(body.url))
+        h, w = img.shape[:2]
+        _, out = register(fit(ref, w, h), img)
     out.update({"w": w, "h": h})
     return out
 

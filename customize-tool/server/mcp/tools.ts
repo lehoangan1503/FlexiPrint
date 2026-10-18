@@ -15,6 +15,7 @@ import { clip, record, str } from "../ai/llm";
 import sharp from "sharp";
 import { CT_MCP_PRINT_TOOLS } from "./print-tools";
 import { CT_MCP_CHAR_TOOLS, charTaskView, submitCharResult } from "./char-tools";
+import { CT_MCP_RESOURCES } from "./guide";
 import { TASK_ARG, json, liveStatus, loadTask, openQuestion, openTask, patchTask } from "./task-common";
 
 export type CtMcpCaller = "agent" | "user";
@@ -197,6 +198,18 @@ const categoryTools: CtMcpTool[] = [
         }),
       );
       return { images };
+    },
+  },
+  {
+    name: "read_guide",
+    description: `The guides as a tool, for clients that cannot read MCP resources: ${CT_MCP_RESOURCES.map((r) => `${r.uri} (${r.name})`).join("; ")}.`,
+    inputSchema: { type: "object", properties: { uri: { type: "string", description: "e.g. flexiprint://guide/overview (or just: overview / layer-rules / whole-set)." } }, required: ["uri"] },
+    callers: ALL,
+    run: async (_ctx, args) => {
+      const key = str(args.uri);
+      const r = CT_MCP_RESOURCES.find((x) => x.uri === key || x.uri.endsWith(`/${key}`));
+      if (!r) throw new Error(`No guide ${key}. Guides: ${CT_MCP_RESOURCES.map((x) => x.uri).join(", ")}`);
+      return json({ uri: r.uri, text: r.text() });
     },
   },
 ];

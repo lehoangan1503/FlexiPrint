@@ -84,16 +84,24 @@ export async function loadProject(db: Db, id: string): Promise<CtCharProject | n
 /** When this server process started: pictures are drawn in-process, so one still "running" from before is lost. */
 const BOOTED_AT = Date.now();
 const LOST_ON_RESTART = "Máy chủ khởi động lại khi đang vẽ — vẽ lại ảnh này";
+/** A draw is ≤ 300 s per model tried + the 120 s measure, a long queue waits ~30 min: a row untouched for longer hung (a swapping VPS, 2026-10-18). */
+const STALE_MS = 45 * 60_000;
+const HUNG = "Ảnh treo quá lâu (máy chủ quá tải) — vẽ lại ảnh này";
 
 export async function loadImages(db: Db, projectId: string): Promise<CtCharImage[]> {
   const { data } = await db.from(CT_TABLES.charImages).select("*").eq("project_id", projectId).order("created_at", { ascending: true }).returns<CtCharImage[]>();
   const images = data ?? [];
   // A deploy in the middle of a run left rows "running" for ever: nothing could redraw them ("Bản sửa này đang
   // chạy") and every wait timed out (2026-10-18). One app instance, so a row started before it booted is orphaned.
-  const lost = images.filter((im) => im.status === "running" && Date.parse(im.created_at) < BOOTED_AT);
-  if (lost.length) {
-    await db.from(CT_TABLES.charImages).update({ status: "failed", error: LOST_ON_RESTART }).in("id", lost.map((im) => im.id));
-    for (const im of lost) Object.assign(im, { status: "failed", error: LOST_ON_RESTART });
+  // A row is touched when its draw starts (the source is written first), so a long queue does not count as hung.
+  const now = Date.now();
+  for (const [error, lost] of [
+    [LOST_ON_RESTART, images.filter((im) => im.status === "running" && Date.parse(im.created_at) < BOOTED_AT)],
+    [HUNG, images.filter((im) => im.status === "running" && Date.parse(im.created_at) >= BOOTED_AT && now - Date.parse(im.updated_at) > STALE_MS)],
+  ] as const) {
+    if (!lost.length) continue;
+    await db.from(CT_TABLES.charImages).update({ status: "failed", error }).in("id", lost.map((im) => im.id));
+    for (const im of lost) Object.assign(im, { status: "failed", error });
   }
   return images;
 }

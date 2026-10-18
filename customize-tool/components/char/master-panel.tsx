@@ -7,26 +7,21 @@
  * from a prompt typed by hand stays as a fallback (agent offline).
  */
 
-import { useMemo, useState } from "react";
-import { ArrowRight, Bot, CheckCircle2, Loader2, Pencil, RotateCcw, Sparkles, Wand2 } from "lucide-react";
+import { useState } from "react";
+import { ArrowRight, Bot, CheckCircle2, Loader2, RotateCcw, Wand2 } from "lucide-react";
 import type { CtCharImage } from "../../types";
-import { REF_USE_INFO, briefCombos, briefProblems, masterPrompt } from "../../lib/char-brief";
+import { briefCombos, briefProblems } from "../../lib/char-brief";
 import { charApi } from "../../lib/api-client";
 import { imageModelLabel } from "../../lib/image-models";
-import { CHECKER_STYLE, CtButton, CtModal, CtSelect, CtTextarea, cx } from "../ui";
+import { CHECKER_STYLE, CtButton, CtModal, CtTextarea, cx } from "../ui";
 import type { CharCtx } from "./char-project";
 
 export function MasterPanel(ctx: CharCtx) {
   const { project, images, editable } = ctx;
   const brief = project.brief;
-  const assembled = useMemo(() => masterPrompt(brief), [brief]);
-  const [custom, setCustom] = useState<string | null>(null);
-  const [manual, setManual] = useState(false);
   const [request, setRequest] = useState("");
   const agentBusy = ctx.agent.busy;
   const drawing = ctx.agent.task?.input.char?.step === "master";
-  const [count, setCount] = useState<"1" | "2" | "3" | "4">("2");
-  const [busy, setBusy] = useState(false);
   const [zoom, setZoom] = useState<CtCharImage | null>(null);
   const problems = briefProblems(brief);
   // Brainstorm previews of directions not taken (role "idea:…") stay with their idea.
@@ -35,21 +30,14 @@ export function MasterPanel(ctx: CharCtx) {
   const approved = masters.find((m) => m.id === project.master_id) ?? null;
   const locked = !!project.master_id;
 
-  const generate = async () => {
-    setBusy(true);
-    ctx.error(null);
-    try {
-      ctx.addImages(await charApi.masters(project.id, { prompt: custom ?? undefined, count: Number(count) }));
-    } catch (e) {
-      ctx.error(e instanceof Error ? e.message : "Không tạo được master");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const approve = async (id: string | null) => {
     try {
       ctx.setProject(await charApi.approve(project.id, id));
+      // Approved: @flexiprint takes steps 3 and 4 on its own (the server started its task) — watch it there.
+      if (id) {
+        await ctx.agent.refresh();
+        ctx.goto("layers");
+      }
     } catch (e) {
       ctx.error(e instanceof Error ? e.message : "Không duyệt được");
     }
@@ -63,7 +51,7 @@ export function MasterPanel(ctx: CharCtx) {
             <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
               <CheckCircle2 className="h-4 w-4" /> Master #{numbers.get(approved.id)} đã duyệt
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">Mọi layer sẽ cắt từ đúng tấm này. Muốn đổi thì bỏ duyệt (chỉ được khi chưa cắt layer).</p>
+            <p className="mt-1 text-xs text-muted-foreground">@flexiprint tự làm tiếp bước 3 (clipart) và bước 4 (sản phẩm, mockup) — theo dõi ở bước 3, bấm Dừng nếu cần sửa. Muốn đổi master thì bỏ duyệt (chỉ được khi chưa cắt layer).</p>
             <div className="mt-3 flex gap-2">
               <CtButton size="sm" variant="primary" onClick={() => ctx.goto("layers")}>
                 Sang bước Layer <ArrowRight className="h-3.5 w-3.5" />
@@ -99,41 +87,7 @@ export function MasterPanel(ctx: CharCtx) {
               {drawing ? "@flexiprint đang làm…" : masters.length ? "Gửi @flexiprint tạo thêm" : "Gửi @flexiprint tạo master"}
             </CtButton>
             <p className="text-[11px] text-muted-foreground">{briefCombos(brief).toLocaleString("vi-VN")} tổ hợp khách có thể chọn.</p>
-            <button className="text-[11px] text-muted-foreground underline" onClick={() => setManual((v) => !v)}>
-              {manual ? "Ẩn" : "Tự viết prompt (không qua agent)"}
-            </button>
-          </div>
-        )}
-        {!approved && manual && (
-          <div className="rounded-xl border bg-card p-4">
-            <h3 className="text-sm font-semibold">Prompt master — tự viết</h3>
-            <p className="mb-2 text-xs text-muted-foreground">
-              Ghép tự động từ brief. Sửa brief là prompt đổi theo. {brief.refs.some((r) => REF_USE_INFO[r.use].take) ? "Có kèm ảnh tham khảo (phong cách / nhân vật / trang phục / dáng) — mỗi ảnh có câu dặn lấy phần nào." : ""}
-            </p>
-            {custom === null ? (
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-muted/50 p-2.5 text-xs leading-relaxed">{assembled}</pre>
-            ) : (
-              <CtTextarea rows={12} className="font-mono text-xs" value={custom} onChange={(e) => setCustom(e.target.value)} />
-            )}
-            <div className="mt-2 flex items-center gap-2">
-              {custom === null ? (
-                <CtButton size="sm" variant="ghost" disabled={!editable} onClick={() => setCustom(assembled)}>
-                  <Pencil className="h-3.5 w-3.5" /> Sửa tay prompt
-                </CtButton>
-              ) : (
-                <CtButton size="sm" variant="ghost" onClick={() => setCustom(null)}>
-                  <RotateCcw className="h-3.5 w-3.5" /> Dùng lại prompt từ brief
-                </CtButton>
-              )}
-              <span className="ml-auto text-xs text-muted-foreground">Số bản</span>
-              <div className="w-16">
-                <CtSelect<"1" | "2" | "3" | "4"> value={count} onChange={setCount} options={["1", "2", "3", "4"].map((v) => ({ value: v as "1" | "2" | "3" | "4", label: v }))} />
-              </div>
-            </div>
-            <CtButton variant="primary" className="mt-3 w-full justify-center" disabled={!editable || busy || (!brief.subjects.length && !custom)} onClick={() => void generate()}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} Tạo {count} master
-            </CtButton>
-            <p className="mt-2 text-[11px] text-muted-foreground">Vẽ đúng prompt trên, không qua agent. Một bản mất ~30–60 giây.</p>
+
           </div>
         )}
         <div className="rounded-xl border bg-card p-4 text-xs text-muted-foreground">

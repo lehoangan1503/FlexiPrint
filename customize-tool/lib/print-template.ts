@@ -180,6 +180,59 @@ export function layoutHint(kind: CtPrintKind, spec: CtPrintSpec): string {
   return parts.join("; ");
 }
 
+// ---- a khuôn from real sizes ---------------------------------------------------------------------------------
+
+export interface CtSizedTemplate {
+  /** The finished piece, mm. */
+  widthMm: number;
+  heightMm: number;
+  /** Print resolution: 300 for small hard goods (ornament, acrylic), 150 for big soft ones (a rug, a blanket) —
+   * enough for fabric and a sheet the printer can still open (a 120 × 40 cm rug at 150 dpi = 7087 × 2362 px). */
+  dpi: number;
+  /** flat: a fixed rectangle (rounded corners) · cut: cut along the artwork's own outline (acrylic, sticker). */
+  kind: "flat" | "cut";
+  cornerMm?: number;
+  /** Artwork past the cut line. */
+  bleedMm?: number;
+  /** Main elements stay this far inside the cut line (a rug's bound edge, a seam). */
+  safeMm?: number;
+  /** A round hanging hole: its diameter and its centre's distance from the top edge. */
+  hole?: { diameterMm: number; fromTopMm: number } | null;
+  notes?: string;
+}
+
+/**
+ * A khuôn from the piece's real size (asked 2026-10-18: "tạo khuôn sẵn cho tôi… thêm vào tạo khuôn nếu các khuôn hiện
+ * tại không phù hợp" — a 60 × 40 / 120 × 40 cm rug printed at 1024 px would be blurred). The sheet is the piece at
+ * `dpi`, the cut line its outline (none for a die-cut), the safe zone inset by `safeMm`.
+ */
+export function sizedTemplateSpec(t: CtSizedTemplate): CtPrintSpec {
+  const px = (mm: number) => Math.round((mm / 25.4) * t.dpi);
+  const W = px(t.widthMm);
+  const H = px(t.heightMm);
+  const bleed = px(t.bleedMm ?? 0);
+  const safe = px(t.safeMm ?? Math.min(t.widthMm, t.heightMm) * 0.05);
+  const r = px(t.cornerMm ?? 0);
+  const hole = t.hole ? [circle(W / 2, px(t.hole.fromTopMm), px(t.hole.diameterMm) / 2)] : [];
+  return normalizePrintSpec({
+    width: W,
+    height: H,
+    dpi: t.dpi,
+    widthMm: t.widthMm,
+    heightMm: t.heightMm,
+    outline: t.kind === "cut" ? null : { type: "rect", x: bleed, y: bleed, w: W - 2 * bleed, h: H - 2 * bleed, radius: r },
+    bleed,
+    safe: t.kind === "cut" ? [] : [{ type: "rect", x: bleed + safe, y: bleed + safe, w: W - 2 * (bleed + safe), h: H - 2 * (bleed + safe), radius: Math.max(0, r - safe) }],
+    cuts: hole,
+    zones: [],
+    sizes: [],
+    frameUrl: null,
+    blankUrl: null,
+    blankBox: null,
+    notes: t.notes ?? "",
+  });
+}
+
 // ---- starting templates ------------------------------------------------------------------------------------
 
 const circle = (cx: number, cy: number, r: number): CtShape => ({ type: "ellipse", cx, cy, rx: r, ry: r });
@@ -342,6 +395,21 @@ export const PRINT_PRESETS: Array<{ name: string; kind: CtPrintKind; spec: CtPri
     name: "Sticker / acrylic cắt viền",
     kind: "cut",
     spec: base(2000, 2000, [100, 100], { bleed: 24, notes: "Đường cắt = viền hình (alpha) + 24 px; không có khung cố định." }),
+  },
+  {
+    name: "Thảm chùi chân 60×40 cm (23.6×15.7″)",
+    kind: "flat",
+    spec: sizedTemplateSpec({ widthMm: 600, heightMm: 400, dpi: 150, kind: "flat", cornerMm: 25, bleedMm: 10, safeMm: 30, notes: "Thảm in toàn mặt, viền may đen ~1 cm: artwork phủ kín + 1 cm; hình, chữ chính trong nét đứt (cách mép 3 cm). 150 dpi." }),
+  },
+  {
+    name: "Thảm bếp dài 120×40 cm (47.2×15.7″)",
+    kind: "flat",
+    spec: sizedTemplateSpec({ widthMm: 1200, heightMm: 400, dpi: 150, kind: "flat", cornerMm: 25, bleedMm: 10, safeMm: 30, notes: "Thảm in toàn mặt, viền may đen ~1 cm: artwork phủ kín + 1 cm; hình, chữ chính trong nét đứt (cách mép 3 cm). 150 dpi." }),
+  },
+  {
+    name: "Acrylic ornament cắt viền (vuông 1024)",
+    kind: "cut",
+    spec: { ...sizedTemplateSpec({ widthMm: 86.7, heightMm: 86.7, dpi: 300, kind: "cut", notes: "Acrylic trong cắt theo viền hình (alpha) + 2.5 mm; tai lỗ treo ở giữa phía trên. Tờ in 1024 × 1024." }), width: 1024, height: 1024 },
   },
   { name: "Quần in toàn thân (mặt trước, mẫu thử)", kind: "panels", spec: trousers() },
   { name: "Quần jogger in toàn thân — mặt trước", kind: "flat", spec: joggerFace(false) },

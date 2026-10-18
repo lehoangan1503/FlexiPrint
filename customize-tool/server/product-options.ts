@@ -5,15 +5,22 @@
  * without ids. Linked layers (a back half of hair) are never asked: they follow their leader (lib/design resolveLinked).
  */
 
-import type { CtRegion, CtSelection } from "../types";
-import { defaultRegionSelection, isLinkedLayer, normalizeRegion, regionGroups, resolveLinked, textMode } from "../lib/design";
+import { CT_MAIN_KEY, type CtRegion, type CtSelection } from "../types";
+import { defaultRegionSelection, isLinkedLayer, mainVersions, normalizeProductConfig, normalizeRegion, regionGroups, resolveLinked, textMode } from "../lib/design";
+import { onVersion } from "../lib/layout";
+
+/** The key that picks a product's version by name ({"Version": "Girl"}); its own label works too. */
+export const VERSION_KEY = "Version";
 import type { ArtworkBundle } from "./print-render";
 
 export interface CtProductOptionView {
   layer: string;
   /** What the customer is asked. */
   label: string;
-  kind: CtRegion["kind"];
+  /** "version": who is in the picture (a boy / a girl, 1–5 people) — each version has its own layers. */
+  kind: CtRegion["kind"] | "version";
+  /** The version a layer belongs to (a product with versions). */
+  version?: string;
   /** image layers: each option (a colour group's options listed under it). */
   options?: Array<{ asset_id: string; name: string; group: string; isDefault: boolean }>;
   /** text layers: "input" (typed) | "list" (choices) | "fixed". */
@@ -27,9 +34,16 @@ const norm = (t: string) => t.trim().toLowerCase().replace(/\s+/g, " ");
 /** The layers the customer chooses in, with their options. */
 export function productOptions(b: ArtworkBundle): CtProductOptionView[] {
   const out: CtProductOptionView[] = [];
+  const config = normalizeProductConfig(b.product.config);
+  const mains = mainVersions(b.assets, b.product.main_asset_id);
+  const versioned = config.main.enabled && mains.length > 1;
+  if (versioned)
+    out.push({ layer: VERSION_KEY, label: config.main.label, kind: "version", options: mains.map((m, i) => ({ asset_id: m.id, name: m.name, group: "", isDefault: i === 0 })) });
+  const versionOf = (r: CtRegion) => (versioned ? mains.find((m) => m.id === r.config.mainId)?.name : undefined);
   for (const raw of [...b.regions].sort((x, y) => x.sort_order - y.sort_order)) {
     const r = normalizeRegion(raw);
     if (r.config.materialFrame || isLinkedLayer(r, b.regions)) continue;
+    const version = versionOf(r);
     if (r.kind === "image") {
       const def = defaultRegionSelection(r, b.items, b.assets);
       const groups = regionGroups(r, b.items, b.assets);
@@ -37,11 +51,12 @@ export function productOptions(b: ArtworkBundle): CtProductOptionView[] {
         layer: r.name,
         label: r.config.image.label,
         kind: r.kind,
+        ...(version ? { version } : {}),
         options: groups.flatMap((g) => g.options.map((a) => ({ asset_id: a.id, name: a.name, group: g.name, isDefault: def.kind === "image" && def.assetId === a.id }))),
       });
     } else if (r.kind === "text") {
-      out.push({ layer: r.name, label: r.config.text.label, kind: r.kind, textMode: textMode(r), choices: r.config.text.choices, defaultText: r.config.text.defaultText });
-    } else out.push({ layer: r.name, label: r.config.photo.label, kind: r.kind });
+      out.push({ layer: r.name, label: r.config.text.label, kind: r.kind, ...(version ? { version } : {}), textMode: textMode(r), choices: r.config.text.choices, defaultText: r.config.text.defaultText });
+    } else out.push({ layer: r.name, label: r.config.photo.label, kind: r.kind, ...(version ? { version } : {}) });
   }
   return out;
 }
@@ -55,9 +70,24 @@ export function selectionFromNames(b: ArtworkBundle, wanted: Record<string, stri
   const sel: CtSelection = {};
   for (const r of b.regions) sel[r.id] = defaultRegionSelection(r, b.items, b.assets);
   const errors: string[] = [];
-  for (const [key, value] of Object.entries(wanted)) {
+  // The version first ("Version" or the product's own label, "Choose character": "Girl"): layers are then looked up
+  // among that version's own.
+  const config = normalizeProductConfig(b.product.config);
+  const mains = mainVersions(b.assets, b.product.main_asset_id);
+  let mainId = mains[0]?.id ?? null;
+  const entries = Object.entries(wanted).filter(([key, value]) => {
+    if (!(mains.length > 1 && (norm(key) === norm(VERSION_KEY) || norm(key) === norm(config.main.label)))) return true;
+    const m = mains.find((x) => x.id === value || norm(x.name) === norm(value));
+    if (m) {
+      mainId = m.id;
+      sel[CT_MAIN_KEY] = { kind: "main", assetId: m.id, optionId: null };
+    } else errors.push(`"${key}": no version "${value}" — versions: ${mains.map((x) => x.name).join(" | ")}`);
+    return false;
+  });
+  const shown = b.regions.filter((r) => onVersion(r, mainId));
+  for (const [key, value] of entries) {
     // A linked layer (the back half of hair) has its leader's label: it follows, it is never picked itself.
-    const r = b.regions.map(normalizeRegion).find((x) => !x.config.materialFrame && !isLinkedLayer(x, b.regions) && [x.name, x.kind === "image" ? x.config.image.label : x.kind === "text" ? x.config.text.label : x.config.photo.label].some((n) => norm(n) === norm(key)));
+    const r = shown.map(normalizeRegion).find((x) => !x.config.materialFrame && !isLinkedLayer(x, b.regions) && [x.name, x.name.replace(/\s*\[[^\]]*\]$/, ""), x.kind === "image" ? x.config.image.label : x.kind === "text" ? x.config.text.label : x.config.photo.label].some((n) => norm(n) === norm(key)));
     if (!r) {
       errors.push(`no layer "${key}"`);
       continue;

@@ -8,8 +8,11 @@ import type {
   CtCharBackdrop,
   CtCharBox,
   CtCharBrief,
+  CtCharChooser,
+  CtCharShownWhen,
   CtCharElement,
   CtCharElementPlace,
+  CtCharLineup,
   CtCharPhotoTreat,
   CtCharSetKind,
   CtCharCut,
@@ -54,6 +57,7 @@ export function defaultCharBrief(kind: CtCharSetKind = "character"): CtCharBrief
     subjects: [],
     photoZones: [],
     elements: [],
+    lineup: null,
     texts: [],
     backdrops: [],
     mockups: [],
@@ -85,8 +89,16 @@ export function newPhotoZone(where = "", label = "Your photo", treat: CtCharPhot
 }
 
 export function newElement(name = "", place: CtCharElementPlace = "behind"): CtCharElement {
-  return { id: uid(), name, place, mode: "shape", options: [], perBackdrop: place === "bottom", box: null };
+  return { id: uid(), name, place, mode: "shape", options: [], perBackdrop: place === "bottom", box: null, follows: null, front: false };
 }
+
+/** Vietnamese labels of a bộ nhân vật's element places (around the characters, not a customer photo). */
+export const CHAR_ELEMENT_PLACE_LABEL: Record<CtCharElementPlace, string> = {
+  behind: "Sau nhân vật, toả 2 bên",
+  above: "Trên đầu nhân vật",
+  bottom: "Dải dưới (nền đất, mây)",
+  free: "Tự đặt (ô vị trí)",
+};
 
 /** Vietnamese labels of a bộ ảnh khách's element places. */
 export const ELEMENT_PLACE_LABEL: Record<CtCharElementPlace, string> = {
@@ -121,6 +133,27 @@ const ELEMENT_PLACES: CtCharElementPlace[] = ["behind", "above", "bottom", "free
 const TREATS: CtCharPhotoTreat[] = ["ai", "face", "photo"];
 const AI_REF = /^ai:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** A chooser condition (brief.choosers), else null. */
+function parseShownWhen(raw: unknown): CtCharShownWhen | null {
+  const o = rec(raw);
+  return typeof o.chooser === "string" && o.chooser && typeof o.option === "string" && o.option ? { chooser: o.chooser, option: o.option } : null;
+}
+
+function parseChooser(raw: unknown): CtCharChooser | null {
+  const o = rec(raw);
+  const label = s(o.label, 80);
+  const options = arr(o.options).map((x) => parseOption(x, "shape")).filter((x): x is CtCharOption => x !== null).slice(0, 8);
+  if (!label || options.length < 2) return null;
+  return { id: idOf(o.id), label, options, subject: typeof o.subject === "string" && o.subject ? o.subject : null };
+}
+
+/** Does a part / text / decoration exist while each chooser shows its first (default) option — is it in the master? */
+export function shownByDefault(brief: CtCharBrief, w: CtCharShownWhen | null | undefined): boolean {
+  if (!w) return true;
+  const c = (brief.choosers ?? []).find((x) => x.id === w.chooser);
+  return !c || c.options[0]?.id === w.option;
+}
+
 /** A box of shares (0–1), clamped; null when it is not a usable one. */
 function parseBox(raw: unknown): CtCharBox | null {
   const o = rec(raw);
@@ -153,14 +186,17 @@ function parseElement(raw: unknown): CtCharElement | null {
     options: arr(o.options).map((x) => parseOption(x, mode)).filter((x): x is CtCharOption => x !== null).slice(0, 12),
     perBackdrop,
     box: parseBox(o.box),
+    follows: typeof o.follows === "string" && o.follows ? o.follows : null,
+    front: o.front === true,
+    shownWhen: parseShownWhen(o.shownWhen),
   };
 }
-const PLACES: CtCharTextPlace[] = ["top", "bottom", "left", "right"];
+const PLACES: CtCharTextPlace[] = ["top", "bottom", "left", "right", "under", "free", "on"];
 
 function parseTextField(raw: unknown): CtCharTextField | null {
   const o = rec(raw);
   const choices = arr(o.choices).map((c) => s(c, 120)).filter(Boolean).slice(0, 30);
-  const kind = o.kind === "choice" || (o.kind === undefined && choices.length > 0) ? "choice" : "input";
+  const kind = o.kind === "fixed" ? "fixed" : o.kind === "choice" || (o.kind === undefined && choices.length > 0) ? "choice" : "input";
   const defaultText = s(o.defaultText, 120) || (kind === "choice" ? (choices[0] ?? "") : "");
   if (kind === "choice" ? !choices.length : !defaultText && !s(o.label)) return null;
   const font = s(o.font, 80);
@@ -175,6 +211,11 @@ function parseTextField(raw: unknown): CtCharTextField | null {
     color: /^#[0-9a-f]{6}$/.test(color) ? color : "#1d1d1f",
     place: PLACES.includes(o.place as CtCharTextPlace) ? (o.place as CtCharTextPlace) : "bottom",
     maxChars: Math.min(60, Math.max(1, Math.round(num(o.maxChars)) || Math.max(20, ...choices.map((c) => c.length)))),
+    subject: typeof o.subject === "string" && o.subject ? o.subject : null,
+    box: parseBox(o.box),
+    uppercase: o.uppercase === true,
+    shownWhen: parseShownWhen(o.shownWhen),
+    curve: typeof o.curve === "number" && Number.isFinite(o.curve) ? Math.max(-100, Math.min(100, Math.round(o.curve))) : 0,
   };
 }
 const MODES: CtCharSlotMode[] = ["color", "texture", "shape"];
@@ -209,6 +250,9 @@ function parseSlot(raw: unknown): CtCharSlot | null {
     options: arr(o.options).map((x) => parseOption(x, mode)).filter((x): x is CtCharOption => x !== null).slice(0, 24),
     colors: mode === "shape" ? arr(o.colors).map((x) => parseOption(x, "color")).filter((x): x is CtCharOption => x !== null).slice(0, 16) : [],
     wraps: typeof o.wraps === "boolean" ? o.wraps : mode === "shape" && /hair|tóc|scarf|khăn/i.test(part),
+    optional: o.optional === true,
+    follows: typeof o.follows === "string" && o.follows ? o.follows : null,
+    shownWhen: parseShownWhen(o.shownWhen),
   };
 }
 
@@ -221,7 +265,15 @@ function parseSubject(raw: unknown): CtCharSubject | null {
     kind: KINDS.includes(o.kind as CtCharSubjectKind) ? (o.kind as CtCharSubjectKind) : "person",
     description,
     slots: arr(o.slots).map(parseSlot).filter((x): x is CtCharSlot => x !== null).slice(0, 12),
+    name: s(o.name, 40),
+    always: o.always === true,
   };
+}
+
+function parseLineup(raw: unknown): CtCharLineup | null {
+  const o = rec(raw);
+  if (o.mode !== "one" && o.mode !== "count") return null;
+  return { mode: o.mode, label: s(o.label, 80) || (o.mode === "one" ? "Choose character" : "Number of people") };
 }
 
 export function parseCharBrief(raw: unknown): CtCharBrief {
@@ -258,6 +310,9 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
       .filter((x): x is CtCharPhotoZone => x !== null)
       .slice(0, 4),
     elements: arr(o.elements).map(parseElement).filter((x): x is CtCharElement => x !== null).slice(0, 10),
+    lineup: parseLineup(o.lineup),
+    choosers: arr(o.choosers).map(parseChooser).filter((x): x is CtCharChooser => x !== null).slice(0, 12),
+    charactersBox: parseBox(o.charactersBox),
     // Older briefs had one name ("text") and a decor sentence: read as one text field / one backdrop.
     texts: (Array.isArray(o.texts)
       ? arr(o.texts).map(parseTextField)
@@ -272,7 +327,7 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
         const r = rec(x);
         const name = s(r.name, 80);
         const value = s(r.value, 1000);
-        return name || value ? { id: idOf(r.id), name: name || "Background", value: value || name } : null;
+        return name || value ? { id: idOf(r.id), name: name || "Background", value: value || name, ...(r.tile === true ? { tile: true } : {}) } : null;
       })
       .filter((x): x is CtCharBackdrop => x !== null)
       .slice(0, 8),
@@ -339,6 +394,21 @@ export const CLEAN_PARTS =
   "tassels or tiny loose details. Every part (hair, top, bottoms, shoes) is clearly separated from its neighbours.";
 
 /**
+ * The canvas every picture of a set is drawn on: a square, or a wide one for a row of 4+ characters (a family rug of
+ * five — in a square each would be tiny). Set by the brief before the master, never changed after.
+ */
+export function setAspect(brief: CtCharBrief): "1:1" | "3:2" {
+  return brief.kind !== "photo" && brief.subjects.length >= 4 ? "3:2" : "1:1";
+}
+
+/** The characters of a lineup stand apart: each one's own pixels are its body file (server/char/product.ts). */
+const LINEUP_LINE: Record<CtCharLineup["mode"], string> = {
+  one: "These are ALTERNATIVE characters (the customer picks ONE of them): draw them side by side as separate figures with a wide empty gap between them — they never touch, overlap or interact — the same scale, the same pose style, each complete on its own.",
+  count:
+    "The customer picks how many of them are in the picture (the first ones from the left): draw them in ONE row, evenly spaced, the same scale and on the same ground line, with a clear empty gap between every two (they never touch or overlap) — each one complete on its own.",
+};
+
+/**
  * ONE prompt for the master, from the brief. Everything the layers need is asked here once: every subject full,
  * on flat white, customizable parts plain and readable, photo zones left empty — the later steps are in-place
  * edits of this picture, never new pictures.
@@ -351,11 +421,13 @@ export function masterPrompt(brief: CtCharBrief): string {
     lines.push(`${brief.subjects.length} characters, from left to right:`);
   }
   brief.subjects.forEach((sub, i) => {
-    const looks = sub.slots.map(slotLook).filter(Boolean);
+    // An optional part (glasses) is not in the master: the customer starts on "NO".
+    const looks = sub.slots.filter((sl) => !sl.optional && shownByDefault(brief, sl.shownWhen)).map(slotLook).filter(Boolean);
     const head = brief.subjects.length > 1 ? `${i + 1}. ` : "";
     lines.push(`${head}${sub.description.replace(/\.$/, "")}${looks.length ? `; ${looks.join("; ")}` : ""}.`);
   });
   if (brief.scene) lines.push(`Arrangement: ${brief.scene.replace(/\.$/, "")}.`);
+  if (brief.lineup && brief.subjects.length > 1) lines.push(LINEUP_LINE[brief.lineup.mode]);
   if (brief.product.layout) lines.push(`On the product: ${brief.product.layout.replace(/\.$/, "")}.`);
   for (const z of brief.photoZones)
     lines.push(
@@ -363,10 +435,11 @@ export function masterPrompt(brief: CtCharBrief): string {
         ? `${z.where}: no face drawn — an empty plain light-grey oval with a clean edge where the face is (the customer's own face photo goes there later); the hat, the hair edge and the collar are drawn around it, slightly over its edge.`
         : `${z.where}: an empty plain light-grey area with a clean edge (a photo goes there later).`,
     );
+  const frame = setAspect(brief) === "3:2" ? "A wide landscape picture" : "A square picture";
   lines.push(
     brief.subjects.length > 1
-      ? "A square picture: everyone fully visible head to toe INSIDE the square, nobody cropped, the group centred with a generous empty margin all around (scale the group down to fit); they may touch, but no one hides another one's clothes, hair or face."
-      : "A square picture: the full body fully visible head to toe INSIDE the square, not cropped, centred with a generous empty margin all around (scale the figure down to fit).",
+      ? `${frame}: everyone fully visible head to toe INSIDE the picture, nobody cropped, the group centred with a generous empty margin all around (scale the group down to fit)${brief.lineup ? "" : "; they may touch, but no one hides another one's clothes, hair or face"}.`
+      : `${frame}: the full body fully visible head to toe INSIDE the picture, not cropped, centred with a generous empty margin all around (scale the figure down to fit).`,
   );
   lines.push("No accessories or props unless described. No text, no logo, no watermark.");
   lines.push(CLEAN_PARTS);
@@ -381,7 +454,8 @@ export function masterPrompt(brief: CtCharBrief): string {
  * mockup scenes and the material are made in step 4 (the product) and stay editable.
  */
 export function masterBriefKey(brief: CtCharBrief): string {
-  const { texts: _t, backdrops: _b, mockups: _m, product, ...rest } = brief;
+  // A bộ nhân vật's decorations are drawn alone after the master (like the backgrounds): never frozen either.
+  const { texts: _t, backdrops: _b, mockups: _m, elements: _e, charactersBox: _c, product, ...rest } = brief;
   const { material: _mat, ...piece } = product;
   // A bộ ảnh khách's pieces are each drawn on their own from the master's look: only the look is frozen — the
   // photo zone, the decorations and their options stay editable after the master (adding a wing style later).
@@ -439,8 +513,13 @@ export function photoMasterPrompt(brief: CtCharBrief): string {
   return lines.join("\n");
 }
 
-/** The aspect an element's picture is drawn at. */
-export function elementAspect(e: CtCharElement): string {
+/** The aspect an element's picture is drawn at; a placed one (box) by its box's shape on the piece (`areaRatio` = the
+ * safe area's width / height): a ribbon banner wide, a tree tall. */
+export function elementAspect(e: CtCharElement, areaRatio = 1): string {
+  if (e.box) {
+    const r = (e.box.w / e.box.h) * areaRatio;
+    return r > 1.25 ? "3:2" : r < 0.8 ? "2:3" : "1:1";
+  }
   return e.place === "behind" || e.place === "bottom" || e.place === "above" ? "3:2" : "1:1";
 }
 
@@ -449,6 +528,7 @@ export function elementAspect(e: CtCharElement): string {
  * (reference picture 1 = the approved master; a per-background band also gets that background as picture 2).
  */
 export function elementPrompt(brief: CtCharBrief, e: CtCharElement, look: string, backdrop?: CtCharBackdrop): string {
+  if (brief.kind !== "photo") return charElementPrompt(brief, e, look, backdrop);
   const who = photoSubject(brief);
   const shape: Record<CtCharElementPlace, string> = {
     behind: `Draw it as it is seen behind ${who}: symmetric, spread wide to the left and right, with the empty middle where ${who} sits (the middle part may be simple — it is hidden). Both sides complete.`,
@@ -463,6 +543,29 @@ export function elementPrompt(brief: CtCharBrief, e: CtCharElement, look: string
     shape[e.place],
     "It is alone, complete and whole — nothing cut off by the picture's edge (except a band's sides and bottom), nothing in front of it — centred, as large as fits.",
     `No ${who}, no people, no animals, no background, no text, no frame. A fully transparent background around it.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/**
+ * A decoration of a bộ nhân vật (asked 2026-10-18): drawn ALONE on transparency in the look of the approved master
+ * (reference picture 1 — the characters, cut out), never cut; the product places it in its box around the characters.
+ */
+function charElementPrompt(brief: CtCharBrief, e: CtCharElement, look: string, backdrop?: CtCharBackdrop): string {
+  const shape: Record<CtCharElementPlace, string> = {
+    behind: "It stands behind the characters: symmetric, spread wide to the left and right, the middle simple (it is hidden). Both sides complete.",
+    above: "Seen slightly from the front, flat and wide, floating.",
+    bottom: "A wide horizontal band filling the whole width of the picture edge to edge: its top edge soft and organic, its bottom straight along the picture's bottom edge — the characters stand / sit on it, so it is calm, with nothing tall in it.",
+    free: "",
+  };
+  return [
+    "Reference picture 1 shows the characters of this design: match their drawing style, colours, line work, rendering and lighting exactly.",
+    backdrop ? `Reference picture 2 is the background it lies on (${backdrop.name}): use ITS colours so the two blend.` : "",
+    `Draw ONLY this one element: ${look}.`,
+    shape[e.place],
+    "It is alone, complete and whole — nothing cut off by the picture's edge (except a band's sides and bottom), nothing in front of it — centred, filling the picture as much as it can.",
+    "No characters, no people, no background, no frame; no text or letters unless the element itself is lettering. A fully transparent background around it.",
   ]
     .filter(Boolean)
     .join(" ");
@@ -498,6 +601,10 @@ export function briefProblems(brief: CtCharBrief): string[] {
     });
   });
   if (brief.product.cut === "alpha" && brief.backdrops.length) out.push("Sản phẩm cắt viền (alpha): nền sẽ nằm trong đường cắt — chắc chắn muốn vậy?");
+  if (brief.lineup && brief.subjects.length < 2) out.push("Khách chọn nhân vật / số người nhưng brief chỉ có 1 nhân vật.");
+  brief.texts.forEach((t, i) => {
+    if (t.place === "under" && !brief.subjects.some((x) => x.id === t.subject)) out.push(`Chữ ${i + 1} (${t.label}): "dưới nhân vật" nhưng chưa chọn nhân vật nào.`);
+  });
   brief.texts.forEach((t, i) => {
     if (t.kind === "choice" && !t.choices.length) out.push(`Chữ ${i + 1} (${t.label}): chưa có câu nào cho khách chọn.`);
   });
@@ -512,6 +619,7 @@ export function briefCombos(brief: CtCharBrief): number {
     return n * Math.max(1, brief.backdrops.length);
   }
   for (const sub of brief.subjects)
-    for (const slot of sub.slots) n *= Math.max(1, slot.options.length) * (slot.mode === "shape" ? Math.max(1, slot.colors.length) : 1);
-  return n;
+    for (const slot of sub.slots) n *= (Math.max(1, slot.options.length) + (slot.optional ? 1 : 0)) * (slot.mode === "shape" ? Math.max(1, slot.colors.length) : 1);
+  for (const e of brief.elements) if (!e.follows && !e.perBackdrop) n *= Math.max(1, e.options.length);
+  return n * Math.max(1, brief.backdrops.length);
 }

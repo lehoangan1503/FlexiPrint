@@ -1,37 +1,47 @@
 ---
 name: flexiprint-char
-description: Làm task bộ nhân vật v2 của app FlexiPrint (tin nhắn "[FlexiPrint task <id>] Bộ nhân vật v2 — …") — brainstorm brief, viết prompt + tạo + tự duyệt master, viết prompt + chạy + kiểm tra ảnh AI tô vùng clipart (bước 3b) — clipart được cắt đúng theo vùng tô đó.
+description: Làm bộ nhân vật / bộ ảnh khách v2 của FlexiPrint — task từ app ("[FlexiPrint task <id>] Bộ nhân vật v2 — …": brainstorm, master, auto, chat) HOẶC người trong công ty nhờ thẳng trên agent_ide làm trọn một sản phẩm custom từ ý tưởng / ảnh mẫu tới sản phẩm + mockup.
 ---
 
-# Bộ nhân vật v2
+# Bộ nhân vật v2 (trang `/v2`)
 
-Trang `/v2` gửi 1 task cho mỗi bước. Mọi task của cùng 1 bộ là 1 cuộc trò chuyện (`get_task` có `earlier`).
-Đọc `flexiprint://guide/layer-rules` trước (skill `flexiprint-layers`): sau master, MỌI ảnh là sửa tại chỗ của master.
+Luật hệ thống: `flexiprint://guide/layer-rules` (khoá pixel — đọc trước). Một bộ = brief → MỘT master được duyệt →
+búp bê giấy + từng lựa chọn vẽ lên búp bê (3b) → clipart = đúng phần pixel khác búp bê (3c) → sản phẩm (bước 4) →
+mockup. Phần trang trí (ruy băng, số năm, cây thông…) và nền thì AI vẽ riêng, không cắt.
 
-1. `mcp__flexiprint__get_task(task_id)` → `step` (brainstorm | master | edits), `request`, `project.brief`,
-   `references` (ảnh tham khảo người dùng thả vào brief: `use` = sample (sản phẩm mẫu hoàn chỉnh — đọc hết: sản phẩm, phong cách, nhân vật, chữ, trang trí) | style | character | outfit | pose | product |
-   avoid + `editorNote` = họ muốn lấy gì), `blankProduct`, `masters`, `edits` (bước edits), `instructions`.
-   **Luôn `view_image` từng ảnh tham khảo và làm theo ghi chú của nó**; style/character/outfit/pose được tự gửi kèm
-   khi vẽ master, prompt không được nói ngược với ảnh.
-   Làm ĐÚNG theo `instructions` của bước đó.
-2. **brainstorm**: theo `briefRules` → `submit_result {summary, questions, ideas: [3 × {title, why, brief}]}`.
-3. **master**: viết prompt (bắt đầu từ `assembledPrompt`) → `char_draw_masters` → `char_wait` → `view_image` →
-   `char_refine_master` (1 thay đổi mỗi lần) hoặc vẽ lại → `submit_result {summary, image_ids}` (đề xuất, người
-   dùng tự duyệt). Có `imageId` = sửa đúng master đó theo `request`.
-4. **edits** (trang: "3b. AI tô vùng clipart" — vùng tô / kiểu vẽ tại chỗ CHÍNH LÀ vùng cắt clipart, layer-rules §9b):
-   Project mới (`clipMode: "key"`, trang: "3b. AI tạo clipart"): mỗi clipart = 1 ảnh — giữ đúng phần đó, mọi thứ
-   khác thành bóng hồng phẳng, nền trong suốt (server tự thêm `keySentence`). Viết "Turn EVERYTHING magenta except
-   the <part>…" và GỌI TÊN + MÀU từng phần khác của người đó (áo khoác vàng, giày đỏ, ly rượu…) — viết "chỉ giữ váy"
-   thì model giữ luôn áo khoác. Không bao giờ bảo vẽ phần đó một mình trên nền trống (model vẽ bừa chỗ khác). base =
-   búp bê giấy bỏ mọi phần đổi được (layer-rules §9a) — chỉ dùng làm lớp thân. MỌI option vẽ từ master: "Take OFF the
-   <part> (<kiểu hiện tại>) and give her a completely DIFFERENT one: … Nothing of the <kiểu hiện tại> stays…" rồi tô hồng
-   mọi thứ trừ nó (vẽ trên búp bê giấy thì model phóng to + đổi tay → lệch). Kiểm tra: chỉ phần đó có màu, hồng phẳng
-   không nét, nền trong suốt, option khác hẳn kiểu mặc định.
-   mỗi `role` 1 prompt (đúng 1 thay đổi, nói rõ nhân vật nào, giữ nguyên mọi thứ khác; tô magenta
-   #FF00FF phủ HẾT phần đó) → `char_run_edits {prompts: {role: prompt}}` (base trước nếu thiếu) → `char_wait` →
-   `view_image` → làm lại bản sai → `submit_result {summary, image_ids}`.
-5. `report_progress` (tiếng Việt) trước mỗi lượt tạo ảnh. Không làm được → `fail_task` với lý do.
-   Không bao giờ duyệt master thay người dùng.
+## Task từ app
+`mcp__flexiprint__get_task(task_id)` có `step`, `request`, toàn bộ bộ (brief, master, ảnh 3b, vùng 3c, file, sản
+phẩm) và `instructions` — làm ĐÚNG theo `instructions` của bước đó.
+- **brainstorm**: theo `briefRules` → `submit_result {summary, questions, ideas: [3 × {title, why, brief}]}`.
+- **master**: viết prompt (từ `assembledPrompt`) → `char_draw_masters` → `char_wait` → `view_image` →
+  `char_refine_master` (1 thay đổi mỗi lần) → `submit_result {summary, image_ids}`. Người dùng tự duyệt.
+- **auto** (vừa duyệt master): tự làm hết 3a → 3b → 3c → bước 4 → mockup, kiểm tra mọi ảnh, tự vẽ lại ảnh sai, tới
+  khi xong sản phẩm. Người dùng bấm "Dừng" = task bị huỷ, tool từ chối: dừng ngay.
+- **chat**: người dùng gõ ở ô chat của trang (kèm ảnh chụp màn hình) — làm đúng yêu cầu, xem lại bằng `view_image`.
 
-Tách nền và vùng của từng lớp do người dùng duyệt / sửa tay trên trang (bước 3); agent không sửa file layer.
-"Tạo bộ custom" (3c) cắt clipart theo vùng tô 3b rồi ráp luôn 1 sản phẩm hoàn chỉnh trong editor — tô sai thì clipart sai, nên tô phủ HẾT phần đó và không lấn sang phần khác.
+## Làm trọn một bộ trên agent_ide (người dùng nhờ thẳng)
+Cùng một phiên từ đầu tới cuối; người dùng theo dõi trên trang bộ và trong phiên này.
+1. Đọc kỹ yêu cầu + mọi ảnh họ gửi (xem từng ảnh). Thiếu điều quyết định (sản phẩm gì, kích thước, mấy nhân vật,
+   khách đổi được gì) thì hỏi 1 lần, gọn.
+2. `char_create_set {name, idea}` → **in link bộ** (`url`) cho người dùng. Ảnh họ gửi → `char_add_reference`
+   (url, hoặc `image_base64` của file trong phiên; `use` sample/style/…; `note` = họ muốn lấy gì).
+3. Khuôn in: `list_print_templates`; không có khuôn đúng kích thước thật thì `create_print_template` (thảm 120×40 cm
+   ở 150 dpi, acrylic cắt viền…) — không dùng khuôn nhỏ cho sản phẩm to.
+4. Brief: `get_task` (có `briefRules` cách viết) → `char_update_brief`. Có: subjects + slots (tóc / áo / quần / kính…,
+   mode color / texture / shape), `lineup` (khách chọn 1 nhân vật / số người), `choosers` (nam/nữ từng cháu, có/không
+   nón…) + `shownWhen`, slot `follows` (áo, nón đi theo Theme), `optional` (ô NO), `elements` (trang trí, `front`,
+   `follows`, `box`), `texts` (input / choice / fixed; top/bottom/left/right/under/free/on), `backdrops` (`tile` cho
+   hoạ tiết lặp), `charactersBox`, `mockups`. Tóm tắt brief cho người dùng (tiếng Việt, ngắn) và hỏi có cần thêm
+   option gì không.
+5. Master: `char_draw_masters` (2 bản) → `char_wait` → `view_image` → sửa / vẽ lại → gửi người dùng xem (link +
+   số thứ tự) và **chờ họ chọn**. Họ chọn xong: `char_approve_master`.
+6. Sau khi duyệt, làm hết như bước **auto** (instructions của `get_task`): 3b `char_run_edits` → soát từng ảnh (đúng 1
+   phần thêm vào búp bê; không vẽ nền; không lộ hồng tím; phần mảnh vẽ đậm) → 3c `char_cut what "plan"` →
+   `char_status` (mọi check đạt) → bước 4 `char_draw_backdrops` + `char_draw_elements` → `char_remake_product` →
+   `render_artwork` vài tổ hợp → chỉnh bố cục (box) nếu chưa giống mẫu → `make_product_mockups` → xem.
+   Báo tiến độ ngắn ở mỗi chặng (kèm link). Sai ở chặng nào thì tự sửa chặng đó.
+7. Xong: gửi link bộ + link sản phẩm (`list_product_options` có editor url) + vài mockup, nói cái gì còn đáng xem lại.
+   `submit_result` task đang mở. Người dùng muốn sửa thì `char_open_task` (hoặc dùng tiếp task cũ nếu còn mở).
+
+## Lỗi của hệ thống
+Tool trả lỗi lạ, sản phẩm sai do code (không phải do ảnh) → skill `flexiprint-dev`: sửa code, deploy, làm tiếp.

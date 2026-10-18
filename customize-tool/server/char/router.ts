@@ -6,6 +6,7 @@ import type { NextRequest, NextResponse } from "next/server";
 import type { CtSession } from "../supabase";
 import { approveCharLayers, buildCharLayers, layerFileRoute, startEdits } from "./layers";
 import { cutRoute, startMatte } from "./cut";
+import { createAgentTask } from "../agent/tasks";
 import { createCharProduct, remakeCharProduct } from "./product";
 import { makeCharBlank } from "./blank";
 import { backdropsRoute } from "./backdrops";
@@ -56,6 +57,12 @@ export async function dispatchChar(req: NextRequest, s: CtSession, path: string[
       if (p && p.brief.kind !== "photo") {
         // The master at print size (3a) runs at once: nothing to review there any more (the AI's own cut-out).
         await startMatte(jobDb(s), s.user.id, p).catch((e: Error) => console.warn("[ct] char matte", e.message));
+      }
+      // Everything after the master is @flexiprint's, on its own (asked 2026-10-18): 3b → cut → step 4 → mockups,
+      // checked at every stage. The editor watches; "Dừng" cancels it; changes are asked in the chat.
+      if (p) {
+        const started = await createAgentTask(s, { kind: "char", input: { char: { projectId: p.id, step: "auto", request: "", roles: [] } } });
+        if (!started.ok) console.warn("[ct] char auto", started.status, await started.text().catch(() => ""));
       }
     }
     return res;

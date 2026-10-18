@@ -51,7 +51,7 @@ async function body<T>(res: Response): Promise<T> {
 }
 
 /** The drawn part of a transparent picture (a little margin kept), so its box holds the element itself. */
-async function trimmed(png: Buffer): Promise<Buffer> {
+export async function trimmed(png: Buffer): Promise<Buffer> {
   const { data, info } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
   let x0 = info.width;
   let y0 = info.height;

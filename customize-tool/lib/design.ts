@@ -616,6 +616,7 @@ export function defaultRegionSelection(region: CtRegion, items: CtRegionItem[], 
     case "photo":
       return { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM }, style: r.config.photo.defaultStyle, sourceUrl: null };
     case "image": {
+      if (r.config.image.allowNone && r.config.image.defaultNone) return { kind: "image", assetId: null };
       const groups = regionGroups(r, items, assets);
       const picked = r.config.image.defaultAssetId;
       if (picked && locateOption(groups, picked).group >= 0) return { kind: "image", assetId: picked };

@@ -19,7 +19,7 @@
  */
 
 import type { CtCharBrief, CtCharSlot } from "../types";
-import { subjectRef } from "./char-brief";
+import { shownByDefault, subjectRef } from "./char-brief";
 
 export interface CtCharEditPlan {
   role: string;
@@ -100,7 +100,8 @@ function basePrompt(brief: CtCharBrief): string {
   brief.subjects.forEach((sub, i) => {
     if (!sub.slots.length) return;
     const who = subjectRef(brief, i);
-    const parts = sub.slots.map((x) => x.part);
+    // An optional part (glasses) is not in the master: nothing to take off.
+    const parts = sub.slots.filter((x) => !x.optional && shownByDefault(brief, x.shownWhen)).map((x) => x.part);
     const clothes = parts.filter((p) => isGarment(p) && !isShoes(p));
     const out: string[] = [];
     if (clothes.length) {

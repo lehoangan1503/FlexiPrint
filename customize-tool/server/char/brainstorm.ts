@@ -46,6 +46,38 @@ You help an editor turn an idea into a BRIEF. Every brief is built like this, so
   circle. Names of two characters: one "left", one "right".
 - backdrops: the backgrounds the customer picks from (English name + an English description for the image model),
   drawn over the whole piece behind the characters — separate art, never part of the master. None = plain piece.
+  "tile": true = a repeating pattern (buffalo plaid, polka dots): drawn as ONE seamless square and repeated — use it
+  on big pieces (rugs, blankets) where one picture stretched over the piece would blur.
+- lineup (null = everyone always): who is in the picture is itself a customer choice — {"mode": "one", "label":
+  "Choose character"} = the customer picks ONE subject (a boy OR a girl graduate: two subjects, each with its own
+  slots and "name": "Boy" / "Girl"); {"mode": "count", "label": "Number of people"} = the customer picks how many,
+  the first N from the left (a family of 1–5: five subjects, each a little different in face / body / expression).
+  The subjects then stand APART in the master (a clear gap, never touching), each with its own body layer.
+- slot "optional": true = the customer may also pick "NO" (glasses / no glasses, hat / no hat).
+- elements (a bộ nhân vật's decorations, drawn ALONE after the master, never cut): {name, place behind | above |
+  bottom (the ground under the characters) | free (box = shares 0–1 of the safe area), mode shape | color, options,
+  front (true = over the characters: the big year numbers over the gown), follows (another element's id: shows the
+  option at the same position — the right-hand Christmas tree follows the left-hand one's theme)}. One option = it is
+  always there (a ribbon banner, a "Class of" scroll); several = a customer choice (the year 2026…2030 drawn as
+  glitter numbers, a theme Christmas / Halloween / Easter). Lettering the customer types stays a text.
+- charactersBox (shares of the safe area) = where the characters go when elements / texts take the rest.
+- choosers [{id, label, options [{id, name}], subject?}]: a customer choice that draws nothing, only decides which
+  parts exist — each grandchild "Boy" / "Girl" (subject = that child), the grandparent "Grandma" / "Grandpa", "Hats":
+  "With Hats" / "No Hats". A slot / text / element with shownWhen {chooser, option} exists only for that option (the
+  boy hair slot and the girl hair slot of one child, each shownWhen its option; a name on the hat brim shownWhen
+  "With Hats", the same name on the sweater shownWhen "No Hats"). The FIRST option of every chooser is what the master
+  shows. Gender by chooser = the same gender-neutral child body, the hair (and its colours) tells boy from girl.
+- slot "follows" (an element id): the slot is not a choice of its own, it shows the option at the element's position
+  (the sweaters and the hats of everyone follow the "Theme" element: Christmas / Halloween / Easter — same count and
+  order of options).
+- subject "always": in every version of a "count" lineup (the grandma in the middle); the others are counted from
+  the ones beside her outwards, left and right in turn.
+- texts kind "fixed" (defaultText as it is, no field — "This Grandma Belongs To", one per grandparent option with
+  shownWhen); place "on" + subject + box = shares of THAT character's box (a name on the hat's brim), curve -100..100.
+- texts: place "under" + "subject" (subject id) = a name under one character (each person's name on a family rug);
+  place "free" + "box" = its own box (the school name on the left of the ribbon, the name on the right).
+- product.templateId: a khuôn of list_print_templates with the product's REAL size; none fits → create_print_template
+  (a 120 × 40 cm rug at 150 dpi) — never a small khuôn for a big piece.
 
 Brainstorm result JSON (submit_result):
 {

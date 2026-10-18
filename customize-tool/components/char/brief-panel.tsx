@@ -8,8 +8,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Bot, ImagePlus, Loader2, MessagesSquare, Plus, Send, Trash2, X } from "lucide-react";
-import type { CtCharBrief, CtCharElement, CtCharElementPlace, CtCharIdea, CtCharImage, CtCharOption, CtCharPhotoTreat, CtCharSlot, CtCharSlotMode, CtCharSubject, CtCharSubjectKind, CtCharTextField, CtCharTextPlace } from "../../types";
-import { ELEMENT_PLACE_LABEL, PHOTO_TREAT_LABEL, briefCombos, newBackdrop, newCharOption, newCharSlot, newCharSubject, newElement, newPhotoZone, newTextField } from "../../lib/char-brief";
+import type { CtCharBox, CtCharBrief, CtCharChooser, CtCharShownWhen, CtCharElement, CtCharElementPlace, CtCharIdea, CtCharImage, CtCharLineup, CtCharOption, CtCharPhotoTreat, CtCharSetKind, CtCharSlot, CtCharSlotMode, CtCharSubject, CtCharSubjectKind, CtCharTextField, CtCharTextPlace } from "../../types";
+import { CHAR_ELEMENT_PLACE_LABEL, ELEMENT_PLACE_LABEL, PHOTO_TREAT_LABEL, briefCombos, newBackdrop, newCharOption, newCharSlot, newCharSubject, newElement, newPhotoZone, newTextField } from "../../lib/char-brief";
+import { KIND_INFO, KindHelpButton } from "./kind-help";
 import { useAiStyles } from "../editor/ai-styles-store";
 import { aiStyleRef } from "../../lib/photo-styles";
 import { CT_FONTS } from "../../config";
@@ -132,6 +133,7 @@ function IdeaChat(ctx: CharCtx & { onTaken: () => void; onBrief: (() => void) | 
             </CtButton>
           )}
         </div>
+        <KindPicker ctx={ctx} />
         <details className="rounded-xl border bg-card p-4" open={first}>
           <summary className="cursor-pointer text-sm font-medium">Ảnh mẫu / tham khảo ({brief.refs.length})</summary>
           <div className="mt-3">
@@ -330,10 +332,11 @@ function TemplatePick({ ctx, brief, onPick }: { ctx: CharCtx; brief: CtCharBrief
 
 // ---- the brief ---------------------------------------------------------------------------------------------
 
-const PLACE_LABEL: Record<CtCharTextPlace, string> = { top: "Trên", bottom: "Dưới", left: "Trái", right: "Phải" };
+const PLACE_LABEL: Record<CtCharTextPlace, string> = { top: "Trên", bottom: "Dưới", left: "Trái", right: "Phải", under: "Dưới 1 nhân vật", free: "Tự đặt (ô)", on: "Trên 1 nhân vật (ô)" };
 
 /** One personalised text: what the customer is asked, typed or picked from the list, font, colour, place. */
-function TextFieldRow({ value: t, readOnly, onChange, onRemove }: { value: CtCharTextField; readOnly: boolean; onChange: (v: CtCharTextField) => void; onRemove: () => void }) {
+function TextFieldRow({ value: t, brief, readOnly, onChange, onRemove }: { value: CtCharTextField; brief: CtCharBrief; readOnly: boolean; onChange: (v: CtCharTextField) => void; onRemove: () => void }) {
+  const subjects = brief.subjects;
   const patch = (p: Partial<CtCharTextField>) => onChange({ ...t, ...p });
   return (
     <div className="space-y-2 rounded-lg border p-2.5">
@@ -345,6 +348,7 @@ function TextFieldRow({ value: t, readOnly, onChange, onRemove }: { value: CtCha
           options={[
             { value: "input", label: "Khách gõ" },
             { value: "choice", label: "Chọn từ list" },
+            { value: "fixed", label: "Chữ cố định" },
           ]}
           onChange={(kind) => patch({ kind, choices: kind === "choice" ? (t.choices.length ? t.choices : [t.defaultText].filter(Boolean)) : [] })}
         />
@@ -367,6 +371,16 @@ function TextFieldRow({ value: t, readOnly, onChange, onRemove }: { value: CtCha
       ) : (
         <CtInput value={t.defaultText} disabled={readOnly} placeholder="Jessica" onChange={(e) => patch({ defaultText: e.target.value })} />
       )}
+      {(t.place === "under" || t.place === "on") && (
+        <CtSelect<string>
+          value={t.subject ?? ""}
+          disabled={readOnly}
+          options={[{ value: "", label: "— chọn nhân vật —" }, ...subjects.map((sub, i) => ({ value: sub.id, label: `${i + 1}. ${sub.name || sub.description.split(/[,.;]/)[0]}` }))]}
+          onChange={(subject) => patch({ subject: subject || null })}
+        />
+      )}
+      {(t.place === "free" || t.place === "on") && <BoxInput label={t.place === "on" ? "Ô chữ (% ô của nhân vật)" : "Ô chữ (% vùng an toàn)"} value={t.box ?? null} disabled={readOnly} onChange={(box) => patch({ box })} />}
+      <ShownWhenSelect brief={brief} value={t.shownWhen ?? null} onChange={(shownWhen) => patch({ shownWhen })} />
       <div className="grid grid-cols-[1fr_90px_80px] gap-2">
         <CtSelect<string> value={t.font} disabled={readOnly} options={CT_FONTS.map((f) => ({ value: f.family, label: f.label }))} onChange={(font) => patch({ font })} />
         <CtInput value={t.color} disabled={readOnly} placeholder="#1d1d1f" onChange={(e) => patch({ color: e.target.value })} />
@@ -407,6 +421,7 @@ function BriefForm({ productEditable, ...ctx }: CharCtx & { productEditable: boo
 
   return (
     <div className="space-y-6">
+    <KindPicker ctx={ctx} />
     <fieldset disabled={ro} className="space-y-6">
       <Section
         title="Sản phẩm"
@@ -472,9 +487,12 @@ function BriefForm({ productEditable, ...ctx }: CharCtx & { productEditable: boo
           <OptionsPreview ctx={ctx} />
         ) : (
         <fieldset disabled={ro} className="space-y-4">
+          <LineupRow brief={brief} set={set} />
+          <ChoosersRow brief={brief} set={set} />
           {brief.subjects.map((sub, i) => (
             <SubjectCard
               key={sub.id}
+              brief={brief}
               index={i}
               subject={sub}
               onChange={(s) => setSubject(i, s)}
@@ -549,7 +567,7 @@ function BriefForm({ productEditable, ...ctx }: CharCtx & { productEditable: boo
         >
           <div className="space-y-3">
             {brief.texts.map((t, i) => (
-              <TextFieldRow key={t.id} value={t} readOnly={roProduct} onChange={(v) => set({ texts: brief.texts.map((x, j) => (j === i ? v : x)) })} onRemove={() => set({ texts: brief.texts.filter((_, j) => j !== i) })} />
+              <TextFieldRow key={t.id} value={t} brief={brief} readOnly={roProduct} onChange={(v) => set({ texts: brief.texts.map((x, j) => (j === i ? v : x)) })} onRemove={() => set({ texts: brief.texts.filter((_, j) => j !== i) })} />
             ))}
             {!brief.texts.length && <p className="text-xs text-muted-foreground">Không có chữ.</p>}
           </div>
@@ -576,6 +594,14 @@ function BriefForm({ productEditable, ...ctx }: CharCtx & { productEditable: boo
               </div>
             ))}
             {!brief.backdrops.length && <p className="text-xs text-muted-foreground">Không có nền (màu phôi).</p>}
+            {brief.backdrops.length > 0 && (
+              <CtCheckbox
+                checked={brief.backdrops.every((b) => b.tile)}
+                onChange={(tile) => set({ backdrops: brief.backdrops.map((b) => ({ ...b, tile })) })}
+                label="Nền là hoạ tiết lặp (caro, chấm bi…)"
+                hint="AI vẽ 1 ô hoạ tiết, sản phẩm lặp ô đó (lật gương nên không thấy đường nối) — nét trên phôi to như thảm 120 cm."
+              />
+            )}
           </div>
           <div className="mt-3">
             <CtField label="Cảnh mockup (mỗi dòng 1 cảnh)">
@@ -584,6 +610,7 @@ function BriefForm({ productEditable, ...ctx }: CharCtx & { productEditable: boo
           </div>
         </Section>
       </div>
+      {!photoSet && <CharElementsSection brief={brief} set={set} readOnly={roProduct} />}
     </fieldset>
 
       <div className="flex justify-end">
@@ -701,7 +728,7 @@ function PhotoSetSections({ brief, set, readOnly }: { brief: CtCharBrief; set: (
   );
 }
 
-function SubjectCard({ index, subject, onChange, onRemove, onMove }: { index: number; subject: CtCharSubject; onChange: (s: CtCharSubject) => void; onRemove: () => void; onMove: (d: number) => void }) {
+function SubjectCard({ brief, index, subject, onChange, onRemove, onMove }: { brief: CtCharBrief; index: number; subject: CtCharSubject; onChange: (s: CtCharSubject) => void; onRemove: () => void; onMove: (d: number) => void }) {
   const setSlot = (i: number, slot: CtCharSlot) => onChange({ ...subject, slots: subject.slots.map((s, j) => (j === i ? slot : s)) });
   return (
     <div className="rounded-lg border p-3">
@@ -711,6 +738,8 @@ function SubjectCard({ index, subject, onChange, onRemove, onMove }: { index: nu
           <CtSelect<CtCharSubjectKind> value={subject.kind} options={KINDS} onChange={(kind) => onChange({ ...subject, kind })} />
         </div>
         <span className="text-xs text-muted-foreground">từ trái sang</span>
+        <CtInput className="h-8 w-40" value={subject.name ?? ""} placeholder="Tên khách thấy (Boy…)" onChange={(e) => onChange({ ...subject, name: e.target.value })} />
+        {brief.lineup && <CtCheckbox checked={subject.always === true} onChange={(always) => onChange({ ...subject, always })} label="Luôn có mặt" />}
         <div className="ml-auto flex gap-1">
           <CtButton size="sm" variant="ghost" onClick={() => onMove(-1)} title="Sang trái">
             ←
@@ -731,7 +760,7 @@ function SubjectCard({ index, subject, onChange, onRemove, onMove }: { index: nu
       />
       <div className="mt-3 space-y-2">
         {subject.slots.map((slot, i) => (
-          <SlotRow key={slot.id} slot={slot} onChange={(s) => setSlot(i, s)} onRemove={() => onChange({ ...subject, slots: subject.slots.filter((_, j) => j !== i) })} />
+          <SlotRow key={slot.id} brief={brief} slot={slot} onChange={(s) => setSlot(i, s)} onRemove={() => onChange({ ...subject, slots: subject.slots.filter((_, j) => j !== i) })} />
         ))}
         <CtButton size="sm" variant="subtle" onClick={() => onChange({ ...subject, slots: [...subject.slots, newCharSlot()] })}>
           <Plus className="h-3.5 w-3.5" /> Phần khách đổi được (tóc, áo, giày, vòng cổ…)
@@ -741,7 +770,7 @@ function SubjectCard({ index, subject, onChange, onRemove, onMove }: { index: nu
   );
 }
 
-function SlotRow({ slot, onChange, onRemove }: { slot: CtCharSlot; onChange: (s: CtCharSlot) => void; onRemove: () => void }) {
+function SlotRow({ brief, slot, onChange, onRemove }: { brief: CtCharBrief; slot: CtCharSlot; onChange: (s: CtCharSlot) => void; onRemove: () => void }) {
   return (
     <div className="rounded-md bg-muted/40 p-2.5">
       <div className="grid grid-cols-[1fr_190px_auto] items-center gap-2">
@@ -756,6 +785,25 @@ function SlotRow({ slot, onChange, onRemove }: { slot: CtCharSlot; onChange: (s:
         </CtButton>
       </div>
       <OptionList mode={slot.mode} label={slot.mode === "shape" ? "Kiểu" : slot.mode === "texture" ? "Chất liệu" : "Màu"} options={slot.options} onChange={(options) => onChange({ ...slot, options })} />
+      <div className="mt-2">
+        <CtCheckbox checked={slot.optional === true} onChange={(optional) => onChange({ ...slot, optional })} label="Khách được chọn “Không” (NO)" hint="Kính, mũ, phụ kiện: thêm ô NO — khách bỏ trống phần này." />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-3">
+        <ShownWhenSelect brief={brief} value={slot.shownWhen ?? null} onChange={(shownWhen) => onChange({ ...slot, shownWhen })} />
+        {brief.elements.length > 0 && (
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+            Đi theo lựa chọn của
+            <select className="rounded border bg-background px-1 py-0.5 text-xs text-foreground" value={slot.follows ?? ""} onChange={(e) => onChange({ ...slot, follows: e.target.value || null })}>
+              <option value="">— (khách tự chọn)</option>
+              {brief.elements.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.name || "(chưa tên)"}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
       {slot.mode === "shape" && (
         <>
           <OptionList mode="color" label="Màu của mỗi kiểu" options={slot.colors} onChange={(colors) => onChange({ ...slot, colors })} />
@@ -876,15 +924,30 @@ function OptionsPreview({ ctx }: { ctx: CharCtx }) {
       </div>
       <div className="space-y-4 rounded-xl border bg-[#f6f3ee] p-4 text-[#1d1d1f]">
         <div className="rounded-md bg-gradient-to-r from-[#d9814a] to-transparent px-3 py-2 text-sm font-semibold text-white">Personalized</div>
+        {brief.lineup && brief.subjects.length > 1 && (
+          <div className="space-y-1.5">
+            <div className="text-sm font-medium">
+              {brief.lineup.label} <span className="text-[#c0392b]">*</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {brief.subjects.map((sub, i) => (
+                <span key={sub.id} className={cx("rounded-md border bg-white px-2.5 py-1 text-xs", i === 0 && "border-[#d9814a] ring-1 ring-[#d9814a]")}>
+                  {brief.lineup!.mode === "one" ? sub.name || short(sub.description) : `${i + 1} ${i ? "People" : "Person"}`}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         {brief.subjects.map((sub, i) => (
           <div key={sub.id} className="space-y-3">
-            {sub.slots.length > 0 && <div className="text-xs font-semibold uppercase tracking-wide text-[#8a7f73]">{short(sub.description) || `Option ${i + 1}`}</div>}
+            {sub.slots.length > 0 && <div className="text-xs font-semibold uppercase tracking-wide text-[#8a7f73]">{sub.name || short(sub.description) || `Option ${i + 1}`}</div>}
             {sub.slots.map((slot) => (
               <div key={slot.id} className="space-y-1.5">
                 <div className="text-sm font-medium">
                   Choose {slot.part || "option"} <span className="text-[#c0392b]">*</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
+                  {slot.optional && <span className="rounded-md border bg-white px-2.5 py-1 text-xs font-semibold text-[#d9814a]">NO</span>}
                   {slot.options.map((o, j) =>
                     slot.mode === "color" ? (
                       <span key={o.id} title={o.name} className={cx("h-8 w-8 rounded-full border-2", j === 0 ? "border-[#d9814a]" : "border-white shadow")} style={{ backgroundColor: /^#[0-9a-f]{6}$/i.test(o.value) ? o.value : "#cccccc" }} />
@@ -906,6 +969,20 @@ function OptionsPreview({ ctx }: { ctx: CharCtx }) {
             ))}
           </div>
         ))}
+        {brief.elements
+          .filter((e) => !e.follows && !e.perBackdrop && e.options.length > 1)
+          .map((e) => (
+            <div key={e.id} className="space-y-1.5">
+              <div className="text-sm font-medium">{e.name}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {e.options.map((o, j) => (
+                  <span key={o.id} className={cx("rounded-md border bg-white px-2.5 py-1 text-xs", j === 0 && "border-[#d9814a] ring-1 ring-[#d9814a]")}>
+                    {o.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
         {brief.photoZones.map((z) => (
           <div key={z.id} className="space-y-1.5">
             <div className="text-sm font-medium">{z.label || "Upload your photo"}</div>
@@ -938,6 +1015,265 @@ function OptionsPreview({ ctx }: { ctx: CharCtx }) {
         <div className="rounded-md bg-[#d9814a] py-2 text-center text-sm font-semibold text-white opacity-80">Add to cart</div>
         <p className="text-[11px] text-[#8a7f73]">Chỉ để nhìn trực quan — chưa bấm chọn được.</p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * What the set is (asked 2026-10-18: one "Bộ mới" button, the kind picked here): characters AI draws, or the
+ * customer's photo as the hero. Fixed once a master is drawn — every picture after it follows the kind.
+ */
+function KindPicker({ ctx }: { ctx: CharCtx }) {
+  const brief = ctx.project.brief;
+  const drawn = !!ctx.project.master_id || ctx.images.some((im) => im.kind === "master" && im.role === "master");
+  const pick = (kind: CtCharSetKind) => {
+    if (kind === brief.kind) return;
+    ctx.setBrief({ ...brief, kind, ...(kind === "photo" && !brief.photoZones.length ? { photoZones: [newPhotoZone("the customer's pet, sitting", "Upload your pet's photo", "ai")] } : {}) });
+  };
+  return (
+    <div className="rounded-xl border bg-card p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-sm font-semibold">Loại bộ</span>
+        <span className="text-xs text-muted-foreground">{drawn ? "Đã có master — không đổi loại được nữa." : "Chọn trước khi vẽ master."}</span>
+        <span className="ml-auto">
+          <KindHelpButton highlight={brief.kind} />
+        </span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {(["character", "photo"] as CtCharSetKind[]).map((k) => (
+          <button
+            key={k}
+            type="button"
+            disabled={drawn || !ctx.editable}
+            onClick={() => pick(k)}
+            className={cx("flex items-center gap-3 rounded-lg border p-2 text-left disabled:cursor-not-allowed", brief.kind === k ? "border-orange-500 bg-orange-500/10" : "hover:bg-accent disabled:opacity-50")}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element -- static guide picture */}
+            <img src={KIND_INFO[k].pictures[2].src} alt="" className="h-12 w-12 rounded object-cover" />
+            <span>
+              <span className="block text-sm font-medium">{KIND_INFO[k].title}</span>
+              <span className="block text-xs text-muted-foreground">{KIND_INFO[k].short}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const LINEUP_OPTIONS: Array<{ value: "" | CtCharLineup["mode"]; label: string }> = [
+  { value: "", label: "Luôn có đủ các nhân vật" },
+  { value: "one", label: "Khách chọn 1 nhân vật (nam / nữ…)" },
+  { value: "count", label: "Khách chọn số người (1, 2, 3… từ trái sang)" },
+];
+
+/** Who is in the picture is a customer choice (asked 2026-10-18): one of the characters, or how many of them. */
+function LineupRow({ brief, set }: { brief: CtCharBrief; set: (patch: Partial<CtCharBrief>) => void }) {
+  const mode = brief.lineup?.mode ?? "";
+  return (
+    <div className="grid gap-2 rounded-md bg-muted/40 p-2.5 md:grid-cols-[260px_1fr]">
+      <CtField label="Ai có trong tranh">
+        <CtSelect<"" | CtCharLineup["mode"]>
+          value={mode}
+          options={LINEUP_OPTIONS}
+          onChange={(m) => set({ lineup: m ? { mode: m, label: brief.lineup?.mode === m ? brief.lineup.label : m === "one" ? "Choose character" : "Number of people" } : null })}
+        />
+      </CtField>
+      {brief.lineup ? (
+        <CtField label="Khách thấy (tiếng Anh)">
+          <CtInput value={brief.lineup.label} onChange={(e) => set({ lineup: { ...brief.lineup!, label: e.target.value } })} />
+        </CtField>
+      ) : (
+        <p className="self-end text-xs text-muted-foreground">Mọi nhân vật luôn có mặt.</p>
+      )}
+      {brief.lineup && (
+        <p className="text-xs text-muted-foreground md:col-span-2">
+          Master vẽ đủ {brief.subjects.length} nhân vật đứng tách nhau; sản phẩm có 1 version cho mỗi lựa chọn ({brief.lineup.mode === "one" ? "mỗi nhân vật 1 version, đặt tên ở ô “Tên khách thấy”" : "version k = k người đầu tiên từ trái, cùng cỡ, căn giữa"}).
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** A box as shares of the safe area, typed in % (x, y, rộng, cao). */
+function BoxInput({ label, value, disabled, onChange }: { label: string; value: CtCharBox | null; disabled?: boolean; onChange: (b: CtCharBox | null) => void }) {
+  const b = value ?? { x: 0.3, y: 0.3, w: 0.4, h: 0.4 };
+  const field = (k: keyof CtCharBox, name: string) => (
+    <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+      {name}
+      <input
+        type="number"
+        disabled={disabled}
+        className="w-14 rounded border bg-background px-1 py-0.5 text-xs text-foreground"
+        value={Math.round(b[k] * 100)}
+        onChange={(e) => onChange({ ...b, [k]: Math.max(-20, Math.min(120, Number(e.target.value) || 0)) / 100 })}
+      />
+    </label>
+  );
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+      {value ? (
+        <>
+          {field("x", "trái")}
+          {field("y", "trên")}
+          {field("w", "rộng")}
+          {field("h", "cao")}
+          <button type="button" disabled={disabled} className="text-[11px] text-muted-foreground underline" onClick={() => onChange(null)}>
+            tự động
+          </button>
+        </>
+      ) : (
+        <button type="button" disabled={disabled} className="text-[11px] text-muted-foreground underline" onClick={() => onChange(b)}>
+          tự động — đặt ô riêng
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A bộ nhân vật's decorations (asked 2026-10-18: the "Class of" scroll, the ribbon banner, the year in glitter numbers,
+ * trees beside a family): drawn alone in the master's look (step 4), never cut, placed around the characters. A
+ * single option is simply drawn; several = a customer choice; one may follow another's choice (the right-hand tree
+ * follows the left-hand one's theme). Editable after the master.
+ */
+function CharElementsSection({ brief, set, readOnly }: { brief: CtCharBrief; set: (patch: Partial<CtCharBrief>) => void; readOnly: boolean }) {
+  const setElement = (i: number, e: CtCharElement) => set({ elements: brief.elements.map((x, j) => (j === i ? e : x)) });
+  return (
+    <Section
+      title={`Phần tử trang trí (${brief.elements.length})`}
+      hint="Không cắt từ master: mỗi lựa chọn AI vẽ riêng, nền trong suốt, theo phong cách master (bước 4). 1 lựa chọn = luôn có (ruy băng, cuộn giấy); nhiều lựa chọn = khách chọn (năm 2026…2030, chủ đề Giáng sinh / Halloween)."
+      action={
+        !readOnly && (
+          <span className="flex flex-wrap gap-1">
+            {(Object.keys(CHAR_ELEMENT_PLACE_LABEL) as CtCharElementPlace[]).map((place) => (
+              <CtButton key={place} size="sm" variant="outline" onClick={() => set({ elements: [...brief.elements, { ...newElement("", place), perBackdrop: false }] })}>
+                <Plus className="h-3.5 w-3.5" /> {CHAR_ELEMENT_PLACE_LABEL[place].split(" (")[0].split(",")[0]}
+              </CtButton>
+            ))}
+          </span>
+        )
+      }
+    >
+      <div className="space-y-3">
+        <BoxInput label="Vị trí nhân vật" value={brief.charactersBox ?? null} disabled={readOnly} onChange={(charactersBox) => set({ charactersBox })} />
+        {brief.elements.map((e, i) => (
+          <div key={e.id} className="rounded-md bg-muted/40 p-2.5">
+            <div className="grid grid-cols-[1fr_200px_150px_auto] items-center gap-2">
+              <CtInput value={e.name} placeholder="Year / Ribbon banner / Theme" onChange={(ev) => setElement(i, { ...e, name: ev.target.value })} />
+              <CtSelect<CtCharElementPlace> value={e.place} options={(Object.keys(CHAR_ELEMENT_PLACE_LABEL) as CtCharElementPlace[]).map((value) => ({ value, label: CHAR_ELEMENT_PLACE_LABEL[value] }))} onChange={(place) => setElement(i, { ...e, place })} />
+              <CtSelect<"shape" | "color">
+                value={e.mode}
+                options={[
+                  { value: "shape", label: "Đổi kiểu" },
+                  { value: "color", label: "Đổi màu" },
+                ]}
+                onChange={(mode) => setElement(i, { ...e, mode, options: e.options.map((o) => (mode === "color" && !/^#/.test(o.value) ? { ...o, value: "#d4af37" } : o)) })}
+              />
+              <CtButton size="icon" variant="ghost" onClick={() => set({ elements: brief.elements.filter((_, j) => j !== i) })} title="Xoá phần tử">
+                <Trash2 className="h-4 w-4 text-destructive" />
+              </CtButton>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-4">
+              <CtCheckbox checked={e.front === true} onChange={(front) => setElement(i, { ...e, front })} label="Nằm trước nhân vật" />
+              <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                Đi theo lựa chọn của
+                <select className="rounded border bg-background px-1 py-0.5 text-xs text-foreground" value={e.follows ?? ""} onChange={(ev) => setElement(i, { ...e, follows: ev.target.value || null })}>
+                  <option value="">— (khách tự chọn)</option>
+                  {brief.elements
+                    .filter((x) => x.id !== e.id)
+                    .map((x) => (
+                      <option key={x.id} value={x.id}>
+                        {x.name || "(chưa tên)"}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            </div>
+            {e.place === "free" && (
+              <div className="mt-2">
+                <BoxInput label="Ô vị trí (% vùng an toàn)" value={e.box} disabled={readOnly} onChange={(box) => setElement(i, { ...e, box })} />
+              </div>
+            )}
+            <OptionList mode={e.mode} label={e.mode === "color" ? "Màu" : "Kiểu (mô tả cho AI)"} options={e.options} onChange={(options) => setElement(i, { ...e, options })} />
+          </div>
+        ))}
+        {!brief.elements.length && <p className="text-xs text-muted-foreground">Không có — ví dụ: Ribbon banner (tự đặt, 1 kiểu), Year (tự đặt, trước nhân vật, 2026…2030), Theme trái / phải (Giáng sinh, Halloween, Phục sinh).</p>}
+      </div>
+    </Section>
+  );
+}
+
+/** "Chỉ hiện khi": a chooser option a part / text / decoration exists for (brief.choosers). */
+function ShownWhenSelect({ brief, value, onChange }: { brief: CtCharBrief; value: CtCharShownWhen | null; onChange: (w: CtCharShownWhen | null) => void }) {
+  const choosers = brief.choosers ?? [];
+  if (!choosers.length) return null;
+  return (
+    <label className="flex items-center gap-1 text-xs text-muted-foreground">
+      Chỉ hiện khi
+      <select
+        className="rounded border bg-background px-1 py-0.5 text-xs text-foreground"
+        value={value ? `${value.chooser}|${value.option}` : ""}
+        onChange={(e) => {
+          const [chooser, option] = e.target.value.split("|");
+          onChange(chooser && option ? { chooser, option } : null);
+        }}
+      >
+        <option value="">— (luôn có)</option>
+        {choosers.flatMap((c) =>
+          c.options.map((o) => (
+            <option key={`${c.id}|${o.id}`} value={`${c.id}|${o.id}`}>
+              {c.label}: {o.name}
+            </option>
+          )),
+        )}
+      </select>
+    </label>
+  );
+}
+
+/**
+ * Choices that draw nothing and only decide which parts exist (asked 2026-10-18: each grandchild a boy or a girl, the
+ * grandparent a grandma or a grandpa, hats or no hats). A part / text / decoration picks "Chỉ hiện khi" one option.
+ */
+function ChoosersRow({ brief, set }: { brief: CtCharBrief; set: (patch: Partial<CtCharBrief>) => void }) {
+  const list = brief.choosers ?? [];
+  const setOne = (i: number, c: CtCharChooser) => set({ choosers: list.map((x, j) => (j === i ? c : x)) });
+  return (
+    <div className="space-y-2 rounded-md bg-muted/40 p-2.5">
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Ô chọn (nam / nữ, có / không nón…)</span>
+        <button
+          type="button"
+          className="ml-auto rounded-md border border-dashed px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent"
+          onClick={() => set({ choosers: [...list, { id: crypto.randomUUID(), label: "", options: [newCharOption("Boy", "Boy"), newCharOption("Girl", "Girl")], subject: null }] })}
+        >
+          + ô chọn
+        </button>
+      </div>
+      {list.map((c, i) => (
+        <div key={c.id} className="flex flex-wrap items-center gap-2">
+          <CtInput className="h-8 w-44" value={c.label} placeholder="Grandchild 1 / Hats" onChange={(e) => setOne(i, { ...c, label: e.target.value })} />
+          <select className="h-8 rounded border bg-background px-1 text-xs" value={c.subject ?? ""} onChange={(e) => setOne(i, { ...c, subject: e.target.value || null })}>
+            <option value="">Chung cả tranh</option>
+            {brief.subjects.map((sub, j) => (
+              <option key={sub.id} value={sub.id}>
+                Của nhân vật {j + 1}
+              </option>
+            ))}
+          </select>
+          <span className="flex flex-wrap gap-1">
+            {c.options.map((o, j) => (
+              <input key={o.id} className="h-7 w-24 rounded border bg-background px-1.5 text-xs" value={o.name} onChange={(e) => setOne(i, { ...c, options: c.options.map((x, k) => (k === j ? { ...x, name: e.target.value, value: e.target.value } : x)) })} />
+            ))}
+          </span>
+          <button type="button" className="rounded p-1 hover:bg-accent" onClick={() => set({ choosers: list.filter((_, j) => j !== i) })} title="Xoá ô chọn">
+            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+          </button>
+        </div>
+      ))}
+      {!list.length && <p className="text-xs text-muted-foreground">Không có.</p>}
     </div>
   );
 }

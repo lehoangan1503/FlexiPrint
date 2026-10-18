@@ -9,11 +9,13 @@
  * approximated. The customer's print file is still made by lib/compositor at add-to-cart.
  */
 
+import { inChunks } from "./in-chunks";
 import sharp, { type OverlayOptions } from "sharp";
 import { CT_TABLES } from "../config";
 import type { CtAsset, CtProduct, CtRegion, CtRegionItem, CtSelection, CtShape } from "../types";
 import type { CtPrintSpec } from "../types/print";
-import { defaultRegionSelection, normalizeProductConfig, normalizeRegion, resolveLinked, textMode } from "../lib/design";
+import { activeRegions, defaultRegionSelection, normalizeProductConfig, normalizeRegion, resolveLinked, selectedMainId, textMode } from "../lib/design";
+import { onVersion } from "../lib/layout";
 import { loadFont, textSvg } from "./print-text";
 import { itemPlacement, shapeBounds, shapeToSvgPath, translateShape } from "../lib/geometry";
 import { boundsInSafe, safeShapes } from "../lib/print-template";
@@ -32,12 +34,15 @@ export async function loadArtwork(db: PrintDb, productId: string): Promise<Artwo
   if (!product) return null;
   const { data: regions } = await db.from(CT_TABLES.regions).select("*").eq("product_id", productId).order("sort_order").returns<CtRegion[]>();
   const ids = (regions ?? []).map((r) => r.id);
-  const { data: items } = ids.length ? await db.from(CT_TABLES.items).select("*").in("region_id", ids).order("sort_order").returns<CtRegionItem[]>() : { data: [] as CtRegionItem[] };
+  const items = (await inChunks(ids, (x) => db.from(CT_TABLES.items).select("*").in("region_id", x).returns<CtRegionItem[]>())).sort((a, b) => a.sort_order - b.sort_order);
   const assetIds = [...new Set([...(items ?? []).map((i) => i.asset_id), ...(product.main_asset_id ? [product.main_asset_id] : [])])];
-  const { data: subs } = assetIds.length ? await db.from(CT_TABLES.assets).select("*").in("id", assetIds).returns<CtAsset[]>() : { data: [] as CtAsset[] };
-  const { data: variants } = assetIds.length ? await db.from(CT_TABLES.assets).select("*").in("parent_id", assetIds).returns<CtAsset[]>() : { data: [] as CtAsset[] };
+  const subs = await inChunks(assetIds, (x) => db.from(CT_TABLES.assets).select("*").in("id", x).returns<CtAsset[]>());
+  const variants = await inChunks(assetIds, (x) => db.from(CT_TABLES.assets).select("*").in("parent_id", x).returns<CtAsset[]>());
+  // Every main version (a boy / a girl, 1–5 people — each has its own layers).
+  const { data: mains } = await db.from(CT_TABLES.assets).select("*").eq("product_id", productId).eq("role", "main").returns<CtAsset[]>();
   const config = normalizeProductConfig(product.config);
-  return { product, regions: (regions ?? []).map(normalizeRegion), items: items ?? [], assets: [...(subs ?? []), ...(variants ?? [])], spec: config.print?.spec ?? null };
+  const all = new Map([...(subs ?? []), ...(variants ?? []), ...(mains ?? [])].map((a) => [a.id, a]));
+  return { product, regions: (regions ?? []).map(normalizeRegion), items: items ?? [], assets: [...all.values()], spec: config.print?.spec ?? null };
 }
 
 /** Where every main element (placed picture, text, photo) sits, and whether it is inside the safe zone. */
@@ -74,11 +79,15 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
   const svgs: string[] = [];
 
   const guides = mode === "guides";
+  // The version shown (selection[CT_MAIN_KEY], else the product's main): only its own layers are drawn.
+  const mainId = b.product.main_asset_id ? selectedMainId(selection, b.assets, b.product.main_asset_id) : null;
+  b = { ...b, regions: b.regions.filter((r) => onVersion(r, mainId)) };
   // Every layer's choice (the defaults where none is given), linked layers (a back half of hair) following theirs.
   const picked: CtSelection = {};
   for (const r of b.regions) picked[r.id] = selection[r.id] ?? defaultRegionSelection(r, b.items, b.assets);
   const chosen = resolveLinked(b.regions, b.items, b.assets, picked);
-  for (const r of [...b.regions].sort((x, y) => x.sort_order - y.sort_order)) {
+  // A child layer only while its parent shows its option (a boy's hair while "Grandchild 1" is "Boy").
+  for (const r of activeRegions([...b.regions].sort((x, y) => x.sort_order - y.sort_order), chosen)) {
     if (r.config.materialFrame) continue;
     const sel = chosen[r.id];
     const bounds = shapeBounds(r.shape);
@@ -97,7 +106,13 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
           const tile = await sharp(buf).resize({ width: tw }).png().toBuffer();
           const th = (await sharp(tile).metadata()).height ?? tw;
           const tiles: OverlayOptions[] = [];
-          for (let y = 0; y < bh; y += th) for (let x = 0; x < bw; x += tw) tiles.push({ input: tile, left: x, top: y });
+          // A tile past the layer's edge is cut there (sharp refuses an overlay bigger than its canvas).
+          for (let y = 0; y < bh; y += th)
+            for (let x = 0; x < bw; x += tw) {
+              const w = Math.min(tw, bw - x);
+              const hh = Math.min(th, bh - y);
+              tiles.push({ input: w < tw || hh < th ? await sharp(tile).extract({ left: 0, top: 0, width: w, height: hh }).png().toBuffer() : tile, left: x, top: y });
+            }
           pic = await sharp({ create: { width: bw, height: bh, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(tiles).png().toBuffer();
         }
         const shifted = translateShape(r.shape, -bounds.x, -bounds.y);

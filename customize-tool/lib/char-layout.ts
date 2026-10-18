@@ -8,11 +8,15 @@
  *   left /  columns beside the characters, at their waist; on a round piece they start where the circle does
  *   right
  *
+ *   under   a band kept under the characters — each name is placed under its character (lib/char-lineup underText)
+ *   free    the text's own box (shares of the area) — placed by the product, not here
+ *
  * Several texts in one place share it (stacked). Sizes are shares of the area, so a 1000 px ornament and a 3600 px
  * poster come out alike.
  */
 
 import type { CtCharTextField, CtCharTextPlace } from "../types";
+import { UNDER_BAND } from "./char-lineup";
 
 export interface CtLayoutBox {
   x: number;
@@ -101,6 +105,8 @@ export function charLayout({ area, round, holes, set, texts }: CtCharLayoutInput
       top += each * rest.length + GAP * D;
     }
   }
+  // Names under each character (lib/char-lineup underText): a band kept under them.
+  if (texts.some((t) => t.place === "under")) bottom -= UNDER_BAND * D;
   if (bottoms.length) {
     const each = (BOTTOM_BAND * D) / 1.2;
     band(bottoms, bottom - each * bottoms.length, each);

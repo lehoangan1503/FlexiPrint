@@ -1,6 +1,7 @@
 /**
  * The pieces of a bộ ảnh khách (brief.kind "photo", asked 2026-10-15): the customer's photo is the hero, the set is
- * the decorations around it. Each option of each element is drawn ALONE on transparency in the approved master's
+ * the decorations around it — and the decorations of a bộ nhân vật (asked 2026-10-18: a ribbon banner, the year in
+ * glitter numbers, a Christmas tree beside the family). Each option of each element is drawn ALONE on transparency in the approved master's
  * look (no doll, no pixel lock — the customer's photo has its own outline, so a wing behind it must be whole):
  *
  *   POST char/projects/:id/elements {roles?: string[], prompts?: {role: prompt}} → { images } (re)draw now
@@ -18,6 +19,9 @@ import type { CtCharBackdrop, CtCharElement, CtCharImage, CtCharProject } from "
 import { elementAspect, elementPrompt } from "../../lib/char-brief";
 import type { CtSession } from "../supabase";
 import { latestBackdrops } from "./backdrops";
+import { briefTemplate } from "./blank";
+import { safeShapes } from "../../lib/print-template";
+import { shapeBounds } from "../../lib/geometry";
 import { fetchImage, saveCharFile } from "./files";
 import { NOT_YOURS, canEditProject, jobDb, jsonError, loadImages, loadProject, runCharDraw, type Db } from "./projects";
 
@@ -113,13 +117,13 @@ async function recolorFrom(db: Db, userId: string, p: CtCharProject, first: CtCh
 /** (Re)draw element pictures in the background: running rows now. `roles` / `prompts` keys empty = every picture the
  * brief needs that has no finished one yet; a colour option is recoloured from its element's first picture. */
 export async function startElements(db: Db, userId: string, p: CtCharProject, args: { roles?: string[]; prompts?: Record<string, string>; taskId?: string }): Promise<CtCharImage[]> {
-  if (p.brief.kind !== "photo") throw new Error("Chỉ bộ ảnh khách có phần tử (brief.kind = photo)");
   const all = elementPictures(p);
   if (!all.length) throw new Error("Brief chưa có phần tử nào (brief.elements)");
   const images = await loadImages(db, p.id);
   const done = latestElementImages(images);
   const wanted = new Set([...(args.roles ?? []), ...Object.keys(args.prompts ?? {})]);
-  const samples = p.brief.photoZones.map((z) => ({ role: `${SAMPLE_ROLE}${z.id}`, zone: z }));
+  // A bộ ảnh khách's zone sample (the master's pet alone); a bộ nhân vật's photo zones are holes in its characters.
+  const samples = p.brief.kind === "photo" ? p.brief.photoZones.map((z) => ({ role: `${SAMPLE_ROLE}${z.id}`, zone: z })) : [];
   const unknown = [...wanted].filter((r) => !all.some((x) => x.role === r) && !samples.some((x) => x.role === r));
   if (unknown.length) throw new Error(`Không có ${unknown.join(", ")} — role là "el:<element id>:<option id>" hoặc "el:<element id>:bd:<backdrop id>"`);
   // A colour option asked again redraws its element's first picture (it is a recolour of it).
@@ -128,6 +132,11 @@ export async function startElements(db: Db, userId: string, p: CtCharProject, ar
   const draws = [...new Map(pick.map((x) => [x.role, x])).values()];
   const master = await masterUrl(db, p);
   const backdrops = latestBackdrops(p, images);
+  // A placed element is drawn in its box's shape on the piece (the safe area's ratio).
+  const template = await briefTemplate(db, p);
+  const safe = template ? safeShapes(template.spec)[0] : undefined;
+  const sb = safe ? shapeBounds(safe) : null;
+  const areaRatio = sb ? sb.w / sb.h : template ? template.spec.width / template.spec.height : 1;
   const rows: CtCharImage[] = [];
   for (const pic of draws) {
     const bd = pic.backdrop ? backdrops.find((x) => x.backdrop.id === pic.backdrop!.id)?.image : undefined;
@@ -142,7 +151,7 @@ export async function startElements(db: Db, userId: string, p: CtCharProject, ar
     rows.push(row);
     const recolors = all.filter((x) => x.element.id === pic.element.id && x.recolor);
     void (async () => {
-      const out = await runCharDraw(db, userId, row, { prompt, refs: [master, ...(bd ? [bd.url] : [])], aspect: elementAspect(pic.element), refSize: { w: null, h: null }, transparent: true });
+      const out = await runCharDraw(db, userId, row, { prompt, refs: [master, ...(bd ? [bd.url] : [])], aspect: elementAspect(pic.element, areaRatio), refSize: { w: null, h: null }, transparent: true });
       if (out && recolors.length) await recolorFrom(db, userId, p, out, recolors, args.taskId);
     })();
   }

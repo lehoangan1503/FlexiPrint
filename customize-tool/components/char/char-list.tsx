@@ -9,11 +9,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { CT_CONFIG } from "../../config";
-import type { CtCharProject, CtCharSetKind, CtCharStatus } from "../../types";
+import type { CtCharProject, CtCharStatus } from "../../types";
 import { charApi } from "../../lib/api-client";
 import { defaultCharBrief } from "../../lib/char-brief";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
 import { ctConfirm, ctPrompt } from "../dialogs";
+import { KindHelpButton } from "./kind-help";
 
 export const CHAR_STATUS_LABEL: Record<CtCharStatus, string> = { brief: "Brief", master: "Master đã duyệt", layers: "Đã cắt layer", product: "Có sản phẩm" };
 const STATUS_CLASS: Record<CtCharStatus, string> = {
@@ -49,18 +50,14 @@ export function CharList({ currentUserId, admin = false }: { currentUserId: stri
     return () => clearTimeout(t);
   }, [load]);
 
-  /** character: drawn characters the customer dresses · photo: the customer's photo + decorations around it. */
-  const create = async (kind: CtCharSetKind) => {
-    const name = await ctPrompt({
-      title: kind === "photo" ? "Bộ ảnh khách mới" : "Bộ nhân vật mới",
-      label: "Tên bộ",
-      defaultValue: kind === "photo" ? "Ornament thú cưng thiên thần" : "Cô gái + cún — túi mỹ phẩm",
-      confirmLabel: "Tạo",
-    });
+  /** One "Bộ mới" (asked 2026-10-18): the kind — drawn characters the customer dresses, or the customer's photo +
+   * decorations around it — is picked in the brief (KindHelpButton explains them). */
+  const create = async () => {
+    const name = await ctPrompt({ title: "Bộ mới", label: "Tên bộ", defaultValue: "Ornament tốt nghiệp — nam / nữ", confirmLabel: "Tạo" });
     if (!name?.trim()) return;
     setCreating(true);
     try {
-      const p = await charApi.create({ name: name.trim(), brief: defaultCharBrief(kind) });
+      const p = await charApi.create({ name: name.trim(), brief: defaultCharBrief("character") });
       router.push(`/v2/${p.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không tạo được");
@@ -88,11 +85,9 @@ export function CharList({ currentUserId, admin = false }: { currentUserId: stri
           <Sparkles className="h-5 w-5 text-orange-500" />
           <h1 className="text-lg font-semibold">Bộ nhân vật v2</h1>
           <div className="ml-auto flex items-center gap-2">
-            <CtButton onClick={() => void create("photo")} disabled={creating} title="Ảnh khách là nhân vật chính (thú cưng thiên thần…): AI vẽ cánh, vòng sáng, mây, nền quanh ảnh">
-              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Bộ ảnh khách
-            </CtButton>
-            <CtButton variant="primary" onClick={() => void create("character")} disabled={creating} title="Nhân vật AI vẽ, khách đổi tóc / quần áo / đồ cầm… (có thể kèm vùng mặt khách: elf)">
-              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Bộ nhân vật
+            <KindHelpButton />
+            <CtButton variant="primary" onClick={() => void create()} disabled={creating} title="Một bộ mới — chọn Bộ nhân vật hay Bộ ảnh khách ở bước 1 (Brief)">
+              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Bộ mới
             </CtButton>
           </div>
         </div>
@@ -119,7 +114,7 @@ export function CharList({ currentUserId, admin = false }: { currentUserId: stri
         ) : projects.length === 0 ? (
           <div className="rounded-xl border border-dashed py-20 text-center text-sm text-muted-foreground">
             <Sparkles className="mx-auto mb-3 h-10 w-10 opacity-40" />
-            Chưa có bộ nào — bấm “Bộ nhân vật” hoặc “Bộ ảnh khách”.
+            Chưa có bộ nào — bấm “Bộ mới”.
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
@@ -139,7 +134,7 @@ export function CharList({ currentUserId, admin = false }: { currentUserId: stri
                   <div className="flex items-center gap-2 p-2.5">
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium">{p.name}</div>
-                      {p.brief.kind === "photo" && <div className="text-[10px] text-sky-600">Bộ ảnh khách</div>}
+                      <div className={cx("text-[10px]", p.brief.kind === "photo" ? "text-sky-600" : "text-orange-600")}>{p.brief.kind === "photo" ? "Bộ ảnh khách" : "Bộ nhân vật"}</div>
                       <div className="mt-0.5 flex items-center gap-1.5">
                         <span className={cx("rounded px-1.5 py-0.5 text-[10px] font-medium", STATUS_CLASS[p.status])}>{CHAR_STATUS_LABEL[p.status]}</span>
                         <span className="text-[10px] text-muted-foreground">{new Date(p.updated_at).toLocaleDateString("vi-VN")}</span>

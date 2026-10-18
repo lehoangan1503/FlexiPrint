@@ -317,6 +317,8 @@ export interface CtImageConfig {
   defaultAssetId: string | null;
   /** Storefront may show "None" for this region. */
   allowNone: boolean;
+  /** With allowNone: the customer starts on "None" (glasses: NO first — asked 2026-10-18). */
+  defaultNone?: boolean;
   /**
    * Linked layer (server/mcp/layer-rules.ts §6): this layer is not a customer choice — it shows the option at the
    * same group / option position as layer `follows` shows (the back half of a hairstyle follows the front half).

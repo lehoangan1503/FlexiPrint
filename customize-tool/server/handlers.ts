@@ -3,6 +3,7 @@
  * Response; router.ts maps paths onto them.
  */
 
+import { inChunks } from "./in-chunks";
 import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
 import type {
@@ -112,9 +113,7 @@ export async function getBundle(s: CtSession, productId: string): Promise<NextRe
       .returns<CtGeneration[]>(),
   ]);
   const regionIds = (regions.data ?? []).map((r) => r.id);
-  const items = regionIds.length
-    ? await s.supabase.from(CT_TABLES.items).select("*").in("region_id", regionIds).order("sort_order").returns<CtRegionItem[]>()
-    : { data: [] as CtRegionItem[] };
+  const items = { data: (await inChunks(regionIds, (ids) => s.supabase.from(CT_TABLES.items).select("*").in("region_id", ids).returns<CtRegionItem[]>())).sort((a, b) => a.sort_order - b.sort_order) };
 
   // The product's own assets + the library cliparts its zones / main versions use.
   const assets = await loadProductAssets(s.supabase, product, items.data ?? [], regions.data ?? []);
@@ -215,9 +214,7 @@ async function publishTemplate(
   ]);
   if (last.error) return { error: missingMigration(last.error.message) ?? last.error.message, status: 500 };
   const regionIds = (regions.data ?? []).map((r) => r.id);
-  const items = regionIds.length
-    ? await s.supabase.from(CT_TABLES.items).select("*").in("region_id", regionIds).returns<CtRegionItem[]>()
-    : { data: [] as CtRegionItem[] };
+  const items = { data: await inChunks(regionIds, (ids) => s.supabase.from(CT_TABLES.items).select("*").in("region_id", ids).returns<CtRegionItem[]>()) };
   const assets = await loadProductAssets(s.supabase, product, items.data ?? [], regions.data ?? []);
 
   const version = (last.data?.version ?? 0) + 1;

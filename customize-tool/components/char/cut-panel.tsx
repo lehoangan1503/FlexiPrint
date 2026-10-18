@@ -9,12 +9,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Download, ExternalLink, Eye, Loader2, Pencil, RefreshCw, Scissors, Undo2, XCircle } from "lucide-react";
-import type { CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharPiece, CtCharPicture, CtCharPlan } from "../../types";
+import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, Pencil, Scissors, XCircle } from "lucide-react";
+import type { CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharPlan } from "../../types";
 import { charApi } from "../../lib/api-client";
-import { redoRoleOf } from "../../lib/char-plan";
 import { CT_CONFIG } from "../../config";
-import { zip } from "../../lib/zip";
 import { CHECKER_STYLE, CtButton, FLOAT_BTN, cx } from "../ui";
 import type { CharCtx } from "./char-project";
 import { MaskEditor } from "./mask-editor";
@@ -66,16 +64,13 @@ function Status({ ok, children }: { ok: boolean; children: React.ReactNode }) {
 
 // ---- Nền ------------------------------------------------------------------------------------------------
 
+/** @flexiprint is doing steps 3–4 on its own: the hand tools wait until it is done or stopped. */
+export const autoRunning = (ctx: CharCtx): boolean => ctx.agent.task?.input.char?.step === "auto";
+
 export function MatteSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void }) {
   const { project, editable } = ctx;
   const m = project.cut?.matte ?? null;
-  const { busy, act } = useAct(ctx);
   const done = m?.status === "done" && !!m.alpha;
-  const start = () =>
-    act("start", async () => {
-      if (m?.alpha?.edited && !window.confirm("Tách lại sẽ bỏ phần đã sửa tay. Vẫn tách lại?")) return;
-      ctx.setProject(await charApi.cut(project.id, "matte"));
-    });
   return (
     <section className="rounded-xl border bg-card p-4">
       <div className="mb-3 flex flex-wrap items-start gap-3">
@@ -84,21 +79,18 @@ export function MatteSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void }) {
             Master cỡ in {done && <Status ok>Xong</Status>}
           </h3>
           <p className="text-xs text-muted-foreground">
-            Master do GPT Image 2.5 vẽ sẵn trên nền trong suốt — đó chính là phần tách nền, không qua dịch vụ tách nền nào. Bước này tự chạy khi duyệt master: phóng to ×2 để in (Real-ESRGAN). Chỉ khi thấy mảnh rời sót lại mới cần “Sửa nền”.
+            Tự chạy khi duyệt master: master đã có nền trong suốt (AI tách sẵn), chỉ phóng to để in. Không cần làm gì ở đây.
           </p>
         </div>
-        {editable && (
-          <div className="flex flex-wrap gap-2">
-            {done && (
-              <CtButton onClick={() => ctx.onEdit({ kind: "matte" })}>
-                <Pencil className="h-4 w-4" /> Sửa nền
-              </CtButton>
-            )}
-            <CtButton variant={done ? "outline" : "primary"} disabled={!!busy || m?.status === "running"} onClick={() => void start()}>
-              {busy === "start" || m?.status === "running" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}
-              {m?.status === "running" ? "Đang phóng to (~20 giây)…" : m ? "Làm lại" : "Phóng to để in"}
-            </CtButton>
-          </div>
+        {m?.status === "running" && (
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang phóng to…
+          </span>
+        )}
+        {editable && done && !autoRunning(ctx) && (
+          <CtButton onClick={() => ctx.onEdit({ kind: "matte" })}>
+            <Pencil className="h-4 w-4" /> Sửa nền
+          </CtButton>
         )}
       </div>
       {m?.status === "failed" && <p className="mb-2 rounded bg-destructive/10 p-2 text-xs text-destructive">{m.error}</p>}
@@ -157,26 +149,11 @@ function Checks({ checks, plan, onEdit, title }: { checks: CtCharLayerCheck[]; p
 
 /** One button for the whole set: the plan (regions) then the files, then the dress-up view (FinalSection). */
 export function CustomSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void; ready: boolean; missing: string }) {
-  const { project, editable } = ctx;
+  const { project } = ctx;
   const plan = project.cut?.plan ?? null;
-  const { busy, act } = useAct(ctx);
   const planning = plan?.status === "running";
   const building = project.layers?.status === "building";
   const hasSet = !!project.layers;
-  const canStart = ctx.ready;
-  const edited = plan?.pieces.filter((x) => x.region.edited).length ?? 0;
-  const start = () =>
-    act("start", async () => {
-      if (hasSet && !window.confirm(`Tạo lại bộ custom: tìm lại vùng rồi cắt lại toàn bộ file (vài phút).${edited ? ` ${edited} vùng đã sửa tay được giữ nếu ảnh của chúng không đổi.` : ""}${project.product_ids.length ? " Sản phẩm cũ của bộ (và thư mục clipart của nó) được thay bằng sản phẩm mới." : ""} Tiếp tục?`)) return;
-      ctx.setProject(await charApi.cut(project.id, "plan", undefined, { auto: true }));
-    });
-  /** The plan is done but the files are not (the cut failed or could not start): cut again without planning again. */
-  const cutOnly = !!plan && plan.status === "done" && (!project.layers || project.layers.status === "failed");
-  const cutNow = () =>
-    act("cut", async () => {
-      await charApi.cut(project.id, "plan", "approve", { approved: true });
-      ctx.setProject(await charApi.buildLayers(project.id));
-    });
   return (
     <div className="space-y-4">
       <section className={cx("rounded-xl border bg-card p-4", !hasSet && "p-6")}>
@@ -184,20 +161,13 @@ export function CustomSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void; rea
           <div className="flex-1">
             <h3 className="text-sm font-semibold">Bộ custom</h3>
             <p className="text-xs text-muted-foreground">
-              Một nút: mỗi clipart = đúng phần ảnh 3b của kiểu đó khác búp bê (không đoán, không tách bằng model), rồi ráp thành sản phẩm hoàn chỉnh — mở trong editor là dùng được ngay. Xong sẽ hiện: bên trái master xếp lớp, bên phải các kiểu của từng hạng mục — chưa ưng thì “Sửa clipart” (cọ, đũa thần, làm mịn…) hoặc làm lại ảnh, rồi cắt lại.
+              Tự động: mỗi clipart = đúng phần ảnh 3b của kiểu đó khác búp bê, rồi ráp thành sản phẩm. Xong sẽ hiện: bên trái master xếp lớp, bên phải các kiểu của từng hạng mục. Lỗi ít thì “Sửa clipart” bằng tay (cọ, đũa thần, làm mịn…); bộ chưa tốt thì nhắn @flexiprint làm lại ở ô chat.
             </p>
           </div>
-          {editable && cutOnly && (
-            <CtButton variant="primary" disabled={!!busy || building} onClick={() => void cutNow()}>
-              {busy === "cut" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}
-              Cắt file (giữ phác thảo)
-            </CtButton>
-          )}
-          {editable && (
-            <CtButton variant={hasSet || cutOnly ? "outline" : "primary"} disabled={!!busy || planning || building || !canStart} title={!ctx.ready ? ctx.missing : ""} onClick={() => void start()}>
-              {busy === "start" || planning || building ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}
-              {planning ? "Đang phác thảo vùng…" : building ? "Đang cắt clipart + tạo sản phẩm…" : hasSet ? "Tạo lại bộ custom" : "Tạo bộ custom"}
-            </CtButton>
+          {(planning || building) && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> {planning ? "Đang tìm vùng từng clipart…" : "Đang cắt clipart + dựng sản phẩm…"}
+            </span>
           )}
           {project.product_ids[0] && project.layers?.status === "done" && (
             <Link href={`${CT_CONFIG.basePath}/${project.product_ids[0]}`} target="_blank" className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm hover:bg-accent">
@@ -222,7 +192,6 @@ export function FinalSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void }) {
   const set = project.layers;
   const plan = project.cut?.plan ?? null;
   const { busy, act } = useAct(ctx);
-  const [zipping, setZipping] = useState<string | null>(null);
   if (!set) return <section className="rounded-xl border bg-card p-4 text-xs text-muted-foreground">Chưa cắt file — bấm “Tạo bộ custom”.</section>;
   const total = set.slots.reduce((n, s) => n + s.files.length, 0);
   const stale = !!plan && plan.status === "done" && !plan.approved;
@@ -234,33 +203,6 @@ export function FinalSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void }) {
       ctx.setProject(await charApi.buildLayers(project.id));
     });
 
-  const download = async () => {
-    setZipping("0");
-    try {
-      const entries: Array<{ name: string; data: Uint8Array }> = [];
-      const safe = (v: string) => v.replace(/[^\p{L}\p{N}._ -]+/gu, "-").replace(/\s+/g, "_").slice(0, 60);
-      let i = 0;
-      for (const [si, s] of set.slots.entries())
-        for (const f of s.files) {
-          const res = await fetch(f.url);
-          entries.push({ name: `${String(si + 1).padStart(2, "0")}_${safe(s.label)}/${safe([f.option, f.color].filter(Boolean).join("_") || "file")}.png`, data: new Uint8Array(await res.arrayBuffer()) });
-          setZipping(String(++i));
-        }
-      const manifest = { name: project.name, width: set.width, height: set.height, order: "bottom → top", slots: set.slots.map((s) => ({ key: s.key, label: s.label, follows: s.follows, files: s.files.map((f) => ({ option: f.option, color: f.color })) })), zones: set.zones, checks: set.checks };
-      entries.push({ name: "manifest.json", data: new TextEncoder().encode(JSON.stringify(manifest, null, 2)) });
-      const url = URL.createObjectURL(zip(entries));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${safe(project.name)}-layers.zip`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    } catch (e) {
-      ctx.error(e instanceof Error ? e.message : "Không tải được");
-    } finally {
-      setZipping(null);
-    }
-  };
-
   return (
     <section className="rounded-xl border bg-card p-4">
       <div className="mb-3 flex flex-wrap items-start gap-3">
@@ -269,32 +211,15 @@ export function FinalSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void }) {
             Bộ file cuối ({total} file) {set.status === "done" && <Status ok={!!set.approved}>{set.approved ? "Đã duyệt — final" : "Chờ duyệt"}</Status>}
           </h3>
           <p className="text-xs text-muted-foreground">
-            Cắt tự động: mỗi file = vùng × ảnh của nó (nền trong suốt của AI). Kiểm tra tự động: các lớp ráp lại so với master (lỗ hổng / thừa được tô lên hình; khác màu là do AI vẽ lại các ảnh), mảnh rời trong từng file, độ khớp của từng ảnh. Xem từng kiểu ở cột phải, sửa vùng nếu cần (rồi “Cắt lại” — clipart và sản phẩm làm lại theo), hoặc tải ZIP gửi người làm tiếp. Sản phẩm của bộ đã sẵn trong editor.
+            Xem từng kiểu ở cột phải. Clipart sai ít thì sửa tay (“Sửa clipart này”); cần làm lại thì nhắn @flexiprint ở ô chat. Sản phẩm của bộ đã sẵn trong editor.
           </p>
         </div>
-        {set.status === "done" && (
+        {set.status === "done" && editable && stale && !autoRunning(ctx) && (
           <div className="flex flex-wrap gap-2">
-            {editable && stale && (
-              <CtButton variant="primary" disabled={!!busy} onClick={() => void cutAgain()}>
-                {busy === "cut" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}
-                Cắt lại
-              </CtButton>
-            )}
-            <CtButton disabled={!!zipping} onClick={() => void download()}>
-              {zipping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              {zipping ? `Đang gom ${zipping}/${total}…` : "Tải ZIP"}
+            <CtButton variant="primary" disabled={!!busy} onClick={() => void cutAgain()}>
+              {busy === "cut" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}
+              Cắt lại (sau khi sửa vùng tay)
             </CtButton>
-            {editable && (
-              <CtButton variant={set.approved ? "outline" : "primary"} disabled={!!busy || stale} title={stale ? "Vùng đã sửa sau lần cắt này — cắt lại trước" : ""} onClick={() => act("approve", async () => ctx.setProject(await charApi.approveLayers(project.id, !set.approved)))}>
-                {busy === "approve" ? <Loader2 className="h-4 w-4 animate-spin" /> : set.approved ? <Undo2 className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-                {set.approved ? "Bỏ duyệt" : "Duyệt bộ file (final)"}
-              </CtButton>
-            )}
-            {set.approved && (
-              <CtButton variant="primary" onClick={() => ctx.goto("product")}>
-                Sang bước Sản phẩm →
-              </CtButton>
-            )}
           </div>
         )}
       </div>
@@ -316,13 +241,14 @@ export function FinalSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void }) {
 }
 
 /** Checks + a dress-up preview: pick an option per slot, the files stack on one canvas; the diff shows on top. */
-function LayerView({ ctx, set, plan, onEdit }: { ctx: CharCtx; set: CtCharLayerSet; plan: CtCharPlan | null; onEdit: ((e: CutEdit) => void) | null }) {
+function LayerView({ ctx, set, plan, onEdit: edit }: { ctx: CharCtx; set: CtCharLayerSet; plan: CtCharPlan | null; onEdit: ((e: CutEdit) => void) | null }) {
+  // The hand tools wait until @flexiprint is done (or stopped).
+  const onEdit = autoRunning(ctx) ? null : edit;
   const [pick, setPick] = useState<Record<string, number>>({});
   const [focus, setFocus] = useState<string | null>(null);
   const [diff, setDiff] = useState(true);
   const focused = focus ? set.slots.find((s) => s.key === focus) : null;
   const ff = focused ? focused.files[Math.min(pick[focused.key] ?? 0, focused.files.length - 1)] : null;
-  const redoRole = ff?.piece ? redoRoleOf(ctx.project.brief, ff.piece) : null;
   const files = (s: CtCharLayerSlot) => {
     const leader = s.follows ? set.slots.find((x) => x.key === s.follows) : null;
     return { list: s.files, index: Math.min(pick[leader?.key ?? s.key] ?? 0, s.files.length - 1) };
@@ -391,23 +317,8 @@ function LayerView({ ctx, set, plan, onEdit }: { ctx: CharCtx; set: CtCharLayerS
                   <Scissors className="h-4 w-4" /> Sửa vùng gốc (cả lớp)
                 </CtButton>
               )}
-              {redoRole && (
-                <CtButton
-                  onClick={async () => {
-                    ctx.error(null);
-                    try {
-                      await charApi.edits(ctx.project.id, [redoRole]);
-                      await ctx.reload();
-                    } catch (e) {
-                      ctx.error(e instanceof Error ? e.message : "Không chạy được");
-                    }
-                  }}
-                >
-                  <RefreshCw className="h-4 w-4" /> Vẽ lại ảnh này
-                </CtButton>
-              )}
             </div>
-            {redoRole && <p className="mt-2 text-muted-foreground">Làm lại ảnh xong thì bấm “Tạo lại bộ custom” ở trên — vùng bạn đã sửa tay của các ảnh không đổi được giữ nguyên.</p>}
+            <p className="mt-2 text-muted-foreground">Muốn AI vẽ lại kiểu này: nhắn @flexiprint ở ô chat (kéo ảnh vào ô chat để chỉ đúng file).</p>
           </div>
         )}
       </div>

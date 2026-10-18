@@ -9,6 +9,7 @@
  * be deleted — the product would lose an option silently.
  */
 
+import { inChunks } from "./in-chunks";
 import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
 import type {
@@ -179,15 +180,10 @@ export async function deleteCategory(s: CtSession, id: string): Promise<NextResp
 /** Children (set members + renditions) and their renditions, two levels deep. */
 async function descendants(db: Db, ids: string[]): Promise<CtAsset[]> {
   if (!ids.length) return [];
-  const { data: kids } = await db.from(CT_TABLES.assets).select("*").in("parent_id", ids).returns<CtAsset[]>();
-  const level1 = kids ?? [];
+  const level1 = await inChunks(ids, (x) => db.from(CT_TABLES.assets).select("*").in("parent_id", x).returns<CtAsset[]>());
   if (!level1.length) return [];
-  const { data: grand } = await db
-    .from(CT_TABLES.assets)
-    .select("*")
-    .in("parent_id", level1.map((a) => a.id))
-    .returns<CtAsset[]>();
-  return [...level1, ...(grand ?? [])];
+  const grand = await inChunks(level1.map((a) => a.id), (x) => db.from(CT_TABLES.assets).select("*").in("parent_id", x).returns<CtAsset[]>());
+  return [...level1, ...grand];
 }
 
 /** GET library/cliparts?category=<id|none>&q= → origins + everything hanging off them. */
@@ -666,8 +662,8 @@ export async function unlinkProductMain(s: CtSession, productId: string, assetId
  */
 async function loadLinkedAssets(db: Db, productId: string, ids: string[], mainAssetId: string | null = null): Promise<CtAsset[]> {
   if (!ids.length) return [];
-  const [{ data: roots }, { data: links }] = await Promise.all([
-    db.from(CT_TABLES.assets).select("*").in("id", ids).is("product_id", null).returns<CtAsset[]>(),
+  const [roots, { data: links }] = await Promise.all([
+    inChunks(ids, (x) => db.from(CT_TABLES.assets).select("*").in("id", x).is("product_id", null).returns<CtAsset[]>()),
     db.from(CT_TABLES.productMains).select("asset_id,sort_order").eq("product_id", productId).returns<Array<{ asset_id: string; sort_order: number }>>(),
   ]);
   const order = new Map((links ?? []).map((l) => [l.asset_id, l.sort_order]));

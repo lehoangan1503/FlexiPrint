@@ -29,6 +29,12 @@ Read it before touching layered-art code. Code consequences:
    hue), kept on its own subject's side of the doll, near its main piece. Doll + file = exactly that 3b picture.
 4. Hair: back = the whole hair of its picture, front = the same pixels over the doll's figure (front ⊂ back).
 5. A layer can only ADD to the doll: a picture that erased / moved doll pixels (check "lost") is drawn again.
+6. Each picture adds exactly ONE part (no stole on the gown picture, no gown on the stole picture, pants never
+   recolour the top). Thin parts on small figures (glasses on a family of five) are drawn bolder, never cut with a
+   lower threshold.
+7. A customer choice of who is in the picture (brief.lineup): subjects apart in the master, the body split per subject,
+   one product version per choice. The doll's magenta is cleaned the same way for every set (body: shadow; option
+   edges: dropped; magenta parts untouched).
 
 Never: a segmentation model choosing edges (SAM), seeds/paint pictures, "unwrap" pictures, parts drawn alone and
 fitted ("whole"), per-case post-processing heuristics (trim / grow / fill-by-colour / front_of …). Every one of those

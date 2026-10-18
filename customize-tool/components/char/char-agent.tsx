@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, X } from "lucide-react";
+import { Bot, Play, X } from "lucide-react";
 import type { CtAgentTask, CtCharChatAttachment, CtCharChatTab, CtCharTaskResult, CtCharTaskStep } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { defaultCategoryRules } from "../../lib/library";
@@ -31,6 +31,8 @@ export interface CharAgent {
   last: CtAgentTask | null;
   busy: boolean;
   start: (step: CtCharTaskStep, request: string, extra?: CharAgentExtra) => Promise<boolean>;
+  /** Follow a task the server started itself (the "auto" one, on master approval). */
+  refresh: () => Promise<void>;
 }
 
 export function useCharAgent(projectId: string, onChange: () => Promise<void>, onError: (msg: string | null) => void) {
@@ -83,6 +85,15 @@ export function useCharAgent(projectId: string, onChange: () => Promise<void>, o
     };
   }, [projectId, follow]);
 
+  const refresh = useCallback(async () => {
+    try {
+      const open = (await ctApi.listAgentTasks("char", projectId)).find(isOpen);
+      if (open && following.current !== open.id) void follow(open);
+    } catch {
+      // Shown on the next reload.
+    }
+  }, [projectId, follow]);
+
   const start: CharAgent["start"] = async (step, request, extra) => {
     onError(null);
     try {
@@ -127,11 +138,11 @@ export function useCharAgent(projectId: string, onChange: () => Promise<void>, o
     setTask(await ctApi.answerAgentTask(task.id, { question_id: questionId, choices, text }));
   };
 
-  const agent: CharAgent = { task, last, busy: task !== null, start };
+  const agent: CharAgent = { task, last, busy: task !== null, start, refresh };
   return { agent, cancel, answer, dismiss: () => setLast(null) };
 }
 
-const STEP_LABEL: Record<CtCharTaskStep, string> = { brainstorm: "Brainstorm", master: "Master", edits: "Ảnh để cắt clipart", chat: "Chat" };
+const STEP_LABEL: Record<CtCharTaskStep, string> = { brainstorm: "Brainstorm", master: "Master", edits: "Ảnh để cắt clipart", chat: "Chat", auto: "Tự động bước 3 – 4" };
 
 /** Under the header: what @flexiprint is doing now, or what it said when it finished. */
 export function CharAgentBar(props: ReturnType<typeof useCharAgent>) {
@@ -159,8 +170,13 @@ export function CharAgentBar(props: ReturnType<typeof useCharAgent>) {
       {task && <AgentProgress task={task} onCancel={() => void props.cancel()} onAnswer={props.answer} />}
       {!task && last && (
         <p className={last.status === "done" ? "whitespace-pre-wrap text-xs" : "text-xs text-destructive"}>
-          {last.status === "done" ? (result?.summary ?? "Xong.") : last.status === "cancelled" ? "Đã dừng." : last.error || "Agent không trả kết quả."}
+          {last.status === "done" ? (result?.summary ?? "Xong.") : last.status === "cancelled" ? "Đã dừng — nhắn yêu cầu sửa ở ô chat bên dưới." : last.error || "Agent không trả kết quả."}
         </p>
+      )}
+      {!task && last && last.input.char?.step === "auto" && last.status !== "done" && (
+        <button className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs hover:bg-accent" onClick={() => void props.agent.start("auto", "")}>
+          <Play className="h-3 w-3" /> Chạy tiếp tự động
+        </button>
       )}
     </div>
   );

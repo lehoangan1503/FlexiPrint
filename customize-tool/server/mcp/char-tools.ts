@@ -13,8 +13,9 @@
  */
 
 import { CT_TABLES } from "../../config";
-import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharProject, CtCharTaskResult } from "../../types";
-import { REF_USE_INFO, masterPrompt, parseCharBrief } from "../../lib/char-brief";
+import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharProject, CtCharRefUse, CtCharTaskResult } from "../../types";
+import { REF_USES, REF_USE_INFO, masterPrompt, parseCharBrief } from "../../lib/char-brief";
+import { saveCharFile } from "../char/files";
 import { KEEP, KEEP_CLEAR, planEdits, tailOf } from "../../lib/char-plan";
 import { latestEditsOf } from "../../lib/char-images";
 import { CT_IMAGE_MODEL, imageModelLabel } from "../../lib/image-models";
@@ -38,7 +39,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const COMMON = [
   "You work on a v2 bộ nhân vật (character set) of FlexiPrint: ONE approved AI master illustration → pixel-registered layers (the customer swaps hair, colours, outfits…) → print products. READ flexiprint://guide/layer-rules first if you have not in this session — every picture after the master is an IN-PLACE edit of it.",
-  "The image model is GPT Image 2.5 on the company API — the only one. Masters and the edits layers are cut from come on a transparent background (its own cut-out; no bg-remover). Every picture of a set is 1024×1024 (one canvas, one ratio — a tall or wide group still fits inside the square with a margin). It re-draws a little of what it keeps (≈ 0.2 % scale, < 1 px per character): layer-kit measures and undoes that, so an edit is usable when what must stay looks the same — never ask it to move, zoom or re-frame.",
+  "The image model is GPT Image 2.5 on the company API — the only one. Masters and the edits layers are cut from come on a transparent background (its own cut-out; no bg-remover). Every picture of a set is on one canvas: 1024×1024, or 1536×1024 for a row of 4+ subjects (a tall or wide group still fits inside with a margin). It re-draws a little of what it keeps (≈ 0.2 % scale, < 1 px per character): layer-kit measures and undoes that, so an edit is usable when what must stay looks the same — never ask it to move, zoom or re-frame.",
   "Write prompts in English. Talk to the editor (report_progress, summary, ask_user) in Vietnamese. report_progress before every batch of pictures (~30–60 s each).",
   "Pictures you make appear live in the editor's page. Look at every one with view_image before you judge it.",
   "\"references\" are pictures the editor dropped into the brief, each with a use (sample | style | character | outfit | pose | product | avoid) and the editor's note in Vietnamese — that note is what they want from it. view_image EVERY reference before you write anything. style / character / outfit / pose ones are attached to every master drawing automatically (with a line saying what to take from each) — your prompt must agree with them, never contradict them. product = how it should sit on the product; avoid = what must NOT be made. sample = a FINISHED product the editor wants something like (often the only picture): read everything from it — the product (shape, cut, size), the art style, every character (left → right: look, hair, skin, outfit, pose), the text (what it says, where, which parts are names the customer types), the decor and background — and turn it into the brief: characters → subjects, their hair / colours / outfits → slots (what the customer may change, per the note; ask_user when the note does not say), text → text, background / ornaments → decor (never part of the master). The master is only the characters, cut out on a transparent background; the rest comes back as separate layers.",
@@ -86,11 +87,22 @@ const CHAT_INSTRUCTIONS = [
   "- step 4 (product): the texts (brief.texts: names typed by the customer, a slogan picked from a list — place top / bottom / left / right) and the backgrounds (brief.backdrops) are changed with char_update_brief (allowed after the master is approved). char_draw_backdrops draws the backgrounds (char_wait, view_image each), char_remake_product builds the set's product again with them. Then list_product_options / render_artwork (mode \"print\", options) to check it, make_product_mockups (one entry per option set + scenes) → wait_product_mockups → view_image.",
   "- a question only the editor can answer → ask_user (Vietnamese, with options).",
   "BỘ ẢNH KHÁCH (set.brief.kind \"photo\" — the customer's own photo is the hero: a pet memorial ornament, a portrait): there are no characters, no 3a/3b/3c and no cut. brief.photoZones[0] = the customer's photo (where = what it shows, e.g. \"the customer's pet, sitting\"; treat \"ai\" + styles = the AI style refs the customer picks from — list_ai_styles; \"face\" = head only; box = shares of the safe area, null = laid out). brief.elements = the decorations, each {name, place: behind (wings) | above (halo) | bottom (a band of clouds over the photo's cut body, the texts lie on it) | free (box), mode shape | color (#hex options, the first drawn, the others recoloured), options, perBackdrop (one picture per background in its colours, follows the background)}. Flow: char_update_brief → char_draw_masters (the whole flat design with a SAMPLE pet) → the editor approves (or char_approve_master when handed the whole set) → char_draw_backdrops → char_draw_elements (every element option + the zone's sample: the master's pet alone) → char_wait, view_image each (whole? transparent? same look as the master?) → char_remake_product (keeps a photo zone the editor reshaped; reset_zones true = the layout again) → list_product_options, render_artwork, make_product_mockups.",
+  "A bộ nhân vật with a CHOICE OF WHO is in the picture (brief.lineup — a boy OR a girl; 1–5 people of a family): every subject drawn once in the master, standing apart (the server splits the body file per subject); the product gets one version per choice with only its subjects' layers — render_artwork / make_product_mockups pick it with {\"Version\": \"Girl\"} (or the lineup label). Decorations of a bộ nhân vật (brief.elements: a ribbon banner, a year in glitter numbers, trees beside the family, a ground band) are drawn after the master approval with char_draw_elements (each option alone, the master as the style reference) and placed by place / box; texts can be \"under\" a subject or \"free\" in a box; brief.charactersBox places the characters. Backdrops with tile true are seamless pattern squares repeated over the piece (a rug's plaid). A product with no fitting khuôn: create_print_template with the real size first. brief.choosers (boy / girl per child, grandma / grandpa, hats / no hats) + shownWhen on slots / texts / elements, slot follows (an element id: sweaters and hats follow the Theme), subject always (the grandma in every version), texts kind fixed / place on (a name on a hat brim): see briefRules in a brainstorm or the layer rules; render_artwork picks a chooser option by its label ({\"Grandchild 1\": \"Girl\", \"Hats\": \"No Hats\"}).",
   "A bộ nhân vật with a customer FACE (an elf / Santa body with the customers' faces, a die-cut acrylic): a normal character set with brief.photoZones [{where: \"the left elf's face\", treat: \"face\"}] and product.cut \"alpha\" — the master leaves the face empty, the body file gets a hole there and the face sits under it (hat brim, hair edge and collar over it).",
   "submit_result(task_id, {summary: Vietnamese — what you changed, where to see it on the page, what is still off; image_ids: pictures you made, if any}).",
 ].join("\n");
 
-const STEP_INSTRUCTIONS = { brainstorm: BRAINSTORM_INSTRUCTIONS, master: MASTER_INSTRUCTIONS, edits: EDITS_INSTRUCTIONS, chat: CHAT_INSTRUCTIONS } as const;
+const AUTO_INSTRUCTIONS = [
+  ...COMMON,
+  "STEP auto — the editor approved a master; everything after it is yours, on your own, until the product is finished (asked 2026-10-18: the editor only writes the request and approves the master; \"Dừng\" cancels this task — a cancelled task's tools refuse: stop at once). Same tools as a chat request. Check each stage with view_image before the next; fix what is wrong yourself (redraw a picture — never patch the cut); report_progress in Vietnamese at every stage (what is done, what you redid and why). Order:",
+  "1. Bộ nhân vật: char_status waits for 3a (the master at print size, started on approval). Bộ ảnh khách (brief.kind \"photo\"): skip to 4.",
+  "2. 3b: get_task \"set.edits\" lists every picture — char_run_edits with roles (all missing ones; your own prompts where the starting one is weak) → char_wait → view_image EVERY picture (a grid of a few at a time): transparent; the doll unchanged; exactly ONE part added (no stole on the gown picture, no gown on the stole picture, pants never recolour the top); no magenta on a part; thin parts on small figures drawn bold. Redraw the wrong ones (≤ 3 tries each).",
+  "3. 3c: char_cut what \"plan\" (finds the regions, cuts the files, makes the product) → char_status → every failed check: redraw its picture, char_cut \"plan\" again. Then view_image the product (render_artwork mode print — each version / a few option sets).",
+  "4. Step 4: char_draw_backdrops and char_draw_elements (every missing picture) → char_wait → view_image each → redraw the wrong ones → char_remake_product → render_artwork (print, a few option sets: versions, themes, colours, names) → fix the layout in the brief (charactersBox, element / text boxes) with char_update_brief + char_remake_product when it does not read like the reference → make_product_mockups (2–3 option sets × the brief's scenes) → wait_product_mockups → view_image.",
+  "5. submit_result {summary: Vietnamese — what was made (versions, options, mockups), what you fixed, what is still worth a look; image_ids: a few mockups}. Then the editor asks for changes in the chat.",
+].join("\n");
+
+const STEP_INSTRUCTIONS = { brainstorm: BRAINSTORM_INSTRUCTIONS, master: MASTER_INSTRUCTIONS, edits: EDITS_INSTRUCTIONS, chat: CHAT_INSTRUCTIONS, auto: AUTO_INSTRUCTIONS } as const;
 
 async function charOf(db: CtServiceClient, task: CtAgentTask): Promise<{ project: CtCharProject; images: CtCharImage[] }> {
   const id = task.input.char?.projectId;
@@ -222,12 +234,12 @@ function chatView(task: CtAgentTask, p: CtCharProject, images: CtCharImage[], nu
             slots: p.layers.slots.map((sl) => ({ key: sl.key, label: sl.label, follows: sl.follows, files: sl.files.map((f) => ({ imageId: f.imageId, option: f.option, color: f.color, url: f.url, view: f.viewUrl ?? null, piece: f.piece ?? null })) })),
           }
         : null,
-      // A bộ ảnh khách: every element picture the brief needs (+ the zone samples), with its newest picture.
-      ...(p.brief.kind === "photo"
+      // Every element picture the brief needs (+ a bộ ảnh khách's zone samples), with its newest picture.
+      ...(p.brief.kind === "photo" || p.brief.elements.length
         ? {
             elementPictures: [
               ...elementPictures(p).map((x) => ({ role: x.role, element: x.element.name, option: x.name, recolouredFromFirst: !!x.recolor, current: latestElementImages(images).has(x.role) ? picture(latestElementImages(images).get(x.role)!) : null })),
-              ...p.brief.photoZones.map((z) => ({ role: `${SAMPLE_ROLE}${z.id}`, element: `sample — ${z.label}`, option: "", recolouredFromFirst: false, current: latestElementImages(images).has(`${SAMPLE_ROLE}${z.id}`) ? picture(latestElementImages(images).get(`${SAMPLE_ROLE}${z.id}`)!) : null })),
+              ...(p.brief.kind === "photo" ? p.brief.photoZones : []).map((z) => ({ role: `${SAMPLE_ROLE}${z.id}`, element: `sample — ${z.label}`, option: "", recolouredFromFirst: false, current: latestElementImages(images).has(`${SAMPLE_ROLE}${z.id}`) ? picture(latestElementImages(images).get(`${SAMPLE_ROLE}${z.id}`)!) : null })),
             ],
             running: images.filter((im) => im.status === "running").map((im) => ({ id: im.id, role: im.role })),
           }
@@ -250,7 +262,7 @@ function chatView(task: CtAgentTask, p: CtCharProject, images: CtCharImage[], nu
       answer: t.result && "summary" in t.result ? str(t.result.summary) : t.error,
     })),
     questions: (task.questions ?? []).map((q) => ({ id: q.id, question: q.question, options: q.options.map((o) => o.label), answer: q.answer })),
-    instructions: CHAT_INSTRUCTIONS,
+    instructions: c.step === "auto" ? AUTO_INSTRUCTIONS : CHAT_INSTRUCTIONS,
   };
 }
 
@@ -270,7 +282,7 @@ export async function charTaskView(db: CtServiceClient, task: CtAgentTask): Prom
     .limit(30)
     .returns<Array<Pick<CtAgentTask, "id" | "created_at" | "status" | "input" | "result" | "error">>>();
   const latest = latestEditsOf(images);
-  if (c.step === "chat") return chatView(task, p, images, numbers, before ?? []);
+  if (c.step === "chat" || c.step === "auto") return chatView(task, p, images, numbers, before ?? []);
   const out: Record<string, unknown> = {
     id: task.id,
     kind: task.kind,
@@ -376,7 +388,7 @@ export async function submitCharResult(db: CtServiceClient, task: CtAgentTask, r
     if (!ids.length && !mine.some((im) => im.kind === "master" && im.status === "done")) throw new Error('Result needs "image_ids": the masters you recommend (make them with char_draw_masters / char_refine_master)');
     return { step: c.step, summary, imageIds: ids };
   }
-  if (c.step === "chat") {
+  if (c.step === "chat" || c.step === "auto") {
     const ok = new Set(images.map((im) => im.id));
     return { step: c.step, summary, imageIds: ids.filter((x) => ok.has(x)) };
   }
@@ -398,7 +410,115 @@ async function openCharTask(ctx: CtMcpContext, id: unknown): Promise<{ db: CtSer
   return { db: taskDb(ctx), task, project: projectRow(project) };
 }
 
+const SITE = () => process.env.NEXT_PUBLIC_SITE_URL ?? "https://flexiprint.next.lc";
+/** The set's page, for the people following along (the agent prints it in its session). */
+const setUrl = (id: string) => `${SITE()}/v2/${id}`;
+
+/** Who owns a set made from agent_ide: the email asked for, else the first admin. */
+async function ownerFor(db: CtServiceClient, email: string): Promise<string> {
+  if (email) {
+    const { data } = await db.auth.admin.listUsers({ page: 1, perPage: 200 });
+    const u = data?.users.find((x) => x.email?.toLowerCase() === email.toLowerCase());
+    if (!u) throw new Error(`No FlexiPrint user ${email}`);
+    return u.id;
+  }
+  const { data } = await db.from("user_profiles").select("user_id").eq("role", "admin").order("created_at").limit(1).maybeSingle<{ user_id: string }>();
+  if (!data?.user_id) throw new Error("No admin user — pass owner_email");
+  return data.user_id;
+}
+
+/** A chat task the agent opens for itself (it is already in its agent_ide session: no turn is sent). */
+async function selfTask(db: CtServiceClient, userId: string, projectId: string, request: string): Promise<CtAgentTask> {
+  const { data, error } = await db
+    .from(CT_TABLES.agentTasks)
+    .insert({
+      user_id: userId,
+      kind: "char",
+      status: "running",
+      input: { category: { id: null, name: "", spec: "", rules: {} }, note: "", images: [], refUrls: [], char: { projectId, step: "chat", request: clip(request, 20000), imageId: null, roles: [], tab: "brief", section: "", attachments: [] } },
+    })
+    .select("*")
+    .single<CtAgentTask>();
+  if (error || !data) throw new Error(error?.message ?? "Could not open a task");
+  return data;
+}
+
 export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
+  {
+    name: "char_create_set",
+    description:
+      "agent_ide (someone chats with @flexiprint directly, not from the /v2 page): make a NEW bộ (set) — character (characters AI draws, the customer dresses them) or photo (the customer's photo is the hero). Opens a chat task on it for you (task_id: use it with every char_* tool, submit_result when the request is done) and returns the set's page url: PRINT IT for the people following. Then char_add_reference for the pictures they gave you, char_update_brief, char_draw_masters…",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Vietnamese set name: 'Ornament bà + 1–4 cháu — acrylic trong'." },
+        kind: { type: "string", description: "character (default) | photo" },
+        idea: { type: "string", description: "What they asked for, in their words." },
+        owner_email: { type: "string", description: "FlexiPrint account that owns it (default: the admin)." },
+      },
+      required: ["name"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const db = taskDb(ctx);
+      const owner = await ownerFor(db, str(args.owner_email));
+      const brief = parseCharBrief({ kind: args.kind === "photo" ? "photo" : "character", idea: clip(str(args.idea), 4000) });
+      const { data: p, error } = await db.from(CT_TABLES.charProjects).insert({ user_id: owner, name: clip(str(args.name), 200) || "Bộ mới", brief }).select("*").single<CtCharProject>();
+      if (error || !p) throw new Error(error?.message ?? "Could not create the set");
+      const task = await selfTask(db, owner, p.id, str(args.idea) || str(args.name));
+      return json({ project_id: p.id, task_id: task.id, url: setUrl(p.id), next: "Print the url. char_add_reference (their pictures) → char_update_brief → get_task → char_draw_masters." });
+    },
+  },
+  {
+    name: "char_open_task",
+    description: "agent_ide: a new chat task on an EXISTING set (set id or its /v2 url) to work on it from your session — returns task_id and the page url (print it). One per request / phase; submit_result when it is done.",
+    inputSchema: { type: "object", properties: { project: { type: "string", description: "Set id or https://flexiprint.next.lc/v2/<id>." }, request: { type: "string", description: "What you are asked (their words)." } }, required: ["project"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const db = taskDb(ctx);
+      const id = (str(args.project).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) ?? [""])[0];
+      const p = id ? await loadProject(db, id) : null;
+      if (!p) throw new Error("No such set");
+      const task = await selfTask(db, p.user_id ?? (await ownerFor(db, "")), p.id, str(args.request) || "(agent_ide)");
+      return json({ project_id: p.id, task_id: task.id, url: setUrl(p.id), status: p.status });
+    },
+  },
+  {
+    name: "char_add_reference",
+    description:
+      "Put a picture into the set's brief as a reference (a sample product the editor wants something like, a style, a character…): from a public url, or the picture's bytes as base64 (a file they dropped in the agent_ide chat — read it and pass it). → the reference id (already in brief.refs with use + note).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        url: { type: "string", description: "Public http(s) url of the picture." },
+        image_base64: { type: "string", description: "PNG / JPEG / WebP bytes, base64 (no data: prefix needed)." },
+        use: { type: "string", description: "sample | style | character | outfit | pose | product | avoid (default sample)." },
+        note: { type: "string", description: "Vietnamese: what to take from it (their words)." },
+      },
+      required: ["task_id"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id);
+      let buf: Buffer;
+      if (str(args.image_base64)) buf = Buffer.from(str(args.image_base64).replace(/^data:[^,]+,/, ""), "base64");
+      else if (/^https?:\/\//.test(str(args.url))) {
+        const r = await fetch(str(args.url), { signal: AbortSignal.timeout(60_000) });
+        if (!r.ok) throw new Error(`Could not fetch the picture (${r.status})`);
+        buf = Buffer.from(await r.arrayBuffer());
+      } else throw new Error("Give url or image_base64");
+      if (buf.length < 100 || buf.length > 25 * 1024 * 1024) throw new Error("Not a picture (or over 25 MB)");
+      const saved = await saveCharFile(project.user_id ?? task.user_id!, project.id, "ref", buf);
+      const { data: im, error } = await db.from(CT_TABLES.charImages).insert({ project_id: project.id, user_id: project.user_id ?? task.user_id, kind: "ref", role: "ref", status: "done", ...saved }).select("*").single<CtCharImage>();
+      if (error || !im) throw new Error(error?.message ?? "Could not save");
+      const use = REF_USES.includes(str(args.use) as CtCharRefUse) ? (str(args.use) as CtCharRefUse) : "sample";
+      const brief = parseCharBrief({ ...project.brief, refs: [...project.brief.refs, { id: im.id, use, note: clip(str(args.note), 600) }] });
+      const { error: e2 } = await db.from(CT_TABLES.charProjects).update({ brief }).eq("id", project.id);
+      if (e2) throw new Error(e2.message);
+      return json({ ref_id: im.id, url: im.url, use });
+    },
+  },
   {
     name: "char_draw_masters",
     description:
@@ -464,7 +584,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     callers: ["agent"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
-      if (task.input.char?.step !== "edits" && task.input.char?.step !== "chat") throw new Error("char_run_edits is for the edits step");
+      if (!["edits", "chat", "auto"].includes(task.input.char?.step ?? "")) throw new Error("char_run_edits is for the edits step");
       if (!project.master_id) throw new Error("No approved master yet — the editor approves one first");
       const plan = planEdits(project.brief);
       const prompts: Record<string, string> = {};
@@ -517,7 +637,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     callers: ["agent"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
-      if (task.input.char?.step !== "chat") throw new Error("char_update_brief is for chat requests");
+      if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_update_brief is for chat requests");
       // A khuôn in named by templateId fills the cut, size and layout sentence like the page does.
       const brief = await withTemplateProduct(db, parseCharBrief(args.brief));
       if (project.master_id) {
@@ -538,7 +658,8 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     callers: ["agent"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
-      if (task.input.char?.step !== "chat") throw new Error("char_cut is for chat requests");
+      if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_cut is for chat requests");
+      if (str(args.what) !== "plan" && str(args.what) !== "build") throw new Error('char_cut: "what" must be "plan" or "build"');
       if (str(args.what) === "plan") await startPlan(db, task.user_id!, project, true);
       else await startBuild(db, task.user_id!, project, project.cut?.plan ? { ...project.cut, plan: { ...project.cut.plan, approved: true } } : undefined, true);
       await progress(db, task.id, str(args.what) === "plan" ? "Đang tìm lại vùng 3c và cắt file" : "Đang cắt lại file layer");
@@ -609,7 +730,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     callers: ["agent"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
-      if (task.input.char?.step !== "chat") throw new Error("char_draw_backdrops is for chat requests");
+      if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_draw_backdrops is for chat requests");
       const prompts = Object.fromEntries(Object.entries(record(args.prompts)).map(([k, v]) => [k, clip(str(v), 4000)]).filter(([, v]) => v));
       const ids = (Array.isArray(args.ids) ? args.ids : []).map(str).filter(Boolean);
       const rows = await startBackdrops(db, task.user_id!, project, { ids, prompts, taskId: task.id });
@@ -620,12 +741,12 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   {
     name: "char_draw_elements",
     description:
-      "Bộ ảnh khách (brief.kind \"photo\", after the master is approved): draw the decorations of brief.elements — each option ALONE on transparency in the master's look (perBackdrop ones: one per background, needs the backgrounds drawn first; colour options are recoloured from the first) — and each photo zone's sample (role \"sample:<zone id>\": the master's pet alone). roles / prompts {role: English prompt} = only these (roles in get_task set.elementPictures); none = every missing one. ~1 min each, in the background → image ids for char_wait.",
+      "After the master is approved (a bộ ảnh khách, or a bộ nhân vật's decorations): draw the decorations of brief.elements — each option ALONE on transparency in the master's look (perBackdrop ones: one per background, needs the backgrounds drawn first; colour options are recoloured from the first) — and each photo zone's sample (role \"sample:<zone id>\": the master's pet alone). roles / prompts {role: English prompt} = only these (roles in get_task set.elementPictures); none = every missing one. ~1 min each, in the background → image ids for char_wait.",
     inputSchema: {
       type: "object",
       properties: {
         ...TASK_ARG,
-        roles: { type: "array", items: { type: "string" }, description: "\"el:<element id>:<option id>\", \"el:<element id>:bd:<backdrop id>\", \"sample:<zone id>\" (empty = every missing one)." },
+        roles: { type: "array", items: { type: "string" }, description: "\"el:<element id>:<option id>\", \"el:<element id>:bd:<backdrop id>\", \"sample:<zone id>\" (bộ ảnh khách only) (empty = every missing one)." },
         prompts: { type: "object", description: "{ role: full English prompt } (optional)." },
       },
       required: ["task_id"],
@@ -633,7 +754,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     callers: ["agent"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
-      if (task.input.char?.step !== "chat") throw new Error("char_draw_elements is for chat requests");
+      if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_draw_elements is for chat requests");
       const prompts = Object.fromEntries(Object.entries(record(args.prompts)).map(([k, v]) => [k, clip(str(v), 4000)]).filter(([, v]) => v));
       const roles = (Array.isArray(args.roles) ? args.roles : []).map(str).filter(Boolean);
       const rows = await startElements(db, task.user_id!, project, { roles, prompts, taskId: task.id });
@@ -653,7 +774,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     callers: ["agent"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
-      if (task.input.char?.step !== "chat") throw new Error("char_remake_product is for chat requests");
+      if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_remake_product is for chat requests");
       if (project.brief.kind !== "photo" && (project.layers?.status !== "done" || !project.layers.approved)) throw new Error('The files are not cut yet — char_cut("build") first (it makes the product too)');
       const productId = await remakeSetProduct(db, project.user_id ?? task.user_id!, project, project.layers, { resetZones: args.reset_zones === true });
       const { error } = await db.from(CT_TABLES.charProjects).update({ product_ids: [productId], status: "product" }).eq("id", project.id);

@@ -23,7 +23,7 @@ import type { CtAiStyleParams, CtAsset, CtRegion, CtRegionItem, CtShape } from "
 import type { CtPrintSpec, CtPrintTemplate } from "../../types/print";
 import { defaultRegionConfig } from "../../lib/design";
 import { newId, shapeBounds } from "../../lib/geometry";
-import { safeShapes } from "../../lib/print-template";
+import { safeShapes, sizedTemplateSpec } from "../../lib/print-template";
 import { str } from "../ai/llm";
 import { aiStyleRef, isAiStyleRef, withAiStyles } from "../../lib/photo-styles";
 import { normalizeAiStyleParams } from "../../lib/ai-style-models";
@@ -247,6 +247,52 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
     run: async (ctx, args) => {
       const t = await templateOf(ctx.db, args.template_id);
       return json({ ...templateSummary(t), spec: t.spec });
+    },
+  },
+  {
+    name: "create_print_template",
+    description:
+      "Make a new khuôn in from the piece's REAL size when no khuôn of list_print_templates fits the product the editor describes (a 120 × 40 cm rug, a 30 × 40 cm canvas…) — never stretch a small khuôn: a 1024 px picture printed on a rug is blurred. kind 'flat' = a fixed rectangle (rounded corners), 'cut' = die-cut along the artwork (acrylic, sticker). dpi: 300 for small hard goods (≤ 30 cm), 150 for big soft ones (rugs, blankets, flags). → the template id; set it as brief.product.templateId.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Vietnamese name with the size: \"Thảm bếp dài 120×40 cm (47.2×15.7″)\"." },
+        kind: { type: "string", description: "flat | cut" },
+        width_mm: { type: "number", description: "The finished piece's width, mm (23.6 in = 600 mm)." },
+        height_mm: { type: "number", description: "Its height, mm." },
+        dpi: { type: "number", description: "300 (small) or 150 (big). Default by size." },
+        corner_mm: { type: "number", description: "Rounded corners of the cut line (flat)." },
+        bleed_mm: { type: "number", description: "Artwork past the cut line (flat; a rug's bound edge ~10)." },
+        safe_mm: { type: "number", description: "Main elements stay this far inside the cut line (default 5 % of the short side)." },
+        hole: { type: "object", description: "{ diameter_mm, from_top_mm } a round hanging hole at the top centre (an ornament)." },
+        notes: { type: "string", description: "Vietnamese notes for the editor (what is printed, edges)." },
+        task_id: { type: "string", description: "Agent: the task it is for (its user owns the khuôn)." },
+      },
+      required: ["name", "kind", "width_mm", "height_mm"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const w = Number(args.width_mm);
+      const h = Number(args.height_mm);
+      if (!(w > 5 && h > 5 && w < 5000 && h < 5000)) throw new Error("width_mm / height_mm: the piece's size in mm (5–5000)");
+      const kind = args.kind === "cut" ? "cut" : "flat";
+      const dpi = Number(args.dpi) > 0 ? Math.min(600, Math.max(72, Math.round(Number(args.dpi)))) : Math.max(w, h) > 300 ? 150 : 300;
+      const hole = args.hole && typeof args.hole === "object" ? (args.hole as Record<string, unknown>) : null;
+      const spec = sizedTemplateSpec({
+        widthMm: w,
+        heightMm: h,
+        dpi,
+        kind,
+        cornerMm: Number(args.corner_mm) || 0,
+        bleedMm: Number(args.bleed_mm) || 0,
+        ...(Number(args.safe_mm) > 0 ? { safeMm: Number(args.safe_mm) } : {}),
+        hole: hole && Number(hole.diameter_mm) > 0 ? { diameterMm: Number(hole.diameter_mm), fromTopMm: Number(hole.from_top_mm) || Number(hole.diameter_mm) } : null,
+        notes: str(args.notes),
+      });
+      const owner = await ownerOf(ctx, args, null);
+      const { data, error } = await ctx.db.from(CT_TABLES.printTemplates).insert({ user_id: owner, name: str(args.name).slice(0, 120) || `Khuôn ${w}×${h} mm`, kind, spec, sort_order: 100 }).select("*").single<CtPrintTemplate>();
+      if (error || !data) throw new Error(error?.message ?? "Không lưu được khuôn");
+      return json({ ...templateSummary(templateRow(data)), next: "brief.product.templateId = this id (char_update_brief)." });
     },
   },
   {

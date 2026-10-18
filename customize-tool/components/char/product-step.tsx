@@ -1,29 +1,25 @@
 "use client";
 
 /**
- * Step 4 — products from the layer set. One set → many products (each its own print size / blank photo is set in
- * the editor). Per product: open it in the editor, and make mockups: the print file is rendered here exactly as the
+ * Step 4 — products from the layer set (asked 2026-10-18: no buttons — @flexiprint makes the product and its mockups
+ * on its own after the master is approved; another product from the same set — a rug, a bag, a t-shirt — is asked in
+ * the chat). One set → many products. Per product: open it in the editor, see its mockups: the print file is rendered as the
  * editor's "File in" tab does, then the product's mockups (server/product-mockups.ts — the same as the editor's
  * Mockups tab and @flexiprint's make_product_mockups) put it on the phôi (exact) and have AI make lifestyle scenes.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, ImageIcon, Loader2, Package, Plus } from "lucide-react";
+import { ExternalLink, Loader2, Package } from "lucide-react";
 import type { CtPackImage, CtProductBundle } from "../../types";
-import { charApi, ctApi } from "../../lib/api-client";
-import { canvasToBlob, renderComposite } from "../../lib/compositor";
-import { defaultSelection } from "../../lib/design";
-import { displayAssets } from "../../lib/library";
+import { ctApi } from "../../lib/api-client";
 import { CT_CONFIG, ctGoogleFontsHref } from "../../config";
-import { CtButton, CtInput } from "../ui";
 import type { CharCtx } from "./char-project";
 import { BackdropSection, BlankSection } from "./blank-section";
+import { ElementGallery } from "./elements-panel";
 
 export function ProductStep(ctx: CharCtx) {
-  const { project, editable } = ctx;
-  const [name, setName] = useState(project.name);
-  const [busy, setBusy] = useState(false);
+  const { project } = ctx;
   const [bundles, setBundles] = useState<Record<string, CtProductBundle>>({});
 
   const loadBundles = useCallback(async () => {
@@ -50,33 +46,19 @@ export function ProductStep(ctx: CharCtx) {
     project.brief.kind === "photo"
       ? project.product_ids.length
         ? null
-        : "Vẽ đủ phần tử ở bước 3 rồi bấm “Tạo sản phẩm”."
-      : project.layers?.status !== "done"
-        ? "Cắt layer ở bước 3 trước — sản phẩm được tạo từ bộ file."
-        : !project.layers.approved
-          ? "Bấm “Tạo bộ custom” ở bước 3c — nó cắt clipart và tạo luôn sản phẩm."
-          : null;
+        : "@flexiprint đang vẽ phần tử — sản phẩm sẽ hiện ở đây."
+      : project.layers?.status !== "done" || !project.layers.approved
+        ? "@flexiprint đang làm bước 3 — sản phẩm được dựng từ bộ clipart, sẽ hiện ở đây."
+        : null;
   if (waiting)
     return (
       <div className="space-y-6 p-6">
         <BlankSection {...ctx} />
         <BackdropSection {...ctx} />
+        {project.brief.kind !== "photo" && project.brief.elements.length > 0 && project.master_id && <ElementGallery {...ctx} />}
         <p className="p-6 text-center text-sm text-muted-foreground">{waiting}</p>
       </div>
     );
-
-  const create = async () => {
-    setBusy(true);
-    ctx.error(null);
-    try {
-      await charApi.createProduct(project.id, name.trim() || project.name);
-      await ctx.reload();
-    } catch (e) {
-      ctx.error(e instanceof Error ? e.message : "Không tạo được sản phẩm");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="space-y-6 p-6">
@@ -84,28 +66,15 @@ export function ProductStep(ctx: CharCtx) {
       <link rel="stylesheet" href={ctGoogleFontsHref()} />
       <BlankSection {...ctx} />
       <BackdropSection {...ctx} />
-      <section className="rounded-xl border bg-card p-4">
-        <h3 className="text-sm font-semibold">Tạo sản phẩm từ bộ layer</h3>
-        <p className="mb-3 text-xs text-muted-foreground">
-          Mọi layer cùng 1 ô (đúng tỉ lệ khung file), thứ tự cố định, tóc sau đi theo tóc trước, có chữ và vùng ảnh khách nếu brief có. Một bộ dùng được cho nhiều sản phẩm — tạo thêm rồi chỉnh cỡ in / ảnh phôi trong editor.
-        </p>
-        <div className="flex gap-2">
-          <CtInput className="max-w-md" value={name} onChange={(e) => setName(e.target.value)} placeholder="Tên sản phẩm" />
-          <CtButton variant="primary" disabled={!editable || busy} onClick={() => void create()}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} {busy ? "Đang tạo (~30 giây)…" : "Tạo sản phẩm"}
-          </CtButton>
-        </div>
-      </section>
+      {project.brief.kind !== "photo" && project.brief.elements.length > 0 && <ElementGallery {...ctx} />}
       {project.product_ids.map((pid) => (
-        <ProductCard key={pid} ctx={ctx} productId={pid} bundle={bundles[pid]} />
+        <ProductCard key={pid} productId={pid} bundle={bundles[pid]} />
       ))}
     </div>
   );
 }
 
-function ProductCard({ ctx, productId, bundle }: { ctx: CharCtx; productId: string; bundle: CtProductBundle | undefined }) {
-  const [busy, setBusy] = useState(false);
-  const [print, setPrint] = useState<string | null>(null);
+function ProductCard({ productId, bundle }: { productId: string; bundle: CtProductBundle | undefined }) {
   const [mockups, setMockups] = useState<CtPackImage[]>([]);
 
   const load = useCallback(async () => {
@@ -127,28 +96,6 @@ function ProductCard({ ctx, productId, bundle }: { ctx: CharCtx; productId: stri
     return () => clearInterval(t);
   }, [drawing, load]);
 
-  const make = async () => {
-    if (!bundle) return;
-    setBusy(true);
-    ctx.error(null);
-    try {
-      const { product, assets, regions, items } = bundle;
-      const main = assets.find((a) => a.id === product.main_asset_id) ?? assets.find((a) => a.role === "main");
-      if (!main) throw new Error("Sản phẩm chưa có vùng in");
-      const flat = displayAssets(assets, "flat");
-      const selection = defaultSelection(regions, items, flat, main.id);
-      const canvas = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts: product.config?.layouts ?? {}, cutToFrame: true });
-      const blob = await canvasToBlob(canvas, "image/png");
-      setPrint(URL.createObjectURL(blob));
-      await ctApi.makeMockups(productId, blob, ctx.project.brief.mockups.filter((x) => x.trim()).slice(0, 3));
-      await load();
-    } catch (e) {
-      ctx.error(e instanceof Error ? e.message : "Không tạo được mockup");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <section className="rounded-xl border bg-card p-4">
       <div className="mb-3 flex items-center gap-3">
@@ -160,19 +107,9 @@ function ProductCard({ ctx, productId, bundle }: { ctx: CharCtx; productId: stri
         <Link href={`${CT_CONFIG.basePath}/${productId}`} target="_blank" className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent">
           <ExternalLink className="h-3.5 w-3.5" /> Mở trong editor
         </Link>
-        <CtButton size="sm" variant="primary" disabled={!ctx.editable || busy || !bundle} onClick={() => void make()}>
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageIcon className="h-3.5 w-3.5" />} Tạo mockup
-        </CtButton>
       </div>
-      {(mockups.length > 0 || print) && (
+      {mockups.length > 0 && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {print && (
-            <figure className="overflow-hidden rounded-lg border bg-white">
-              {/* eslint-disable-next-line @next/next/no-img-element -- local blob */}
-              <img src={print} alt="file in" className="aspect-[4/5] w-full object-contain" />
-              <figcaption className="p-1.5 text-[11px] text-muted-foreground">File in (mặc định)</figcaption>
-            </figure>
-          )}
           {mockups.map((m) => (
             <figure key={m.id} className="overflow-hidden rounded-lg border bg-white">
               {m.status === "done" && m.url ? (

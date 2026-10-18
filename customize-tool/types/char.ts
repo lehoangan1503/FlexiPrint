@@ -52,6 +52,34 @@ export interface CtCharSlot {
   colors: CtCharOption[];
   /** A part both behind and in front of the body (long hair, scarf): two layers, back linked to front. */
   wraps: boolean;
+  /** The customer may also pick none of it ("NO" glasses, asked 2026-10-18): the options are drawn as usual, the
+   * product's layer gets a "None" choice. */
+  optional?: boolean;
+  /** Not a choice of its own: shows the option at the same position as this decoration (brief.elements id) — the
+   * sweaters and hats of a family follow the theme the customer picks. Same option count and order. */
+  follows?: string | null;
+  /** Only there while a chooser shows one option (a boy's hair while "Grandchild 1" is "Boy"). */
+  shownWhen?: CtCharShownWhen | null;
+}
+
+/** A condition on a chooser (brief.choosers): the part / text / decoration exists only while it shows `option`. */
+export interface CtCharShownWhen {
+  chooser: string;
+  option: string;
+}
+
+/**
+ * A customer choice that draws nothing itself and only decides which parts exist (asked 2026-10-18: each grandchild a
+ * boy or a girl, the grandparent a grandma or a grandpa, hats or no hats): the parts, texts and decorations with
+ * `shownWhen` on it come and go. `subject` = it belongs to that character (only in the versions that have them).
+ */
+export interface CtCharChooser {
+  id: string;
+  /** What the customer is asked, English: "Grandchild 1", "Hats". */
+  label: string;
+  /** The first one is the master's / the default. */
+  options: CtCharOption[];
+  subject?: string | null;
 }
 
 /**
@@ -83,6 +111,24 @@ export interface CtCharSubject {
   /** "young woman, sitting, one knee up" · "small corgi, sitting" — order in the list = left → right in the picture. */
   description: string;
   slots: CtCharSlot[];
+  /** What the customer calls this character, English ("Boy", "Person 1") — the version name when the customer picks
+   * who is in the picture (brief.lineup), and the start of its options' labels. Empty = from the description. */
+  name?: string;
+  /** Always in the picture whatever the lineup (the grandma the grandchildren gather round). */
+  always?: boolean;
+}
+
+/**
+ * Who is in the picture is itself a customer choice (asked 2026-10-18: a graduation ornament of a boy OR a girl; a
+ * family rug of 1–5 people). Every subject is drawn once in the master, standing apart; the product gets one version
+ * per choice (CtMainOptionConfig), each with only its subjects' layers, laid out on their own:
+ *   one    the customer picks ONE subject (a version per subject, named by subject.name)
+ *   count  the customer picks how many: version k = the first k subjects from the left, same size, centred
+ */
+export interface CtCharLineup {
+  mode: "one" | "count";
+  /** What the customer is asked, English: "Choose character", "Number of people". */
+  label: string;
 }
 
 /**
@@ -134,7 +180,9 @@ export type CtCharSetKind = "character" | "photo";
  */
 export type CtCharElementPlace = "behind" | "above" | "bottom" | "free";
 
-/** One decoration the customer picks (bộ ảnh khách). */
+/** One decoration the customer picks (bộ ảnh khách), or a decoration of a bộ nhân vật (asked 2026-10-18: a "Class of"
+ * scroll, a ribbon banner, the year in glitter numbers, a Christmas tree beside the family) — drawn ALONE in the
+ * master's look, never cut; a single option is simply drawn (no choice). */
 export interface CtCharElement {
   id: string;
   /** What the customer is asked, English: "Wings", "Halo colour". */
@@ -149,10 +197,18 @@ export interface CtCharElement {
   perBackdrop: boolean;
   /** On the piece (shares of the safe area); null = from `place`. */
   box: CtCharBox | null;
+  /** Another element whose choice this one shows at the same position (the right-hand decoration and the ground follow
+   * the left-hand one's theme): not a customer choice, same option count. */
+  follows?: string | null;
+  /** Drawn in front of the characters (the year over the gown); default = behind them. A bộ nhân vật only. */
+  front?: boolean;
+  shownWhen?: CtCharShownWhen | null;
 }
 
-/** Where a text sits on the product, around the characters. */
-export type CtCharTextPlace = "top" | "bottom" | "left" | "right";
+/** Where a text sits on the product, around the characters — "under": under one character (`subject`), the name of
+ * each person of a family rug; "free": `box`; "on": over one character (`subject`) at `box` = shares of THAT
+ * character's own box (a name on a hat's brim, on a sweater). */
+export type CtCharTextPlace = "top" | "bottom" | "left" | "right" | "under" | "free" | "on";
 
 /**
  * A text the customer personalises (asked 2026-10-14: a name left and right of the characters, a slogan picked from
@@ -164,7 +220,9 @@ export interface CtCharTextField {
   id: string;
   /** What the customer is asked, in English: "Name on the left", "Choose your slogan". */
   label: string;
-  kind: "input" | "choice";
+  /** input = typed · choice = picked from `choices` · fixed = `defaultText` as it is (no field — "This Grandma Belongs
+   * To", one per grandparent option with shownWhen). */
+  kind: "input" | "choice" | "fixed";
   defaultText: string;
   choices: string[];
   /** A Google font of config.ts CT_FONTS. */
@@ -173,6 +231,15 @@ export interface CtCharTextField {
   color: string;
   place: CtCharTextPlace;
   maxChars: number;
+  /** place "under": the subject (id) it is the name of — shown only with that subject. */
+  subject?: string | null;
+  /** place "free": shares of the safe area. */
+  box?: CtCharBox | null;
+  /** Letters drawn upper-case. */
+  uppercase?: boolean;
+  shownWhen?: CtCharShownWhen | null;
+  /** Bowed along an arc (-100..100, positive ∩) — a name along a hat's brim. */
+  curve?: number;
 }
 
 /**
@@ -186,6 +253,9 @@ export interface CtCharBackdrop {
   name: string;
   /** English description for the image model. */
   value: string;
+  /** A repeating pattern (buffalo plaid): drawn as one seamless tile and repeated over the piece — sharp on a 120 cm
+   * rug, where one picture stretched over it would blur. */
+  tile?: boolean;
 }
 
 export interface CtCharBrief {
@@ -204,6 +274,12 @@ export interface CtCharBrief {
   photoZones: CtCharPhotoZone[];
   /** A bộ ảnh khách's decorations, bottom → top within their place. */
   elements: CtCharElement[];
+  /** Where the characters go on the piece (shares of the safe area); null = laid out around the texts. */
+  charactersBox?: CtCharBox | null;
+  /** Choices that only decide which parts exist (boy / girl, hats / no hats). */
+  choosers?: CtCharChooser[];
+  /** Who is in the picture is a customer choice (null = everyone, always). */
+  lineup?: CtCharLineup | null;
   /** The texts the customer personalises (names, a slogan), each in its place around the characters. */
   texts: CtCharTextField[];
   /** The backgrounds the customer picks from (none = the product's own colour); never part of the master. */
@@ -483,10 +559,13 @@ export interface CtCharCutState {
  *   master      the agent writes the master prompt, draws candidates, looks at them, refines in place; the editor
  *               approves one (imageId set = refine that master by `request`)
  *   edits       the agent writes the prompt of every in-place edit the brief needs, runs them, checks, redoes
+ *   auto        everything after the master is approved, on its own (asked 2026-10-18): 3a → the 3b pictures (drawn,
+ *               checked, redrawn) → the cut → step 4 (backgrounds, decorations, the product, mockups); the editor only
+ *               watches it — "Dừng" cancels the task, then they ask for changes in the chat
  *   chat        the sticky chat of the page: anything the editor asks on any tab (with screenshots / pictures dragged
  *               in) — the agent gets the whole set (brief, masters, edits, regions, files, products) and every tool
  */
-export type CtCharTaskStep = "brainstorm" | "master" | "edits" | "chat";
+export type CtCharTaskStep = "brainstorm" | "master" | "edits" | "chat" | "auto";
 
 /** The tab of the page the editor was on when they wrote a chat request. */
 export type CtCharChatTab = "brief" | "master" | "layers" | "product";

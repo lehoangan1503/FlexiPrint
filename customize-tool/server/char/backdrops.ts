@@ -39,6 +39,16 @@ export function backdropPrompt(p: CtCharProject, b: CtCharBackdrop, round: boole
     .join(" ");
 }
 
+/** The starting prompt of a repeating background (backdrop.tile): one square of the pattern, flat, edge to edge — the
+ * product repeats it (mirrored, so its seams always meet: server/char/product.ts seamlessTile). */
+export function tilePrompt(p: CtCharProject, b: CtCharBackdrop): string {
+  return [
+    `${(b.value || b.name).replace(/\.$/, "")}.`,
+    `One square swatch of this repeating pattern for a ${p.brief.product.label || "printed product"}, seen flat from straight above, filling the whole picture edge to edge, evenly lit (no vignette, no shadow, no fold, no perspective), the pattern straight and regular, crisp fabric-print detail.`,
+    "Only the pattern: no characters, no objects, no text, no frame or border.",
+  ].join(" ");
+}
+
 /** (Re)draw backdrops in the background: running rows now, done / failed later. `prompts` replaces the starting
  * prompt of a backdrop; `ids` empty = every backdrop of the brief. */
 export async function startBackdrops(db: Db, userId: string, p: CtCharProject, args: { ids?: string[]; prompts?: Record<string, string>; taskId?: string }): Promise<CtCharImage[]> {
@@ -54,7 +64,7 @@ export async function startBackdrops(db: Db, userId: string, p: CtCharProject, a
   const aspect = ratio > 1.2 ? "3:2" : ratio < 0.83 ? "2:3" : "1:1";
   const rows: CtCharImage[] = [];
   for (const b of list) {
-    const prompt = (args.prompts?.[b.id] ?? "").trim() || backdropPrompt(p, b, round);
+    const prompt = (args.prompts?.[b.id] ?? "").trim() || (b.tile ? tilePrompt(p, b) : backdropPrompt(p, b, round));
     const { data: row } = await db
       .from(CT_TABLES.charImages)
       .insert({ project_id: p.id, user_id: userId, kind: "blank", role: `${BACKDROP_ROLE}${b.id}`, status: "running", note: `Nền — ${b.name}`, prompt, meta: args.taskId ? { taskId: args.taskId } : {} })
@@ -62,7 +72,7 @@ export async function startBackdrops(db: Db, userId: string, p: CtCharProject, a
       .single<CtCharImage>();
     if (!row) continue;
     rows.push(row);
-    void runCharDraw(db, userId, row, { prompt, refs: [], aspect, refSize: { w: null, h: null } });
+    void runCharDraw(db, userId, row, { prompt, refs: [], aspect: b.tile ? "1:1" : aspect, refSize: { w: null, h: null } });
   }
   return rows;
 }

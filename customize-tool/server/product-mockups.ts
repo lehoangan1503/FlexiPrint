@@ -70,6 +70,99 @@ export async function frontMockup(blank: Buffer, print: Buffer, box: CtProductSc
   return sharp(blank).removeAlpha().composite([{ input: patch, left: x, top: y }]).jpeg({ quality: 92 }).toBuffer();
 }
 
+// ---- a die-cut acrylic piece: its phôi IS its outline --------------------------------------------------------
+
+/** A mask grown by r px (blur, then any trace counts — sharp thresholds before it blurs, so by hand). */
+async function grow(mask: Buffer, w: number, h: number, r: number): Promise<Buffer> {
+  // One band out (sharp hands a blurred single band back as three otherwise).
+  const blurred = await sharp(mask, { raw: { width: w, height: h, channels: 1 } }).blur(Math.max(0.5, r / 2)).extractChannel(0).raw().toBuffer();
+  const out = Buffer.alloc(w * h);
+  for (let i = 0; i < w * h; i++) out[i] = blurred[i] > 6 ? 255 : 0;
+  return out;
+}
+
+/**
+ * The front photo of a die-cut clear acrylic ornament (asked 2026-10-18 — there is no blank to shoot: the piece is the
+ * artwork's own outline): the print on a clear plate cut `borderPx` around it, a round clear tab at the top centre
+ * with the hanging hole, the plate's edge catching the light, on a soft light backdrop. The AI scenes start from it.
+ */
+export async function acrylicFront(print: Buffer, borderPx: number): Promise<Buffer> {
+  const m = await sharp(print).metadata();
+  const pw = m.width ?? 1024;
+  const ph = m.height ?? 1024;
+  const tabR = Math.round(Math.max(pw, ph) * 0.055);
+  const pad = Math.round(Math.max(pw, ph) * 0.12) + tabR * 2;
+  const W = pw + 2 * pad;
+  const H = ph + 2 * pad;
+  const art = await sharp(print).ensureAlpha().extend({ top: pad, bottom: pad, left: pad, right: pad, background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+  const alpha = await sharp(art).extractChannel(3).raw().toBuffer();
+  const ink = Buffer.alloc(W * H);
+  for (let i = 0; i < W * H; i++) ink[i] = alpha[i] > 24 ? 255 : 0;
+  const plate = await grow(ink, W, H, borderPx);
+  // The tab: a disc over the plate's top edge at the middle of the artwork, the hole through it.
+  let top = H;
+  let x0 = W;
+  let x1 = 0;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++)
+      if (plate[y * W + x]) {
+        if (y < top) top = y;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+      }
+  const cx = Math.round((x0 + x1) / 2);
+  // The plate's top at the middle (the tab sits on what is there, not on the highest point elsewhere).
+  let midTop = top;
+  for (let y = 0; y < H; y++)
+    if ([-2, 0, 2].some((d) => plate[y * W + cx + Math.round((d * tabR) / 4)])) {
+      midTop = y;
+      break;
+    }
+  const cy = midTop - Math.round(tabR * 0.45);
+  const holeR = Math.round(tabR * 0.45);
+  for (let y = Math.max(0, cy - tabR); y <= Math.min(H - 1, cy + tabR); y++)
+    for (let x = Math.max(0, cx - tabR); x <= Math.min(W - 1, cx + tabR); x++) if ((x - cx) ** 2 + (y - cy) ** 2 <= tabR * tabR) plate[y * W + x] = 255;
+  // A neck between the tab and the plate (the tab must hold).
+  for (let y = cy; y <= midTop + borderPx; y++) for (let x = cx - Math.round(tabR * 0.6); x <= cx + Math.round(tabR * 0.6); x++) if (y >= 0 && y < H && x >= 0 && x < W) plate[y * W + x] = 255;
+  for (let y = cy - holeR; y <= cy + holeR; y++) for (let x = cx - holeR; x <= cx + holeR; x++) if (y >= 0 && y < H && (x - cx) ** 2 + (y - cy) ** 2 <= holeR * holeR) plate[y * W + x] = 0;
+  // The plate: faintly white, its rim brighter with a soft grey line outside (the cut edge's thickness).
+  const rimIn = await grow(Buffer.from(plate.map((v) => 255 - v)), W, H, Math.max(2, borderPx * 0.18));
+  const outer = await grow(plate, W, H, Math.max(2, borderPx * 0.12));
+  const px = Buffer.alloc(W * H * 4);
+  for (let i = 0; i < W * H; i++) {
+    const o = i * 4;
+    if (plate[i] && rimIn[i]) {
+      px[o] = px[o + 1] = px[o + 2] = 255;
+      px[o + 3] = 210;
+    } else if (plate[i]) {
+      px[o] = 248;
+      px[o + 1] = 251;
+      px[o + 2] = 255;
+      px[o + 3] = 95;
+    } else if (outer[i]) {
+      px[o] = 150;
+      px[o + 1] = 156;
+      px[o + 2] = 165;
+      px[o + 3] = 150;
+    }
+  }
+  const glass = await sharp(px, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer();
+  const shadow = await sharp(Buffer.from(plate), { raw: { width: W, height: H, channels: 1 } }).blur(Math.max(4, borderPx)).extractChannel(0).raw().toBuffer();
+  const shade = Buffer.alloc(W * H * 4);
+  for (let i = 0; i < W * H; i++) shade[i * 4 + 3] = Math.round(shadow[i] * 0.16);
+  const shadowPng = await sharp(shade, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer();
+  const bg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><defs><radialGradient id="g" cx="50%" cy="40%" r="75%"><stop offset="0" stop-color="#f7f7f5"/><stop offset="1" stop-color="#dcdcd8"/></radialGradient></defs><rect width="100%" height="100%" fill="url(#g)"/></svg>`);
+  return sharp(bg)
+    .composite([
+      { input: shadowPng, left: Math.round(borderPx * 0.6), top: Math.round(borderPx * 0.9) },
+      { input: glass, left: 0, top: 0 },
+      { input: art, left: 0, top: 0 },
+    ])
+    .flatten({ background: "#eeeeec" })
+    .jpeg({ quality: 92 })
+    .toBuffer();
+}
+
 // ---- the phôi trơn ------------------------------------------------------------------------------------------
 
 /** What the piece is cut to, in sheet px: the khuôn outline, else the whole sheet. */
@@ -362,10 +455,16 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
     return json.asset;
   };
 
-  // The front one: the artwork laid exactly on the phôi (its own light and shade), no AI. Without a phôi: on white.
+  // The front one: the artwork laid exactly on the phôi (its own light and shade), no AI. A die-cut acrylic: its plate
+  // made from the artwork's outline (+ the border, the hanging tab). Without a phôi: on white.
+  const dieCut = config.print?.kind === "cut" || (config.material.id.startsWith("acrylic") && config.material.shape === "contour");
   let front: Buffer;
   if (config.scene.url && config.scene.box.w > 0) front = await frontMockup(await fetchImage(config.scene.url), print, config.scene.box);
-  else {
+  else if (dieCut) {
+    const pw = (await sharp(print).metadata()).width ?? 1024;
+    const mm = config.print?.spec.widthMm || config.material.widthMm || 90;
+    front = await acrylicFront(print, Math.max(4, Math.round((config.material.borderMm || 2.5) * (pw / mm))));
+  } else {
     const m = await sharp(print).metadata();
     const pad = Math.round(Math.max(m.width ?? 0, m.height ?? 0) * 0.08);
     front = await sharp(print).flatten({ background: "#ffffff" }).extend({ top: pad, bottom: pad, left: pad, right: pad, background: "#ffffff" }).jpeg({ quality: 92 }).toBuffer();
@@ -379,14 +478,21 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
     .select("*")
     .single<CtPackImage>();
 
+  // A wide piece (a 120 × 40 cm runner rug) in a wide photo: in a 4:5 one its ends were cut off (2026-10-18).
+  const fm = await sharp(front).metadata();
+  const sceneAspect = (fm.width ?? 1) / (fm.height ?? 1) > 1.6 ? "3:2" : "4:5";
   const want = scenes.length ? scenes : [`on a bright minimal surface with soft daylight and a few props that suit a ${piece}`];
   const model = CT_IMAGE_MODEL;
   const rows: CtPackImage[] = [];
+  // A die-cut acrylic is named by what it is (the khuôn's name is the team's Vietnamese one).
+  const what = dieCut
+    ? `${config.material.id === "acrylic_white" ? "white-backed" : "clear"} acrylic ornament, die-cut along the artwork's outline with a thin clear border, a small round clear tab with a hole at the top centre, hung by a gold cord through that hole`
+    : piece;
   for (const sc of want) {
-    const prompt = `Lifestyle product photo of this exact ${piece} ${sc}. The product is shown as a real physical object in a fitting, beautiful setting (the finished product with any hanger, ribbon or stand it would really have).${KEEP_PRINT}`;
+    const prompt = `Lifestyle product photo of this exact ${what} ${sc}. The product is shown as a real physical object in a fitting, beautiful setting (the finished product with any hanger, ribbon or stand it would really have).${sceneAspect === "3:2" ? " The whole product is in the picture, both ends visible." : ""}${dieCut ? " The acrylic is glossy and see-through where nothing is printed, its cut edge catching the light." : ""}${KEEP_PRINT}`;
     const { data: row } = await db
       .from(CT_TABLES.packImages)
-      .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: sc, prompt, refs: [frontAsset.url], aspect: "4:5", model })
+      .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: sc, prompt, refs: [frontAsset.url], aspect: sceneAspect, model })
       .select("*")
       .single<CtPackImage>();
     if (row) rows.push(row);
@@ -396,7 +502,7 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
       let last = "";
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const out = await drawImage(model, row.prompt, [frontAsset.url], "4:5", "crop");
+          const out = await drawImage(model, row.prompt, [frontAsset.url], sceneAspect, "crop");
           const jpeg = await sharp(out.data).flatten({ background: "#ffffff" }).jpeg({ quality: 90 }).toBuffer();
           const asset = await toProduct(jpeg, `mockup_${row.description.split(/\s+/).slice(0, 4).join("_")}`);
           const m = await sharp(jpeg).metadata();

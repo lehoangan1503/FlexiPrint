@@ -26,7 +26,7 @@
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
 import type { CtCharBrief, CtCharCutState, CtCharIdeaRound, CtCharImage, CtCharImageKind, CtCharMask, CtCharProject, CtCharRef, CtCharRefUse } from "../../types";
-import { REF_USE_INFO, masterBriefKey, masterPrompt, parseCharBrief } from "../../lib/char-brief";
+import { REF_USE_INFO, masterBriefKey, masterPrompt, parseCharBrief, setAspect } from "../../lib/char-brief";
 import { CT_IMAGE_MODEL } from "../../lib/image-models";
 import { drawImage } from "../pack-images";
 import { ctServiceClient, type CtSession } from "../supabase";
@@ -216,7 +216,7 @@ export async function uploadCharFile(s: CtSession, id: string, form: FormData): 
 
 /** "w:h" of the picture an edit is made from (gpt-image picks its canvas from it). */
 function editAspect(w: number | null, h: number | null): string {
-  return w && h ? `${w}:${h}` : SET_ASPECT;
+  return w && h ? `${w}:${h}` : "1:1";
 }
 
 export interface CharDraw {
@@ -273,9 +273,9 @@ export function modelRefs(brief: CtCharBrief, images: CtCharImage[]): { urls: st
   };
 }
 
-/** Every picture of a set is 1024×1024 (asked 2026-10-12: one canvas, one ratio — whoever is tall or short fits in it):
- * the master and every edit of it land on the same pixels; layer-kit only undoes the model's own drift. */
-const SET_ASPECT = "1:1";
+// Every picture of a set is on ONE canvas (asked 2026-10-12: one ratio — whoever is tall or short fits in it): the
+// master and every edit of it land on the same pixels; layer-kit only undoes the model's own drift. 1024×1024, or
+// 1536×1024 for a row of 4+ characters (lib/char-brief setAspect, 2026-10-18).
 
 export interface MasterDrawArgs {
   /** The full prompt (the style-reference line is added here); "" = assembled from the brief. */
@@ -300,7 +300,7 @@ export async function drawMasters(db: Db, userId: string, p: CtCharProject, a: M
   if (error || !data) throw new Error(error?.message ?? "Không tạo được");
   // Drawn cut out (transparent): the AI's own cut-out is the matte (step 3a) — no bg-remover (asked 2026-10-12).
   // A bộ ảnh khách's master is the whole flat design, its background included.
-  for (const row of data) void runCharDraw(db, userId, row, { prompt: full, refs, aspect: SET_ASPECT, refSize: { w: null, h: null }, transparent: p.brief.kind !== "photo" });
+  for (const row of data) void runCharDraw(db, userId, row, { prompt: full, refs, aspect: setAspect(p.brief), refSize: { w: null, h: null }, transparent: p.brief.kind !== "photo" });
   return data;
 }
 
@@ -322,7 +322,7 @@ export async function drawIdeaPreviews(db: Db, userId: string, p: CtCharProject,
   data.forEach((row, i) => {
     const brief = { ...round.ideas[i].brief, refs: p.brief.refs };
     const { urls } = modelRefs(brief, images);
-    void runCharDraw(db, userId, row, { prompt: row.prompt, refs: urls, aspect: SET_ASPECT, refSize: { w: null, h: null }, transparent: brief.kind !== "photo" });
+    void runCharDraw(db, userId, row, { prompt: row.prompt, refs: urls, aspect: setAspect(brief), refSize: { w: null, h: null }, transparent: brief.kind !== "photo" });
   });
   return data;
 }

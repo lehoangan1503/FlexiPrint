@@ -96,6 +96,17 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
   object alone and complete — used ONLY as the option's thumbnail in the shop (asset meta.thumb); its clipart stays the cut.
 - "Tạo bộ custom" = plan (regions) → cut → the cliparts in the product's library folder → ONE finished product, its
   layers in the cut's order (a recoloured jacket lies over the dress).
+- Each picture adds exactly ONE part (2026-10-18): a gown picture with the stole drawn on it, a stole picture with the
+  gown, pants that recolour the underwear top — each would carry the other part into its file and hide the customer's
+  choice of it. Say "ONLY the <part>, the magenta underwear stays visible around it" and draw again.
+- Thin parts on small figures (gọng kính on a family of five on a wide canvas) fall under the cut's minimum piece:
+  draw them bolder (cartoon glasses: thick frames, tinted lenses with a shine) — never lower the cut's threshold.
+- Who is in the picture as a customer choice (brief.lineup, 2026-10-18): the subjects stand apart in the master; the
+  body file is split per subject (each connected piece to the nearest subject's centre, a piece holding two centres
+  split by x) — one version per choice, only its subjects' layers.
+- The doll's magenta never reaches a product (standard chroma-key clean-up, the same for every set): uncovered
+  underwear in the body file is a dark shadow; a key-coloured pixel within 4 px of an option file's edge (the doll
+  mixed into its outline) is dropped — a magenta / purple part itself is left alone.
 
 ## 10. Checks before a set is used
 - Every file of a slot has the same pixel size.

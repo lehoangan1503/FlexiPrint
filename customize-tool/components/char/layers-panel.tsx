@@ -9,12 +9,11 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Bot, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Play, RefreshCw } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import type { CtCharImage } from "../../types";
 import { planEdits } from "../../lib/char-plan";
 import { latestEditsOf } from "../../lib/char-images";
-import { CHECKER_STYLE, CtButton, CtModal, CtTextarea, FLOAT_BTN, cx } from "../ui";
-import { charApi } from "../../lib/api-client";
+import { CHECKER_STYLE, CtButton, CtModal, FLOAT_BTN, cx } from "../ui";
 import type { CharCtx } from "./char-project";
 import { ProductStep } from "./product-step";
 import { CustomSection, CutEditor, MatteSection, type CutEdit } from "./cut-panel";
@@ -60,7 +59,7 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
       {!project.master_id ? (
         <div className="rounded-xl border bg-card p-6 text-sm">
           <p className="font-medium">Bước 3 bắt đầu khi đã có master được duyệt.</p>
-          <p className="mt-1 text-muted-foreground">Sang tab “2. Master”, cho @flexiprint vẽ rồi bấm Duyệt 1 bản. Sau đó ở đây lần lượt: 3a tách nền (master đã có nền trong suốt — chỉ phóng to để in) → 3b AI vẽ búp bê giấy rồi vẽ từng kiểu lên búp bê → 3c bộ custom (một nút: mỗi clipart = đúng phần ảnh 3b khác búp bê, ráp thành sản phẩm hoàn chỉnh trong editor).</p>
+          <p className="mt-1 text-muted-foreground">Sang tab “2. Master”, cho @flexiprint vẽ rồi bấm Duyệt 1 bản. Duyệt xong, @flexiprint tự làm hết: 3a master cỡ in → 3b búp bê giấy và từng kiểu vẽ lên búp bê → 3c cắt clipart và ráp sản phẩm → bước 4 nền, phần tử, mockup. Bạn chỉ xem; cần sửa thì bấm Dừng và nhắn ở ô chat.</p>
           <CtButton className="mt-3" onClick={() => ctx.goto("master")}>
             Sang bước Master →
           </CtButton>
@@ -81,16 +80,11 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
 const shift = (im: CtCharImage) => (im.meta.align ? (im.meta.align.before ?? Math.hypot(im.meta.align.dx, im.meta.align.dy)) : null);
 
 function EditsSection(ctx: CharCtx) {
-  const { project, images, editable } = ctx;
+  const { project, images } = ctx;
   const plan = useMemo(() => planEdits(project.brief), [project.brief]);
   const latest = latestEditsOf(images);
-  const [request, setRequest] = useState("");
   const [zoomRole, setZoomRole] = useState<string | null>(null);
   const done = plan.filter((e) => latest.get(e.role)?.status === "done").length;
-  const missing = plan.length - done;
-  const running = plan.some((e) => latest.get(e.role)?.status === "running");
-  const busy = ctx.agent.busy;
-  const working = ctx.agent.task?.input.char?.step === "edits";
   // The viewer steps through the finished edits in the grid's order (‹ › or the arrow keys).
   const viewable = plan.map((e) => latest.get(e.role)).filter((im): im is CtCharImage => im?.status === "done");
   const at = viewable.findIndex((im) => im.role === zoomRole);
@@ -106,45 +100,15 @@ function EditsSection(ctx: CharCtx) {
     return () => window.removeEventListener("keydown", kd);
   });
 
-  /** @flexiprint writes the prompts, runs them and checks the results (roles: only those; none = what is missing). */
-  const run = async (roles?: string[]) => {
-    await ctx.agent.start("edits", request.trim(), { roles: roles ?? [] });
-    setRequest("");
-  };
-  /** The planned prompts as they are, no agent (roles: again; none = what is missing). */
-  const direct = async (roles?: string[]) => {
-    ctx.error(null);
-    try {
-      await charApi.edits(project.id, roles);
-      await ctx.reload();
-    } catch (e) {
-      ctx.error(e instanceof Error ? e.message : "Không chạy được");
-    }
-  };
-
   return (
     <section className="rounded-xl border bg-card p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <div className="flex-1">
           <h3 className="text-sm font-semibold">AI vẽ ảnh để cắt clipart ({done}/{plan.length})</h3>
           <p className="text-xs text-muted-foreground">
-            Khoá pixel: GPT Image 2.5 vẽ búp bê giấy (bỏ mọi phần khách đổi — trọc, đồ lót hồng tím, tay không) rồi vẽ TỪNG kiểu lên chính búp bê đó, nền trong suốt. Búp bê là lớp thân; mỗi clipart = đúng những pixel ảnh của kiểu đó khác búp bê — ráp lên búp bê là ra y ảnh ở đây. Ảnh nào làm xê dịch / xoá phần búp bê (tay, mặt) thì vẽ lại ảnh đó. Danh sách tự sinh từ brief. Model xê dịch một chút: lúc cắt mỗi ảnh được đo và kéo về đúng chỗ (≤ 0,5 px).
+            Tự động: @flexiprint vẽ búp bê giấy (bỏ mọi phần khách đổi) rồi vẽ TỪNG kiểu lên chính búp bê đó, tự xem và vẽ lại ảnh sai. Mỗi clipart = đúng những pixel ảnh của kiểu đó khác búp bê, nên ghép lại không lệch. Thấy ảnh nào chưa ưng thì nhắn ở ô chat bên dưới.
           </p>
         </div>
-        {editable && (
-          <div className="flex w-full items-end gap-2 sm:w-auto">
-            <CtTextarea rows={1} className="min-w-[260px]" value={request} disabled={busy} placeholder="Yêu cầu cho @flexiprint (không bắt buộc)" onChange={(e) => setRequest(e.target.value)} />
-            {missing > 0 && (
-              <CtButton disabled={busy || running} title="Chạy ngay các ảnh còn thiếu bằng prompt mặc định (không qua @flexiprint)" onClick={() => void direct()}>
-                {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Tạo ngay
-              </CtButton>
-            )}
-            <CtButton variant="primary" disabled={busy || running || (missing === 0 && !request.trim())} onClick={() => void run()}>
-              {working || running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-              {working ? "@flexiprint đang làm…" : missing > 0 ? `Gửi @flexiprint tạo ${missing} bản còn thiếu` : "Gửi @flexiprint xem lại"}
-            </CtButton>
-          </div>
-        )}
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6 2xl:grid-cols-8">
         {plan.map((e) => {
@@ -185,26 +149,6 @@ function EditsSection(ctx: CharCtx) {
                       dời {d.toFixed(2)} px
                     </span>
                   ) : null}
-                  {editable && im && im.status !== "running" && e.role !== "work" && (
-                    <>
-                      <button
-                        className="ml-auto rounded p-0.5 hover:bg-accent disabled:opacity-40"
-                        disabled={busy || running}
-                        title="Làm lại ngay bằng prompt mặc định (kéo theo các ảnh vẽ từ nó)"
-                        onClick={() => void direct([e.role])}
-                      >
-                        <Play className="h-3 w-3" />
-                      </button>
-                      <button
-                        className="rounded p-0.5 hover:bg-accent disabled:opacity-40"
-                        disabled={busy}
-                        title="@flexiprint làm lại (kéo theo các ảnh vẽ từ nó) — ghi yêu cầu ở ô trên nếu cần"
-                        onClick={() => void run([e.role])}
-                      >
-                        <RefreshCw className="h-3 w-3" />
-                      </button>
-                    </>
-                  )}
                 </div>
               </div>
             </div>

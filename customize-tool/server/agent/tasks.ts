@@ -112,7 +112,7 @@ function parseContentInput(raw: unknown): CtAgentTaskInput | null {
   };
 }
 
-const CHAR_STEPS: CtCharTaskStep[] = ["brainstorm", "master", "edits", "chat"];
+const CHAR_STEPS: CtCharTaskStep[] = ["brainstorm", "master", "edits", "chat", "auto"];
 const CHAT_TABS: CtCharChatTab[] = ["brief", "master", "layers", "product"];
 
 /** The pictures of a chat request: our own uploads only (screenshots / page pictures on R2). */
@@ -157,6 +157,7 @@ const CHAR_STEP_TEXT: Record<CtCharTaskStep, string> = {
   master: "Viết prompt master, tạo và tự duyệt master",
   edits: "Viết prompt các ảnh AI để cắt clipart (3b), chạy và kiểm tra",
   chat: "Yêu cầu từ ô chat",
+  auto: "Master đã duyệt — tự làm hết bước 3 (ảnh để cắt, cắt clipart) và bước 4 (nền, phần tử, sản phẩm, mockup), tự kiểm tra từng bước, đến khi xong sản phẩm",
 };
 
 export const CHAT_TAB_TEXT: Record<CtCharChatTab, string> = { brief: "1. Brief", master: "2. Master", layers: "3. Layer", product: "4. Sản phẩm" };

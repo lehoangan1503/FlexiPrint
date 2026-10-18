@@ -311,7 +311,7 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
       .slice(0, 4),
     elements: arr(o.elements).map(parseElement).filter((x): x is CtCharElement => x !== null).slice(0, 10),
     lineup: parseLineup(o.lineup),
-    choosers: arr(o.choosers).map(parseChooser).filter((x): x is CtCharChooser => x !== null).slice(0, 12),
+    choosers: arr(o.choosers).map(parseChooser).filter((x): x is CtCharChooser => x !== null).slice(0, 24),
     charactersBox: parseBox(o.charactersBox),
     // Older briefs had one name ("text") and a decor sentence: read as one text field / one backdrop.
     texts: (Array.isArray(o.texts)
@@ -321,8 +321,8 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
         : []
     )
       .filter((x): x is CtCharTextField => x !== null)
-      // A name per character, on the hat or (no hat) on the top: 2 fields × up to 8 subjects.
-      .slice(0, 16),
+      // A name per character on each hat style's brim or (no hat) on the top: up to 4 fields × 6 subjects.
+      .slice(0, 24),
     backdrops: (Array.isArray(o.backdrops) ? arr(o.backdrops) : s(o.decor) ? [{ name: "Background", value: s(o.decor, 1000) }] : [])
       .map((x) => {
         const r = rec(x);

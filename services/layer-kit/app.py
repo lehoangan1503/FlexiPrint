@@ -65,14 +65,17 @@ def auth(h: str | None) -> None:
 
 
 def fetch(url: str) -> Image.Image:
-    # Three tries: one slow answer of the file server failed a whole 15-minute plan (2026-10-14).
-    for attempt in range(3):
+    # Four tries: one slow answer of the file server failed a whole 15-minute plan (2026-10-14); a busy server's 5xx /
+    # 429 (60+ files fetched in a row on the small VPS) failed a whole cut (2026-10-18).
+    for attempt in range(4):
         try:
             r = requests.get(url, timeout=120)
-            break
+            if r.status_code < 500 and r.status_code != 429:
+                break
         except requests.RequestException:
-            if attempt == 2:
+            if attempt == 3:
                 raise
+        if attempt < 3:
             time.sleep(3 * (attempt + 1))
     if not r.ok:
         raise HTTPException(400, f"cannot download {url}: {r.status_code}")

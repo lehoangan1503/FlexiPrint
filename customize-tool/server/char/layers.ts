@@ -450,7 +450,12 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const failed: CtCharLayerSet = { ...(p.layers ?? { width: 0, height: 0, slots: [], zones: [], checks: [], builtAt: "" }), status: "failed", error: msg.slice(0, 1000) };
-    await db.from(CT_TABLES.charProjects).update({ layers: failed }).eq("id", p.id);
+    // A few tries: one blip of the database left the set "building" for ever, nothing could cut it again (2026-10-18).
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { error } = await db.from(CT_TABLES.charProjects).update({ layers: failed }).eq("id", p.id);
+      if (!error) break;
+      await new Promise((r) => setTimeout(r, 5_000 * (attempt + 1)));
+    }
   } finally {
     if (job) await kitForget(job);
   }

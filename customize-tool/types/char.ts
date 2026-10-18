@@ -549,6 +549,8 @@ export interface CtCharPlan {
   checks: CtCharLayerCheck[];
   approved: boolean;
   at: string;
+  /** The layer-kit job while it runs: whether a plan still runs is asked there, not guessed from the clock. */
+  job?: string;
 }
 
 export interface CtCharCutState {

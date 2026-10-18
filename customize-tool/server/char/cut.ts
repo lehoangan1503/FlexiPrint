@@ -29,7 +29,7 @@ import type { CtCharCutState, CtCharImage, CtCharLayerCheck, CtCharMask, CtCharM
 import type { CtSession } from "../supabase";
 import { ctRemove } from "../storage";
 import { saveCharRaw } from "./files";
-import { kitFile, kitForget, kitJob, kitPost } from "./kit";
+import { kitFile, kitForget, kitJob, kitJobRunning, kitPost } from "./kit";
 import { kitPlanInput, latestEdits, startBuild } from "./layers";
 import { cutPaths, jobDb, jsonError, loadImages, loadProject, maskPaths, projectRow, type Db, canEditProject, NOT_YOURS } from "./projects";
 
@@ -182,9 +182,11 @@ interface KitPlan {
 /** `auto` ("Tạo bộ custom"): when the plan is done, approve it, cut the files and make the set's product from them
  * (it replaces the one made before — the page warns). */
 export async function startPlan(db: Db, userId: string, p: CtCharProject, auto = false): Promise<CtCharProject> {
-  // A plan whose server went away (a restart kills the background job) is "running" for ever: after 30 min it may run again.
-  const live = p.cut?.plan?.status === "running" && Date.now() - Date.parse(p.cut.plan.at) < 30 * 60_000;
-  if (live) throw new Error("Đang phác thảo");
+  // A plan whose server went away (a restart kills the background job) is "running" for ever: layer-kit is asked
+  // whether its job still runs (a big set takes over an hour); an older plan without a job id gets 30 min.
+  const cur = p.cut?.plan;
+  const live = cur?.status === "running" && (cur.job ? await kitJobRunning(cur.job) : Date.now() - Date.parse(cur.at) < 30 * 60_000);
+  if (live) throw new Error("Đang phác thảo — chờ xong (char_status), không chạy lại");
   if (p.layers?.status === "building") throw new Error("Đang cắt layer — chờ xong");
   const images = await loadImages(db, p.id);
   const input = kitPlanInput(p, latestEdits(images));
@@ -196,16 +198,21 @@ export async function startPlan(db: Db, userId: string, p: CtCharProject, auto =
   // because ONE other option was redone).
   const { sigs, ...plan } = input.plan;
   const sigOf = (key: string) => sigs[key] ?? "";
-  void runPlan(db, userId, p.id, plan as unknown as Record<string, unknown>, old, sigOf, auto);
+  void runPlan(db, userId, p.id, plan as unknown as Record<string, unknown>, old, sigOf, auto, running.at);
   return project;
 }
 
-async function runPlan(db: Db, userId: string, projectId: string, body: Record<string, unknown>, old: CtCharPlan | null, sigOf: (key: string) => string, thenCut: boolean): Promise<void> {
+async function runPlan(db: Db, userId: string, projectId: string, body: Record<string, unknown>, old: CtCharPlan | null, sigOf: (key: string) => string, thenCut: boolean, at: string): Promise<void> {
   let job = "";
   const saved: string[] = [];
   const carried = new Set<string>();
+  // This run's plan is the stored one (not one started after it).
+  const mine = (p: CtCharProject | null) => p?.cut?.plan?.at === at;
   try {
-    const r = await kitJob<KitPlan>("/plan", body);
+    const r = await kitJob<KitPlan>("/plan", body, async (id) => {
+      const p = await fresh(db, projectId);
+      if (mine(p) && p.cut?.plan) await saveCut(db, projectId, { ...cutState(p), plan: { ...p.cut.plan, job: id } });
+    });
     job = r.job;
     const store = async (name: string | undefined): Promise<{ url: string; path: string } | null> => {
       if (!name) return null;
@@ -265,7 +272,7 @@ async function runPlan(db: Db, userId: string, projectId: string, body: Record<s
   } catch (e) {
     await ctRemove(saved);
     const p = await fresh(db, projectId).catch(() => null);
-    if (p?.cut?.plan) await saveCut(db, projectId, { ...cutState(p), plan: { ...p.cut.plan, status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 1000) } }).catch(() => undefined);
+    if (p?.cut?.plan && mine(p)) await saveCut(db, projectId, { ...cutState(p), plan: { ...p.cut.plan, status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 1000) } }).catch(() => undefined);
   } finally {
     if (job) await kitForget(job);
   }

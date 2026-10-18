@@ -190,11 +190,28 @@ def _forget(job_id: str) -> None:
     shutil.rmtree(_job_dir(job_id), ignore_errors=True)
 
 
+class Cancelled(Exception):
+    pass
+
+
+def _check(out_dir: str) -> None:
+    """A job its caller deleted (gave up on it) stops at the next picture: queued plans of a set that was asked
+    again ran one after the other for hours on the small VPS (2026-10-18)."""
+    if os.path.basename(out_dir) not in _jobs:
+        raise Cancelled()
+
+
 async def _run_job(job_id: str, fn, body) -> None:
     try:
         async with _lock:  # one job at a time: a few GB of float arrays
+            if job_id not in _jobs:
+                return  # deleted while it waited
             result = await asyncio.to_thread(fn, body, _job_dir(job_id))
+            if job_id not in _jobs:
+                return
             _jobs[job_id] = {"status": "done", "result": result, "at": time.time()}
+    except Cancelled:
+        log.info("job %s cancelled", job_id)
     except Exception as e:  # noqa: BLE001 — the caller reads it
         log.exception("job %s failed", job_id)
         detail = e.detail if isinstance(e, HTTPException) else str(e)
@@ -379,6 +396,7 @@ def _plan(body: PlanBody, out_dir: str) -> dict:
 
     save_picture("base", "Búp bê giấy", doll)
     for o in body.options:
+        _check(out_dir)
         rgba = fit(transparent_rgba(fetch(o.url), o.label), W, H)
         own = lands.setdefault(o.subject, territory(doll[..., 3], o.subject, body.subjects))
         reg, a = register_option(doll, rgba, body.key, own)

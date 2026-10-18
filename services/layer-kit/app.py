@@ -111,13 +111,13 @@ def transparent_rgba(img: Image.Image, what: str) -> np.ndarray:
     return rgba
 
 
-def print_rgba(rgba: np.ndarray, factor: float) -> np.ndarray:
+def print_rgba(rgba: np.ndarray, factor: float, keep: np.ndarray | None = None) -> np.ndarray:
     """A cut-out at print size: colours spread under the transparent edge before the upscale (no dark rim), alpha
-    resized smoothly."""
+    resized smoothly. `keep`: where the model upscale is needed (an option's region); elsewhere a plain resize."""
     a = rgba[..., 3]
     col = np.where(a[..., None] > 0.9, rgba[..., :3], _fill(rgba[..., :3], (a > 0.9).astype(np.float32)))
     if factor > 1:
-        col = upscale.upscale2(np.clip(col, 0, 1))
+        col = upscale.upscale2(np.clip(col, 0, 1), keep)
         a = cv2.resize(a, (col.shape[1], col.shape[0]), interpolation=cv2.INTER_LINEAR)
     # Fully transparent: white (the region editor shows the colours as they are — a spread glow looked like dirt);
     # the soft edge keeps the spread colours (no white fringe once multiplied by the alpha).
@@ -385,8 +385,8 @@ def _plan(body: PlanBody, out_dir: str) -> dict:
     def to_print(m: np.ndarray) -> np.ndarray:
         return cv2.resize(m.astype(np.float32), size, interpolation=cv2.INTER_LINEAR) if m.shape[:2] != (size[1], size[0]) else m.astype(np.float32)
 
-    def save_picture(pid: str, label: str, rgba: np.ndarray) -> None:
-        up = print_rgba(rgba, factor)
+    def save_picture(pid: str, label: str, rgba: np.ndarray, keep: np.ndarray | None = None) -> None:
+        up = print_rgba(rgba, factor, keep)
         pictures.append({"id": pid, "label": label, "colour": write_colour(out_dir, f"{pid}.colour.png", up[..., :3]), "alpha": write_mask(out_dir, f"{pid}.alpha.png", up[..., 3])})
 
     def save_region(m: np.ndarray) -> str:
@@ -402,7 +402,8 @@ def _plan(body: PlanBody, out_dir: str) -> dict:
         reg, a = register_option(doll, rgba, body.key, own)
         aligns[o.url] = a
         m, info = part_region(doll, reg, body.key, own)
-        save_picture(o.picture, o.label, reg)
+        # Only its region (with room for a hand fix) is cut from it: the model upscale there, a resize elsewhere.
+        save_picture(o.picture, o.label, reg, cv2.dilate(m.astype(np.uint8), kernel(48)).astype(bool) if m.any() else None)
         ok_align = a["residual"] <= 0.6 and a["before"] <= 4.0
         checks.append({"name": f"Khớp: {o.label}", "ok": ok_align, "detail": f"lệch {a['before']:.2f} → {a['residual']:.2f} px (tệ nhất {a['max']:.2f})" + ("" if ok_align else " — AI dời người khi vẽ: vẽ lại ảnh này"), "piece": o.key})
         ok = info["px"] >= 500 and info["lost"] <= 1500

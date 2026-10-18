@@ -42,9 +42,12 @@ def _load():
     return _model
 
 
-def upscale2(rgb: np.ndarray) -> np.ndarray:
+def upscale2(rgb: np.ndarray, keep: np.ndarray | None = None) -> np.ndarray:
     """RGB float 0–1 → exactly 2×. The model works at 4×; every tile is brought down to 2× right away (area), so the
-    memory stays ~2× the picture (the VPS has 1.6 GB) and the tiling is the same for every picture of a set."""
+    memory stays ~2× the picture (the VPS has 1.6 GB) and the tiling is the same for every picture of a set.
+    `keep` (bool, input size): only the tiles that touch it go through the model — the same grid, so their pixels are
+    exactly those of a full run — the others are resized (bicubic). An option picture is only cut where it drew anew:
+    the full run took ~2 min a picture on the 2-core VPS, 60+ pictures over two hours (2026-10-18)."""
     import torch
 
     h, w = rgb.shape[:2]
@@ -55,9 +58,12 @@ def upscale2(rgb: np.ndarray) -> np.ndarray:
             for x0 in range(0, w, TILE):
                 ya, xa = max(0, y0 - PAD), max(0, x0 - PAD)
                 yb, xb = min(h, y0 + TILE + PAD), min(w, x0 + TILE + PAD)
-                inp = torch.from_numpy(np.ascontiguousarray(rgb[ya:yb, xa:xb].transpose(2, 0, 1))[None])
-                o = m(inp)[0].numpy().transpose(1, 2, 0)
-                o = cv2.resize(o, ((xb - xa) * 2, (yb - ya) * 2), interpolation=cv2.INTER_AREA)
+                if keep is not None and not keep[ya:yb, xa:xb].any():
+                    o = cv2.resize(rgb[ya:yb, xa:xb], ((xb - xa) * 2, (yb - ya) * 2), interpolation=cv2.INTER_CUBIC)
+                else:
+                    inp = torch.from_numpy(np.ascontiguousarray(rgb[ya:yb, xa:xb].transpose(2, 0, 1))[None])
+                    o = m(inp)[0].numpy().transpose(1, 2, 0)
+                    o = cv2.resize(o, ((xb - xa) * 2, (yb - ya) * 2), interpolation=cv2.INTER_AREA)
                 oy, ox = (y0 - ya) * 2, (x0 - xa) * 2
                 hh, ww = min(TILE, h - y0) * 2, min(TILE, w - x0) * 2
                 out[y0 * 2:y0 * 2 + hh, x0 * 2:x0 * 2 + ww] = o[oy:oy + hh, ox:ox + ww]

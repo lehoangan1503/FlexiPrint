@@ -34,6 +34,9 @@
  *   POST   public/uploads/:productId     multipart: file, kind=photo|preview
  *   POST   public/photo/:productId       multipart: file, region, style, cutout=0|1 → processed image bytes
  *
+ * Jobs (server/jobs.ts) — any POST sent with ?async=1 that runs longer than a few seconds answers 202 CtJobPending:
+ *   GET    jobs/:id · public/jobs/:id    202 while it runs, then the POST's own response
+ *
  * MCP (session cookie, or Bearer CT_AGENT_TOKEN for the @flexiprint agent):
  *   POST   mcp                           flexiprint-mcp, JSON-RPC 2.0 (server/mcp): Bearer CT_AGENT_TOKEN (agent) | cookie
  *
@@ -94,7 +97,7 @@
  *   *      char/projects/*               v2 bộ nhân vật (brief → master → layers → products), server/char/projects.ts
  */
 
-import type { NextRequest } from "next/server";
+import { NextRequest } from "next/server";
 import type { NextResponse } from "next/server";
 import type {
   CtAiStyleBody,
@@ -121,6 +124,7 @@ import { dispatchChar } from "./char/router";
 import * as packImages from "./pack-images";
 import * as prices from "./price-tables";
 import { mcpEndpoint } from "./mcp/server";
+import { asJob, pollJob } from "./jobs";
 import { agentStatus, answerAgentTask, cancelAgentTask, createAgentTask, getAgentTask, listAgentTasks } from "./agent/tasks";
 
 export interface CtRouteContext {
@@ -148,6 +152,7 @@ async function dispatchPublic(req: NextRequest, path: string[]): Promise<NextRes
   const [, resource, id] = path;
   if (req.method === "OPTIONS") return h.publicPreflight();
   if (!id || !UUID.test(id)) return h.jsonError("id không hợp lệ", 400);
+  if (resource === "jobs" && req.method === "GET") return pollJob(id, true, h.CORS_HEADERS);
   if (resource === "templates" && req.method === "GET") {
     const v = Number(req.nextUrl.searchParams.get("version"));
     return h.publicTemplate(id, Number.isInteger(v) && v > 0 ? v : null);
@@ -162,6 +167,17 @@ async function dispatchPublic(req: NextRequest, path: string[]): Promise<NextRes
 
 async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResponse> {
   const path = (await ctx.params).path ?? [];
+  // `?async=1` (lib/job-fetch.ts): a POST still running after a few seconds becomes a job to poll (server/jobs.ts).
+  // The body is read whole first — the request ends with the 202 while the work goes on.
+  if (req.method === "POST" && req.nextUrl.searchParams.get("async") === "1" && path[0] !== "mcp") {
+    const copy = new NextRequest(req.url, { method: "POST", headers: req.headers, body: await req.arrayBuffer() });
+    const isPublic = path[0] === "public";
+    return asJob(() => route(copy, path), isPublic, isPublic ? h.CORS_HEADERS : {});
+  }
+  return route(req, path);
+}
+
+async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
   if (path[0] === "public") return dispatchPublic(req, path);
   if (path[0] === "cron" && path[1] === "cleanup" && req.method === "POST") return h.cronCleanup(req.headers.get("authorization"));
   if (path[0] === "mcp" && path.length === 1) return mcpEndpoint(req);
@@ -171,6 +187,7 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
 
   const [head, id, sub] = path;
   const method = req.method;
+  if (head === "jobs" && id && UUID.test(id) && !sub && method === "GET") return pollJob(id, false);
   if (head === "ai") {
     if (id === "providers" && method === "GET") return h.aiProviders();
     if (id === "photo" && method === "GET") return h.photoCapabilitiesResponse();

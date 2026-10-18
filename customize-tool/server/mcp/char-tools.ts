@@ -33,7 +33,8 @@ import { TASK_ARG, json, liveStatus, loadTask, openTask, patchTask } from "./tas
 import type { CtMcpContext, CtMcpTool } from "./tools";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const WAIT_MS = 170_000;
+// One MCP call is one silent POST: kept under the proxies' cut (Cloudflare Tunnel 100 s, nginx 120 s); the agent calls again.
+const WAIT_MS = 60_000;
 const POLL_MS = 4_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -623,7 +624,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   },
   {
     name: "char_wait",
-    description: "Wait for pictures of a bộ nhân vật to finish (the server waits up to ~3 min per call) → each one's status, url, prompt, registration. \"still running\" → call again.",
+    description: "Wait for pictures of a bộ nhân vật to finish (the server waits up to ~1 min per call) → each one's status, url, prompt, registration. \"still running\" → call again.",
     inputSchema: { type: "object", properties: { ...TASK_ARG, image_ids: { type: "array", items: { type: "string" }, description: "Ids from char_draw_masters / char_refine_master / char_run_edits." } }, required: ["task_id", "image_ids"] },
     callers: ["agent"],
     run: async (ctx, args) => {
@@ -711,7 +712,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   },
   {
     name: "char_status",
-    description: "Bộ nhân vật (chat): wait (up to ~3 min) for the 3c regions / the layer cut to finish → their status, checks and the layer files.",
+    description: "Bộ nhân vật (chat): wait (up to ~1 min) for the 3c regions / the layer cut to finish → their status, checks and the layer files.",
     inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
     callers: ["agent"],
     run: async (ctx, args) => {

@@ -1398,6 +1398,15 @@ export interface CtApiError {
   error: string;
 }
 
+/**
+ * 202 body of a POST sent with `?async=1` that is still running after a few seconds (server/jobs.ts): ask `poll`
+ * (GET) until it answers something else — that is the POST's own response.
+ */
+export interface CtJobPending {
+  ctJob: string;
+  poll: string;
+}
+
 // ---------------------------------------------------------------------------
 // Category history (migration 010): saves (older rows also hold AI revisions)
 // ---------------------------------------------------------------------------

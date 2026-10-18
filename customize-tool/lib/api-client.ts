@@ -3,6 +3,7 @@
  */
 
 import { CT_CONFIG } from "../config";
+import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
 import type {
   CtPackImage,
@@ -62,7 +63,7 @@ export interface CtUploadClipartOpts {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${CT_CONFIG.apiBase}/${path}`, init);
+  const res = await jobFetch(`${CT_CONFIG.apiBase}/${path}`, init);
   if (res.status === 204) return undefined as T;
   const body: T | CtApiError = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
   if (!res.ok) {
@@ -170,7 +171,7 @@ export const ctApi = {
     if (body.main) form.append("main", body.main, "main.png");
     form.append("material", JSON.stringify(body.material));
     form.append("dpi", String(body.dpi));
-    const res = await fetch(`${CT_CONFIG.apiBase}/products/${productId}/print-pack`, { method: "POST", body: form });
+    const res = await jobFetch(`${CT_CONFIG.apiBase}/products/${productId}/print-pack`, { method: "POST", body: form });
     if (!res.ok) {
       const err: CtApiError = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
       throw new Error(err.error);

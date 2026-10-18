@@ -19,6 +19,7 @@ import type { CtPhotoStyleRef } from "../types";
 import { canvasToBlob } from "./compositor";
 import { removeBackgroundFrom, trimTransparent } from "./image-tools";
 import { needsServer, styleEngine, styleFamily, styleFilter, type CtPhotoFilter } from "./photo-styles";
+import { jobFetch } from "./job-fetch";
 
 const isFaceStyle = (style: CtPhotoStyleRef) => styleFamily(style) === "face";
 
@@ -87,7 +88,7 @@ async function serverStep(req: PhotoProcessRequest, input: Blob): Promise<HTMLCa
   body.append("style", req.style);
   body.append("cutout", req.cutout ? "1" : "0");
   for (const [k, v] of Object.entries(req.fields ?? {})) body.append(k, v);
-  const res = await fetch(req.endpoint, { method: "POST", body, mode: "cors", signal: req.signal });
+  const res = await jobFetch(req.endpoint, { method: "POST", body, mode: "cors", signal: req.signal });
   if (!res.ok) {
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(json.error ?? `HTTP ${res.status}`);

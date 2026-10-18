@@ -3,11 +3,12 @@
  */
 
 import { CT_CONFIG } from "../config";
+import { jobFetch } from "./job-fetch";
 import type { CtApiError, CtProduct } from "../types";
 import type { CtPrintAiRequest, CtPrintAiResult, CtPrintFace, CtPrintKind, CtPrintSpec, CtPrintTemplate } from "../types/print";
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${CT_CONFIG.apiBase}/${path}`, init);
+  const res = await jobFetch(`${CT_CONFIG.apiBase}/${path}`, init);
   if (res.status === 204) return undefined as T;
   const body: T | CtApiError = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
   if (!res.ok) throw new Error((body as CtApiError).error ?? `HTTP ${res.status}`);

@@ -432,7 +432,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
   },
   {
     name: "wait_product_mockups",
-    description: "Wait (up to ~3 min per call) for mockup jobs of a product → each one's status and url. \"still running\" → call again.",
+    description: "Wait (up to ~1 min per call) for mockup jobs of a product → each one's status and url. \"still running\" → call again.",
     inputSchema: {
       type: "object",
       properties: { product_id: { type: "string", description: "The product." }, job_ids: { type: "array", items: { type: "string" }, description: "From make_product_mockups." } },
@@ -443,7 +443,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       const ids = (Array.isArray(args.job_ids) ? args.job_ids : []).map(str).filter((x) => UUID.test(x)).slice(0, 20);
       if (!ids.length) throw new Error("job_ids is required");
       const read = async () => (await ctx.db.from(CT_TABLES.packImages).select("*").in("id", ids).eq("name", `mockup:${str(args.product_id)}`).returns<CtPackImage[]>()).data ?? [];
-      const deadline = Date.now() + 170_000;
+      const deadline = Date.now() + 60_000; // under the proxies' cut (Cloudflare Tunnel 100 s), as char-tools WAIT_MS
       let rows = await read();
       while (rows.some((r) => r.status === "running") && Date.now() + 4000 < deadline) {
         await new Promise((r) => setTimeout(r, 4000));

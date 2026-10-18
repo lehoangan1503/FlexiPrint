@@ -1,0 +1,15 @@
+# an-vm only (flexi2.next.lc): loaded through COMPOSE_FILE in /opt/flexi2/app/.env — the VPS never reads it.
+# The containers reach https://flexi2.next.lc via host-gateway (extra_hosts in docker-compose.yml), where host nginx
+# serves a local-CA certificate (/opt/flexi2/certs): trust that CA.
+services:
+  app:
+    environment:
+      NODE_EXTRA_CA_CERTS: /certs/ca.crt
+    volumes:
+      - /opt/flexi2/certs/ca.crt:/certs/ca.crt:ro
+
+  layer-kit:
+    environment:
+      REQUESTS_CA_BUNDLE: /certs/bundle.crt
+    volumes:
+      - /opt/flexi2/certs/bundle.crt:/certs/bundle.crt:ro

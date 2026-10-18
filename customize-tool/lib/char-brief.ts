@@ -58,6 +58,7 @@ export function defaultCharBrief(kind: CtCharSetKind = "character"): CtCharBrief
     photoZones: [],
     elements: [],
     lineup: null,
+    framing: "full",
     texts: [],
     backdrops: [],
     mockups: [],
@@ -311,6 +312,7 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
       .slice(0, 4),
     elements: arr(o.elements).map(parseElement).filter((x): x is CtCharElement => x !== null).slice(0, 10),
     lineup: parseLineup(o.lineup),
+    framing: o.framing === "bust" ? "bust" : "full",
     choosers: arr(o.choosers).map(parseChooser).filter((x): x is CtCharChooser => x !== null).slice(0, 24),
     charactersBox: parseBox(o.charactersBox),
     // Older briefs had one name ("text") and a decor sentence: read as one text field / one backdrop.
@@ -402,11 +404,12 @@ export function setAspect(brief: CtCharBrief): "1:1" | "3:2" {
   return brief.kind !== "photo" && brief.subjects.length >= 4 ? "3:2" : "1:1";
 }
 
-/** The characters of a lineup stand apart: each one's own pixels are its body file (server/char/product.ts). */
+/** The characters of a lineup are apart: each one's own pixels are its body file (server/char/product.ts splits
+ * touching ones at the middle between them, so shoulders may touch — nobody may be in front of another). */
 const LINEUP_LINE: Record<CtCharLineup["mode"], string> = {
   one: "These are ALTERNATIVE characters (the customer picks ONE of them): draw them side by side as separate figures with a wide empty gap between them — they never touch, overlap or interact — the same scale, the same pose style, each complete on its own.",
   count:
-    "The customer picks how many of them are in the picture (the first ones from the left): draw them in ONE row, evenly spaced, the same scale and on the same ground line, with a clear empty gap between every two (they never touch or overlap) — each one complete on its own.",
+    "The customer picks how many of them are in the picture (versions with fewer people leave some out): draw them in ONE row, the same scale, side by side close together — shoulders may just touch, but NOBODY overlaps or stands in front of another, every head, hat and hand fully visible — each one complete on its own.",
 };
 
 /**
@@ -437,10 +440,13 @@ export function masterPrompt(brief: CtCharBrief): string {
         : `${z.where}: an empty plain light-grey area with a clean edge (a photo goes there later).`,
     );
   const frame = setAspect(brief) === "3:2" ? "A wide landscape picture" : "A square picture";
+  const touch = brief.lineup ? "" : "; they may touch, but no one hides another one's clothes, hair or face";
   lines.push(
-    brief.subjects.length > 1
-      ? `${frame}: everyone fully visible head to toe INSIDE the picture, nobody cropped, the group centred with a generous empty margin all around (scale the group down to fit)${brief.lineup ? "" : "; they may touch, but no one hides another one's clothes, hair or face"}.`
-      : `${frame}: the full body fully visible head to toe INSIDE the picture, not cropped, centred with a generous empty margin all around (scale the figure down to fit).`,
+    brief.framing === "bust"
+      ? `${frame}: ${brief.subjects.length > 1 ? "everyone" : "the character"} shown from the chest up (half figure, like leaning on a counter), all cut off by the SAME straight horizontal line near the bottom of the picture (a sign is placed in front of it later); heads, hats and hands fully inside the picture with a generous empty margin above and at the sides${brief.subjects.length > 1 ? touch : ""}.`
+      : brief.subjects.length > 1
+        ? `${frame}: everyone fully visible head to toe INSIDE the picture, nobody cropped, the group centred with a generous empty margin all around (scale the group down to fit)${touch}.`
+        : `${frame}: the full body fully visible head to toe INSIDE the picture, not cropped, centred with a generous empty margin all around (scale the figure down to fit).`,
   );
   lines.push("No accessories or props unless described. No text, no logo, no watermark.");
   lines.push(CLEAN_PARTS);

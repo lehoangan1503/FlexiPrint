@@ -280,6 +280,9 @@ export interface CtCharBrief {
   choosers?: CtCharChooser[];
   /** Who is in the picture is a customer choice (null = everyone, always). */
   lineup?: CtCharLineup | null;
+  /** How much of the characters the master shows: "full" head to toe (default), or "bust" = chest up, cut level at
+   * the bottom (a sign / plank element in front hides the cut — "This Grandma Belongs To"). */
+  framing?: "full" | "bust";
   /** The texts the customer personalises (names, a slogan), each in its place around the characters. */
   texts: CtCharTextField[];
   /** The backgrounds the customer picks from (none = the product's own colour); never part of the master. */

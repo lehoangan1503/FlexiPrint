@@ -677,6 +677,10 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const whole = record(args.brief);
       if (!Object.keys(patch).length && !Object.keys(whole).length) throw new Error("char_update_brief: give `brief` or `patch`");
       const next = Object.keys(whole).length ? whole : { ...project.brief, ...patch };
+      // Fields the parser drops silently: say what shape they take (the agent tried "lineup" five ways, 2026-10-18).
+      const lu = record(next.lineup);
+      if (next.lineup != null && lu.mode !== "one" && lu.mode !== "count") throw new Error('lineup must be {"mode": "one" | "count", "label": "Number of Grandchildren"} (or null)');
+      if (next.framing != null && next.framing !== "full" && next.framing !== "bust") throw new Error('framing must be "full" or "bust"');
       // A khuôn in named by templateId fills the cut, size and layout sentence like the page does.
       const brief = await withTemplateProduct(db, parseCharBrief(next));
       if (project.master_id) {

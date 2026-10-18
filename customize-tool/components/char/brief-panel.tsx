@@ -1064,7 +1064,12 @@ function KindPicker({ ctx }: { ctx: CharCtx }) {
 const LINEUP_OPTIONS: Array<{ value: "" | CtCharLineup["mode"]; label: string }> = [
   { value: "", label: "Luôn có đủ các nhân vật" },
   { value: "one", label: "Khách chọn 1 nhân vật (nam / nữ…)" },
-  { value: "count", label: "Khách chọn số người (1, 2, 3… từ trái sang)" },
+  { value: "count", label: "Khách chọn số người (1, 2, 3…)" },
+];
+
+const FRAMING_OPTIONS: Array<{ value: "full" | "bust"; label: string }> = [
+  { value: "full", label: "Cả người (đầu tới chân)" },
+  { value: "bust", label: "Nửa người (ngực trở lên, biển che phía dưới)" },
 ];
 
 /** Who is in the picture is a customer choice (asked 2026-10-18): one of the characters, or how many of them. */
@@ -1072,6 +1077,10 @@ function LineupRow({ brief, set }: { brief: CtCharBrief; set: (patch: Partial<Ct
   const mode = brief.lineup?.mode ?? "";
   return (
     <div className="grid gap-2 rounded-md bg-muted/40 p-2.5 md:grid-cols-[260px_1fr]">
+      <CtField label="Vẽ nhân vật">
+        <CtSelect<"full" | "bust"> value={brief.framing ?? "full"} options={FRAMING_OPTIONS} onChange={(framing) => set({ framing })} />
+      </CtField>
+      <p className="self-end text-xs text-muted-foreground">Nửa người: master cắt ngang mọi người cùng một đường ở dưới; thêm phần trang trí “trước người” ở dưới (tấm biển) để che.</p>
       <CtField label="Ai có trong tranh">
         <CtSelect<"" | CtCharLineup["mode"]>
           value={mode}
@@ -1088,7 +1097,7 @@ function LineupRow({ brief, set }: { brief: CtCharBrief; set: (patch: Partial<Ct
       )}
       {brief.lineup && (
         <p className="text-xs text-muted-foreground md:col-span-2">
-          Master vẽ đủ {brief.subjects.length} nhân vật đứng tách nhau; sản phẩm có 1 version cho mỗi lựa chọn ({brief.lineup.mode === "one" ? "mỗi nhân vật 1 version, đặt tên ở ô “Tên khách thấy”" : "version k = k người đầu tiên từ trái, cùng cỡ, căn giữa"}).
+          Master vẽ đủ {brief.subjects.length} nhân vật, không ai đứng trước ai; sản phẩm có 1 version cho mỗi lựa chọn ({brief.lineup.mode === "one" ? "mỗi nhân vật 1 version, đặt tên ở ô “Tên khách thấy”" : "version k = k người (người “Luôn có mặt” + những người cạnh họ), cùng cỡ, căn giữa"}).
         </p>
       )}
     </div>

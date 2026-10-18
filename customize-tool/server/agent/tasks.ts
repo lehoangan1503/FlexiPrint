@@ -162,14 +162,26 @@ const CHAR_STEP_TEXT: Record<CtCharTaskStep, string> = {
 
 export const CHAT_TAB_TEXT: Record<CtCharChatTab, string> = { brief: "1. Brief", master: "2. Master", layers: "3. Layer", product: "4. Sản phẩm" };
 
+/**
+ * This instance's MCP server in the agent's capability (CT_AGENT_MCP): "flexiprint" (the VPS) or "flexi2" (an-vm) —
+ * one @flexiprint agent serves both, so every turn names the server its task lives on.
+ */
+function agentMcp(): string {
+  return (process.env.CT_AGENT_MCP || "flexiprint").replace(/[^a-z0-9_-]/gi, "");
+}
+
+const mcpLine = () => `Task này nằm trên MCP server "${agentMcp()}": chỉ dùng các tool mcp__${agentMcp()}__* (không dùng server FlexiPrint khác).`;
+
 /** The turn's message: short — the agent reads the task itself over the MCP. */
 function turnPrompt(task: CtAgentTask): string {
+  const m = `mcp__${agentMcp()}__`;
   if (task.kind === "content") {
     const c = task.input.content;
     return [
       `[FlexiPrint task ${task.id}] Viết content Shopify (title + description) cho sản phẩm "${clip(c?.productName ?? "", 120)}".`,
       c?.request ? `Người dùng muốn: ${clip(c.request, 800)}` : "",
-      `Gọi mcp__flexiprint__get_task với task_id "${task.id}" (có sản phẩm, option khách, ảnh, các lần viết trước và "instructions"), viết, rồi kết thúc bằng mcp__flexiprint__submit_result {summary, title, description_html} hoặc fail_task.`,
+      mcpLine(),
+      `Gọi ${m}get_task với task_id "${task.id}" (có sản phẩm, option khách, ảnh, các lần viết trước và "instructions"), viết, rồi kết thúc bằng ${m}submit_result {summary, title, description_html} hoặc fail_task.`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -180,8 +192,9 @@ function turnPrompt(task: CtAgentTask): string {
     return [
       `[FlexiPrint task ${task.id}] Bộ nhân vật v2 — yêu cầu từ ô chat, người dùng đang ở tab ${where}.`,
       `Người dùng viết:\n${c.request}`,
+      mcpLine(),
       ...(c.attachments?.length ? [`Ảnh gửi kèm (xem bằng view_image):`, ...c.attachments.map((a, i) => `${i + 1}. ${a.label || (a.source === "page" ? "Ảnh trên trang" : "Ảnh chụp màn hình")}${a.imageId ? ` (image ${a.imageId})` : ""}: ${a.url}`)] : []),
-      `Gọi mcp__flexiprint__get_task với task_id "${task.id}" — có toàn bộ bộ nhân vật (brief, master, ảnh 3b, vùng 3c, file layer, sản phẩm, các yêu cầu trước) và "instructions". Làm đúng yêu cầu bằng các tool char_*, xem lại kết quả bằng view_image, rồi kết thúc bằng mcp__flexiprint__submit_result {summary} hoặc fail_task.`,
+      `Gọi ${m}get_task với task_id "${task.id}" — có toàn bộ bộ nhân vật (brief, master, ảnh 3b, vùng 3c, file layer, sản phẩm, các yêu cầu trước) và "instructions". Làm đúng yêu cầu bằng các tool char_*, xem lại kết quả bằng view_image, rồi kết thúc bằng ${m}submit_result {summary} hoặc fail_task.`,
     ].join("\n");
   }
   if (task.kind === "char") {
@@ -189,7 +202,8 @@ function turnPrompt(task: CtAgentTask): string {
     return [
       `[FlexiPrint task ${task.id}] Bộ nhân vật v2 — ${c ? CHAR_STEP_TEXT[c.step] : ""}${c?.imageId ? ` (sửa master ${c.imageId})` : ""}.`,
       c?.request ? `Người dùng muốn: ${clip(c.request, 800)}` : "",
-      `Làm theo skill flexiprint-char (nếu chưa có thì theo "instructions" trong get_task): gọi mcp__flexiprint__get_task với task_id "${task.id}" (có brief, ảnh, các bước trước và quy tắc layer), làm việc bằng các tool char_*, xem lại từng ảnh bằng view_image, rồi kết thúc bằng mcp__flexiprint__submit_result hoặc fail_task.`,
+      mcpLine(),
+      `Làm theo skill flexiprint-char (nếu chưa có thì theo "instructions" trong get_task): gọi ${m}get_task với task_id "${task.id}" (có brief, ảnh, các bước trước và quy tắc layer), làm việc bằng các tool char_*, xem lại từng ảnh bằng view_image, rồi kết thúc bằng ${m}submit_result hoặc fail_task.`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -370,7 +384,8 @@ function answerPrompt(task: CtAgentTask, q: CtAgentQuestion): string {
   const typed = a?.text ? `viết: ${clip(a.text, 1500)}` : "";
   return [
     `[FlexiPrint task ${task.id}] Người dùng trả lời câu hỏi "${clip(q.question, 300)}" — ${[picked, typed].filter(Boolean).join("; ")}.`,
-    "Làm tiếp task này theo câu trả lời (get_task nếu cần xem lại), rồi kết thúc bằng mcp__flexiprint__submit_result hoặc fail_task — chỉ khi mọi việc đã xong.",
+    mcpLine(),
+    `Làm tiếp task này theo câu trả lời (get_task nếu cần xem lại), rồi kết thúc bằng mcp__${agentMcp()}__submit_result hoặc fail_task — chỉ khi mọi việc đã xong.`,
   ].join("\n");
 }
 

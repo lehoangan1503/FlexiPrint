@@ -7,9 +7,18 @@
       "flexiprint": {
         "type": "http",
         "url": "https://flexiprint.next.lc/api/customize-tool/mcp",
-        "headers": { "Authorization": "Bearer <CT_AGENT_TOKEN của FlexiPrint>" }
+        "headers": {
+          "Authorization": "Bearer <CT_AGENT_TOKEN của FlexiPrint>"
+        }
+      },
+      "flexi2": {
+        "type": "http",
+        "url": "https://flexi2.next.lc/api/customize-tool/mcp",
+        "headers": {
+          "Authorization": "Bearer <CT_AGENT_TOKEN của FlexiPrint>"
+        }
       }
     },
-    "hint": "Dữ liệu thật của FlexiPrint. Đọc resource flexiprint://guide/overview trước."
+    "hint": "Dữ liệu thật của FlexiPrint: hai bản (server flexiprint = VPS, flexi2 = máy công ty) — tin nhắn task nói bản nào. Đọc resource flexiprint://guide/overview trước."
   }
 }

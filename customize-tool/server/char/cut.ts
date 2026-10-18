@@ -181,6 +181,16 @@ interface KitPlan {
 
 /** `auto` ("Tạo bộ custom"): when the plan is done, approve it, cut the files and make the set's product from them
  * (it replaces the one made before — the page warns). */
+/** A plan stored "running" whose layer-kit job is gone (a deploy restarted the app or layer-kit) is failed, so it can
+ * be asked again — waiting on it never ends. Returns the set as it is now. */
+export async function failLostPlan(db: Db, p: CtCharProject): Promise<CtCharProject> {
+  const cur = p.cut?.plan;
+  if (cur?.status !== "running") return p;
+  const alive = cur.job ? await kitJobRunning(cur.job) : Date.now() - Date.parse(cur.at) < 30 * 60_000;
+  if (alive) return p;
+  return saveCut(db, p.id, { ...cutState(p), plan: { ...cur, status: "failed", error: "Máy chủ khởi động lại giữa chừng — chạy lại phác thảo" } });
+}
+
 export async function startPlan(db: Db, userId: string, p: CtCharProject, auto = false): Promise<CtCharProject> {
   // A plan whose server went away (a restart kills the background job) is "running" for ever: layer-kit is asked
   // whether its job still runs (a big set takes over an hour); an older plan without a job id gets 30 min.

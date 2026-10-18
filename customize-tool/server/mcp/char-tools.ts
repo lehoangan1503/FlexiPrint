@@ -27,7 +27,7 @@ import { startBackdrops } from "../char/backdrops";
 import { withTemplateProduct } from "../char/blank";
 import { remakeSetProduct } from "../char/product";
 import { runEditRoles, startBuild } from "../char/layers";
-import { startMatte, startPlan } from "../char/cut";
+import { failLostPlan, startMatte, startPlan } from "../char/cut";
 import { SAMPLE_ROLE, elementPictures, latestElementImages, startElements } from "../char/elements";
 import { TASK_ARG, json, liveStatus, loadTask, openTask, patchTask } from "./task-common";
 import type { CtMcpContext, CtMcpTool } from "./tools";
@@ -720,6 +720,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const busy = (p: CtCharProject) => p.cut?.matte?.status === "running" || p.cut?.plan?.status === "running" || p.layers?.status === "building";
       const deadline = Date.now() + WAIT_MS;
       let p = await loadProject(db, id);
+      if (p) p = await failLostPlan(db, p);
       while (p && busy(p) && Date.now() + POLL_MS < deadline) {
         await sleep(POLL_MS);
         p = await loadProject(db, id);

@@ -21,7 +21,9 @@ phẩm) và `instructions` — làm ĐÚNG theo `instructions` của bước đ�
 
 ## Làm trọn một bộ trên agent_ide (người dùng nhờ thẳng)
 Cùng một phiên từ đầu tới cuối; người dùng theo dõi trên trang bộ và trong phiên này.
-1. Đọc kỹ yêu cầu + mọi ảnh họ gửi (xem từng ảnh). Thiếu điều quyết định (sản phẩm gì, kích thước, mấy nhân vật,
+1. Đọc kỹ yêu cầu + mọi ảnh họ gửi (xem từng ảnh). Ảnh mẫu quyết định sản phẩm trông thế nào: khung hình (cả người /
+   nửa người sau tấm biển — `framing`), tư thế, ai ở giữa, cái gì ở phía trước, trang trí, tên nằm đâu; lời họ viết
+   đè lên ảnh; cái gì cả hai không nói mới dùng mặc định (cả người, đứng cạnh nhau). Thiếu điều quyết định (sản phẩm gì, kích thước, mấy nhân vật,
    khách đổi được gì) thì hỏi 1 lần, gọn.
 2. `char_create_set {name, idea}` → **in link bộ** (`url`) cho người dùng. Ảnh họ gửi → `char_add_reference`
    (url, hoặc `image_base64` của file trong phiên; `use` sample/style/…; `note` = họ muốn lấy gì).

@@ -14,7 +14,7 @@
 
 import { CT_TABLES } from "../../config";
 import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharProject, CtCharRefUse, CtCharTaskResult } from "../../types";
-import { REF_USES, REF_USE_INFO, masterPrompt, parseCharBrief } from "../../lib/char-brief";
+import { REF_USES, REF_USE_INFO, masterPrompt, parseCharBrief, shownByDefault } from "../../lib/char-brief";
 import { saveCharFile } from "../char/files";
 import { KEEP, KEEP_CLEAR, planEdits, tailOf } from "../../lib/char-plan";
 import { latestEditsOf } from "../../lib/char-images";
@@ -160,6 +160,9 @@ function briefLosses(old: CtCharBrief, next: CtCharBrief): string[] {
     }
     for (const sl of sub.slots) {
       const nl = ns.slots.find((x) => x.id === sl.id);
+      // A slot the master does not show (optional, or behind a chooser's other option) was never cut from it:
+      // it may go (a hat slot replaced by one slot per hat style).
+      if (!nl && (sl.optional || !shownByDefault(old, sl.shownWhen))) continue;
       if (!nl) {
         out.push(`slot ${sl.part} removed`);
         continue;

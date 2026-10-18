@@ -212,13 +212,23 @@ def _affine(ref: np.ndarray, img: np.ndarray, dx: float, dy: float) -> np.ndarra
     """ECC affine (scale + shear + shift) on the unchanged pixels. gpt-image maps its input with a slightly different
     scale per axis (≈ 0.2 %, 2 px across the picture) — a translation alone leaves that."""
     g1, g2 = _gray(ref), _gray(img)
-    warp = np.float32([[1, 0, dx], [0, 1, dy]])
-    crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
-    b1, b2 = cv2.GaussianBlur(g1, (0, 0), 1.0), cv2.GaussianBlur(g2, (0, 0), 1.0)
-    for _ in range(2):
-        moved = cv2.warpAffine(g2, warp, g1.shape[::-1], flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_REPLICATE)
-        same = cv2.erode((np.abs(moved - g1) < 18).astype(np.uint8), np.ones((5, 5), np.uint8))
-        _, warp = cv2.findTransformECC(b1, b2, warp, cv2.MOTION_AFFINE, crit, same, 5)
+    # Coarse to fine: the two rounds at half size, then one short round at full size from there — the same warp in a
+    # fraction of the time (full size × 2 rounds × 200 iterations was ~12 s on a laptop, a minute on the 2-core VPS,
+    # for every option of a 60-option set, 2026-10-18).
+    half = lambda a: cv2.resize(a, (a.shape[1] // 2, a.shape[0] // 2), interpolation=cv2.INTER_AREA)
+    warp = np.float32([[1, 0, dx / 2], [0, 1, dy / 2]])
+    for (r1, r2), rounds, crit in (
+        ((half(g1), half(g2)), 2, (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)),
+        ((g1, g2), 1, (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 40, 1e-6)),
+    ):
+        if r1 is g1:
+            warp = warp.copy()
+            warp[:, 2] *= 2
+        b1, b2 = cv2.GaussianBlur(r1, (0, 0), 1.0), cv2.GaussianBlur(r2, (0, 0), 1.0)
+        for _ in range(rounds):
+            moved = cv2.warpAffine(r2, warp, r1.shape[::-1], flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_REPLICATE)
+            same = cv2.erode((np.abs(moved - r1) < 18).astype(np.uint8), np.ones((5, 5), np.uint8))
+            _, warp = cv2.findTransformECC(b1, b2, warp, cv2.MOTION_AFFINE, crit, same, 5)
     return warp
 
 
@@ -295,18 +305,26 @@ def _premul_warp(rgba: np.ndarray, fn) -> np.ndarray:
     return np.dstack([np.clip(col, 0, 1), out_a]).astype(np.float32)
 
 
-def register_rgba(ref: np.ndarray, rgba: np.ndarray, exclude: np.ndarray | None = None, local: bool = True) -> tuple[np.ndarray, dict]:
+def affine_of(ref: np.ndarray, rgba: np.ndarray) -> np.ndarray:
+    """The affine `register_rgba` measures (to measure it once for two calls)."""
+    rgb = on_white(rgba[..., :3], rgba[..., 3])
+    before = align(ref, rgb)
+    try:
+        return _sane(_affine(ref, rgb, before["dx"], before["dy"]), before["dx"], before["dy"])
+    except cv2.error:
+        return np.float32([[1, 0, before["dx"]], [0, 1, before["dy"]]])
+
+
+def register_rgba(ref: np.ndarray, rgba: np.ndarray, exclude: np.ndarray | None = None, local: bool = True, warp: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
     """`register` for a picture with its own alpha: measured on its colours over white, the same affine + local flow
     applied to colours and alpha. `exclude`: pixels the local flow must not learn from (what the picture drew anew);
-    `local` False: the affine alone."""
+    `local` False: the affine alone; `warp`: the affine already measured (affine_of)."""
     rgb = on_white(rgba[..., :3], rgba[..., 3])
     before = align(ref, rgb)
     t0 = tile_shifts(ref, rgb)
     h, w = rgb.shape[:2]
-    try:
-        warp = _sane(_affine(ref, rgb, before["dx"], before["dy"]), before["dx"], before["dy"])
-    except cv2.error:
-        warp = np.float32([[1, 0, before["dx"]], [0, 1, before["dy"]]])
+    if warp is None:
+        warp = affine_of(ref, rgba)
     aff = lambda x: cv2.warpAffine(x, warp, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
     rgba1 = _premul_warp(rgba, aff)
     rgb1 = on_white(rgba1[..., :3], rgba1[..., 3])
@@ -408,11 +426,12 @@ def register_option(doll: np.ndarray, rgba: np.ndarray, key: str | None, own: np
     the flow moves them back."""
     white = on_white(doll[..., :3], doll[..., 3])
     s = max(doll.shape[:2]) / 1024
-    reg0, _ = register_rgba(white, rgba, local=False)
+    warp = affine_of(white, rgba)
+    reg0, _ = register_rgba(white, rgba, local=False, warp=warp)
     rough, _ = part_region(doll, reg0, key, own)
     solid = cv2.morphologyEx(rough.astype(np.uint8), cv2.MORPH_OPEN, kernel(max(4, round(6 * s))))
     exclude = cv2.dilate(solid, kernel(max(6, round(10 * s)))).astype(bool)
-    return register_rgba(white, rgba, exclude=exclude)
+    return register_rgba(white, rgba, exclude=exclude, warp=warp)
 
 
 # ---- 3. cut: the files ---------------------------------------------------------------------------------------

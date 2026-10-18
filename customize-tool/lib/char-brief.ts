@@ -321,7 +321,8 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
         : []
     )
       .filter((x): x is CtCharTextField => x !== null)
-      .slice(0, 6),
+      // A name per character, on the hat or (no hat) on the top: 2 fields × up to 8 subjects.
+      .slice(0, 16),
     backdrops: (Array.isArray(o.backdrops) ? arr(o.backdrops) : s(o.decor) ? [{ name: "Background", value: s(o.decor, 1000) }] : [])
       .map((x) => {
         const r = rec(x);

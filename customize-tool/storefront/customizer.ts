@@ -906,10 +906,12 @@ export class Customizer {
       list.append(b);
     };
     if (allowNone) add(null, el("span", { class: "ct-choice__none", text: "NO" }), this.t("none", "None"));
+    // A clipart's name is "<layer> · <option>" ("Theme · Christmas"): a button says only the option.
+    const short = (x: string) => (x.includes(" · ") ? x.slice(x.lastIndexOf(" · ") + 3) : x);
     for (const o of options) {
-      if (display === "button") add(o.id, el("span", { class: "ct-choice__text", text: o.label }), o.label);
+      if (display === "button") add(o.id, el("span", { class: "ct-choice__text", text: short(o.label) }), o.label);
       else if (display === "swatch" && o.swatch) add(o.id, el("span", { class: "ct-choice__swatch", style: `background:${o.swatch}` }), o.label);
-      else if (!o.image) add(o.id, el("span", { class: "ct-choice__text", text: o.label }), o.label);
+      else if (!o.image) add(o.id, el("span", { class: "ct-choice__text", text: short(o.label) }), o.label);
       else {
         // The part cropped and centred in its tile (lib/option-thumb.ts) once it is read; the file until then.
         const img = el("img", { src: o.image, alt: o.label, loading: "lazy" });

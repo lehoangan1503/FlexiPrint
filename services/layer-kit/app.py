@@ -45,7 +45,7 @@ from pydantic import BaseModel
 
 import upscale
 
-from layers import Option, Slot, Zone, _fill, cut, erase_at, kernel, on_white, part_region, region_zone, register, register_option, territory
+from layers import Option, Slot, Zone, _fill, cut, unit, erase_at, kernel, on_white, part_region, region_zone, register, register_option, territory
 
 TOKEN = os.getenv("LAYER_TOKEN", "")
 PRINT_SIDE = int(os.getenv("PRINT_SIDE", "3072"))  # long side wanted for print (≈ 300 dpi at 26 cm)
@@ -259,6 +259,13 @@ def delete_job(job_id: str, authorization: str | None = Header(default=None)) ->
 
 
 # ---- pictures in and out ------------------------------------------------------------------------------------
+
+def mask8(img: Image.Image) -> np.ndarray:
+    """read_mask as 8-bit (0..255)."""
+    if img.mode in ("RGBA", "LA", "PA") or "transparency" in img.info:
+        return np.asarray(img.convert("RGBA").getchannel("A")).copy()
+    return np.asarray(img.convert("L")).copy()
+
 
 def read_mask(img: Image.Image) -> np.ndarray:
     """A mask PNG: its alpha (white + alpha, how the page saves them), or its grey levels when it has none."""
@@ -483,13 +490,15 @@ def _cut(body: CutBody, out_dir: str) -> dict:
     t0 = time.time()
     cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 
+    # Every picture / region is kept 8-bit until its file is made (layers.unit): as floats, a 63-option set took
+    # 11 GB and was OOM-killed (2026-10-19).
     def pic(pid: str) -> tuple[np.ndarray, np.ndarray]:
         if pid not in cache:
             if pid not in body.pictures:
                 raise HTTPException(400, f"thiếu ảnh {pid}")
             p = body.pictures[pid]
-            col = rgba_of(fetch(p.colour))[..., :3]
-            a = read_mask(fetch(p.alpha))
+            col = np.ascontiguousarray(np.asarray(fetch(p.colour).convert("RGB")))
+            a = mask8(fetch(p.alpha))
             if a.shape != col.shape[:2]:
                 a = cv2.resize(a, (col.shape[1], col.shape[0]), interpolation=cv2.INTER_LINEAR)
             cache[pid] = (col, a)
@@ -501,7 +510,7 @@ def _cut(body: CutBody, out_dir: str) -> dict:
     def region(url: str | None) -> np.ndarray | None:
         if not url:
             return None
-        m = read_mask(fetch(url))
+        m = mask8(fetch(url))
         return m if m.shape == (H, W) else cv2.resize(m, (W, H), interpolation=cv2.INTER_LINEAR)
 
     slots: list[Slot] = []
@@ -515,7 +524,7 @@ def _cut(body: CutBody, out_dir: str) -> dict:
             slot.options.append(opt)
         slots.append(slot)
     zones = [Zone(z.id, region(z.region)) for z in body.zones]
-    out = cut(b_col, b_a * np.clip(region(body.body_region), 0, 1), slots, zones)
+    out = cut(unit(b_col), unit(b_a) * unit(region(body.body_region)), slots, zones, lambda rgba: (png_b64(rgba), bbox(rgba)), jpg_b64)
     log.info("cut %d files in %.1fs", len(out["files"]), time.time() - t0)
     return {
         "width": out["width"],
@@ -526,11 +535,11 @@ def _cut(body: CutBody, out_dir: str) -> dict:
         "zones": out["zones"],
         "checks": out["checks"],
         "diff": png_b64(out["diff"]),
-        "files": [{"slot": f.slot, "label": f.label, "option": f.option, "color": f.color, "piece": f.piece, "png": png_b64(f.rgba), "bbox": bbox(f.rgba), "plate": f.plate} for f in out["files"]],
+        "files": [{"slot": f.slot, "label": f.label, "option": f.option, "color": f.color, "piece": f.piece, "png": f.png, "bbox": f.bbox, "plate": f.plate} for f in out["files"]],
         # Each file's colours over the whole canvas (JPEG): what a hand edit adds to the file is painted from these.
-        "plates": {k: jpg_b64(v) for k, v in out["plates"].items()},
+        "plates": out["plates"],
         # A part made of a back + a front layer as it is seen (its whole back file): the option's thumbnail.
-        "views": [{"slot": v.slot, "option": v.option, "color": v.color, "png": png_b64(v.rgba), "plate": v.plate} for v in out["views"]],
+        "views": [{"slot": v.slot, "option": v.option, "color": v.color, "png": v.png, "plate": v.plate} for v in out["views"]],
     }
 
 

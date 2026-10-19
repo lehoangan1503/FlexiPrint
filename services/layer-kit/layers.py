@@ -24,6 +24,7 @@ is fixed by hand (the region / file editor) or by drawing that 3b picture again.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import cv2
@@ -458,10 +459,15 @@ def recolor(colour: np.ndarray, alpha: np.ndarray, target_hex: str | None, tint:
     return colour * (1 - w[..., None]) + from_lab(out) * w[..., None]
 
 
+def unit(x: np.ndarray) -> np.ndarray:
+    """0..1 floats of a picture kept as 8-bit (cut inputs are, 2026-10-19: 60+ float pictures took 11 GB)."""
+    return x.astype(np.float32) / 255 if x.dtype == np.uint8 else x
+
+
 @dataclass
 class Option:
     name: str
-    col: np.ndarray | None = None       # the option picture's colours (registered onto the doll, print size)
+    col: np.ndarray | None = None       # the option picture's colours (registered onto the doll, print size; float or 8-bit)
     alpha: np.ndarray | None = None     # … its alpha
     region: np.ndarray | None = None    # what it drew anew (part_region), maybe fixed by hand
 
@@ -489,14 +495,16 @@ class Out:
     label: str
     option: str
     color: str
-    rgba: np.ndarray
+    png: str                # the file, encoded as it is made (encode below): 200+ full-crop RGBA arrays took GBs
+    bbox: list[int]
     piece: str = ""
     plate: str = ""         # key of its colours over the whole canvas (cut()["plates"])
 
 
-def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zone]) -> dict:
+def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zone], encode: Callable[[np.ndarray], tuple[str, list[int]]], encode_plate: Callable[[np.ndarray], str]) -> dict:
     """The layer files. body / body_a: the doll × the body region. Every part file = its region × its own picture's
-    alpha, in its own picture's colours (recoloured for another colour). Cropped by ONE common rectangle, 8-bit."""
+    alpha, in its own picture's colours (recoloured for another colour). Cropped by ONE common rectangle, 8-bit.
+    encode: an RGBA file → (PNG, bbox); encode_plate: RGB colours → JPEG — each done at once, nothing big is kept."""
     H, W = body.shape[:2]
     checks: list[dict] = []
 
@@ -505,15 +513,15 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
         for i, o in enumerate(s.options):
             if o.region is None or o.alpha is None or o.col is None:
                 continue
-            a = np.clip(o.region, 0, 1) * np.clip(o.alpha, 0, 1)
+            a = np.clip(unit(o.region), 0, 1) * np.clip(unit(o.alpha), 0, 1)
             if (a > 0.5).sum() < 300:
                 checks.append({"name": f"{s.label}: {o.name}", "ok": False, "detail": "Vùng trống — AI không vẽ gì khác búp bê (vẽ lại ảnh 3b này).", "piece": f"{s.key}#{i}"})
                 continue
-            alphas[f"{s.key}#{i}"] = a
+            alphas[f"{s.key}#{i}"] = a.astype(np.float16)
 
     zone_out = []
     for z in zones:
-        m = clean(np.clip(z.region, 0, 1) > 0.5, close_r=6)
+        m = clean(np.clip(unit(z.region), 0, 1) > 0.5, close_r=6)
         if m.sum() < 500:
             checks.append({"name": f"Vùng ảnh {z.id}", "ok": False, "detail": "Vùng ảnh khách trống — tô lại.", "piece": f"zone:{z.id}"})
             continue
@@ -536,17 +544,17 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
 
     files: list[Out] = []
     views: list[Out] = []
-    plates: dict[str, np.ndarray] = {}
+    plates: dict[str, str] = {}
 
     def plate_of(col: np.ndarray) -> str:
         name = f"p{len(plates)}"
-        plates[name] = (np.clip(col, 0, 1) * 255).round().astype(np.uint8)
+        plates[name] = encode_plate((np.clip(col, 0, 1) * 255).round().astype(np.uint8))
         return name
 
-    def px(col: np.ndarray, a: np.ndarray) -> np.ndarray:
+    def px(col: np.ndarray, a: np.ndarray) -> tuple[str, list[int]]:
         out = (np.clip(np.dstack([col, a]), 0, 1) * 255).round().astype(np.uint8)
         out[out[..., 3] == 0] = 0
-        return out
+        return encode(out)
 
     backs: list[dict] = []
     parts: list[dict] = []
@@ -558,24 +566,24 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
             if piece not in alphas:
                 continue
             made = True
-            a = alphas[piece][c]
-            col0 = o.col[c]
+            a = alphas.pop(piece)[c].astype(np.float32)
+            col0 = unit(o.col[c])
             if s.mode == "color":
                 # One drawing, one file per colour option.
                 for k, (name, hex_) in enumerate(zip([x.name for x in s.options], s.hexes)):
                     col = col0 if k == 0 else recolor(col0, a, hex_)
-                    files.append(Out(s.key, s.label, name, "", px(col, a), piece, plate_of(col)))
+                    files.append(Out(s.key, s.label, name, "", *px(col, a), piece, plate_of(col)))
                 break
             for k, (cname, hex_) in enumerate(s.colors or [("", None)]):
                 col = col0 if k == 0 else recolor(col0, a, hex_)
                 plate = plate_of(col)
                 if s.wraps:
                     whole = px(col, a)
-                    files.append(Out(f"{s.key}:back", f"{s.label} — lớp sau", o.name, cname, whole, piece, plate))
-                    views.append(Out(f"{s.key}:back", s.label, o.name, cname, whole, piece, plate))
-                    files.append(Out(f"{s.key}:front", f"{s.label} — lớp trước", o.name, cname, px(col, a * fig), piece, plate))
+                    files.append(Out(f"{s.key}:back", f"{s.label} — lớp sau", o.name, cname, *whole, piece, plate))
+                    views.append(Out(f"{s.key}:back", s.label, o.name, cname, *whole, piece, plate))
+                    files.append(Out(f"{s.key}:front", f"{s.label} — lớp trước", o.name, cname, *px(col, a * fig), piece, plate))
                 else:
-                    files.append(Out(s.key, s.label, o.name, cname, px(col, a), piece, plate))
+                    files.append(Out(s.key, s.label, o.name, cname, *px(col, a), piece, plate))
         if not made:
             continue
         if s.wraps:
@@ -583,7 +591,7 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
             fronts.append({"key": f"{s.key}:front", "label": f"{s.label} — lớp trước", "follows": None})
         else:
             parts.append({"key": s.key, "label": s.label, "follows": None})
-    files.append(Out("body", "Thân", "Body", "", px(body[c], body_a[c]), "body", plate_of(body[c])))
+    files.append(Out("body", "Thân", "Body", "", *px(body[c], body_a[c]), "body", plate_of(body[c])))
     order = backs + [{"key": "body", "label": "Thân", "follows": None}] + parts + fronts
     checks.append({"name": "Cắt theo phần khác búp bê", "ok": True, "detail": f"{len(files)} file — mỗi file là đúng pixel ảnh 3b của nó, thân là búp bê nguyên vẹn"})
     h, w = y1 - y0, x1 - x0

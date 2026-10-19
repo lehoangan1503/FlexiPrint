@@ -22,6 +22,7 @@ import { RefPictures } from "./ref-pictures";
 import { StepGuide } from "./step-guide";
 import type { CtPrintTemplate } from "../../types/print";
 import { layoutHint } from "../../lib/print-template";
+import { charVersions } from "../../lib/char-lineup";
 import { printApi } from "../../lib/print-api";
 import { PrintSheet } from "../print/print-sheet";
 
@@ -950,9 +951,10 @@ function OptionsPreview({ ctx }: { ctx: CharCtx }) {
               {brief.lineup.label} <span className="text-[#c0392b]">*</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {brief.subjects.map((sub, i) => (
-                <span key={sub.id} className={cx("rounded-md border bg-white px-2.5 py-1 text-xs", i === 0 && "border-[#d9814a] ring-1 ring-[#d9814a]")}>
-                  {brief.lineup!.mode === "one" ? sub.name || short(sub.description) : `${i + 1} ${i ? "People" : "Person"}`}
+              {/* The product's own versions (the grandma always there is not counted: 1–4 grandchildren). */}
+              {charVersions(brief).map((v, i) => (
+                <span key={v.name || i} className={cx("rounded-md border bg-white px-2.5 py-1 text-xs", i === 0 && "border-[#d9814a] ring-1 ring-[#d9814a]")}>
+                  {v.name}
                 </span>
               ))}
             </div>

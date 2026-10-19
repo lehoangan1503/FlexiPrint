@@ -95,7 +95,7 @@ export function CharList({ currentUserId, admin = false }: { currentUserId: stri
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <ol className="mb-6 grid gap-2 text-xs text-muted-foreground sm:grid-cols-4">
           {[
-            ["1. Mô tả bộ clipart", "Ý tưởng → @flexiprint gợi ý → bạn review option, tên khách gõ và nền (quan trọng nhất)."],
+            ["1. Mô tả bộ clipart", "Gõ mô tả + kéo ảnh mẫu vào ô chat → @flexiprint viết brief → bạn review option, tên khách gõ và nền."],
             ["2. Ảnh master", "Tấm gốc mọi clipart cắt ra từ đó. Duyệt kỹ — chưa ưng thì tạo lại / sửa."],
             ["3. Cắt clipart · tự động", "Tự chạy sau khi duyệt master. Xem nếu muốn; sửa tay hoặc nhờ @flexiprint ở ô chat."],
             ["4. Sản phẩm · tự động", "Tự dựng sản phẩm, file in, nền và mockup từ bộ clipart."],

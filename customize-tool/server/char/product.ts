@@ -68,7 +68,8 @@ export function textRegion(productId: string, mainId: string, t: CtCharTextField
         choices: t.kind === "choice" ? t.choices : [],
         maxChars: Math.max(t.maxChars, ...t.choices.map((c) => c.length)),
         fontFamily: font.family,
-        fontWeight: font.weights.includes(700) && t.kind === "choice" ? 700 : font.weights[0],
+        // Bold for a slogan, a fixed line (the sign) and a name on a hat — like the samples.
+        fontWeight: font.weights.includes(700) && (t.kind !== "input" || t.place === "on") ? 700 : font.weights[0],
         fontSize: at.fontSize,
         color: t.color,
         ...(onPattern ? { strokeColor: "#fffaf0", strokeWidth: Math.max(2, Math.round(at.fontSize * (t.kind === "choice" ? 0.16 : 0.12))) } : {}),
@@ -338,38 +339,50 @@ export async function cleanKey(png: Buffer, body: boolean): Promise<Buffer> {
 }
 
 /** [x, y, w, h] of the visible pixels. */
-/** A hat's brim / cuff on its file (canvas coordinates): the widest band of rows in its lower part — where a name goes
- * on a Santa hat's cuff, a witch hat's band, a beanie's fold (asked 2026-10-19: names on the hats, no box in the brief). */
+/** A hat's brim / cuff on its file (canvas coordinates): in its lower part, the band of rows whose solid run through
+ * the hat's middle is the longest — the Santa hat's cuff, a witch hat's band, a beanie's fold. Measured through the
+ * middle so the pom-pom hanging at the side does not count (it pulled the names below the cuff, 2026-10-19). Asked
+ * 2026-10-19: names on the hats, no box in the brief. */
 async function brimBox(png: Buffer): Promise<CtLayoutBox | null> {
   const { data, info } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
-  const rows: Array<{ x0: number; x1: number }> = [];
+  const W = info.width;
+  const solid = (x: number, y: number) => data[y * W + x] > 128;
   let top = -1;
   let bottom = -1;
-  for (let y = 0; y < info.height; y++) {
-    let x0 = -1;
-    let x1 = -1;
-    for (let x = 0; x < info.width; x++)
-      if (data[y * info.width + x] > 128) {
-        if (x0 < 0) x0 = x;
-        x1 = x;
+  let left = W;
+  let right = -1;
+  for (let y = 0; y < info.height; y++)
+    for (let x = 0; x < W; x++)
+      if (solid(x, y)) {
+        if (top < 0) top = y;
+        bottom = y;
+        left = Math.min(left, x);
+        right = Math.max(right, x);
       }
-    rows.push({ x0, x1 });
-    if (x0 >= 0) {
-      if (top < 0) top = y;
-      bottom = y;
-    }
-  }
   if (top < 0) return null;
   const h = bottom - top + 1;
-  const width = (y: number) => (rows[y].x0 < 0 ? 0 : rows[y].x1 - rows[y].x0 + 1);
-  // The lower 60 % (the pom-pom / tip is above or beside it); the widest row, then the rows around it nearly as wide.
+  const mid = Math.round((left + right) / 2);
+  // The solid run through the middle column of a row (none when the middle is clear).
+  const run = (y: number): [number, number] | null => {
+    if (!solid(mid, y)) return null;
+    let a = mid;
+    let b = mid;
+    while (a > 0 && solid(a - 1, y)) a--;
+    while (b < W - 1 && solid(b + 1, y)) b++;
+    return [a, b];
+  };
+  const len = (y: number) => {
+    const r = run(y);
+    return r ? r[1] - r[0] + 1 : 0;
+  };
   let best = -1;
-  for (let y = top + Math.floor(h * 0.4); y <= bottom; y++) if (best < 0 || width(y) > width(best)) best = y;
-  const wide = width(best) * 0.85;
+  for (let y = top + Math.floor(h * 0.4); y <= bottom; y++) if (best < 0 || len(y) > len(best)) best = y;
+  if (best < 0 || len(best) === 0) return null;
+  const wide = len(best) * 0.85;
   let y0 = best;
   let y1 = best;
-  while (y0 > top && width(y0 - 1) >= wide) y0--;
-  while (y1 < bottom && width(y1 + 1) >= wide) y1++;
+  while (y0 > top && len(y0 - 1) >= wide) y0--;
+  while (y1 < bottom && len(y1 + 1) >= wide) y1++;
   // A thin band still gets a readable line (≥ 14 % of the hat).
   const need = Math.round(h * 0.14) - (y1 - y0 + 1);
   if (need > 0) {
@@ -378,12 +391,14 @@ async function brimBox(png: Buffer): Promise<CtLayoutBox | null> {
   }
   let x0 = Infinity;
   let x1 = -Infinity;
-  for (let y = y0; y <= y1; y++)
-    if (rows[y].x0 >= 0) {
-      x0 = Math.min(x0, rows[y].x0);
-      x1 = Math.max(x1, rows[y].x1);
+  for (let y = y0; y <= y1; y++) {
+    const r = run(y);
+    if (r) {
+      x0 = Math.min(x0, r[0]);
+      x1 = Math.max(x1, r[1]);
     }
-  const inset = (x1 - x0) * 0.12;
+  }
+  const inset = (x1 - x0) * 0.1;
   return { x: x0 + inset, y: y0, w: x1 - x0 - 2 * inset, h: y1 - y0 + 1 };
 }
 

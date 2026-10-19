@@ -2,25 +2,22 @@
 
 /**
  * Left sidebar: what the product uses — the editor only edits; every clipart
- * is made and fixed in the library (/library).
+ * is made and fixed in the library (/library) or in a v2 bộ nhân vật.
  *
- *   Version    the main object's VERSIONS (colour, material…), each with its
- *              own layers. The crown marks the default; with "Khách chọn
- *              version" on, every version is an option the customer picks
- *              ("Choose Color"). "Thêm option" gives a version sub-options
- *              (đa sắc): a second row on the storefront, the version itself
- *              first, sharing its layers and config.
+ *   Version    the product's VERSIONS (what the customer picks: a character, a
+ *              number of people…), each with its own layers. Click one to
+ *              edit it; the crown marks the default. A clipart dropped on the
+ *              list becomes one more version.
  *   Thư viện   the global clipart library (library-panel.tsx): drag any
- *              picture onto the Version column or the canvas.
+ *              picture onto the canvas.
  */
 
 import { useState } from "react";
-import { AlertTriangle, Crown, Layers, Plus, Trash2, Unlink, X } from "lucide-react";
-import type { CtAsset, CtMainOptionConfig, CtOptionDisplay } from "../../types";
-import { mainSubOptions, mainVersions } from "../../lib/design";
-import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtSelect, CtTooltip, cx } from "../ui";
-import { DISPLAY_OPTIONS } from "./inspector";
-import { LibraryBadge, LibraryPanel } from "./library-panel";
+import { Crown, Trash2, Unlink } from "lucide-react";
+import type { CtAsset } from "../../types";
+import { mainVersions } from "../../lib/design";
+import { CHECKER_STYLE, CtInput, CtTooltip, cx } from "../ui";
+import { CLIPART_DRAG, LibraryPanel, type CtClipartDrag } from "./library-panel";
 
 export type AssetTab = "main" | "library";
 
@@ -32,26 +29,20 @@ export interface AssetPanelProps {
   onDelete: (asset: CtAsset) => void;
   onSetMain: (asset: CtAsset) => void;
   onRename: (asset: CtAsset, name: string) => void;
-  onPreview: (asset: CtAsset) => void;
-  mainConfig: CtMainOptionConfig;
-  onMainConfig: (patch: Partial<CtMainOptionConfig>) => void;
+  /** Show (and edit) this version on the canvas. */
+  onShow: (asset: CtAsset) => void;
   /** Main version id -> how many layers it has (every version has its own). */
   layerCounts: Record<string, number>;
-  /** Main version currently on the canvas, and the picture it shows (a sub-option of it, or itself). */
+  /** Main version currently on the canvas. */
   shownMainId: string | null;
-  shownMainImageId: string | null;
-  /** "Thêm option": pick library cliparts as sub-options of this version. */
-  onAddOptions: (version: CtAsset) => void;
-  onRemoveOption: (version: CtAsset, option: CtAsset) => void;
-  /** Show this picture of the version on the canvas (null = the version itself). */
-  onShowOption: (version: CtAsset, optionId: string | null) => void;
+  /** A library clipart dropped on the version list: one more version. */
+  onDropVersion: (drag: CtClipartDrag) => void;
 }
 
 export function AssetPanel(props: AssetPanelProps) {
   const [tab, setTab] = useState<AssetTab>("main");
-  const { assets } = props;
-  const mains = mainVersions(assets, props.mainAssetId);
-  const defaultMain = mains.find((m) => m.id === props.mainAssetId) ?? null;
+  const [over, setOver] = useState(false);
+  const mains = mainVersions(props.assets, props.mainAssetId);
 
   return (
     <div className="flex h-full flex-col text-sm">
@@ -59,7 +50,6 @@ export function AssetPanel(props: AssetPanelProps) {
         {(
           [
             ["main", `Version (${mains.length})`],
-            // References only fed AI requests (older products).
             ["library", "Thư viện"],
           ] as Array<[AssetTab, string]>
         ).map(([k, label]) => (
@@ -75,173 +65,103 @@ export function AssetPanel(props: AssetPanelProps) {
 
       {tab === "library" ? (
         <div className="min-h-0 flex-1">
-          <LibraryPanel usedIds={new Set(assets.map((a) => a.id))} version={props.libraryVersion} />
+          <LibraryPanel usedIds={new Set(props.assets.map((a) => a.id))} version={props.libraryVersion} />
         </div>
       ) : (
-        <div className="flex-1 space-y-2 overflow-y-auto p-2">
-          {tab === "main" &&
-            (mains.length === 0 ? (
-              <Empty text="Chưa có version. Mở tab Thư viện, kéo 1 clipart (gốc, đa sắc hay vật liệu) thả vào canvas." />
-            ) : (
-              <>
-                <div className="space-y-2 rounded-md border p-2">
-                  <CtCheckbox
-                    checked={props.mainConfig.enabled}
-                    onChange={(enabled) => props.onMainConfig({ enabled })}
-                    label="Khách chọn version"
-                    hint="Mỗi version là 1 option (vd. Choose Color: đen / xám / đỏ). Tên ảnh = tên option hiện cho khách."
-                  />
-                  {props.mainConfig.enabled && (
-                    <div className="grid grid-cols-[1fr_110px] gap-1.5">
-                      <CtField label="Nhãn">
-                        <CtInput value={props.mainConfig.label} placeholder="Choose Color" onChange={(e) => props.onMainConfig({ label: e.target.value })} />
-                      </CtField>
-                      <CtField label="Hiển thị">
-                        <CtSelect<CtOptionDisplay> value={props.mainConfig.display} onChange={(display) => props.onMainConfig({ display })} options={DISPLAY_OPTIONS} />
-                      </CtField>
-                    </div>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {mains.map((a) => {
-                    const mismatch = defaultMain && (a.width !== defaultMain.width || a.height !== defaultMain.height);
-                    return (
-                      <AssetCard key={a.id} asset={a} {...props} highlighted={a.id === props.shownMainId}>
-                        {mismatch && (
-                          <CtTooltip label={`${a.width}×${a.height} khác version mặc định ${defaultMain.width}×${defaultMain.height} — sẽ bị kéo giãn cho khớp vùng`}>
-                            <span className="mb-1 flex items-center gap-1 text-[11px] text-amber-500">
-                              <AlertTriangle className="h-3 w-3" /> Lệch kích thước
-                            </span>
-                          </CtTooltip>
-                        )}
-                        <span className="mb-1 flex items-center gap-1 text-[11px] text-muted-foreground">
-                          <Layers className="h-3 w-3" /> {props.layerCounts[a.id] ?? 0} layer
-                        </span>
-                        {a.id === props.mainAssetId ? (
-                          <span className="mb-1 flex items-center gap-1 text-[11px] font-medium text-amber-500">
-                            <Crown className="h-3 w-3" /> Mặc định
-                          </span>
-                        ) : (
-                          <CtButton size="sm" className="mb-1" onClick={() => props.onSetMain(a)}>
-                            <Crown className="h-3 w-3" /> Đặt mặc định
-                          </CtButton>
-                        )}
-                        <SubOptions version={a} {...props} />
-                      </AssetCard>
-                    );
-                  })}
-                </div>
-              </>
-            ))}
-
+        <div
+          className={cx("flex-1 space-y-1 overflow-y-auto p-2", over && "bg-sky-500/5 ring-2 ring-inset ring-sky-500/50")}
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes(CLIPART_DRAG)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+            setOver(true);
+          }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false);
+          }}
+          onDrop={(e) => {
+            setOver(false);
+            const raw = e.dataTransfer.getData(CLIPART_DRAG);
+            if (!raw) return;
+            e.preventDefault();
+            props.onDropVersion(JSON.parse(raw) as CtClipartDrag);
+          }}
+        >
+          {mains.length === 0 ? (
+            <p className="px-1 py-6 text-center text-xs text-muted-foreground">Chưa có version.</p>
+          ) : (
+            mains.map((a) => <VersionRow key={a.id} asset={a} {...props} />)
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function Empty({ text }: { text: string }) {
-  return <p className="px-1 py-6 text-center text-xs text-muted-foreground">{text}</p>;
-}
-
-/**
- * A version's sub-options: the version itself first (n° 1), then the pictures added with "Thêm option". Clicking
- * one shows it on the canvas — the layers stay the version's.
- */
-function SubOptions(props: AssetPanelProps & { version: CtAsset }) {
-  const { version } = props;
-  const options = mainSubOptions(props.assets, props.mainConfig, version.id);
-  const shown = props.shownMainId === version.id ? props.shownMainImageId : null;
-  return (
-    <div className="space-y-1 border-t pt-1">
-      {options.length > 0 && (
-        <div className="grid grid-cols-4 gap-1">
-          {[version, ...options].map((o, i) => (
-            <div key={o.id} className="group relative">
-              <CtTooltip label={i === 0 ? `${o.name || "Version"} — chính nó, option số 1` : `${o.name} — dùng chung layer & config của version`}>
-                <button
-                  type="button"
-                  onClick={() => props.onShowOption(version, i === 0 ? null : o.id)}
-                  className={cx("relative block aspect-square w-full overflow-hidden rounded border", shown === o.id && "ring-2 ring-sky-500")}
-                  style={CHECKER_STYLE}
-                >
-                  <img src={o.url} alt={o.name} className="h-full w-full object-contain" loading="lazy" />
-                  <span className="absolute bottom-0 left-0 rounded-tr bg-black/60 px-0.5 text-[8px] leading-tight text-white">{i + 1}</span>
-                </button>
-              </CtTooltip>
-              {i > 0 && (
-                <button
-                  type="button"
-                  className="absolute -right-1 -top-1 hidden rounded-full bg-black/70 p-0.5 text-white group-hover:block"
-                  onClick={() => props.onRemoveOption(version, o)}
-                  aria-label="Bỏ option"
-                >
-                  <X className="h-2.5 w-2.5" />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      <CtTooltip label="Thêm option con (đa sắc) cho version này: khách chọn version rồi chọn tiếp 1 trong các ảnh — dùng chung layer & config">
-        <span className="flex">
-          <CtButton size="sm" className="h-6 flex-1 px-1.5 text-[11px]" onClick={() => props.onAddOptions(version)}>
-            <Plus className="h-3 w-3" /> Thêm option
-          </CtButton>
-        </span>
-      </CtTooltip>
-    </div>
-  );
-}
-
-function AssetCard({
-  asset,
-  children,
-  onDelete,
-  onRename,
-  onPreview,
-  highlighted,
-}: AssetPanelProps & { asset: CtAsset; children?: React.ReactNode; highlighted?: boolean }) {
-  const inLibrary = asset.product_id === null;
+function VersionRow({ asset, ...props }: AssetPanelProps & { asset: CtAsset }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(asset.name);
+  const isDefault = asset.id === props.mainAssetId;
+  const shown = asset.id === props.shownMainId;
+  const inLibrary = asset.product_id === null;
+  const count = props.layerCounts[asset.id] ?? 0;
   return (
-    <div className={cx("group rounded-md border bg-card p-1.5", highlighted && "border-sky-500 ring-1 ring-sky-500")}>
-      <button className="relative block aspect-square w-full overflow-hidden rounded" style={CHECKER_STYLE} onClick={() => onPreview(asset)}>
-        <img src={asset.url} alt={asset.name} className="h-full w-full object-contain" loading="lazy" />
-        <span className="absolute bottom-0.5 right-0.5 rounded bg-black/60 px-1 text-[10px] text-white">
-          {asset.width}×{asset.height}
-        </span>
-        {(asset.generation_id || asset.source === "ai") && <span className="absolute left-0.5 top-0.5 rounded bg-sky-600/90 px-1 text-[10px] text-white">AI</span>}
-        {inLibrary && <LibraryBadge />}
-      </button>
-      <div className="mt-1 flex items-center gap-1">
+    <div
+      onClick={() => props.onShow(asset)}
+      className={cx("group flex cursor-pointer items-center gap-2 rounded-md border p-1.5", shown ? "border-sky-500 bg-sky-500/10" : "border-transparent hover:bg-accent")}
+    >
+      <span className="h-11 w-11 shrink-0 overflow-hidden rounded border" style={CHECKER_STYLE}>
+        <img src={asset.url} alt={asset.name} className="h-full w-full object-contain" loading="lazy" draggable={false} />
+      </span>
+      <div className="min-w-0 flex-1">
         {editing ? (
           <CtInput
             autoFocus
             value={name}
             className="h-6 text-xs"
+            onClick={(e) => e.stopPropagation()}
             onChange={(e) => setName(e.target.value)}
             onBlur={() => {
               setEditing(false);
-              if (name !== asset.name) onRename(asset, name);
+              if (name !== asset.name) props.onRename(asset, name);
             }}
             onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
           />
         ) : (
-          <CtTooltip label="Double-click để đổi tên">
-            <span className="flex-1 cursor-text truncate text-[11px]" onDoubleClick={() => setEditing(true)}>
-              {asset.name || "(không tên)"}
-            </span>
-          </CtTooltip>
+          <span className="block truncate text-xs font-medium" onDoubleClick={() => setEditing(true)}>
+            {asset.name || "(không tên)"}
+          </span>
         )}
-        <CtTooltip label={inLibrary ? "Gỡ khỏi sản phẩm (clipart vẫn trong thư viện)" : "Xoá"}>
-          <button className="rounded p-0.5 text-destructive opacity-60 hover:bg-accent hover:opacity-100" onClick={() => onDelete(asset)}>
-            {inLibrary ? <Unlink className="h-3 w-3" /> : <Trash2 className="h-3 w-3" />}
+        <span className="text-[11px] text-muted-foreground">{count} layer</span>
+      </div>
+      {isDefault ? (
+        <CtTooltip label="Mặc định">
+          <Crown className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+        </CtTooltip>
+      ) : (
+        <CtTooltip label="Đặt mặc định">
+          <button
+            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-amber-500 group-hover:block"
+            onClick={(e) => {
+              e.stopPropagation();
+              props.onSetMain(asset);
+            }}
+          >
+            <Crown className="h-3.5 w-3.5" />
           </button>
         </CtTooltip>
-      </div>
-      {children && <div className="mt-1">{children}</div>}
+      )}
+      <CtTooltip label={inLibrary ? "Gỡ khỏi sản phẩm" : "Xoá"}>
+        <button
+          className="hidden shrink-0 rounded p-0.5 text-destructive hover:bg-background group-hover:block"
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onDelete(asset);
+          }}
+        >
+          {inLibrary ? <Unlink className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
+        </button>
+      </CtTooltip>
     </div>
   );
 }

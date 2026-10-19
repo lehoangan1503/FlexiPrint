@@ -16,32 +16,22 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
-  ChevronDown,
-  ChevronRight,
-  Wallpaper,
-  Circle,
-  Copy,
-  Crown,
   Hand,
   ImageIcon,
   Loader2,
   MousePointer2,
   Move,
-  Pentagon,
-  Plus,
   Redo2,
   Rocket,
   Save,
-  Scissors,
   Square,
   Type,
   Undo2,
   UserSquare,
-  X,
 } from "lucide-react";
 import { CT_CONFIG, ctGoogleFontsHref } from "../../config";
 import { CT_BASE_OPTION, CT_MAIN_KEY } from "../../types";
-import type { CtAsset, CtMainFrame, CtMainOptionConfig, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection, CtShape, CtZoneParent, CtRegionKind } from "../../types";
+import type { CtAsset, CtMainFrame, CtMainOptionConfig, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import {
   defaultProductConfig,
@@ -58,7 +48,7 @@ import {
   zoneSubtree,
 } from "../../lib/design";
 import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, shapeBounds, translateShape } from "../../lib/geometry";
-import { CHECKER_STYLE, CtAutoWidthInput, CtButton, CtTooltip, CtTooltipProvider, cx } from "../ui";
+import { CtAutoWidthInput, CtButton, CtTooltip, CtTooltipProvider, cx } from "../ui";
 import { Stage, type EditTarget, type StageTool } from "./stage";
 import { Inspector } from "./inspector";
 import { AssetPanel } from "./asset-panel";
@@ -69,12 +59,11 @@ import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zo
 import { PrintDialog } from "./print-dialog";
 import { PrintPanel } from "./print-panel";
 import { CLIPART_DRAG, type CtClipartDrag, type CtClipartSetEntry } from "./library-panel";
-import { ClipartPickerDialog } from "./clipart-picker";
 import { ctConfirm } from "../dialogs";
 import { asLayerClipart, asMainOption, asVersion } from "../../lib/library";
-import { claimSharedLayers, cloneLayers, fitMainFrame, mainFrameFor, versionLayers } from "../../lib/layout";
+import { claimSharedLayers, fitMainFrame, mainFrameFor, versionLayers } from "../../lib/layout";
 import { useArtworkSaver } from "./artwork-saver";
-import { frameRegionFor, isMaterialFrame } from "../../lib/material-frame";
+import { frameRegionFor } from "../../lib/material-frame";
 
 /**
  * Thiết kế = edit, flat (what is printed — no phôi) · File in = the flat print file · Xem trước = the real storefront
@@ -83,30 +72,9 @@ import { frameRegionFor, isMaterialFrame } from "../../lib/material-frame";
 type View = "design" | "preview" | "print" | "mockup";
 
 
-/** Kinds drawn with a frame tool. A custom layer is added at once instead: its frame is the image itself. */
-/** "frame": the khuôn vật liệu — a custom layer whose outline is the product's shape (lib/material-frame). */
-type DrawKind = "text" | "photo" | "frame";
+/** Kinds drawn with a frame tool. A custom layer comes from a dropped clipart instead: its frame is the image itself. */
+type DrawKind = "text" | "photo";
 type CenterAxis = "x" | "y" | "xy";
-
-/** localStorage: the "copy layers from version" list was folded for this product. */
-const COPY_PANEL_KEY = "ct-copy-layers-off:";
-
-function readCopyPanelOff(productId: string): boolean {
-  try {
-    return localStorage.getItem(COPY_PANEL_KEY + productId) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeCopyPanelOff(productId: string, off: boolean): void {
-  try {
-    if (off) localStorage.setItem(COPY_PANEL_KEY + productId, "1");
-    else localStorage.removeItem(COPY_PANEL_KEY + productId);
-  } catch {
-    // Storage blocked: the list just opens again next time.
-  }
-}
 
 /** How long "C" waits for its second key (X / Y / C). */
 const CENTER_CHORD_MS = 900;
@@ -155,8 +123,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   };
   const [tool, setTool] = useState<StageTool>("select");
   const [drawKind, setDrawKind] = useState<DrawKind>("text");
-  /** Drawing a part cut out of this khuôn vật liệu (a hanging hole). */
-  const [cutFor, setCutFor] = useState<string | null>(null);
   /** "C" pressed: waiting for X / Y / C to centre the selected zone. */
   const centerChord = useRef<number>(0);
   const [editTarget, setEditTarget] = useState<EditTarget>("region");
@@ -168,13 +134,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
 
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  /** The "copy layers from version" list (right column) is folded for this product. */
-  const [copyPanelOff, setCopyPanelOff] = useState(false);
-  /** "Thêm option": pick sub-options of this version among its own clipart set. */
-  const [optionsFor, setOptionsFor] = useState<CtAsset | null>(null);
-  /** Version column "+": one blank version slot (null = none); shown on the canvas while `blankShown`. */
-  const [blank, setBlank] = useState(false);
-  const [blankShown, setBlankShown] = useState(false);
   /** The shown version's picture frame is selected (moved / resized on the canvas, numbers in the right column). */
   const [mainSelected, setMainSelected] = useState(false);
 
@@ -186,7 +145,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         setProduct(b.product);
         setNameDraft(b.product.name);
         setAssets(b.assets);
-        setCopyPanelOff(readCopyPanelOff(b.product.id));
         const config = normalizeProductConfig(b.product.config);
         // The design's own content (texts, choices, test photos) comes back as it was left.
         setSelection(config.samples);
@@ -233,12 +191,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     () => (main ? frameRegionFor(design.state.regions.map(normalizeRegion), shownMainId, main.id) : null),
     [design.state.regions, shownMainId, main],
   );
-  // Leaving the frame tools drops a khuôn / cut being drawn.
-  useEffect(() => {
-    if (tool !== "select" && tool !== "hand") return;
-    setCutFor(null);
-    setDrawKind((k) => (k === "frame" ? "text" : k));
-  }, [tool]);
   /** Main version id -> its layer count. */
   const layerCounts = useMemo(() => {
     const out: Record<string, number> = {};
@@ -387,65 +339,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     setEditTarget("region");
   };
 
-  /**
-   * The shown version's khuôn vật liệu (tool K): drawn with the frame tools (polygon = dots along the outline), it
-   * becomes the version's only khuôn — a custom layer named "Khuôn vật liệu".
-   */
-  const addMaterialFrame = (shape: CtShape) => {
-    if (!product) return;
-    const made = makeRegion(product.id, "image", shape, regions.length);
-    const region: CtRegion = { ...made, name: "Khuôn vật liệu", config: { ...made.config, materialFrame: true } };
-    ed.commit((s) => ({
-      ...s,
-      regions: [...s.regions.map((r) => (isMaterialFrame(r) ? { ...r, config: { ...r.config, materialFrame: false } } : r)), region],
-    }));
-    setSelectedRegionId(region.id);
-    setActiveItemId(null);
-    setDrawKind("text");
-    flash("Đã đặt khuôn vật liệu — file in cắt theo khuôn; bản vật liệu “theo khuôn” upload ở Thư viện → Upload vật liệu");
-  };
-
-  /** A part cut out of khuôn `regionId` (a hanging hole). */
-  const addFrameCut = (regionId: string, shape: CtShape) => {
-    ed.commit((s) => updateRegion(s, regionId, (r) => ({ ...r, config: { ...r.config, cuts: [...(r.config.cuts ?? []), shape] } })));
-    setCutFor(null);
-    setSelectedRegionId(regionId);
-  };
-
-  const startFrameCut = (regionId: string, shapeTool: "rect" | "ellipse" | "polygon") => {
-    setCutFor(regionId);
-    setTool(shapeTool);
-    setEditTarget("region");
-  };
-
-  /** Tool L: a layer is a clipart dragged from the Thư viện tab (each one its own frame) — nothing is uploaded here. */
-  const addCustomLayer = () => {
-    if (!main) return;
-    setTool("select");
-    flash("Kéo clipart từ tab Thư viện (cột trái) thả lên canvas — mỗi clipart là 1 layer riêng");
-  };
-
-  /**
-   * "+ con" on an option: a child zone shown only while its parent shows that option — a text, an empty custom
-   * layer (click it to pick its picture) or a photo upload — inside the parent's box, selected for editing.
-   */
-  const addChildZone = (parent: CtZoneParent, kind: CtRegionKind) => {
-    const p = regions.find((r) => r.id === parent.regionId);
-    if (!p || !product) return;
-    const b = shapeBounds(p.shape);
-    const w = Math.round(b.w * 0.6);
-    const h = Math.round(kind === "text" ? Math.max(40, b.h * 0.3) : b.h * 0.6);
-    const shape = { type: "rect" as const, x: Math.round(b.x + (b.w - w) / 2), y: Math.round(b.y + (b.h - h) / 2), w, h, radius: 0 };
-    const made = makeRegion(product.id, kind, shape, regions.length);
-    const region: CtRegion = { ...made, name: `${made.name} ↳ ${p.name}`, config: { ...made.config, parent } };
-    ed.commit((s) => ({ ...s, regions: [...s.regions, region] }));
-    revealZone(region.id, [...regions, region]);
-    setSelectedRegionId(region.id);
-    setActiveItemId(null);
-    setEditTarget("region");
-    flash("Đã thêm option con — chỉ hiện khi khách chọn option đó");
-  };
-
   /** Show a (child) zone on the canvas: every parent above it switched to the option it belongs to. */
   const revealZone = (id: string, list: CtRegion[] = regions) => {
     const byId = new Map(list.map((r) => [r.id, r]));
@@ -569,10 +462,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         if (selectedRegionId) centerChord.current = Date.now();
         return;
       }
-      if (k === "l") addCustomLayer();
-      else if (k === "t") startDraw("text");
+      if (k === "t") startDraw("text");
       else if (k === "u") startDraw("photo");
-      else if (k === "k") startDraw("frame");
       else if (k === "v") setTool("select");
       else if (k === "h") setTool("hand");
       else if (k === "r") setTool("rect");
@@ -698,46 +589,12 @@ export function CustomizeEditor({ productId }: { productId: string }) {
 
   /** Show (and edit) main version `id` on the canvas. */
   const showVersion = (id: string) => {
-    setBlankShown(false);
     setMainSelected(false);
     if (id === shownMainId) return;
     setSelection((sel) => ({ ...sel, [CT_MAIN_KEY]: { kind: "main", assetId: id } }));
     setSelectedRegionId(null);
     setActiveItemId(null);
     setEditTarget("region");
-  };
-
-  /** The shown version's layers become copies of version `from`'s (one click; replacing asks first, ⌘Z undoes). */
-  const copyLayersFrom = async (from: CtAsset) => {
-    if (!shownMainId || from.id === shownMainId) return;
-    const src = versionLayers(design.state.regions, design.state.items, from.id);
-    if (!src.regions.length) return;
-    const target = mains.find((m) => m.id === shownMainId);
-    if (
-      regions.length > 0 &&
-      !(await ctConfirm({
-        title: `Thay ${regions.length} layer của “${target?.name || "version này"}”?`,
-        message: `Layer hiện có của version này được thay bằng bản sao ${src.regions.length} layer của “${from.name || "version"}”. Hoàn tác được bằng ⌘Z.`,
-        confirmLabel: "Thay",
-      }))
-    )
-      return;
-    const ordered = [...src.regions].sort((a, b) => a.sort_order - b.sort_order).map((r, k) => ({ ...r, sort_order: k }));
-    const copy = cloneLayers(ordered, src.items, shownMainId);
-    ed.commit((s) => ({ ...s, regions: copy.regions, items: copy.items }));
-    // Object / text choices come along; a test photo stays with its own zone.
-    setSelection((sel) => {
-      const next = { ...sel };
-      for (const [from, to] of copy.idMap) {
-        const v = sel[from];
-        if (v && v.kind !== "photo") next[to] = v;
-      }
-      return next;
-    });
-    setSelectedRegionId(null);
-    setActiveItemId(null);
-    setEditTarget("region");
-    flash(`Đã sao chép ${copy.regions.length} layer từ “${from.name || "version"}”`);
   };
 
   const removeAsset = async (asset: CtAsset) => {
@@ -998,12 +855,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     }
   };
 
-  /** A clipart dropped into the blank version slot (or onto the column): a new version, shown at once. */
+  /** A clipart dropped onto the version list: a new version, shown at once. */
   const addVersionFromDrop = async (drag: CtClipartDrag) => {
-    if (!(await addLibraryMain(drag))) return;
-    setBlank(false);
-    setBlankShown(false);
-    showVersion(drag.asset.id);
+    if (await addLibraryMain(drag)) showVersion(drag.asset.id);
   };
 
   /** The shown version's picture frame on the artboard (CtMainLayout.frame). */
@@ -1024,54 +878,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       const subOptions = ids.length ? [...rest, { mainId, ids }] : rest;
       return { ...s, config: { ...s.config, main: { ...s.config.main, subOptions } } };
     });
-
-  const addSubOptions = (version: CtAsset, picks: CtAsset[]) => {
-    setOptionsFor(null);
-    // One role per picture in a product: not a version, another version's option, or a layer's clipart already.
-    const taken = new Set([...mains.map((m) => m.id), ...config.main.subOptions.flatMap((e) => e.ids), ...design.state.items.map((i) => i.asset_id)]);
-    const fresh = picks.filter((a) => !taken.has(a.id));
-    if (!fresh.length) return flash("Các ảnh này đã có trong sản phẩm (version, option khác hoặc layer)");
-    const current = config.main.subOptions.find((e) => e.mainId === version.id)?.ids ?? [];
-    setSubOptions(version.id, [...current, ...fresh.map((a) => a.id)]);
-    setAssets((list) => [...list.filter((a) => !fresh.some((f) => f.id === a.id)), ...fresh.map((a) => asMainOption(a, version.id))]);
-    keepAsDragged(fresh.map((a) => a.id));
-    if (!config.main.enabled) setMainConfig({ enabled: true });
-    flash(`Đã thêm ${fresh.length} option cho “${version.name || "version"}” — nhớ Lưu thiết kế`);
-  };
-
-  const removeSubOption = (version: CtAsset, option: CtAsset) => {
-    const current = config.main.subOptions.find((e) => e.mainId === version.id)?.ids ?? [];
-    setSubOptions(version.id, current.filter((id) => id !== option.id));
-    // Still used elsewhere in the product (a layer clipart): keep it, as that.
-    if (!items.some((i) => i.asset_id === option.id)) setAssets((list) => list.filter((a) => a.id !== option.id));
-    setSelection((sel) => {
-      const m = sel[CT_MAIN_KEY];
-      return m?.kind === "main" && m.optionId === option.id ? { ...sel, [CT_MAIN_KEY]: { ...m, optionId: null } } : sel;
-    });
-  };
-
-  /** Show version `version` on the canvas with one of its pictures (null = itself). */
-  const showOption = (version: CtAsset, optionId: string | null) => {
-    if (version.id !== shownMainId) showVersion(version.id);
-    setSelection((sel) => ({ ...sel, [CT_MAIN_KEY]: { kind: "main", assetId: version.id, optionId } }));
-  };
-
-  const previewAsset = (asset: CtAsset) => {
-    if (asset.role === "main") {
-      setSelection((sel) => ({ ...sel, [CT_MAIN_KEY]: { kind: "main", assetId: asset.id } }));
-      return;
-    }
-    const version = asset.role === "variant" ? mains.find((m) => m.id === asset.parent_id) : undefined;
-    if (version) return showOption(version, asset.id);
-    const subId = asset.role === "variant" ? asset.parent_id : asset.id;
-    const hits = items.filter((i) => i.asset_id === subId);
-    if (hits.length === 0) return;
-    setSelection((sel) => {
-      const next = { ...sel };
-      for (const h of hits) next[h.region_id] = { kind: "image", assetId: asset.id };
-      return next;
-    });
-  };
 
   const rename = async (asset: CtAsset, name: string) => {
     try {
@@ -1121,26 +927,10 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     { id: "select", icon: MousePointer2, label: "Chọn / di chuyển", keys: ["V"] },
     { id: "hand", icon: Hand, label: "Kéo khung nhìn", keys: ["H"] },
   ];
-  const frameTools: Array<{ id: StageTool; icon: typeof Square; label: string; keys: string[] }> = [
-    { id: "rect", icon: Square, label: "Khung chữ nhật", keys: ["R"] },
-    { id: "ellipse", icon: Circle, label: "Khung tròn / ellipse", keys: ["O"] },
-    { id: "polygon", icon: Pentagon, label: "Khung đa giác — chấm điểm", keys: ["P"] },
-  ];
   const drawing = tool === "rect" || tool === "ellipse" || tool === "polygon";
   const kinds: Array<{ id: DrawKind; icon: typeof Square; label: string; keys: string[] }> = [
-    { id: "text", icon: Type, label: "Text — khách nhập / chọn chữ · kéo để tạo khung", keys: ["T"] },
-    { id: "photo", icon: UserSquare, label: "Ảnh khách — khách upload ảnh · kéo để tạo khung", keys: ["U"] },
-    {
-      id: "frame",
-      icon: Scissors,
-      label: "Khuôn vật liệu — hình dạng sản phẩm (ornament tròn, cái quần…): kéo khung tròn / chữ nhật, hoặc đa giác chấm điểm theo viền. File in + vật liệu “theo khuôn” cắt theo nó",
-      keys: ["K"],
-    },
-  ];
-  const centers: Array<{ axis: CenterAxis; text: string; label: string; keys: string[] }> = [
-    { axis: "x", text: "CX", label: "Canh vào trục X giữa main (dịch lên / xuống)", keys: ["C", "X"] },
-    { axis: "y", text: "CY", label: "Canh vào trục Y giữa main (dịch trái / phải)", keys: ["C", "Y"] },
-    { axis: "xy", text: "CC", label: "Canh giữa main theo cả X và Y", keys: ["C", "C"] },
+    { id: "text", icon: Type, label: "Thêm chữ — kéo khung trên canvas", keys: ["T"] },
+    { id: "photo", icon: UserSquare, label: "Thêm ảnh khách — kéo khung trên canvas", keys: ["U"] },
   ];
   // Image layer: its items. Photo zone: the child frame the customer's photo goes in.
   const objectModeDisabled = selectedRegion?.kind === "photo" ? false : selectedRegion?.kind !== "image" || !items.some((i) => i.region_id === selectedRegionId);
@@ -1207,7 +997,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               {design.dirty ? "Lưu thiết kế" : "Đã lưu"}
             </CtButton>
           </CtTooltip>
-          <CtTooltip label="Deploy sản phẩm lên Shopify: bảng giá (Size / Pack), variants, ảnh + template custom">
+          <CtTooltip label="Đưa sản phẩm lên Shopify">
             <CtButton size="sm" variant="outline" onClick={() => void openDeploy()} disabled={!main || deploying}>
               {deploying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />} Deploy sản phẩm
             </CtButton>
@@ -1224,15 +1014,10 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             onDelete={removeAsset}
             onSetMain={setMain}
             onRename={rename}
-            onPreview={previewAsset}
-            mainConfig={config.main}
-            onMainConfig={setMainConfig}
+            onShow={(a) => showVersion(a.id)}
             layerCounts={layerCounts}
             shownMainId={shownMainId}
-            shownMainImageId={shownMainImageId}
-            onAddOptions={setOptionsFor}
-            onRemoveOption={removeSubOption}
-            onShowOption={showOption}
+            onDropVersion={(drag) => void addVersionFromDrop(drag)}
           />
         </aside>
 
@@ -1241,41 +1026,22 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           {view === "design" ? (
             <div className="flex min-h-0 flex-1">
               {/* Vertical tool rail */}
-              <div className="flex w-14 shrink-0 flex-col items-stretch gap-0.5 overflow-y-auto border-r px-1 py-1.5">
+              <div className="flex w-11 shrink-0 flex-col items-stretch gap-0.5 overflow-y-auto border-r px-1 py-1.5">
                 {navTools.map((t) => (
                   <RailButton key={t.id} label={t.label} keys={t.keys} active={tool === t.id} onClick={() => setTool(t.id)}>
                     <t.icon className="h-4 w-4" />
                   </RailButton>
                 ))}
                 <RailDivider />
-                <RailButton label="Custom layer — kéo clipart từ tab Thư viện thả lên canvas: mỗi clipart 1 layer riêng, khung chính là ảnh" keys={["L"]} disabled={!main} onClick={addCustomLayer}>
-                  <ImageIcon className="h-4 w-4" />
-                </RailButton>
                 {kinds.map((k) => (
                   <RailButton key={k.id} label={k.label} keys={k.keys} active={drawing && drawKind === k.id} disabled={!main} onClick={() => startDraw(k.id)}>
                     <k.icon className="h-4 w-4" />
                   </RailButton>
                 ))}
                 <RailDivider />
-                {frameTools.map((t) => (
-                  <RailButton key={t.id} label={t.label} keys={t.keys} active={tool === t.id} disabled={!main} onClick={() => { setTool(t.id); setEditTarget("region"); }}>
-                    <t.icon className="h-4 w-4" />
-                  </RailButton>
-                ))}
-                <RailDivider />
-                {centers.map((c) => (
-                  <RailButton key={c.axis} label={c.label} keys={c.keys} inlineKeys={false} disabled={!selectedRegion} onClick={() => centerSelected(c.axis)}>
-                    <span className="text-[11px] font-semibold">{c.text}</span>
-                  </RailButton>
-                ))}
-                <RailDivider />
                 <RailButton
                   label={
-                    objectModeDisabled
-                      ? "Chế độ Object — chọn Custom layer có ít nhất 1 ảnh, hoặc 1 vùng Ảnh khách"
-                      : selectedRegion?.kind === "photo"
-                        ? "Chế độ Object — khung ảnh khách bên trong vùng: vị trí / kích thước / độ nghiêng"
-                        : "Chế độ Object — vị trí / scale / xoay ảnh trong layer"
+                    selectedRegion?.kind === "photo" ? "Chỉnh khung ảnh khách bên trong vùng" : "Chỉnh vị trí / cỡ / xoay ảnh trong layer"
                   }
                   keys={["↵"]}
                   active={editTarget === "object"}
@@ -1284,67 +1050,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                 >
                   <Move className="h-4 w-4" />
                 </RailButton>
-                <RailDivider />
-                <RailButton label="Phôi trơn — ảnh phôi + vị trí thiết kế trên phôi (chỉ dùng cho Xem trước & Mockups; Thiết kế và File in luôn phẳng)" keys={[]} active={!!config.scene.url} disabled={!main} onClick={() => setSceneOpen(true)}>
-                  <Wallpaper className="h-4 w-4" />
-                </RailButton>
               </div>
               <div className="relative min-h-0 min-w-0 flex-1">
-                {main && (
-                  <div className="pointer-events-none absolute right-3 top-2 z-10 whitespace-nowrap text-[11px] text-muted-foreground">
-                    Main: {main.width}×{main.height}px · {regions.length} vùng
-                  </div>
-                )}
-                {main && (
-                  <VersionRail
-                    mains={mains}
-                    defaultId={main.id}
-                    shownId={shownMainId}
-                    layerCounts={layerCounts}
-                    onShow={showVersion}
-                    onDropClipart={(drag) => void addVersionFromDrop(drag)}
-                    blank={blank}
-                    blankShown={blankShown}
-                    onAdd={() => {
-                      // One blank slot at most: "+" again only shows it.
-                      setBlank(true);
-                      setBlankShown(true);
-                      setMainSelected(false);
-                      setSelectedRegionId(null);
-                    }}
-                    onShowBlank={() => setBlankShown(true)}
-                    onRemoveBlank={() => {
-                      setBlank(false);
-                      setBlankShown(false);
-                    }}
-                  />
-                )}
-                {main && blankShown ? (
-                  // The blank version slot: an empty artboard waiting for a clipart.
-                  <div
-                    className="flex h-full items-center justify-center p-10"
-                    onDragOver={(e) => {
-                      if (!e.dataTransfer.types.includes(CLIPART_DRAG)) return;
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = "copy";
-                    }}
-                    onDrop={(e) => {
-                      const raw = e.dataTransfer.getData(CLIPART_DRAG);
-                      if (!raw) return;
-                      e.preventDefault();
-                      void addVersionFromDrop(JSON.parse(raw) as CtClipartDrag);
-                    }}
-                  >
-                    <div
-                      className="flex max-h-full w-full max-w-xl flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed text-center text-sm text-muted-foreground"
-                      style={{ ...CHECKER_STYLE, aspectRatio: `${main.width} / ${main.height}` }}
-                    >
-                      <span className="rounded-md bg-background/90 px-3 py-2">
-                        <b className="text-foreground">Version mới</b> — kéo 1 clipart từ tab Thư viện thả vào đây
-                      </span>
-                    </div>
-                  </div>
-                ) : main ? (
+                {main ? (
                   <Stage
                     productId={product.id}
                     main={main}
@@ -1353,7 +1061,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     selection={selection}
                     tool={tool}
                     onToolChange={setTool}
-                    drawKind={drawKind === "frame" ? "image" : drawKind}
+                    drawKind={drawKind}
                     editTarget={editTarget}
                     onEditTargetChange={(t) => {
                       setEditTarget(t);
@@ -1379,13 +1087,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     }}
                     materialFrame={materialFrame}
                     printSpec={config.print?.spec ?? null}
-                    drawInto={
-                      cutFor
-                        ? { label: "Vẽ vùng cắt bỏ (lỗ đục…) trên khuôn — không in, vật liệu để trống", onShape: (shape) => addFrameCut(cutFor, shape) }
-                        : drawKind === "frame"
-                          ? { label: "Vẽ khuôn vật liệu — hình dạng sản phẩm (đa giác P: chấm điểm theo viền)", onShape: addMaterialFrame }
-                          : null
-                    }
                   />
                 ) : (
                   <div
@@ -1456,18 +1157,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         {/* Right: layers + properties */}
         {view === "design" && (
           <aside className="flex w-80 shrink-0 flex-col border-l">
-            {main && mains.length > 1 && (
-              <CopyLayersPanel
-                sources={mains.filter((m) => m.id !== shownMainId && (layerCounts[m.id] ?? 0) > 0)}
-                layerCounts={layerCounts}
-                onCopy={(m) => void copyLayersFrom(m)}
-                folded={copyPanelOff}
-                onFold={(off) => {
-                  setCopyPanelOff(off);
-                  writeCopyPanelOff(product.id, off);
-                }}
-              />
-            )}
             <div className="min-h-0 flex-1">
             <Inspector
               design={ed}
@@ -1486,12 +1175,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               onSelectMain={() => {
                 setSelectedRegionId(null);
                 setMainSelected(true);
-                setBlankShown(false);
               }}
               onMainFrame={setMainFrame}
               onPreviewOption={(regionId, assetId) => setSelection((sel) => ({ ...sel, [regionId]: { kind: "image", assetId } }))}
-              onAddChild={addChildZone}
-              onDrawCut={startFrameCut}
               onSaveArtwork={artworks.saveExtra}
               artworkBusy={artworks.busy}
               artworkFolder={artworks.folderName}
@@ -1555,12 +1241,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         )}
       </div>
 
-      <ClipartPickerDialog
-        version={optionsFor}
-        disabledIds={new Set([...mains.map((m) => m.id), ...config.main.subOptions.flatMap((e) => e.ids), ...allItems.map((i) => i.asset_id)])}
-        onClose={() => setOptionsFor(null)}
-        onPick={(picks) => optionsFor && addSubOptions(optionsFor, picks)}
-      />
       {main && (
         <>
           <SceneDialog
@@ -1583,8 +1263,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   );
 }
 
-/** One rail tool: icon with its shortcut beside it; the tooltip opens to the right. */
-function RailButton(props: { label: string; keys: string[]; inlineKeys?: boolean; active?: boolean; disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
+/** One rail tool: an icon; its name and shortcut are in the tooltip (opens to the right). */
+function RailButton(props: { label: string; keys: string[]; active?: boolean; disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <CtTooltip label={props.label} shortcut={props.keys} side="right">
       <span className="block">
@@ -1593,19 +1273,12 @@ function RailButton(props: { label: string; keys: string[]; inlineKeys?: boolean
           disabled={props.disabled}
           onClick={props.onClick}
           className={cx(
-            "flex h-8 w-full items-center justify-between gap-1 rounded-md px-1.5 text-foreground",
+            "flex h-8 w-full items-center justify-center rounded-md text-foreground",
             props.active ? "bg-sky-500/15 text-sky-500 ring-1 ring-sky-500/60" : "hover:bg-accent",
             props.disabled && "pointer-events-none opacity-35",
           )}
         >
-          {props.inlineKeys === false ? (
-            <span className="flex w-full justify-center">{props.children}</span>
-          ) : (
-            <>
-              <span className="flex w-5 justify-center">{props.children}</span>
-              <span className="text-[9px] leading-none text-muted-foreground">{props.keys.join("")}</span>
-            </>
-          )}
+          {props.children}
         </button>
       </span>
     </CtTooltip>
@@ -1614,146 +1287,4 @@ function RailButton(props: { label: string; keys: string[]; inlineKeys?: boolean
 
 function RailDivider() {
   return <div className="mx-1.5 my-1 h-px bg-border" />;
-}
-
-/**
- * Main versions, top-left of the canvas beside the tool rail: click one to show
- * it — the canvas, Layers and properties then edit that version's own layers.
- * "+" opens ONE blank version slot (pressing it again just shows that slot): an
- * empty artboard where a clipart dragged from the library becomes the new
- * version. A clipart dropped on the column does the same.
- */
-function VersionRail(props: {
-  mains: CtAsset[];
-  defaultId: string;
-  shownId: string | null;
-  layerCounts: Record<string, number>;
-  onShow: (id: string) => void;
-  onDropClipart: (drag: CtClipartDrag) => void;
-  /** A blank version slot exists / is on the canvas. */
-  blank: boolean;
-  blankShown: boolean;
-  onAdd: () => void;
-  onShowBlank: () => void;
-  onRemoveBlank: () => void;
-}) {
-  const [over, setOver] = useState(false);
-  return (
-    <div
-      className={cx(
-        // overflow-x hidden: 48 px tiles + padding + border are a hair wider than w-14 — no horizontal scrollbar.
-        "absolute left-2 top-2 z-10 flex max-h-[calc(100%-1rem)] w-[60px] flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden rounded-lg border bg-background/90 p-1 shadow-sm backdrop-blur",
-        over && "border-sky-500 ring-2 ring-sky-500/40",
-      )}
-      onDragOver={(e) => {
-        if (!e.dataTransfer.types.includes(CLIPART_DRAG)) return;
-        // The canvas below must not take it as a layer.
-        e.preventDefault();
-        e.stopPropagation();
-        e.dataTransfer.dropEffect = "copy";
-        setOver(true);
-      }}
-      onDragLeave={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false);
-      }}
-      onDrop={(e) => {
-        setOver(false);
-        const raw = e.dataTransfer.getData(CLIPART_DRAG);
-        if (!raw) return;
-        e.preventDefault();
-        e.stopPropagation();
-        props.onDropClipart(JSON.parse(raw) as CtClipartDrag);
-      }}
-    >
-      <span className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Version</span>
-      {props.mains.map((m) => {
-        const count = props.layerCounts[m.id] ?? 0;
-        return (
-          <CtTooltip key={m.id} label={`${m.name || "Version"} · ${count ? `${count} layer` : "chưa có layer"}`} side="right">
-            <button
-              type="button"
-              onClick={() => props.onShow(m.id)}
-              className={cx(
-                "relative block h-12 w-12 shrink-0 overflow-hidden rounded-md border",
-                m.id === props.shownId && !props.blankShown ? "ring-2 ring-sky-500" : "opacity-75 hover:opacity-100",
-              )}
-              style={CHECKER_STYLE}
-            >
-              <img src={m.url} alt={m.name} className="h-full w-full object-contain" draggable={false} />
-              {m.id === props.defaultId && <Crown className="absolute left-0.5 top-0.5 h-3 w-3 text-amber-500 drop-shadow" />}
-              <span
-                className={cx(
-                  "absolute bottom-0.5 right-0.5 rounded px-1 text-[9px] font-semibold leading-tight",
-                  count ? "bg-foreground/80 text-background" : "bg-muted text-muted-foreground",
-                )}
-              >
-                {count}
-              </span>
-            </button>
-          </CtTooltip>
-        );
-      })}
-{props.blank && (
-        <div className="group relative shrink-0">
-          <CtTooltip label="Version mới (trống) — kéo 1 clipart từ tab Thư viện vào canvas" side="right">
-            <button
-              type="button"
-              onClick={props.onShowBlank}
-              className={cx("block h-12 w-12 rounded-md border border-dashed bg-muted/40", props.blankShown ? "ring-2 ring-sky-500" : "opacity-75 hover:opacity-100")}
-            />
-          </CtTooltip>
-          <button
-            type="button"
-            onClick={props.onRemoveBlank}
-            className="absolute -right-1 -top-1 hidden rounded-full bg-black/70 p-0.5 text-white group-hover:block"
-            aria-label="Bỏ version trống"
-          >
-            <X className="h-2.5 w-2.5" />
-          </button>
-        </div>
-      )}
-      <CtTooltip label="Thêm version: mở 1 ô trống, kéo clipart từ tab Thư viện vào (hoặc kéo thả thẳng vào cột này)" side="right">
-        <button
-          type="button"
-          onClick={props.onAdd}
-          className={cx(
-            "flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-dashed text-muted-foreground hover:border-sky-500 hover:bg-sky-500/10 hover:text-sky-500",
-            over && "border-sky-500 bg-sky-500/10 text-sky-500",
-          )}
-        >
-          <Plus className="h-4 w-4" />
-        </button>
-      </CtTooltip>
-    </div>
-  );
-}
-
-/** Right column: copy every layer of another version into the shown one — one click per card. Foldable. */
-function CopyLayersPanel(props: { sources: CtAsset[]; layerCounts: Record<string, number>; onCopy: (m: CtAsset) => void; folded: boolean; onFold: (folded: boolean) => void }) {
-  return (
-    <div className="shrink-0 border-b px-3 py-2">
-      <button type="button" onClick={() => props.onFold(!props.folded)} className="flex w-full items-center gap-1.5 text-left">
-        {props.folded ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
-        <Copy className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-xs font-semibold">Sao chép layer từ version</span>
-      </button>
-      {props.folded ? null : props.sources.length === 0 ? (
-        <p className="mt-1.5 text-[11px] text-muted-foreground">Version khác chưa có layer nào để sao chép.</p>
-      ) : (
-        <div className="mt-1.5 grid max-h-44 grid-cols-3 gap-1.5 overflow-y-auto">
-          {props.sources.map((m) => (
-            <CtTooltip key={m.id} label={`Sao chép ${props.layerCounts[m.id] ?? 0} layer của “${m.name || "version"}” vào version đang sửa`}>
-              <button type="button" onClick={() => props.onCopy(m)} className="group rounded-md border p-1 text-left hover:border-sky-500 hover:bg-sky-500/5">
-                <span className="block aspect-square overflow-hidden rounded" style={CHECKER_STYLE}>
-                  <img src={m.url} alt={m.name} className="h-full w-full object-contain" draggable={false} />
-                </span>
-                <span className="mt-0.5 block truncate text-[11px] font-medium">{m.name || "Version"}</span>
-                <span className="block text-[10px] text-muted-foreground">{props.layerCounts[m.id] ?? 0} layer</span>
-              </button>
-            </CtTooltip>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }

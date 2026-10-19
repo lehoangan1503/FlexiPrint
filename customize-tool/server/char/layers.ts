@@ -238,7 +238,7 @@ export interface KitPlanInput {
   key: string;
   /** How many figures the doll has (subjects, left → right). */
   subjects: number;
-  options: Array<{ key: string; slot: string; label: string; option: string; index: number; picture: string; url: string; subject: number; against?: string; fine?: boolean }>;
+  options: Array<{ key: string; slot: string; label: string; option: string; index: number; picture: string; url: string; subject: number; against?: string; fine?: boolean; spread?: boolean }>;
   zones: Array<{ id: string; label: string; mask: string }>;
   /** Per piece: the urls its region comes from — the same again keeps a hand-fixed region on a re-plan. */
   sigs: Record<string, string>;
@@ -273,7 +273,7 @@ export function kitPlanInput(p: CtCharProject, latest: Map<string, CtCharImage>)
     const key = `${x.slot.id}#${x.index}`;
     const against = x.against ? url(x.against) : undefined;
     sigs[key] = [url(x.role), doll, ...(against ? [against] : [])].join("|");
-    return { key, slot: x.slot.id, label: `${slotLabel(p.brief, x.subject, x.slot)}: ${o.name}`, option: o.name, index: x.index, picture: pictureIdOf(x), url: url(x.role), subject: x.subject, ...(against ? { against } : {}), ...((x.fine ?? isFace(x.slot.part)) ? { fine: true } : {}) };
+    return { key, slot: x.slot.id, label: `${slotLabel(p.brief, x.subject, x.slot)}: ${o.name}`, option: o.name, index: x.index, picture: pictureIdOf(x), url: url(x.role), subject: x.subject, ...(against ? { against } : {}), ...((x.fine ?? isFace(x.slot.part)) ? { fine: true } : {}), ...(x.slot.headwear ? { spread: true } : {}) };
   });
   const zones = p.brief.photoZones.map((z) => ({ id: z.id, label: z.label, mask: url(`zone:${z.id}`) }));
   for (const z of zones) sigs[`zone:${z.id}`] = [z.mask, doll].join("|");

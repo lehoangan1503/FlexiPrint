@@ -984,7 +984,13 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_remake_product is for chat requests");
       if (project.brief.kind !== "photo" && (project.layers?.status !== "done" || !project.layers.approved)) throw new Error('The files are not cut yet — char_cut("build") first (it makes the product too)');
-      const productId = project.brief.lineup?.drawn ? await remakeDrawnProduct(db, task.user_id!, project.id) : await remakeSetProduct(db, project.user_id ?? task.user_id!, project, project.layers, { resetZones: args.reset_zones === true });
+      // A drawn lineup's product (every version set) takes minutes: built in the background (an MCP call is cut at ~100 s).
+      if (project.brief.lineup?.drawn) {
+        void remakeDrawnProduct(db, task.user_id!, project.id).catch((e: Error) => console.warn("[ct] drawn product", e.message));
+        await progress(db, task.id, "Đang dựng lại sản phẩm (mọi phiên bản, vài phút)");
+        return json({ building: true, next: "Built in the background (2–4 min): char_status shows the new productIds when it is done — do not call char_remake_product again meanwhile." });
+      }
+      const productId = await remakeSetProduct(db, project.user_id ?? task.user_id!, project, project.layers, { resetZones: args.reset_zones === true });
       if (!productId) throw new Error("Not every version set is cut yet (get_task set.versions: layers.status \"done\" for each) — wait for them, then call again");
       const { error } = await db.from(CT_TABLES.charProjects).update({ product_ids: [productId], status: "product" }).eq("id", project.id);
       if (error) throw new Error(error.message);

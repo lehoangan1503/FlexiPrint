@@ -219,7 +219,7 @@ function groupPrompt(brief: CtCharBrief, list: CtCharOptionPicture[]): string {
     return (
       `Give each of these characters the hairstyle written for them, ${style}, drawn as smooth solid sculpted locks — no loose flyaway strands:\n${lines}\n` +
       (first.on
-        ? "Each character wears a hat: the hair is drawn UNDER it — the hat stays exactly as it is, on top, untouched; the hair shows only below the hat's band (around the face, the ears and the neck, falling to the shoulders as the style goes); nothing of the hair is above, over or in front of the hat. "
+        ? "Each character wears a hat: the hair is drawn UNDER it — the hat stays exactly as it is, on top, untouched; the hair comes out from right under the hat's band, touching it all along: NO bald scalp or skin shows anywhere between the band and the hair (the hairline is hidden under the band; fringe / bangs over the forehead where the style has them), then frames the face, the ears and the neck, falling to the shoulders as the style goes; nothing of the hair is above, over or in front of the hat. "
         : "The hair sits on the bald head. ") +
       `Only add the hair; the faces, ears, necks, bodies${first.on ? ", hats" : ""} and clothes stay exactly as they are.${others}${KEEP_CLEAR}`
     );

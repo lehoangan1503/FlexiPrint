@@ -171,6 +171,29 @@ export async function runVersionChain(db: Db, userId: string, id: string): Promi
  * when any of them finishes a cut; does nothing while one is still missing. → the product id, or null.
  */
 export async function remakeDrawnProduct(db: Db, userId: string, parentId: string): Promise<string | null> {
+  // One build at a time per lineup: several sets finishing their cut together each asked for one, and the builds
+  // deleted each other's products half-way (2026-10-19). Asked while one runs → once more after it.
+  const busy = building.get(parentId);
+  if (busy) {
+    again.add(parentId);
+    return busy;
+  }
+  const run = (async () => {
+    let id: string | null = null;
+    do {
+      again.delete(parentId);
+      id = await buildDrawnProduct(db, userId, parentId);
+    } while (again.has(parentId));
+    return id;
+  })().finally(() => building.delete(parentId));
+  building.set(parentId, run);
+  return run;
+}
+
+const building = new Map<string, Promise<string | null>>();
+const again = new Set<string>();
+
+async function buildDrawnProduct(db: Db, userId: string, parentId: string): Promise<string | null> {
   const parent = await loadProject(db, parentId);
   if (!parent?.brief.lineup?.drawn || parent.layers?.status !== "done") return null;
   const children = await versionSetsOf(db, parentId);

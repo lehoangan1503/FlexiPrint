@@ -884,11 +884,13 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       if (!p) throw new Error("The bộ nhân vật no longer exists");
       return json({
         running: busy(p),
-        plan: p.cut?.plan ? { status: p.cut.plan.status, error: p.cut.plan.error, checks: p.cut.plan.checks } : null,
+        plan: p.cut?.plan ? { status: p.cut.plan.status, error: p.cut.plan.error, failedChecks: p.cut.plan.checks.filter((c) => !c.ok) } : null,
         layers: p.layers
-          ? { status: p.layers.status, error: p.layers.error, checks: p.layers.checks, diff: p.layers.diffUrl ?? null, slots: p.layers.slots.map((sl) => ({ key: sl.key, label: sl.label, files: sl.files.map((f) => ({ option: f.option, color: f.color, url: f.url, piece: f.piece ?? null })) })) }
+          ? // Compact: a lineup of 9 hair slots × 6 files made it too big to read — the product id went unseen (2026-10-19).
+            { status: p.layers.status, error: p.layers.error, failedChecks: p.layers.checks.filter((c) => !c.ok), files: p.layers.slots.reduce((n, sl) => n + sl.files.length, 0), slots: p.layers.slots.map((sl) => `${sl.key} (${sl.files.length})`) }
           : null,
         productIds: p.product_ids,
+        ...(p.brief.versionOf ? { lineupProductIds: (await loadProject(db, p.brief.versionOf.id))?.product_ids ?? [] } : {}),
         ...(busy(p) ? { message: "Still running — call char_status again." } : {}),
       });
     },

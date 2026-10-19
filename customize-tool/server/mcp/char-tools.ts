@@ -739,6 +739,9 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const whole = record(args.brief);
       if (!Object.keys(patch).length && !Object.keys(whole).length) throw new Error("char_update_brief: give `brief` or `patch`");
       const next = Object.keys(whole).length ? whole : { ...project.brief, ...patch };
+      // The references are char_add_reference's: a whole brief written without them keeps them (2026-10-19: one dropped
+      // the sample picture just added, and the masters were drawn without it).
+      if (!Array.isArray(next.refs) || !next.refs.length) next.refs = project.brief.refs;
       // Fields the parser drops silently: say what shape they take (the agent tried "lineup" five ways, 2026-10-18).
       const lu = record(next.lineup);
       if (next.lineup != null && lu.mode !== "one" && lu.mode !== "count") throw new Error('lineup must be {"mode": "one" | "count", "label": "Number of Grandchildren"} (or null)');

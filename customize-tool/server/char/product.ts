@@ -30,7 +30,7 @@ import { latestEditsOf } from "../../lib/char-images";
 import * as h from "../handlers";
 import type { CtSession } from "../supabase";
 import { fetchImage } from "./files";
-import { NOT_YOURS, canEditProject, jobDb, jsonError, loadImages, loadProject, type Db } from "./projects";
+import { NOT_YOURS, canEditProject, jobDb, jsonError, loadImages, loadProject, projectRow, type Db } from "./projects";
 import { getTemplate } from "../print-templates";
 import { makeTemplateProduct, productPrintOf } from "../print-products";
 import { safeShapes } from "../../lib/print-template";
@@ -565,7 +565,7 @@ interface Version {
 /** The version sets of a drawn lineup, by position (server/char/versions.ts makes them). */
 export async function versionSetsOf(db: Db, parentId: string): Promise<CtCharProject[]> {
   const { data } = await db.from(CT_TABLES.charProjects).select("*").eq("brief->versionOf->>id", parentId).returns<CtCharProject[]>();
-  return (data ?? []).sort((a, b) => (a.brief.versionOf?.index ?? 0) - (b.brief.versionOf?.index ?? 0));
+  return (data ?? []).map(projectRow).sort((a, b) => (a.brief.versionOf?.index ?? 0) - (b.brief.versionOf?.index ?? 0));
 }
 
 async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: string, keptZones: Map<string, KeptZone> = new Map()): Promise<string> {

@@ -186,20 +186,20 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
               }
             }}
           />
-          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{CHAR_STATUS_LABEL[project.status]}</span>
-          <nav className="ml-4 flex gap-1">
+          <span className="shrink-0 whitespace-nowrap rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{CHAR_STATUS_LABEL[project.status]}</span>
+          <nav className="ml-4 flex shrink-0 gap-1">
             {(photoSet ? PHOTO_STEPS : STEPS).map((s) => (
               <button
                 key={s.id}
                 onClick={() => setStep(s.id)}
-                className={cx("flex items-center gap-1 rounded-md px-3 py-1.5 text-sm", step === s.id ? "bg-foreground text-background" : "hover:bg-accent")}
+                className={cx("flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-3 py-1.5 text-sm", step === s.id ? "bg-foreground text-background" : "hover:bg-accent")}
               >
                 {done[s.id] && <Check className="h-3.5 w-3.5 text-emerald-500" />}
                 {s.label}
               </button>
             ))}
           </nav>
-          <span className="ml-auto text-xs text-muted-foreground">
+          <span className="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground">
             {!editable ? "Chỉ xem (bộ của người khác)" : saving === "pending" ? "Đang lưu…" : saving === "saved" ? "Đã lưu" : ""}
           </span>
         </div>

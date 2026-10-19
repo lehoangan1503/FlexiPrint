@@ -1,0 +1,100 @@
+"use client";
+
+/**
+ * The versions of a lineup drawn version by version (brief.lineup.drawn, asked 2026-10-19): this set is the biggest
+ * version, each smaller one is its own set (server/char/versions.ts) — its own master, doll, 3b pictures and cut. Shown
+ * on the parent's steps 2 and 3: each version's masters (the approved one ringed) and how far it is; a click opens it.
+ */
+
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
+import type { CtCharVersionCard } from "../../types";
+import { charVersions } from "../../lib/char-lineup";
+import { charApi } from "../../lib/api-client";
+import { cx } from "../ui";
+import type { CharCtx } from "./char-project";
+
+function stage(v: CtCharVersionCard): { text: string; busy: boolean; ok: boolean } {
+  const p = v.project;
+  if (p.layers?.status === "done") return { text: "Cắt xong", busy: false, ok: true };
+  if (p.layers?.status === "building" || p.cut?.plan?.status === "running") return { text: "Đang cắt clipart (3c)", busy: true, ok: false };
+  if (p.cut?.plan?.status === "failed") return { text: `3c lỗi: ${p.cut.plan.error}`, busy: false, ok: false };
+  if (p.master_id && v.edits.total) return { text: `3b: ${v.edits.done}/${v.edits.total} ảnh${v.edits.failed ? ` · ${v.edits.failed} lỗi` : ""}`, busy: v.edits.running > 0 || p.cut?.matte?.status === "running", ok: false };
+  if (p.master_id) return { text: "Đã duyệt master", busy: true, ok: false };
+  if (v.masters.some((m) => m.status === "running")) return { text: "Đang vẽ master", busy: true, ok: false };
+  return { text: "Chờ chọn master", busy: false, ok: false };
+}
+
+export function VersionsPanel(ctx: CharCtx) {
+  const { project } = ctx;
+  const [list, setList] = useState<CtCharVersionCard[] | null>(null);
+  const load = useCallback(async () => {
+    try {
+      setList(await charApi.versions(project.id));
+    } catch {
+      /* the panel is a view */
+    }
+  }, [project.id]);
+  useEffect(() => {
+    void load();
+  }, [load, project.updated_at]);
+  const busy = (list ?? []).some((v) => stage(v).busy);
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(() => void load(), 5000);
+    return () => clearInterval(t);
+  }, [busy, load]);
+  if (!project.brief.lineup?.drawn) return null;
+  const names = charVersions(project.brief);
+  const biggest = names[names.length - 1]?.name ?? "";
+  return (
+    <section className="rounded-xl border bg-card p-4">
+      <h3 className="text-sm font-semibold">
+        Phiên bản — {project.brief.lineup.label} ({names.length})
+      </h3>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Mỗi phiên bản là một ảnh riêng (không cắt từ ảnh đông người): bản <b>{biggest}</b> là chính bộ này; các bản nhỏ hơn có bộ riêng, master vẽ lại từ master đã duyệt, rồi tự cắt clipart. @flexiprint chọn master cho từng bản; sản phẩm gom mọi bản khi tất cả cắt xong.
+      </p>
+      {!list ? (
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+      ) : !list.length ? (
+        <p className="text-xs text-muted-foreground">{project.master_id ? "Đang tạo các phiên bản…" : "Duyệt master xong, các phiên bản nhỏ hơn được tạo và vẽ ở đây."}</p>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {list.map((v) => {
+            const st = stage(v);
+            return (
+              <Link key={v.project.id} href={`/v2/${v.project.id}`} className="block rounded-lg border p-3 hover:bg-accent/40">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  {project.brief.lineup?.label}: {v.project.brief.versionOf?.name}
+                  <ExternalLink className="ml-auto h-3.5 w-3.5 text-muted-foreground" />
+                </div>
+                <div className="mt-2 flex gap-2">
+                  {v.masters.length ? (
+                    v.masters.slice(-3).map((m) => (
+                      <div key={m.id} className={cx("relative h-20 flex-1 overflow-hidden rounded border bg-[repeating-conic-gradient(#eee_0%_25%,#fff_0%_50%)] bg-[length:12px_12px]", m.id === v.project.master_id && "ring-2 ring-emerald-500")}>
+                        {m.status === "done" ? (
+                          // eslint-disable-next-line @next/next/no-img-element -- our R2 preview
+                          <img src={m.thumbUrl} alt="" className="h-full w-full object-contain" />
+                        ) : (
+                          <Loader2 className="absolute inset-0 m-auto h-4 w-4 animate-spin text-muted-foreground" />
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="h-20 flex-1 rounded border border-dashed" />
+                  )}
+                </div>
+                <div className={cx("mt-2 flex items-center gap-1 text-xs", st.ok ? "text-emerald-600" : "text-muted-foreground")}>
+                  {st.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : st.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  {st.text}
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}

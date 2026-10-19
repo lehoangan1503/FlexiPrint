@@ -10,7 +10,7 @@ búp bê giấy + từng lựa chọn vẽ lên búp bê (3b) → clipart = đú
 mockup. Phần trang trí (ruy băng, số năm, cây thông…) và nền thì AI vẽ riêng, không cắt.
 
 ## Task từ app
-`mcp__flexiprint__get_task(task_id)` có `step`, `request`, toàn bộ bộ (brief, master, ảnh 3b, vùng 3c, file, sản
+`mcp__flexi2__get_task(task_id)` có `step`, `request`, toàn bộ bộ (brief, master, ảnh 3b, vùng 3c, file, sản
 phẩm) và `instructions` — làm ĐÚNG theo `instructions` của bước đó.
 - **brainstorm**: theo `briefRules` → `submit_result {summary, questions, ideas: [3 × {title, why, brief}]}`.
 - **master**: viết prompt (từ `assembledPrompt`) → `char_draw_masters` → `char_wait` → `view_image` →
@@ -18,6 +18,25 @@ phẩm) và `instructions` — làm ĐÚNG theo `instructions` của bước đ�
 - **auto** (vừa duyệt master): tự làm hết 3a → 3b → 3c → bước 4 → mockup, kiểm tra mọi ảnh, tự vẽ lại ảnh sai, tới
   khi xong sản phẩm. Người dùng bấm "Dừng" = task bị huỷ, tool từ chối: dừng ngay.
 - **chat**: người dùng gõ ở ô chat của trang (kèm ảnh chụp màn hình) — làm đúng yêu cầu, xem lại bằng `view_image`.
+  Từ 2026-10-19 **bước 1 không còn form nhập**: bộ mới được mô tả hết trong ô chat (kèm ảnh mẫu). Brief còn trống →
+  `view_image` mọi ảnh đính kèm → `char_add_reference {url}` từng ảnh → viết brief theo `briefRules` →
+  `char_update_brief` → `char_draw_masters` (2) → `char_wait` → `view_image` → tóm tắt brief + bản master đề xuất.
+  Người dùng tự duyệt master ở bước 2.
+
+## Bộ vẽ riêng từng phiên bản (`lineup.drawn`)
+Khách chọn số người (bà + 1…4 cháu) và mỗi số người phải là MỘT ẢNH RIÊNG (cắt từ ảnh đông người trông nham nhở):
+`lineup {mode: "count", label, drawn: true}`. Bộ chính = bản đông nhất. Duyệt master bộ chính → server tạo **bộ
+phiên bản** cho mỗi bản nhỏ hơn (`get_task set.versions`, mỗi bản có `set_id`) và vẽ 2 master từ master đã duyệt.
+Agent: `view_image` → `char_approve_master {task_id, set_id, image_id}` (sai thì `char_refine_master` /
+`char_draw_masters` với `set_id`). Duyệt xong server tự chạy 3a → 3b → 3c cho bản đó; agent soát ảnh 3b, ảnh sai →
+`char_run_edits {set_id}` + `char_cut {set_id, what: "plan"}`. Sản phẩm tự dựng khi mọi bản cắt xong.
+- **Nhóm (`slot.group`)**: cùng một loại phần của mọi nhân vật (tóc từng cháu, biểu cảm, trang phục) chung group →
+  lựa chọn thứ k vẽ trong MỘT ảnh cho tất cả (role `group:<group>:<k>`).
+- **Theme**: chooser `theme` (Christmas / Halloween / Easter). Trang phục = 1 slot shape mỗi nhân vật, part "outfit
+  (hat and sweater)", `headwear: true` (nón thành lớp riêng NẰM TRÊN tóc), `group: "outfit"`, `restyle: true`,
+  `follows: "theme"`. Tóc: `group: "hair"`, `on: "outfit"` (vẽ DƯỚI nón — không lòi tóc), 3 màu trong `colors`.
+  Biểu cảm: part "face expression", `group: "face"` (búp bê mặt trống). Biển gỗ: element `place: "plaque"` (≈ 1/4
+  chiều cao, tay tì lên), mỗi theme 1 option, `follows: "theme"`; câu trên biển: text `kind: "fixed"`, `place: "plaque"`.
 
 ## Làm trọn một bộ trên agent_ide (người dùng nhờ thẳng)
 Cùng một phiên từ đầu tới cuối; người dùng theo dõi trên trang bộ và trong phiên này.

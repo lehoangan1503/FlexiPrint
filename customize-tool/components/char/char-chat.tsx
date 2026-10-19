@@ -259,9 +259,11 @@ export function CharChat(props: {
             rows={Math.min(8, Math.max(2, text.split("\n").length))}
             disabled={!props.editable}
             placeholder={
-              props.editable
-                ? `Yêu cầu cho @flexiprint ở ${where} — dán ảnh chụp màn hình (⌘V), kéo ảnh / clipart của trang vào đây. Enter gửi, Shift+Enter xuống dòng.`
-                : "Chỉ xem — bộ của người khác"
+              !props.editable
+                ? "Chỉ xem — bộ của người khác"
+                : tab === "brief" && !project.master_id
+                  ? "Mô tả bộ clipart cho @flexiprint: sản phẩm gì, nhân vật nào, khách đổi được gì, chữ gì… — kéo ảnh mẫu / ảnh tham khảo vào đây (hoặc ⌘V). Enter gửi, Shift+Enter xuống dòng."
+                  : `Yêu cầu cho @flexiprint ở ${where} — dán ảnh chụp màn hình (⌘V), kéo ảnh / clipart của trang vào đây. Enter gửi, Shift+Enter xuống dòng.`
             }
             className="block w-full resize-none bg-transparent px-2 py-1.5 text-sm"
             // Inline: the app's unlayered `*:focus-visible` outline beats Tailwind's layered utilities.

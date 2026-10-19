@@ -363,6 +363,9 @@ class PlanOption(BaseModel):
     picture: str           # its picture id ("opt.<slot>.<index>")
     subject: int = 0       # whose part it is (left → right): its region stays on that figure's side of the doll
     url: str
+    fine: bool = False     # thin features (eyes, brows, a mouth): small pieces and thin lines are the part
+    against: str | None = None  # the picture it is cut against instead of the doll (hair drawn under the hats of
+                                # another option picture): its region = what it drew anew on THAT picture
 
 
 class PlanZone(BaseModel):
@@ -405,26 +408,55 @@ def _plan(body: PlanBody, out_dir: str) -> dict:
         return write_mask(out_dir, f"region.{len(pieces)}.png", reg)
 
     save_picture("base", "Búp bê giấy", doll)
+    # Pictures by url, registered onto the doll once: several options share one picture (a group: every grandchild's
+    # hair in one, 2026-10-19), and a picture another option is cut against is needed registered first.
+    by_url: dict[str, list[PlanOption]] = {}
     for o in body.options:
+        by_url.setdefault(o.url, []).append(o)
+    registered: dict[str, np.ndarray] = {}
+
+    def reg_of(url: str, label: str) -> np.ndarray:
+        """`url` registered onto the doll (or onto the picture it is cut against)."""
+        if url in registered:
+            return registered[url]
+        opts = by_url.get(url, [])
+        rgba = fit(transparent_rgba(fetch(url), label), W, H)
+        base = reg_of(opts[0].against, label) if opts and opts[0].against else doll
+        subj = {x.subject for x in opts}
+        # One subject's picture: its own side guides the registration; a shared one: the whole doll.
+        own = lands.setdefault(opts[0].subject, territory(doll[..., 3], opts[0].subject, body.subjects)) if len(subj) == 1 and opts else None
+        reg, a = register_option(base, rgba, body.key, own)
+        aligns[url] = a
+        registered[url] = reg
+        del rgba
+        return reg
+
+    for url, opts in by_url.items():
         _check(out_dir)
-        rgba = fit(transparent_rgba(fetch(o.url), o.label), W, H)
-        own = lands.setdefault(o.subject, territory(doll[..., 3], o.subject, body.subjects))
-        reg, a = register_option(doll, rgba, body.key, own)
-        aligns[o.url] = a
-        m, info = part_region(doll, reg, body.key, own)
-        # Only its region (with room for a hand fix) is cut from it: the model upscale there, a resize elsewhere.
-        save_picture(o.picture, o.label, reg, cv2.dilate(m.astype(np.uint8), kernel(48)).astype(bool) if m.any() else None)
-        ok_align = a["residual"] <= 0.6 and a["before"] <= 4.0
-        checks.append({"name": f"Khớp: {o.label}", "ok": ok_align, "detail": f"lệch {a['before']:.2f} → {a['residual']:.2f} px (tệ nhất {a['max']:.2f})" + ("" if ok_align else " — AI dời người khi vẽ: vẽ lại ảnh này"), "piece": o.key})
-        ok = info["px"] >= 500 and info["lost"] <= 1500
-        detail = f"{info['px']:,} px vẽ mới"
-        if info["px"] < 500:
-            detail += " — gần như không khác búp bê: vẽ lại ảnh này"
-        if info["lost"] > 1500:
-            detail += f" · AI xoá / dời {info['lost']:,} px của búp bê (lớp chỉ thêm được, không bớt được): vẽ lại ảnh này"
-        checks.append({"name": f"Vùng {o.label}", "ok": ok, "detail": detail, "piece": o.key})
-        pieces.append({"key": o.key, "slot": o.slot, "kind": "part", "label": o.label, "option": o.option, "index": o.index, "picture": o.picture, "region": save_region(m)})
-        del rgba, reg
+        reg = reg_of(url, opts[0].label)
+        a = aligns[url]
+        keep_all: np.ndarray | None = None
+        for o in opts:
+            own = lands.setdefault(o.subject, territory(doll[..., 3], o.subject, body.subjects))
+            ref = registered[o.against] if o.against else doll
+            m, info = part_region(ref, reg, body.key, own, o.fine)
+            if m.any():
+                k = cv2.dilate(m.astype(np.uint8), kernel(48)).astype(bool)
+                keep_all = k if keep_all is None else (keep_all | k)
+            ok_align = a["residual"] <= 0.6 and a["before"] <= 4.0
+            checks.append({"name": f"Khớp: {o.label}", "ok": ok_align, "detail": f"lệch {a['before']:.2f} → {a['residual']:.2f} px (tệ nhất {a['max']:.2f})" + ("" if ok_align else " — AI dời người khi vẽ: vẽ lại ảnh này"), "piece": o.key})
+            ok = info["px"] >= (150 if o.fine else 500) and info["lost"] <= 1500
+            detail = f"{info['px']:,} px vẽ mới"
+            if info["px"] < (150 if o.fine else 500):
+                detail += " — gần như không khác ảnh nền: vẽ lại ảnh này"
+            if info["lost"] > 1500:
+                detail += f" · AI xoá / dời {info['lost']:,} px của ảnh nền (lớp chỉ thêm được, không bớt được): vẽ lại ảnh này"
+            checks.append({"name": f"Vùng {o.label}", "ok": ok, "detail": detail, "piece": o.key})
+            pieces.append({"key": o.key, "slot": o.slot, "kind": "part", "label": o.label, "option": o.option, "index": o.index, "picture": o.picture, "region": save_region(m)})
+        # Only its regions (with room for a hand fix) are cut from it: the model upscale there, a resize elsewhere.
+        save_picture(opts[0].picture, opts[0].label, reg, keep_all)
+    # A picture only cut against (never an option itself) is not saved; every registered one is let go.
+    registered.clear()
     for z in body.zones:
         paint, a = register(doll_white, fit(rgb_on_white(fetch(z.mask)), W, H))
         aligns[z.mask] = a
@@ -471,6 +503,8 @@ class CutSlot(BaseModel):
     wraps: bool = False          # back (the whole part) + front (where it lies on the doll's figure)
     options: list[CutOption]
     colors: list[CutColour] = []
+    figure: str | None = None    # wraps: the picture whose figure the front layer lies on (hair drawn over the
+                                 # sweaters of an outfit picture); default the doll
 
 
 class CutZone(BaseModel):
@@ -516,6 +550,8 @@ def _cut(body: CutBody, out_dir: str) -> dict:
     slots: list[Slot] = []
     for s in body.slots:
         slot = Slot(s.key, s.label, s.mode, wraps=s.wraps, colors=[(c.name, c.hex) for c in s.colors], hexes=[o.hex for o in s.options])
+        if s.figure:
+            slot.figure = pic(s.figure)[1]
         for o in s.options:
             opt = Option(o.name)
             if o.picture:

@@ -55,11 +55,28 @@ export interface CtCharSlot {
   /** The customer may also pick none of it ("NO" glasses, asked 2026-10-18): the options are drawn as usual, the
    * product's layer gets a "None" choice. */
   optional?: boolean;
-  /** Not a choice of its own: shows the option at the same position as this decoration (brief.elements id) — the
-   * sweaters and hats of a family follow the theme the customer picks. Same option count and order. */
+  /** Not a choice of its own: shows the option at the same position as this decoration or chooser (brief.elements /
+   * brief.choosers id) — the sweaters and hats of a family follow the theme the customer picks. Same option count and order. */
   follows?: string | null;
   /** Only there while a chooser shows one option (a boy's hair while "Grandchild 1" is "Boy"). */
   shownWhen?: CtCharShownWhen | null;
+  /**
+   * Drawn together (asked 2026-10-19: a picture per option per grandchild was 60+ pictures): every slot of the set with
+   * the same group — one per subject (each grandchild's hair) — has its option k drawn in ONE picture for everyone;
+   * each subject's file is cut from it on its own side. Options are matched by position.
+   */
+  group?: string | null;
+  /**
+   * Drawn ON the first picture of this group and cut against it, not the doll (asked 2026-10-19: hair drawn on the
+   * bald doll stuck out from under the Santa hats): the hair is drawn UNDER the hats and only what shows is kept.
+   */
+  on?: string | null;
+  /** The options after the first are drawn from the first one's picture (the Halloween / Easter hats on the Santa
+   * hats' band — the hair drawn under it fits them all); still cut against the doll. */
+  restyle?: boolean;
+  /** A worn outfit whose top piece (above the face) is headwear: in the product the hat is its own layer over the
+   * hair, the rest (the sweater) under it. */
+  headwear?: boolean;
 }
 
 /** A condition on a chooser (brief.choosers): the part / text / decoration exists only while it shows `option`. */
@@ -129,6 +146,22 @@ export interface CtCharLineup {
   mode: "one" | "count";
   /** What the customer is asked, English: "Choose character", "Number of people". */
   label: string;
+  /**
+   * Every version is drawn as its OWN picture (asked 2026-10-19: grandma + 1 grandchild cut out of the row of five
+   * looked patchy): this set is the biggest version; each smaller one is a version set (brief.versionOf) with its own
+   * master, doll and cut, and the product takes each version's layers from its own set.
+   */
+  drawn?: boolean;
+}
+
+/** A version set: one version of a set drawn on its own (brief.lineup.drawn) — not listed, built into the parent's product. */
+export interface CtCharVersionOf {
+  /** The parent set. */
+  id: string;
+  /** The version's customer name ("1", "2 People"). */
+  name: string;
+  /** Its position among the parent's versions (0 = the first). */
+  index: number;
 }
 
 /**
@@ -177,8 +210,10 @@ export type CtCharSetKind = "character" | "photo";
  *   bottom  a band over the bottom of the photo and the piece's bottom edge — hides where the photo's body is cut
  *           (clouds, flowers, snow); the texts go over it
  *   free    `box`
+ *   plaque  a bộ nhân vật's sign in front of the characters' cut-off bottom ("This Grandma Belongs To"): as wide as the
+ *           group of each version, about a quarter of the piece's height, the forearms resting on its top edge
  */
-export type CtCharElementPlace = "behind" | "above" | "bottom" | "free";
+export type CtCharElementPlace = "behind" | "above" | "bottom" | "free" | "plaque";
 
 /** One decoration the customer picks (bộ ảnh khách), or a decoration of a bộ nhân vật (asked 2026-10-18: a "Class of"
  * scroll, a ribbon banner, the year in glitter numbers, a Christmas tree beside the family) — drawn ALONE in the
@@ -197,8 +232,8 @@ export interface CtCharElement {
   perBackdrop: boolean;
   /** On the piece (shares of the safe area); null = from `place`. */
   box: CtCharBox | null;
-  /** Another element whose choice this one shows at the same position (the right-hand decoration and the ground follow
-   * the left-hand one's theme): not a customer choice, same option count. */
+  /** Another element (or a chooser) whose choice this one shows at the same position (the right-hand decoration and the
+   * ground follow the left-hand one's theme; the sign follows the Theme chooser): not a customer choice, same option count. */
   follows?: string | null;
   /** Drawn in front of the characters (the year over the gown); default = behind them. A bộ nhân vật only. */
   front?: boolean;
@@ -207,8 +242,9 @@ export interface CtCharElement {
 
 /** Where a text sits on the product, around the characters — "under": under one character (`subject`), the name of
  * each person of a family rug; "free": `box`; "on": over one character (`subject`) at `box` = shares of THAT
- * character's own box (a name on a hat's brim, on a sweater). */
-export type CtCharTextPlace = "top" | "bottom" | "left" | "right" | "under" | "free" | "on";
+ * character's own box (a name on a hat's brim, on a sweater); "plaque": on the sign in front of the characters
+ * (brief.elements place "plaque"), sized with it in every version. */
+export type CtCharTextPlace = "top" | "bottom" | "left" | "right" | "under" | "free" | "on" | "plaque";
 
 /**
  * A text the customer personalises (asked 2026-10-14: a name left and right of the characters, a slogan picked from
@@ -280,6 +316,8 @@ export interface CtCharBrief {
   choosers?: CtCharChooser[];
   /** Who is in the picture is a customer choice (null = everyone, always). */
   lineup?: CtCharLineup | null;
+  /** This set is one version of another (brief.lineup.drawn there). */
+  versionOf?: CtCharVersionOf | null;
   /** How much of the characters the master shows: "full" head to toe (default), or "bust" = chest up, cut level at
    * the bottom (a sign / plank element in front hides the cut — "This Grandma Belongs To"). */
   framing?: "full" | "bust";
@@ -608,4 +646,13 @@ export interface CtCharTaskResult {
   roundId?: string;
   /** master: the masters it recommends, best first. edits: the edits it made. */
   imageIds?: string[];
+}
+
+/** One version set of a drawn lineup as the parent's page shows it (GET char/projects/:id/versions). */
+export interface CtCharVersionCard {
+  project: CtCharProject;
+  /** Its masters, newest last. */
+  masters: Array<{ id: string; status: CtCharImageStatus; thumbUrl: string; url: string }>;
+  /** 3b pictures the cut needs: done / all. */
+  edits: { done: number; total: number; running: number; failed: number };
 }

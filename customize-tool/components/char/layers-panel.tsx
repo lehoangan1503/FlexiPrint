@@ -8,6 +8,7 @@
  * 3a runs by itself when the master is approved; 3b can run at the same time.
  */
 
+import { VersionsPanel } from "./versions-panel";
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import type { CtCharImage } from "../../types";
@@ -46,6 +47,7 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
   return (
     <div className="space-y-4 p-6">
       <AutoStepGuide what="@flexiprint cắt clipart từ master" />
+      <VersionsPanel {...ctx} />
       <nav className="flex flex-wrap items-center gap-1 text-sm">
         {tabs.map((t, i) => (
           <div key={t.id} className="flex items-center gap-1">

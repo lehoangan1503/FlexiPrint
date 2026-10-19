@@ -163,11 +163,11 @@ const CHAR_STEP_TEXT: Record<CtCharTaskStep, string> = {
 export const CHAT_TAB_TEXT: Record<CtCharChatTab, string> = { brief: "1. Mô tả bộ clipart (brief)", master: "2. Ảnh master", layers: "3. Cắt clipart", product: "4. Sản phẩm" };
 
 /**
- * This instance's MCP server in the agent's capability (CT_AGENT_MCP): "flexiprint" (the VPS) or "flexi2" (an-vm) —
- * one @flexiprint agent serves both, so every turn names the server its task lives on.
+ * This instance's MCP server in the agent's capability (CT_AGENT_MCP): "flexi2" (an-vm) — the only one since
+ * 2026-10-19 (the VPS server "flexiprint" was dropped); every turn still names it.
  */
 function agentMcp(): string {
-  return (process.env.CT_AGENT_MCP || "flexiprint").replace(/[^a-z0-9_-]/gi, "");
+  return (process.env.CT_AGENT_MCP || "flexi2").replace(/[^a-z0-9_-]/gi, "");
 }
 
 const mcpLine = () => `Task này nằm trên MCP server "${agentMcp()}": chỉ dùng các tool mcp__${agentMcp()}__* (không dùng server FlexiPrint khác).`;

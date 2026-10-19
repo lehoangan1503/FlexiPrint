@@ -212,6 +212,14 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
           </button>
         </div>
       )}
+      {project.brief.versionOf && (
+        <div className="mx-4 mt-3 rounded-md border border-sky-500/40 bg-sky-500/5 p-3 text-sm">
+          Phiên bản <b>{project.brief.versionOf.name}</b> của một bộ vẽ riêng từng phiên bản — master vẽ lại từ master đã duyệt của bộ chính, duyệt xong tự cắt clipart.{" "}
+          <Link href={`/v2/${project.brief.versionOf.id}`} className="underline">
+            Mở bộ chính
+          </Link>
+        </div>
+      )}
       <CharAgentBar {...agentKit} />
       <main className="min-h-0 flex-1">
         {step === "brief" && <BriefPanel {...ctx} />}

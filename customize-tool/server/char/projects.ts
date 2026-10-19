@@ -127,7 +127,8 @@ async function ownProject(s: CtSession, id: string): Promise<CtCharProject | Nex
 export async function listCharProjects(s: CtSession): Promise<NextResponse> {
   const { data, error } = await s.supabase.from(CT_TABLES.charProjects).select("*").order("updated_at", { ascending: false }).limit(200).returns<CtCharProject[]>();
   if (error) return jsonError(error.message, 500);
-  const projects = (data ?? []).map(projectRow);
+  // A version set (one version of a lineup drawn version by version) is shown on its parent's page, not here.
+  const projects = (data ?? []).map(projectRow).filter((p) => !p.brief.versionOf);
   // Preview: the approved master, else the newest finished master.
   const { data: masters } = await s.supabase
     .from(CT_TABLES.charImages)
@@ -187,10 +188,14 @@ export async function updateCharProject(s: CtSession, id: string, body: unknown)
 export async function deleteCharProject(s: CtSession, id: string): Promise<NextResponse> {
   const p = await ownProject(s, id);
   if (p instanceof NextResponse) return p;
-  const images = await loadImages(s.supabase, id);
-  const { error } = await s.supabase.from(CT_TABLES.charProjects).delete().eq("id", id);
-  if (error) return jsonError(error.message, 500);
-  await ctRemove([...images.flatMap((im) => [im.storage_path, im.thumb_path]), ...cutPaths(p.cut), p.layers?.diffPath ?? ""].filter(Boolean));
+  // Its version sets (a lineup drawn version by version) go with it.
+  const { data: kids } = await s.supabase.from(CT_TABLES.charProjects).select("*").eq("brief->versionOf->>id", id).returns<CtCharProject[]>();
+  for (const k of [...(kids ?? []), p]) {
+    const images = await loadImages(s.supabase, k.id);
+    const { error } = await s.supabase.from(CT_TABLES.charProjects).delete().eq("id", k.id);
+    if (error) return jsonError(error.message, 500);
+    await ctRemove([...images.flatMap((im) => [im.storage_path, im.thumb_path]), ...cutPaths(k.cut), k.layers?.diffPath ?? ""].filter(Boolean));
+  }
   return NextResponse.json({ ok: true });
 }
 

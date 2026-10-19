@@ -12,6 +12,7 @@ import { makeCharBlank } from "./blank";
 import { backdropsRoute } from "./backdrops";
 import { elementsRoute } from "./elements";
 import { charKhuonRoute } from "./khuon";
+import { listVersionSets, runVersionChain, startVersionSets } from "./versions";
 import { adoptMaster, approveMaster, createCharProject, deleteCharProject, generateMasters, getCharProject, jobDb, jsonError, listCharProjects, loadProject, refineMaster, updateCharProject, uploadCharFile, uploadChatFile } from "./projects";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -35,6 +36,7 @@ export async function dispatchChar(req: NextRequest, s: CtSession, path: string[
     return jsonError("Not found", 404);
   }
   if (!UUID.test(id)) return jsonError("id không hợp lệ", 400);
+  if (action === "versions" && !sub && method === "GET") return listVersionSets(s, id);
   if (!action) {
     if (method === "GET") return getCharProject(s, id);
     if (method === "PATCH") return updateCharProject(s, id, await json(req));
@@ -54,9 +56,16 @@ export async function dispatchChar(req: NextRequest, s: CtSession, path: string[
     if (res.ok && body && typeof body === "object" && typeof (body as { imageId?: unknown }).imageId === "string") {
       const p = await loadProject(s.supabase, id);
       // A bộ ảnh khách has no cut: its pieces are drawn on their own (server/char/elements.ts).
+      // A version set (one version of a lineup drawn version by version) goes on by itself: 3a → 3b → 3c.
+      if (p?.brief.versionOf) {
+        void runVersionChain(jobDb(s), s.user.id, p.id);
+        return res;
+      }
       if (p && p.brief.kind !== "photo") {
         // The master at print size (3a) runs at once: nothing to review there any more (the AI's own cut-out).
         await startMatte(jobDb(s), s.user.id, p).catch((e: Error) => console.warn("[ct] char matte", e.message));
+        // Each smaller version drawn as its own picture: its set + masters (the agent picks them).
+        if (p.brief.lineup?.drawn) await startVersionSets(jobDb(s), s.user.id, p).catch((e: Error) => console.warn("[ct] char versions", e.message));
       }
       // Everything after the master is @flexiprint's, on its own (asked 2026-10-18): 3b → cut → step 4 → mockups,
       // checked at every stage. The editor watches; "Dừng" cancels it; changes are asked in the chat.

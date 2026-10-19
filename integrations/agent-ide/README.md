@@ -9,7 +9,7 @@
 
 ## 1. Mục đích
 
-FlexiPrint (app sản phẩm in theo yêu cầu, `https://flexiprint.next.lc`) giao một số việc AI cho agent **@flexiprint**
+FlexiPrint (app sản phẩm in theo yêu cầu, `https://flexi2.next.lc` — máy công ty an-vm; bản VPS `flexiprint.next.lc` không dùng nữa từ 2026-10-19) giao một số việc AI cho agent **@flexiprint**
 chạy trên agent_ide (Claude Code, gói thuê bao của công ty): viết content Shopify (trang Deploy, task `content`) và
 các bước của bộ nhân vật v2 (task `char`). (Các việc AI cũ — tạo / sửa / kiểm tra danh mục, studio ComfyUI, tạo ảnh
 cho thư viện ảnh mockup — đã bỏ khỏi FlexiPrint.)
@@ -156,7 +156,10 @@ Agent đọc được toàn bộ source FlexiPrint (tra logic, giải thích l�
 kẹt), và vẫn không đụng tới source của agent_ide hay project khác. Kiểm: hỏi @flexiprint
 "đọc `REPO/customize-tool/server/mcp/tools.ts` và liệt kê các tool" → nó đọc được file.
 
-### 5.4 Gắn MCP flexiprint (capability)
+### 5.4 Gắn MCP flexi2 (capability)
+**Từ 2026-10-19 chỉ dùng MCP server `flexi2`.** Nếu capability `flexiprint` đang có server `flexiprint`
+(`https://flexiprint.next.lc/...`) thì **xoá khối đó**, chỉ giữ `flexi2` **[CẦN NGƯỜI: sửa file catalog trên máy agent_ide]**.
+
 Thêm vào `~/.http-agent-ide/claude-tool-catalog.json`, trong `capabilities` (tạo file bằng bản copy của
 `server/config/claude-tool-catalog.json` nếu chưa có), khối trong `flexiprint-capability.json` cạnh file này,
 thay `<CT_AGENT_TOKEN của FlexiPrint>` bằng token An gửi riêng **[CẦN NGƯỜI: nhận token]**:
@@ -166,9 +169,9 @@ thay `<CT_AGENT_TOKEN của FlexiPrint>` bằng token An gửi riêng **[CẦN N
   "short": "FlexiPrint library + tasks",
   "tools": [],
   "mcpServers": {
-    "flexiprint": {
+    "flexi2": {
       "type": "http",
-      "url": "https://flexiprint.next.lc/api/customize-tool/mcp",
+      "url": "https://flexi2.next.lc/api/customize-tool/mcp",
       "headers": { "Authorization": "Bearer fpa_…" }
     }
   }
@@ -184,7 +187,7 @@ UI Cài đặt → Dịch vụ → thêm; hoặc API admin
 (`svc_…`). **[CẦN NGƯỜI]** Gửi **riêng** cho An: token `svc_…` + địa chỉ public agent_ide.
 
 ### 5.6 Kiểm tra
-1. Chat với @flexiprint: "liệt kê danh mục FlexiPrint" → nó gọi `mcp__flexiprint__list_categories` và trả danh sách.
+1. Chat với @flexiprint: "liệt kê danh mục FlexiPrint" → nó gọi `mcp__flexi2__list_categories` và trả danh sách.
 2. `curl -H "Authorization: Bearer svc_…" https://<agent_ide>/kernel/v1/ping` → `ok: true`, `card.name = "flexiprint"`.
 3. Sau khi An cấu hình xong (mục 6): trên app FlexiPrint mở trang Deploy của một sản phẩm → viết content với
    @flexiprint → thấy tiến độ, rồi title + description.
@@ -201,7 +204,7 @@ UI Cài đặt → Dịch vụ → thêm; hoặc API admin
 
 ---
 
-## 7. MCP flexiprint
+## 7. MCP flexi2 (flexiprint-mcp trên flexi2.next.lc)
 
 | Nhóm | Tool |
 |---|---|

@@ -15,6 +15,7 @@ import { charApi } from "../../lib/api-client";
 import { imageModelLabel } from "../../lib/image-models";
 import { CHECKER_STYLE, CtButton, CtModal, CtTextarea, cx } from "../ui";
 import type { CharCtx } from "./char-project";
+import { VersionsPanel } from "./versions-panel";
 import { StepGuide } from "./step-guide";
 
 export function MasterPanel(ctx: CharCtx) {
@@ -97,6 +98,7 @@ export function MasterPanel(ctx: CharCtx) {
 
           </div>
         )}
+        {approved && <VersionsPanel {...ctx} />}
         <div className="rounded-xl border bg-card p-4 text-xs text-muted-foreground">
           <div className="mb-1 font-semibold text-foreground">Duyệt master — kiểm tra:</div>
           <ul className="list-disc space-y-0.5 pl-4">

@@ -362,16 +362,54 @@ def territory(doll_a: np.ndarray, subject: int, count: int) -> np.ndarray | None
         return None
     lab, n = ndi.label(doll_a > 0.5)
     if n < count:
-        return None
+        return columns(doll_a, subject, count)
     sizes = ndi.sum(np.ones_like(doll_a), lab, range(1, n + 1))
     figs = sorted(np.argsort(sizes)[::-1][:count] + 1, key=lambda i: float(np.where(lab == i)[1].mean()))
-    if sizes[figs[-1] - 1] < 0.05 * sizes.sum() or subject >= count:
+    if subject >= count:
         return None
+    # Each figure a real share of them (two touching figures + a speck are not three): else by columns.
+    if min(sizes[i - 1] for i in figs) < 0.25 * sizes.sum() / count:
+        return columns(doll_a, subject, count)
     dists = [cv2.distanceTransform((lab != i).astype(np.uint8), cv2.DIST_L2, 5) for i in figs]
     return np.argmin(np.stack(dists), axis=0) == subject
 
 
-def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
+def columns(doll_a: np.ndarray, subject: int, count: int) -> np.ndarray | None:
+    """Figures that touch (shoulder to shoulder): each one's side is the band of columns between the deepest dips of
+    the figures' top outline (the shoulders / necks between two heads), left → right. None when the heads cannot be told apart."""
+    H, W = doll_a.shape
+    solid = doll_a > 0.5
+    has = solid.any(axis=0)
+    if not has.any():
+        return None
+    top = np.where(has, solid.argmax(axis=0), H).astype(np.float32)
+    top = cv2.GaussianBlur(top.reshape(1, -1), (0, 0), max(2.0, W / 300)).ravel()
+    xs = np.where(has)[0]
+    x0, x1 = int(xs.min()), int(xs.max())
+    # The heads: the `count` highest points of the outline with a real dip (a neck, a shoulder) between any two —
+    # two points on one wide head have none.
+    dip = 0.03 * H
+    order = np.argsort(top[x0:x1 + 1], kind="stable") + x0
+    heads: list[int] = []
+    for x in order:
+        x = int(x)
+        if all(top[min(x, h):max(x, h) + 1].max() - max(top[x], top[h]) >= dip for h in heads):
+            heads.append(x)
+        if len(heads) == count:
+            break
+    if len(heads) < count:
+        return None
+    heads.sort()
+    # Between two heads: the lowest point of the outline (the deepest dip).
+    cuts = [int(np.argmax(top[a:b + 1])) + a for a, b in zip(heads, heads[1:])]
+    lo = 0 if subject == 0 else cuts[subject - 1]
+    hi = W if subject == count - 1 else cuts[subject]
+    out = np.zeros((H, W), bool)
+    out[:, lo:hi] = True
+    return out
+
+
+def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: np.ndarray | None = None, fine: bool = False) -> tuple[np.ndarray, dict]:
     """The pixels an option picture (registered onto the doll, both RGBA on one canvas) drew anew: a clearly different
     colour where both are figure, or figure where the doll has none (hair past the head, a skirt past the legs).
     The re-drawn outlines (a 1–2 px line where a contour moved a fraction of a pixel) and specks are not the part;
@@ -390,7 +428,9 @@ def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: 
     # New figure away from the doll's own outline (along it the outline only moved a little).
     grown = ((oa - da) > 0.3) & ~near_doll
     changed = (de > CHANGED_DE) & (oa > 0.5) & ~grown & ~keyed
-    changed = cv2.morphologyEx(changed.astype(np.uint8), cv2.MORPH_OPEN, kernel(max(1, round(1.5 * s)))).astype(bool)
+    # Fine features (eyes, brows, a mouth on a blank face — 2026-10-19) are thin lines: no opening, small pieces kept.
+    if not fine:
+        changed = cv2.morphologyEx(changed.astype(np.uint8), cv2.MORPH_OPEN, kernel(max(1, round(1.5 * s)))).astype(bool)
     m = cv2.morphologyEx((changed | grown).astype(np.uint8), cv2.MORPH_CLOSE, kernel(max(2, round(3 * s)))).astype(bool) & (oa > 0.02)
     if own is not None:
         m &= own
@@ -403,7 +443,7 @@ def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: 
         main = lab == int(np.argmax(sizes)) + 1
         dist = cv2.distanceTransform((~main).astype(np.uint8), cv2.DIST_L2, 5)
         near = ndi.minimum(dist, lab, range(1, n + 1))
-        keep = [i + 1 for i in range(n) if sizes[i] >= 300 * s * s and near[i] <= 0.08 * max(H, W)]
+        keep = [i + 1 for i in range(n) if sizes[i] >= (30 if fine else 300) * s * s and near[i] <= (0.05 if fine else 0.08) * max(H, W)]
         m = np.isin(lab, keep)
     # A small hole inside the part where it happens to match the doll (a highlight on a white collar) is the part's.
     inv = ~m
@@ -481,6 +521,7 @@ class Slot:
     colors: list[tuple[str, str]] = field(default_factory=list)   # (name, hex): shape colours (the first = as drawn)
     hexes: list[str | None] = field(default_factory=list)         # color mode: each option's hex (the first = as drawn)
     wraps: bool = False                      # back (the whole part) + front (where it lies on the doll's figure)
+    figure: np.ndarray | None = None         # wraps: the figure the front lies on (8-bit alpha, full canvas); None = the doll
 
 
 @dataclass
@@ -545,6 +586,16 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
     files: list[Out] = []
     views: list[Out] = []
     plates: dict[str, str] = {}
+    figs: dict[str, np.ndarray] = {}
+
+    def fig_of(s: Slot) -> np.ndarray:
+        """The figure a wrapping part's front lies on when it is not the doll (hair over an outfit picture's sweaters)."""
+        if s.key not in figs:
+            fa = np.clip(unit(s.figure), 0, 1)
+            if fa.shape != (H, W):
+                fa = cv2.resize(fa, (W, H), interpolation=cv2.INTER_LINEAR)
+            figs[s.key] = soft((fa[c] > 0.02) | (body_a[c] > 0.02), grow=max(2, round(2 * aa)), blur=0.8 * aa)
+        return figs[s.key]
 
     def plate_of(col: np.ndarray) -> str:
         name = f"p{len(plates)}"
@@ -581,7 +632,7 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
                     whole = px(col, a)
                     files.append(Out(f"{s.key}:back", f"{s.label} — lớp sau", o.name, cname, *whole, piece, plate))
                     views.append(Out(f"{s.key}:back", s.label, o.name, cname, *whole, piece, plate))
-                    files.append(Out(f"{s.key}:front", f"{s.label} — lớp trước", o.name, cname, *px(col, a * fig), piece, plate))
+                    files.append(Out(f"{s.key}:front", f"{s.label} — lớp trước", o.name, cname, *px(col, a * (fig_of(s) if s.figure is not None else fig)), piece, plate))
                 else:
                     files.append(Out(s.key, s.label, o.name, cname, *px(col, a), piece, plate))
         if not made:

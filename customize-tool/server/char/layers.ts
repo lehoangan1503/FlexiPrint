@@ -16,8 +16,8 @@
 
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
-import type { CtAsset, CtCharAlign, CtCharCutState, CtCharImage, CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject } from "../../types";
-import { DOLL_COLOUR, isThumbRole, optionPictures, planEdits, slotLabel, type CtCharEditPlan } from "../../lib/char-plan";
+import type { CtAsset, CtCharAlign, CtCharCutState, CtCharImage, CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject, CtCharSlot } from "../../types";
+import { DOLL_COLOUR, isFace, isThumbRole, optionPictures, planEdits, slotLabel, type CtCharEditPlan } from "../../lib/char-plan";
 import { latestEditsOf } from "../../lib/char-images";
 import type { CtSession } from "../supabase";
 import { ctLibraryPath, ctRemove, ctStoragePath, ctUpload } from "../storage";
@@ -27,6 +27,7 @@ import { kitForget, kitJob, kitPost } from "./kit";
 import { remakeSetProduct } from "./product";
 import { jobDb, jsonError, loadImages, loadProject, projectRow, runCharDraw, canEditProject, NOT_YOURS } from "./projects";
 import { editLayerFile, reapplyEdits, revertLayerFile } from "./file-edit";
+import { remakeDrawnProduct } from "./versions";
 
 type Db = ReturnType<typeof jobDb>;
 
@@ -234,14 +235,15 @@ export interface KitPlanInput {
   key: string;
   /** How many figures the doll has (subjects, left → right). */
   subjects: number;
-  options: Array<{ key: string; slot: string; label: string; option: string; index: number; picture: string; url: string; subject: number }>;
+  options: Array<{ key: string; slot: string; label: string; option: string; index: number; picture: string; url: string; subject: number; against?: string; fine?: boolean }>;
   zones: Array<{ id: string; label: string; mask: string }>;
   /** Per piece: the urls its region comes from — the same again keeps a hand-fixed region on a re-plan. */
   sigs: Record<string, string>;
 }
 
-/** The picture id of option `index` of a slot (layer-kit). */
+/** The picture id of option `index` of a slot (layer-kit); a group's options share their picture's. */
 const optionId = (slotId: string, index: number): string => `opt.${slotId}.${index}`;
+const pictureIdOf = (x: { slot: CtCharSlot; index: number }): string => (x.slot.group ? `grp.${x.slot.group}.${x.index}` : optionId(x.slot.id, x.index));
 
 /** The edits the plan step needs (layer-kit /plan), or why it can't run yet. */
 export function kitPlanInput(p: CtCharProject, latest: Map<string, CtCharImage>): { plan: KitPlanInput } | { missing: string[] } {
@@ -261,12 +263,18 @@ export function kitPlanInput(p: CtCharProject, latest: Map<string, CtCharImage>)
   const options = optionPictures(p.brief).map((x) => {
     const o = x.slot.options[x.index];
     const key = `${x.slot.id}#${x.index}`;
-    sigs[key] = [url(x.role), doll].join("|");
-    return { key, slot: x.slot.id, label: `${slotLabel(p.brief, x.subject, x.slot)}: ${o.name}`, option: o.name, index: x.index, picture: optionId(x.slot.id, x.index), url: url(x.role), subject: x.subject };
+    const against = x.against ? url(x.against) : undefined;
+    sigs[key] = [url(x.role), doll, ...(against ? [against] : [])].join("|");
+    return { key, slot: x.slot.id, label: `${slotLabel(p.brief, x.subject, x.slot)}: ${o.name}`, option: o.name, index: x.index, picture: pictureIdOf(x), url: url(x.role), subject: x.subject, ...(against ? { against } : {}), ...(isFace(x.slot.part) ? { fine: true } : {}) };
   });
   const zones = p.brief.photoZones.map((z) => ({ id: z.id, label: z.label, mask: url(`zone:${z.id}`) }));
   for (const z of zones) sigs[`zone:${z.id}`] = [z.mask, doll].join("|");
   return { plan: { doll, key: DOLL_COLOUR.hex, subjects: p.brief.subjects.length, options, zones, sigs } };
+}
+
+/** The first slot of a group (its option 0 is the group's first picture). */
+function firstOfGroup(brief: CtCharProject["brief"], group: string): string {
+  return brief.subjects.flatMap((sub) => sub.slots).find((sl) => sl.group === group)?.id ?? "";
 }
 
 /** layer-kit /cut input: the doll, every option picture + its region, slots as the brief has them. */
@@ -292,6 +300,8 @@ function cutInput(p: CtCharProject): Record<string, unknown> {
         return { name: o.name, hex: slot.mode === "color" ? o.value : null, picture: pc?.picture ?? null, region: pc?.region.url ?? null };
       }),
       colors: slot.mode === "shape" ? slot.colors.map((c) => ({ name: c.name, hex: c.value })) : [],
+      // Hair drawn under the hats of an outfit picture lies in front where that picture's figure is (the sweaters).
+      ...(slot.on && slot.mode === "shape" && slot.wraps && piece(`${firstOfGroup(p.brief, slot.on)}#0`) ? { figure: piece(`${firstOfGroup(p.brief, slot.on)}#0`)!.picture } : {}),
     })),
   );
   const zones = plan.pieces.filter((x) => x.kind === "zone").map((x) => ({ id: x.key.slice(5), region: x.region.url }));
@@ -423,9 +433,16 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
     };
     // The files the editor had edited by hand get their edits again (each clipart stays as they left it).
     layers.extraPaths!.push(...(await reapplyEdits(db, userId, p, oldSet, layers)));
-    if (product) {
+    const now = (await loadProject(db, p.id)) ?? p;
+    // A lineup drawn version by version: the product takes every set of it — made by the parent once all are cut.
+    const lineupOf = now.brief.versionOf?.id ?? (now.brief.lineup?.drawn ? now.id : null);
+    if (product && lineupOf) {
+      await db.from(CT_TABLES.charProjects).update({ layers: { ...layers, approved: true }, status: now.brief.versionOf ? "layers" : now.status === "product" ? "product" : "layers" }).eq("id", p.id);
+      await remakeDrawnProduct(db, userId, lineupOf).catch(async (e: Error) => {
+        await db.from(CT_TABLES.charProjects).update({ layers: { ...layers, approved: true, error: `Đã cắt file nhưng chưa tạo được sản phẩm: ${e.message}`.slice(0, 1000) } }).eq("id", lineupOf);
+      });
+    } else if (product) {
       // "Tạo bộ custom": the cliparts + the finished product, made from this set (the old product goes with the old files).
-      const now = (await loadProject(db, p.id)) ?? p;
       try {
         const productId = await remakeSetProduct(db, userId, now, { ...layers, approved: true });
         await db.from(CT_TABLES.charProjects).update({ layers: { ...layers, approved: true }, product_ids: [productId], status: "product" }).eq("id", p.id);

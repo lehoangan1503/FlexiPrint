@@ -24,24 +24,24 @@ sharp; dịch vụ Python trong `services/` (layer-kit: cắt layer).
 4. Kiểm tra: `npx tsc --noEmit -p tsconfig.json` sạch; `npx eslint <file đã sửa>` không lỗi mới. Thử lại bằng chính
    tool / trang đã lỗi nếu được.
 5. Commit rõ ràng (tiếng Việt hoặc Anh, nói sửa gì và vì sao) → `git push origin main`.
-6. Deploy (VPS `root@139.180.132.159`, app ở `/opt/flexiprint/app`):
+6. Deploy lên **flexi2** (máy công ty an-vm, `ssh an@100.108.93.16` qua Tailscale, app ở `/opt/flexi2/app`). VPS
+   (flexiprint.next.lc) đã bỏ từ 2026-10-19 — không deploy lên đó.
    ```bash
-   ssh root@139.180.132.159 'cd /opt/flexiprint/app && git status --short'
+   ssh an@100.108.93.16 'cd /opt/flexi2/app && git status --short'
    ```
-   Có file sửa tay trên VPS (ai đó sửa thẳng) → KHÔNG pull đè: sao lưu, commit phần đó lên nhánh, merge, rồi mới deploy.
+   Có file sửa tay trên máy (ai đó sửa thẳng) → KHÔNG pull đè: sao lưu, commit phần đó lên nhánh, merge, rồi mới deploy.
    Sạch thì:
    ```bash
-   ssh root@139.180.132.159 'cd /opt/flexiprint/app && git pull --ff-only && docker compose up -d --build app'
+   ssh an@100.108.93.16 'cd /opt/flexi2/app && git pull --ff-only && docker compose up -d --build app'
    ```
    Đổi `services/layer-kit` thì build thêm `layer-kit`. Migration SQL mới (`supabase/migrations/NNN_*.sql`):
-   `ssh root@139.180.132.159 "docker exec -i supabase-db psql -U postgres -v ON_ERROR_STOP=1" < file.sql`.
-   VPS chỉ 1.6 GB RAM: build mất vài phút, đừng build hai thứ cùng lúc.
-7. Kiểm tra sau deploy: `curl -s -o /dev/null -w "%{http_code}" https://flexiprint.next.lc/` = 200/307, chạy lại việc đã
+   `ssh an@100.108.93.16 "docker exec -i supabase-db psql -U postgres -v ON_ERROR_STOP=1" < file.sql`.
+7. Kiểm tra sau deploy: `curl -s -o /dev/null -w "%{http_code}" https://flexi2.next.lc/login` = 200, chạy lại việc đã
    lỗi. Báo người dùng: lỗi là gì, đã sửa ở đâu (file:dòng), commit nào, đã deploy chưa.
 
 ## DB
-Supabase tự host trên VPS, schema `flexiprint`. Service role (MCP) không có quyền xoá một số bảng — việc xoá / sửa tay
-dùng psql: `ssh root@139.180.132.159 "docker exec -i supabase-db psql -U postgres -c \"set search_path to flexiprint; …\""`.
+Supabase tự host trên an-vm, schema `flexiprint`. Service role (MCP) không có quyền xoá một số bảng — việc xoá / sửa tay
+dùng psql: `ssh an@100.108.93.16 "docker exec -i supabase-db psql -U postgres -c \"set search_path to flexiprint; …\""`.
 Sửa đúng dòng cần sửa, ghi lại đã làm gì.
 
 ## Không làm

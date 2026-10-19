@@ -23,14 +23,14 @@ import type { CtAsset, CtCharBrief, CtCharElement, CtCharShownWhen, CtCharImage,
 import { defaultProductConfig, defaultRegionConfig } from "../../lib/design";
 import { applyMaterialPreset, isMaterialId } from "../../lib/materials";
 import { charLayout, type CtCharLayoutText, type CtLayoutBox } from "../../lib/char-layout";
-import { charElementBoxes, charVersions, fromShares, placeCrop, subjectName, underText, unionBox } from "../../lib/char-lineup";
+import { charElementBoxes, charVersions, fromShares, subjectName, underText, unionBox } from "../../lib/char-lineup";
 import { elementPictures, latestElementImages } from "./elements";
 import { latestBackdrops } from "./backdrops";
 import { latestEditsOf } from "../../lib/char-images";
 import * as h from "../handlers";
 import type { CtSession } from "../supabase";
 import { fetchImage } from "./files";
-import { NOT_YOURS, canEditProject, jobDb, jsonError, loadImages, loadProject } from "./projects";
+import { NOT_YOURS, canEditProject, jobDb, jsonError, loadImages, loadProject, type Db } from "./projects";
 import { getTemplate } from "../print-templates";
 import { makeTemplateProduct, productPrintOf } from "../print-products";
 import { safeShapes } from "../../lib/print-template";
@@ -43,6 +43,7 @@ import { guessedBox, sceneForBlank } from "../product-mockups";
 import { AI_BLANK_ROLE, projectBlank } from "./blank";
 import { buildPhotoProduct, trimmed, type KeptZone } from "./photo-product";
 import { CT_FACE_STYLES } from "../../lib/photo-styles";
+import { isFace } from "../../lib/char-plan";
 
 /** A personalised text of the brief as a text layer in its box (lib/char-layout). Over a patterned background the
  * letters get a light halo so they read. */
@@ -447,6 +448,126 @@ export async function seamlessTile(raw: Buffer, across = false): Promise<Buffer>
     .toBuffer();
 }
 
+/** The pieces of an outfit file (alpha components): the headwear = the piece with the topmost pixel and every piece
+ * that starts above its bottom (a pom-pom apart from the hat); the rest is the top (a sweater). The face lies between
+ * them, so they never touch (asked 2026-10-19: the hats lie over the hair, the sweaters under it). */
+async function splitHeadwear(png: Buffer): Promise<{ hat: Buffer; rest: Buffer }> {
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const W = info.width;
+  const H = info.height;
+  const n = W * H;
+  const label = new Int32Array(n).fill(-1);
+  const comps: Array<{ minY: number; maxY: number; count: number }> = [];
+  const stack = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    if (label[i] >= 0 || data[i * 4 + 3] <= 8) continue;
+    const id = comps.length;
+    const c = { minY: H, maxY: -1, count: 0 };
+    let top = 0;
+    stack[top++] = i;
+    label[i] = id;
+    while (top) {
+      const j = stack[--top];
+      const x = j % W;
+      const y = (j - x) / W;
+      c.count++;
+      if (y < c.minY) c.minY = y;
+      if (y > c.maxY) c.maxY = y;
+      const near = [x > 0 ? j - 1 : -1, x < W - 1 ? j + 1 : -1, y > 0 ? j - W : -1, y < H - 1 ? j + W : -1];
+      for (const k of near)
+        if (k >= 0 && label[k] < 0 && data[k * 4 + 3] > 8) {
+          label[k] = id;
+          stack[top++] = k;
+        }
+    }
+    comps.push(c);
+  }
+  const big = comps.map((c, i) => ({ ...c, i })).filter((c) => c.count >= 200);
+  const first = big.sort((a, b) => a.minY - b.minY)[0];
+  const isHat = new Set(first ? big.filter((c) => c.minY < first.maxY && c.maxY <= first.maxY + (first.maxY - first.minY) * 0.25).map((c) => c.i) : []);
+  const hat = Buffer.alloc(n * 4);
+  const rest = Buffer.alloc(n * 4);
+  for (let i = 0; i < n; i++) {
+    if (!data[i * 4 + 3]) continue;
+    data.copy(isHat.has(label[i]) ? hat : rest, i * 4, i * 4, i * 4 + 4);
+  }
+  const out = (b: Buffer) => sharp(b, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer();
+  return { hat: await out(hat), rest: await out(rest) };
+}
+
+/**
+ * A plank sign stretched to `aspect` (w / h) the way a real one is made longer: its decorated ends kept as drawn, the
+ * plain middle (the columns where nothing rises above the plank's top edge) mirrored and repeated — one sign picture
+ * serves the short version of one grandchild and the long one of four (asked 2026-10-19).
+ */
+async function stretchPlank(png: Buffer, aspect: number): Promise<Buffer> {
+  const { data, info } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
+  const W0 = info.width;
+  const H0 = info.height;
+  const Wt = Math.max(8, Math.round(H0 * aspect));
+  if (Math.abs(Wt - W0) <= 2) return png;
+  const top = Array.from({ length: W0 }, (_, x) => {
+    for (let y = 0; y < H0; y++) if (data[y * W0 + x] > 128) return y;
+    return H0;
+  });
+  const mid = top.slice(Math.round(W0 * 0.4), Math.round(W0 * 0.6)).sort((p, q) => p - q);
+  const plankTop = mid[mid.length >> 1] ?? 0;
+  const plain = (x: number) => top[x] >= plankTop - H0 * 0.03;
+  let m0 = Math.round(W0 / 2);
+  let m1 = m0;
+  while (m0 > 0 && plain(m0 - 1)) m0--;
+  while (m1 < W0 - 1 && plain(m1 + 1)) m1++;
+  // A little inside the plain run (the decorations' soft edges).
+  const pad = Math.round((m1 - m0) * 0.04);
+  m0 += pad;
+  m1 -= pad;
+  const left = m0;
+  const right = W0 - 1 - m1;
+  const run = m1 - m0 + 1;
+  const need = Wt - left - right;
+  if (run < 8 || need < 8) return sharp(png).resize({ width: Wt, height: H0, fit: "fill" }).png().toBuffer();
+  const crop = (x: number, width: number) => sharp(png).extract({ left: x, top: 0, width, height: H0 }).png().toBuffer();
+  const parts: Array<{ input: Buffer; left: number; top: number }> = [{ input: await crop(0, left), left: 0, top: 0 }];
+  if (need <= run) parts.push({ input: await crop(m0 + Math.floor((run - need) / 2), need), left, top: 0 });
+  else {
+    const a = await crop(m0, run);
+    const b = await sharp(a).flop().png().toBuffer();
+    for (let x = 0, k = 0; x < need; x += run, k++) {
+      const w = Math.min(run, need - x);
+      const tile = w === run ? (k % 2 ? b : a) : await sharp(k % 2 ? b : a).extract({ left: 0, top: 0, width: w, height: H0 }).png().toBuffer();
+      parts.push({ input: tile, left: left + x, top: 0 });
+    }
+  }
+  parts.push({ input: await crop(m1 + 1, right), left: left + need, top: 0 });
+  return sharp({ create: { width: left + need + right, height: H0, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(parts).png().toBuffer();
+}
+
+/** The sign in front of the characters (element place "plaque"), shares of the characters' crop: its top a little
+ * over their cut-off bottom (the forearms rest on it), a quarter of the piece's height, a little wider than them. */
+const PLAQUE = { top: 0.93, h: 0.31, w: 1.06 };
+/** The lettering on the sign: the plain middle, between the decorated ends. */
+const PLAQUE_TEXT = { x: 0.2, y: 0.22, w: 0.6, h: 0.52 };
+
+/** One set a product version is made of: the set itself, or a version set of a drawn lineup (brief.lineup.drawn). */
+interface Source {
+  p: CtCharProject;
+  set: CtCharLayerSet;
+  images: CtCharImage[];
+}
+
+/** A version of the product: its customer name, the set its layers come from, the subjects (of that set) in it. */
+interface Version {
+  name: string;
+  src: Source;
+  subjects: number[];
+}
+
+/** The version sets of a drawn lineup, by position (server/char/versions.ts makes them). */
+export async function versionSetsOf(db: Db, parentId: string): Promise<CtCharProject[]> {
+  const { data } = await db.from(CT_TABLES.charProjects).select("*").eq("brief->versionOf->>id", parentId).returns<CtCharProject[]>();
+  return (data ?? []).sort((a, b) => (a.brief.versionOf?.index ?? 0) - (b.brief.versionOf?.index ?? 0));
+}
+
 async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: string, keptZones: Map<string, KeptZone> = new Map()): Promise<string> {
   const brief = p.brief;
   // On a khuôn in (brief.product.templateId): the product's canvas is its sheet, the characters sit in its safe zone.
@@ -510,9 +631,6 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
   const charArea: CtLayoutBox = brief.charactersBox ? fromShares(area, brief.charactersBox) : layout.characters;
 
   const images = await loadImages(s.supabase, p.id);
-  // The thumbnail pictures (3b "thumb:<slot>:<option>") by role.
-  const thumbs = new Map([...latestEditsOf(images)].filter(([role, im]) => role.startsWith("thumb:") && im.status === "done").map(([role, im]) => [role, im.url]));
-
   const fileCache = new Map<string, Buffer>();
   const bytes = async (url: string) => {
     const hit = fileCache.get(url);
@@ -522,68 +640,167 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     return b;
   };
 
-  // ---- who is where: each subject's files, its centre and its crop on the set's canvas ----
-  const subjectOfSlot = new Map<string, number>();
-  brief.subjects.forEach((sub, i) => sub.slots.forEach((sl) => subjectOfSlot.set(sl.id, i)));
-  const slotSubject = (sl: CtCharLayerSlot) => subjectOfSlot.get(sl.key.split(":")[0]) ?? -1;
-  const fileBox = (f: CtCharLayerFile): CtLayoutBox | null => (f.bbox && f.bbox.length === 4 ? { x: f.bbox[0], y: f.bbox[1], w: f.bbox[2], h: f.bbox[3] } : null);
-  const boxesOf = (i: number) => set.slots.filter((sl) => slotSubject(sl) === i).flatMap((sl) => sl.files.map(fileBox).filter((b): b is CtLayoutBox => b !== null));
-  const versions = charVersions(brief);
+  // ---- the versions, each from its own set ----
+  const own: Source = { p, set, images };
+  const named = charVersions(brief);
+  const drawn = brief.lineup?.drawn === true && named.length > 1;
+  let versions: Version[];
+  if (drawn) {
+    // The biggest version is this set; each smaller one its own version set (server/char/versions.ts).
+    const children = await versionSetsOf(s.supabase, p.id);
+    versions = [];
+    for (const [i, v] of named.entries()) {
+      if (i === named.length - 1) {
+        versions.push({ name: v.name, src: own, subjects: brief.subjects.map((_, k) => k) });
+        continue;
+      }
+      const c = children.find((x) => x.brief.versionOf?.index === i);
+      if (!c?.layers || c.layers.status !== "done") throw new Error(`Phiên bản "${v.name}" chưa cắt xong`);
+      versions.push({ name: v.name, src: { p: c, set: c.layers, images: await loadImages(s.supabase, c.id) }, subjects: c.brief.subjects.map((_, k) => k) });
+    }
+  } else versions = named.map((v) => ({ name: v.name, src: own, subjects: v.subjects }));
   const lineup = versions.length > 1;
-  const bodySlot = set.slots.find((sl) => sl.key === "body");
-  // Face zones: their outline is cut out of the body file (the face shows through it from the layer under the body).
-  const faceHoles = set.zones.filter((z) => brief.photoZones.find((x) => x.id === z.id)?.treat === "face").map((z) => z.polygon);
-  const bodyPng = bodySlot?.files[0] ? await cleanKey(faceHoles.length ? await punched(await bytes(bodySlot.files[0].url), faceHoles) : await bytes(bodySlot.files[0].url), true) : null;
-  const bodyBox = bodyPng ? await alphaBox(bodyPng) : null;
-  // Each subject's centre (its parts' boxes; one without parts gets its share of the body's width).
-  const centres = brief.subjects.map((_, i) => {
-    const u = unionBox(boxesOf(i));
-    if (u) return u.x + u.w / 2;
-    const b = bodyBox ?? { x: 0, y: 0, w: set.width, h: set.height };
-    return b.x + (b.w * (i + 0.5)) / Math.max(1, brief.subjects.length);
-  });
-  const bodies = bodyPng ? (lineup ? await splitBody(bodyPng, centres) : [bodyPng]) : [];
-  const bodyBoxes = await Promise.all(bodies.map(alphaBox));
-  const subjectBox = (i: number): CtLayoutBox | null => unionBox([...boxesOf(i), ...(lineup && bodyBoxes[i] ? [bodyBoxes[i]!] : [])]);
-  const cropOf = (subs: number[]): CtLayoutBox => unionBox(subs.map(subjectBox).filter((b): b is CtLayoutBox => b !== null)) ?? bodyBox ?? { x: 0, y: 0, w: set.width, h: set.height };
-  // "count": one scale for every version — the whole row's fit (one person is as big as in the row of five).
-  const rowScale = brief.lineup?.mode === "count" ? Math.min(charArea.w / cropOf(versions[versions.length - 1].subjects).w, charArea.h / cropOf(versions[versions.length - 1].subjects).h) : null;
 
-  // ---- cliparts, made once and used by every version ----
-  const thumbPictureOf = (slot: CtCharLayerSlot, f: CtCharLayerFile) => {
-    const sl = brief.subjects.flatMap((sub) => sub.slots).find((x) => x.id === slot.key.split(":")[0]);
-    const o = sl?.options.find((x) => x.name === f.option);
-    return o ? thumbs.get(`thumb:${sl!.id}:${o.id}`) : undefined;
+  // ---- per set: who is where, its files and cliparts (made once, used by every version of it) ----
+  const cap = (x: string) => (x ? x[0].toUpperCase() + x.slice(1) : x);
+  const HAT = /\b(hat|cap|beanie|helmet|crown|hood)\b|mũ|nón/i;
+  const prepared = new Map<string, Awaited<ReturnType<typeof prepare>>>();
+  async function prepare(src: Source) {
+    const sb = src.p.brief;
+    const sset = src.set;
+    const allSlots = sb.subjects.flatMap((sub) => sub.slots);
+    const slotOf = (sl: CtCharLayerSlot) => allSlots.find((x) => x.id === sl.key.split(":")[0]);
+    const subjectOfSlot = new Map<string, number>();
+    sb.subjects.forEach((sub, i) => sub.slots.forEach((sl) => subjectOfSlot.set(sl.id, i)));
+    const slotSubject = (sl: CtCharLayerSlot) => subjectOfSlot.get(sl.key.split(":")[0]) ?? -1;
+    const fileBox = (f: CtCharLayerFile): CtLayoutBox | null => (f.bbox && f.bbox.length === 4 ? { x: f.bbox[0], y: f.bbox[1], w: f.bbox[2], h: f.bbox[3] } : null);
+    const boxesOf = (i: number) => sset.slots.filter((sl) => slotSubject(sl) === i).flatMap((sl) => sl.files.map(fileBox).filter((b): b is CtLayoutBox => b !== null));
+    // A lineup cut from ONE picture splits the body per subject; a drawn version has its own body.
+    const split = lineup && !drawn;
+    const bodySlot = sset.slots.find((sl) => sl.key === "body");
+    // Face zones: their outline is cut out of the body file (the face shows through it from the layer under the body).
+    const faceHoles = sset.zones.filter((z) => sb.photoZones.find((x) => x.id === z.id)?.treat === "face").map((z) => z.polygon);
+    const bodyPng = bodySlot?.files[0] ? await cleanKey(faceHoles.length ? await punched(await bytes(bodySlot.files[0].url), faceHoles) : await bytes(bodySlot.files[0].url), true) : null;
+    const bodyBox = bodyPng ? await alphaBox(bodyPng) : null;
+    // Each subject's centre (its parts' boxes; one without parts gets its share of the body's width).
+    const centres = sb.subjects.map((_, i) => {
+      const u = unionBox(boxesOf(i));
+      if (u) return u.x + u.w / 2;
+      const b = bodyBox ?? { x: 0, y: 0, w: sset.width, h: sset.height };
+      return b.x + (b.w * (i + 0.5)) / Math.max(1, sb.subjects.length);
+    });
+    const bodies = bodyPng ? (split ? await splitBody(bodyPng, centres) : [bodyPng]) : [];
+    const bodyBoxes = await Promise.all(bodies.map(alphaBox));
+    const subjectBox = (i: number): CtLayoutBox | null => unionBox([...boxesOf(i), ...(split && bodyBoxes[i] ? [bodyBoxes[i]!] : [])]);
+    const cropOf = (subs: number[]): CtLayoutBox =>
+      (split ? unionBox(subs.map(subjectBox).filter((b): b is CtLayoutBox => b !== null)) : null) ?? (subs.length === sb.subjects.length ? unionBox([...(bodyBox ? [bodyBox] : []), ...subs.flatMap(boxesOf)]) : null) ?? bodyBox ?? { x: 0, y: 0, w: sset.width, h: sset.height };
+
+    // A headwear outfit (slot.headwear): the hat becomes its own layer over the hair, the rest stays where the slot is.
+    const hats = new Map<string, string>();
+    const slots: CtCharLayerSlot[] = [];
+    for (const sl of sset.slots) {
+      slots.push(sl);
+      if (slotOf(sl)?.headwear && !sl.follows) {
+        const key = `${sl.key}:hat`;
+        hats.set(key, sl.key);
+      }
+    }
+    const hatSlots: CtCharLayerSlot[] = [...hats].map(([key, of]) => {
+      const sl = sset.slots.find((x) => x.key === of)!;
+      return { ...sl, key, label: `${sl.label} — nón` };
+    });
+    const pieceOf = async (sl: CtCharLayerSlot, url: string): Promise<Buffer> => {
+      const png = await bytes(url);
+      if (hats.has(sl.key)) return (await splitHeadwear(png)).hat;
+      if (slotOf(sl)?.headwear) return (await splitHeadwear(png)).rest;
+      return png;
+    };
+
+    // The thumbnail pictures (3b "thumb:<slot>:<option>") by role.
+    const thumbs = new Map([...latestEditsOf(src.images)].filter(([role, im]) => role.startsWith("thumb:") && im.status === "done").map(([role, im]) => [role, im.url]));
+    const thumbPictureOf = (slot: CtCharLayerSlot, f: CtCharLayerFile) => {
+      const sl = slotOf(slot);
+      const o = sl?.options.find((x) => x.name === f.option);
+      return o ? thumbs.get(`thumb:${sl!.id}:${o.id}`) : undefined;
+    };
+    /** A slot's groups: shape slots with colours → one group per colour (options = shapes); otherwise one group. */
+    const slotGroups = new Map<string, Promise<Array<{ name: string; sub: CtAsset | null }>>>();
+    const groupsOf = (slot: CtCharLayerSlot, label: string) => {
+      const hit = slotGroups.get(slot.key);
+      if (hit) return hit;
+      const colours = [...new Set(slot.files.map((f) => f.color))];
+      const grouped = colours.length > 1 || colours[0] !== "";
+      const groups = grouped ? colours.map((c) => ({ name: c, files: slot.files.filter((f) => f.color === c) })) : [{ name: "", files: slot.files }];
+      // A wrapping part's option is shown as it is seen (back + front, server/char/layers.ts views).
+      const back = sset.slots.find((x) => x.follows === slot.key);
+      const thumbOf = (f: CtCharLayerFile) => (f.viewUrl ? f : back?.files.find((b) => b.option === f.option && b.color === f.color));
+      // Uploads of a group go in order (variants hang on the first); groups in parallel.
+      const made = Promise.all(
+        groups.map(async (g) => {
+          let sub: CtAsset | null = null;
+          for (const f of g.files) {
+            const swatch = swatchOf(sb, slot.key, f.option, f.color);
+            const whole = thumbOf(f);
+            const thumb = thumbPictureOf(slot, f) ?? (whole ? whole.viewUrl || whole.url : undefined);
+            const a = await clipart(await cleanKey(await pieceOf(slot, f.url), false), [label, f.option, f.color].filter(Boolean).join(" · "), sub?.id ?? null, { charLayerId: f.imageId, ...(swatch ? { swatch } : {}), ...(thumb ? { thumb } : {}) });
+            sub ??= a;
+          }
+          return { name: grouped ? g.name : "", sub };
+        }),
+      );
+      slotGroups.set(slot.key, made);
+      return made;
+    };
+    const bodyCliparts = bodies.map((png, i) => clipart(png, split ? `Body · ${subjectName(sb, i)}` : drawn ? `Body · ${src.p.brief.versionOf?.name ?? named[named.length - 1].name}` : "Body", null, bodySlot?.files[0] ? { charLayerId: bodySlot.files[0].imageId } : {}));
+
+    // A name "on" a character with no box of its own sits on that character's hat brim (its first hat file).
+    const brims = new Map<number, CtLayoutBox | null>();
+    for (const t of brief.texts.filter((x) => x.place === "on" && !x.box)) {
+      const i = sb.subjects.findIndex((x) => x.id === t.subject);
+      if (i < 0 || brims.has(i)) continue;
+      const hatSlot = sb.subjects[i].slots.find((sl) => sl.headwear) ?? sb.subjects[i].slots.find((sl) => HAT.test(sl.part));
+      const sl = hatSlot && sset.slots.find((x) => x.key === hatSlot.id || x.key === `${hatSlot.id}:front`);
+      const file = sl?.files[0];
+      brims.set(i, file ? await brimBox(hatSlot?.headwear ? (await splitHeadwear(await bytes(file.url))).hat : await bytes(file.url)) : null);
+    }
+    return { sb, sset, slotOf, slotSubject, subjectBox, cropOf, slots, hatSlots, groupsOf, bodies, bodyCliparts, brims };
+  }
+  for (const v of versions) if (!prepared.has(v.src.p.id)) prepared.set(v.src.p.id, await prepare(v.src));
+
+  // ---- where each version goes: its characters' crop (+ the sign under them) fitted in the characters' area ----
+  const done = latestElementImages(images);
+  // An element with a picture missing is left out (the cut makes the product before step 4 draws them; "Dựng lại sản
+  // phẩm" puts them in).
+  const pics = elementPictures(p);
+  const ready = brief.elements.filter((e) => pics.filter((x) => x.element.id === e.id).every((x) => done.has(x.role)));
+  const plaque = ready.find((e) => e.place === "plaque") ?? null;
+  const blockOf = (c: CtLayoutBox) => (plaque ? { w: c.w * PLAQUE.w, h: c.h * (PLAQUE.top + PLAQUE.h) } : { w: c.w, h: c.h });
+  const fitOf = (c: CtLayoutBox) => Math.min(charArea.w / blockOf(c).w, charArea.h / blockOf(c).h);
+  const cropOfVersion = (v: Version) => prepared.get(v.src.p.id)!.cropOf(v.subjects);
+  const last = versions[versions.length - 1];
+  const lastCrop = cropOfVersion(last);
+  // "count": one size for everyone — the whole row's fit (one person is as big as in the row of five); a drawn
+  // version (its own picture) gets the height the whole row's characters have.
+  const rowScale = fitOf(lastCrop);
+  const rowHeight = lastCrop.h * rowScale;
+  const placeOf = (v: Version): { box: CtLayoutBox; k: number; plaque: CtLayoutBox | null } => {
+    const sset = v.src.set;
+    if (!lineup && !brief.charactersBox && !plaque) {
+      const k = layout.characters.w / sset.width;
+      return { box: layout.characters, k, plaque: null };
+    }
+    const crop = cropOfVersion(v);
+    const k = brief.lineup?.mode === "count" ? (drawn ? Math.min(rowHeight / crop.h, fitOf(crop)) : rowScale) : fitOf(crop);
+    const b = blockOf(crop);
+    const bx = charArea.x + (charArea.w - b.w * k) / 2;
+    const by = charArea.y + charArea.h - b.h * k;
+    const chars = { x: bx + ((b.w - crop.w) * k) / 2, y: by, w: crop.w * k, h: crop.h * k };
+    return {
+      box: { x: chars.x - crop.x * k, y: chars.y - crop.y * k, w: sset.width * k, h: sset.height * k },
+      k,
+      plaque: plaque ? { x: bx, y: chars.y + chars.h * PLAQUE.top, w: crop.w * k * PLAQUE.w, h: chars.h * PLAQUE.h } : null,
+    };
   };
-  /** A slot's groups: shape slots with colours → one group per colour (options = shapes); otherwise one group. */
-  const slotGroups = new Map<string, Promise<Array<{ name: string; sub: CtAsset | null }>>>();
-  const groupsOf = (slot: CtCharLayerSlot, label: string) => {
-    const hit = slotGroups.get(slot.key);
-    if (hit) return hit;
-    const colours = [...new Set(slot.files.map((f) => f.color))];
-    const grouped = colours.length > 1 || colours[0] !== "";
-    const groups = grouped ? colours.map((c) => ({ name: c, files: slot.files.filter((f) => f.color === c) })) : [{ name: "", files: slot.files }];
-    // A wrapping part's option is shown as it is seen (back + front, server/char/layers.ts views).
-    const back = set.slots.find((x) => x.follows === slot.key);
-    const thumbOf = (f: CtCharLayerFile) => (f.viewUrl ? f : back?.files.find((b) => b.option === f.option && b.color === f.color));
-    // Uploads of a group go in order (variants hang on the first); groups in parallel.
-    const made = Promise.all(
-      groups.map(async (g) => {
-        let sub: CtAsset | null = null;
-        for (const f of g.files) {
-          const swatch = swatchOf(brief, slot.key, f.option, f.color);
-          const whole = thumbOf(f);
-          const thumb = thumbPictureOf(slot, f) ?? (whole ? whole.viewUrl || whole.url : undefined);
-          const a = await clipart(await cleanKey(await bytes(f.url), false), [label, f.option, f.color].filter(Boolean).join(" · "), sub?.id ?? null, { charLayerId: f.imageId, ...(swatch ? { swatch } : {}), ...(thumb ? { thumb } : {}) });
-          sub ??= a;
-        }
-        return { name: grouped ? g.name : "", sub };
-      }),
-    );
-    slotGroups.set(slot.key, made);
-    return made;
-  };
-  const bodyCliparts = bodies.map((png, i) => clipart(png, lineup ? `Body · ${subjectName(brief, i)}` : "Body", null, bodySlot?.files[0] ? { charLayerId: bodySlot.files[0].imageId } : {}));
 
   // The backgrounds the customer picks (over the whole piece); a repeating one (plaid) as a seamless tile.
   const backdrops = latestBackdrops(p, images);
@@ -591,36 +808,37 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
   const backdropCliparts = Promise.all(backdrops.map(async ({ backdrop, image }) => clipart(backdrop.tile ? await seamlessTile(await bytes(image.url)) : await bytes(image.url), `Background · ${backdrop.name}`, null, {})));
 
   // Decorations (asked 2026-10-18): drawn alone (server/char/elements.ts), trimmed, placed in their box.
-  const done = latestElementImages(images);
-  // An element with a picture missing is left out (the cut makes the product before step 4 draws them; "Dựng lại sản
-  // phẩm" puts them in).
-  const pics = elementPictures(p);
-  const ready = brief.elements.filter((e) => pics.filter((x) => x.element.id === e.id).every((x) => done.has(x.role)));
   const elementBoxes = charElementBoxes(brief.elements, charArea, area, piece);
   const elementCliparts = new Map<string, Promise<Array<{ name: string; sub: CtAsset }>>>();
-  for (const e of ready)
-    elementCliparts.set(
-      e.id,
-      (async () => {
-        const list = pics.filter((x) => x.element.id === e.id);
-        const out: Array<{ name: string; sub: CtAsset }> = [];
-        let first: CtAsset | null = null;
-        // perBackdrop: each picture its own group (no gốc / đa sắc chain).
-        for (const x of list) {
-          let png = await trimmed(await fetchImage(done.get(x.role)!.url));
-          // The ground under the characters: mirrored beside itself, repeated along the band (a 3:1 rug from a 3:2 picture).
-          if (e.place === "bottom" && !e.box) png = await seamlessTile(png, true);
-          const hex = e.options.find((o) => o.name === x.name)?.value;
-          const a = await clipart(png, `${e.name} · ${x.name}`, e.perBackdrop ? null : (first?.id ?? null), e.mode === "color" && hex && /^#[0-9a-f]{6}$/i.test(hex) ? { swatch: hex } : {});
-          first ??= a;
-          out.push({ name: x.name, sub: a });
-        }
-        return out;
-      })(),
-    );
+  /** An element's cliparts; the sign (place "plaque") stretched to each version's width (`aspect`). */
+  const cliparsOf = (e: CtCharElement, aspect = 0): Promise<Array<{ name: string; sub: CtAsset }>> => {
+    const key = `${e.id}@${aspect ? aspect.toFixed(2) : ""}`;
+    const hit = elementCliparts.get(key);
+    if (hit) return hit;
+    const made = (async () => {
+      const list = pics.filter((x) => x.element.id === e.id);
+      const out: Array<{ name: string; sub: CtAsset }> = [];
+      let first: CtAsset | null = null;
+      // perBackdrop: each picture its own group (no gốc / đa sắc chain).
+      for (const x of list) {
+        let png = await trimmed(await fetchImage(done.get(x.role)!.url));
+        // The ground under the characters: mirrored beside itself, repeated along the band (a 3:1 rug from a 3:2 picture).
+        if (e.place === "bottom" && !e.box) png = await seamlessTile(png, true);
+        if (e.place === "plaque" && aspect) png = await stretchPlank(png, aspect);
+        const hex = e.options.find((o) => o.name === x.name)?.value;
+        const a = await clipart(png, `${e.name} · ${x.name}${aspect && lineup ? ` · ${aspect.toFixed(1)}` : ""}`, e.perBackdrop ? null : (first?.id ?? null), e.mode === "color" && hex && /^#[0-9a-f]{6}$/i.test(hex) ? { swatch: hex } : {});
+        first ??= a;
+        out.push({ name: x.name, sub: a });
+      }
+      return out;
+    })();
+    elementCliparts.set(key, made);
+    return made;
+  };
 
-  // Choosers (brief.choosers — a grandchild a boy or a girl, hats or no hats): a layer that draws nothing (its options
-  // are empty pictures named after the choice) and that the parts / texts / decorations with shownWhen hang under.
+  // Choosers (brief.choosers — a grandchild a boy or a girl, hats or no hats, the Theme): a layer that draws nothing (its
+  // options are empty pictures named after the choice) and that the parts / texts / decorations with shownWhen hang
+  // under, or that follow it.
   const blankPng = await sharp({ create: { width: 8, height: 8, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer();
   const chooserAssets = new Map<string, Promise<Map<string, CtAsset>>>();
   for (const c of brief.choosers ?? [])
@@ -638,17 +856,6 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       })(),
     );
 
-  // A name "on" a character with no box of its own sits on that character's hat brim (its first hat file).
-  const HAT = /\b(hat|cap|beanie|helmet|crown|hood)\b|mũ|nón/i;
-  const brims = new Map<number, CtLayoutBox | null>();
-  for (const t of brief.texts.filter((x) => x.place === "on" && !x.box)) {
-    const i = brief.subjects.findIndex((x) => x.id === t.subject);
-    if (i < 0 || brims.has(i)) continue;
-    const hat = brief.subjects[i].slots.find((sl) => HAT.test(sl.part));
-    const slot = hat && set.slots.find((sl) => sl.key === hat.id || sl.key === `${hat.id}:front`);
-    brims.set(i, slot?.files[0] ? await brimBox(await bytes(slot.files[0].url)) : null);
-  }
-
   // ---- the versions ----
   const mains: CtAsset[] = [main];
   for (const v of versions.slice(1)) mains.push(await upload(sheetPng, "main", v.name));
@@ -664,20 +871,21 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     items.push({ id, region_id: r.id, asset_id: sub.id, transform: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0 }, is_default: index === 0, sort_order: index });
     if (groupName) r.config.image.groupNames[id] = groupName;
   };
-  const cap = (x: string) => (x ? x[0].toUpperCase() + x.slice(1) : x);
-  const modeOf = (sl: CtCharLayerSlot) => brief.subjects.flatMap((sub) => sub.slots).find((x) => x.id === sl.key.split(":")[0])?.mode;
-  const slotOf = (sl: CtCharLayerSlot) => brief.subjects.flatMap((sub) => sub.slots).find((x) => x.id === sl.key.split(":")[0]);
 
   for (const [vi, v] of versions.entries()) {
     const mainId = mains[vi].id;
-    const own = new Set(v.subjects);
-    const { box, k } = lineup ? placeCrop(set, cropOf(v.subjects), charArea, brief.lineup?.mode === "count" ? rowScale : null) : brief.charactersBox ? placeCrop(set, cropOf(v.subjects), charArea, null) : { box: layout.characters, k: layout.characters.w / set.width };
+    const P = prepared.get(v.src.p.id)!;
+    const sb = P.sb;
+    const ownSet = new Set(v.subjects);
+    const { box, k, plaque: plaqueBox } = placeOf(v);
     const many = v.subjects.length > 1;
+    const modeOf = (sl: CtCharLayerSlot) => P.slotOf(sl)?.mode;
     // One character in the picture: the part alone ("Hair"); several: "Person 2 — Hair".
     const labelFor = (sl: CtCharLayerSlot) => {
-      const w = who(brief, sl.key);
-      if (w.part && !many) return cap(w.part);
-      return w.name ? `${w.name} — ${w.part}` : sl.label;
+      const w = who(sb, sl.key);
+      const part = P.slotOf(sl)?.headwear ? (sl.key.endsWith(":hat") ? "Hat" : "Top") : w.part;
+      if (part && !many) return cap(part);
+      return w.name ? `${w.name} — ${part}` : sl.label;
     };
     const imageRegion = (label: string, customerLabel: string, image: Partial<CtRegion["config"]["image"]>, shape: CtShape = { type: "rect", x: box.x, y: box.y, w: box.w, h: box.h, radius: 0 }, extra: Partial<CtRegion["config"]> = {}): CtRegion => {
       const cfg = defaultRegionConfig("image");
@@ -697,8 +905,8 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     // This version's choosers (one that belongs to a character only where that character is).
     const choosers = new Map<string, { region: CtRegion; assets: Map<string, CtAsset> }>();
     for (const c of brief.choosers ?? []) {
-      const si = c.subject ? brief.subjects.findIndex((x) => x.id === c.subject) : -1;
-      if (c.subject && !own.has(si)) continue;
+      const si = c.subject ? sb.subjects.findIndex((x) => x.id === c.subject) : -1;
+      if (c.subject && !ownSet.has(si)) continue;
       const assets = await chooserAssets.get(c.id)!;
       const r = imageRegion(`Chọn — ${c.label}`, c.label, { display: "button" }, { type: "rect", x: 0, y: 0, w: 1, h: 1, radius: 0 });
       const first = assets.get(c.options[0].id);
@@ -712,7 +920,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     };
 
     // 0) the background (over the whole piece), 1) decorations behind, 2) back halves (linked), 3) bodies, 4) photo
-    // zones, 5) every other part in the set's order (front halves last), 6) decorations in front, 7) texts.
+    // zones, 5) every other part in the set's order (front halves last), 6) hats, 7) decorations in front, 8) texts.
     if (backdrops.length) {
       const r = imageRegion("Nền", "Background", { display: "image" }, template?.spec.outline ?? { type: "rect", x: 0, y: 0, w: W, h: H, radius: 0 }, {
         clip: false,
@@ -722,8 +930,8 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     }
     const elementRegions = new Map<string, CtRegion>();
     const placeElement = async (e: CtCharElement) => {
-      const b = elementBoxes[e.id];
-      const list = await elementCliparts.get(e.id)!;
+      const b = e.place === "plaque" && plaqueBox ? plaqueBox : elementBoxes[e.id];
+      const list = await cliparsOf(e, e.place === "plaque" && plaqueBox ? plaqueBox.w / plaqueBox.h : 0);
       const first = list[0]?.sub;
       // The ground: one row of the mirrored band along it, as tall as it.
       const ground = e.place === "bottom" && !e.box;
@@ -735,31 +943,32 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       if (e.perBackdrop && backdrops.length) list.forEach((x, i) => addItem(r, x.sub, i));
       else if (first) addItem(r, first, 0);
     };
-    for (const e of ready.filter((x) => !x.front)) await placeElement(e);
+    for (const e of ready.filter((x) => !x.front && x.place !== "plaque")) await placeElement(e);
 
-    const byKey = new Map(set.slots.map((sl) => [sl.key, sl]));
-    const mine = (sl: CtCharLayerSlot) => own.has(slotSubject(sl));
-    const backs = set.slots.filter((sl) => sl.follows && mine(sl));
-    const fronts = set.slots.filter((sl) => !sl.follows && sl.key !== "body" && mine(sl));
+    const byKey = new Map([...P.slots, ...P.hatSlots].map((sl) => [sl.key, sl]));
+    const mine = (sl: CtCharLayerSlot) => ownSet.has(P.slotSubject(sl));
+    const backs = P.slots.filter((sl) => sl.follows && mine(sl));
+    const fronts = P.slots.filter((sl) => !sl.follows && sl.key !== "body" && mine(sl));
+    const hatsOver = P.hatSlots.filter(mine);
     const regionOf = new Map<string, CtRegion>();
     const fillRegion = (r: CtRegion, sl: CtCharLayerSlot) =>
       fills.push(
-        groupsOf(sl, labelFor(sl)).then((groups) =>
+        P.groupsOf(sl, labelFor(sl)).then((groups) =>
           groups.forEach((g, gi) => {
             if (g.sub) addItem(r, g.sub, gi, g.name);
           }),
         ),
       );
     for (const sl of backs) regionOf.set(sl.key, imageRegion(sl.label, labelFor(sl), {}));
-    if (bodies.length) {
-      for (const [i, c] of bodyCliparts.entries()) {
-        if (lineup && !own.has(i)) continue;
-        const r = imageRegion(lineup ? `Thân — ${subjectName(brief, i)}` : "Thân", "Body", {});
+    if (P.bodies.length) {
+      for (const [i, c] of P.bodyCliparts.entries()) {
+        if (lineup && !drawn && !ownSet.has(i)) continue;
+        const r = imageRegion(lineup && !drawn ? `Thân — ${subjectName(sb, i)}` : "Thân", "Body", {});
         fills.push(c.then((a) => addItem(r, a, 0)));
       }
     }
     const firstBody = regions.findIndex((r) => r.config.mainId === mainId && r.name.startsWith("Thân"));
-    const photoRegions: CtRegion[] = set.zones.map((z) => {
+    const photoRegions: CtRegion[] = v.src.set.zones.map((z) => {
       const cfg = defaultRegionConfig("photo");
       const keptZone = keptZones.get(`Ảnh khách — ${z.label}`);
       const r: CtRegion = {
@@ -769,7 +978,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         kind: "photo",
         shape: keptZone?.shape ?? { type: "polygon", points: z.polygon.map(([x, y]) => ({ x: box.x + x * k, y: box.y + y * k })) },
         // A face under the body: the body's hole edges it (its hair may show past the hat, like the reference) — not clipped.
-        config: { ...cfg, clip: brief.photoZones.find((x) => x.id === z.id)?.treat !== "face", mainId, photo: { ...cfg.photo, ...zonePhoto(brief, z.id), label: z.label, required: true, ...(keptZone ? { frame: keptZone.frame } : {}) } },
+        config: { ...cfg, clip: sb.photoZones.find((x) => x.id === z.id)?.treat !== "face", mainId, photo: { ...cfg.photo, ...zonePhoto(sb, z.id), label: z.label, required: true, ...(keptZone ? { frame: keptZone.frame } : {}) } },
         sort_order: order++,
       };
       return r;
@@ -785,19 +994,21 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       regions.splice(at, 0, ...under);
     }
     // In the set's own order (every part is a layer drawn on the doll: a cardigan that only changes colour lies over the
-    // dress like any garment — 2026-10-14).
-    for (const sl of fronts) {
-      const slot = slotOf(sl);
+    // dress like any garment — 2026-10-14); the hats of headwear outfits over everything of the characters.
+    for (const sl of [...fronts, ...hatsOver]) {
+      const slot = P.slotOf(sl);
       const optional = slot?.optional === true;
       if (modeOf(sl) !== "shape") {
         regionOf.set(sl.key, imageRegion(sl.label, labelFor(sl), { display: modeOf(sl) === "color" ? "swatch" : "image", allowNone: optional, defaultNone: optional }));
         continue;
       }
       const coloured = sl.files.some((f) => f.color !== "");
-      const w = who(brief, sl.key);
+      const w = who(sb, sl.key);
       const part = w.part.replace(/\s*(style|kiểu)$/i, "").trim() || w.part;
+      // A face's expression is picked by its name (its file alone is only eyes and a mouth).
+      const face = slot ? isFace(slot.part) : false;
       // The styles are picked by their picture (a back half's full clipart — meta.thumb), the colour by its swatch.
-      regionOf.set(sl.key, imageRegion(sl.label, labelFor(sl), { display: "image", allowNone: optional, defaultNone: optional, groupLabel: !many ? `${cap(part)} Colour` : `${w.name} — ${part} Colour`, groupDisplay: coloured ? "swatch" : "button" }));
+      regionOf.set(sl.key, imageRegion(sl.label, labelFor(sl), { display: face ? "button" : "image", allowNone: optional, defaultNone: optional, groupLabel: !many ? `${cap(part)} Colour` : `${w.name} — ${part} Colour`, groupDisplay: coloured ? "swatch" : "button" }));
     }
     for (const sl of backs) {
       const leader = regionOf.get(sl.follows ?? "");
@@ -810,39 +1021,44 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     }
     // A part only there for one choice (a boy's hair): under its chooser.
     for (const [key, r] of regionOf) {
-      const parent = parentOf(slotOf(byKey.get(key)!)?.shownWhen);
+      const parent = parentOf(P.slotOf(byKey.get(key)!)?.shownWhen);
       if (parent) r.config.parent = parent;
     }
     for (const [key, r] of regionOf) fillRegion(r, byKey.get(key)!);
-    for (const e of ready.filter((x) => x.front)) await placeElement(e);
-    // A part that follows a decoration (the sweaters and hats follow the theme): linked, no choice of its own.
+    for (const e of ready.filter((x) => x.front || x.place === "plaque")) await placeElement(e);
+    // A part that follows a decoration or a chooser (the sweaters and hats follow the Theme): linked, no choice of its own.
     for (const [key, r] of regionOf) {
       const sl = byKey.get(key)!;
-      const lead = sl.follows ? null : slotOf(sl)?.follows;
-      const er = lead ? elementRegions.get(lead) : undefined;
+      const lead = sl.follows ? null : P.slotOf(sl)?.follows;
+      const er = lead ? (elementRegions.get(lead) ?? choosers.get(lead)?.region) : undefined;
       if (er) r.config.image.follows = er.id;
     }
-    // A decoration that follows another (the right-hand tree follows the left-hand one's theme): linked, no choice.
+    // A decoration that follows another (the right-hand tree follows the left-hand one's theme) or a chooser (the sign
+    // follows the Theme): linked, no choice.
     for (const e of brief.elements) {
       const r = elementRegions.get(e.id);
       if (!r) continue;
-      if (e.follows && elementRegions.get(e.follows)) r.config.image.follows = elementRegions.get(e.follows)!.id;
+      const lead = e.follows ? (elementRegions.get(e.follows) ?? choosers.get(e.follows)?.region) : undefined;
+      if (lead) r.config.image.follows = lead.id;
       else if (e.perBackdrop) {
         const bg = regions.find((x) => x.config.mainId === mainId && x.name.startsWith("Nền"));
         if (bg) r.config.image.follows = bg.id;
       }
     }
-    // Texts above everything: around the characters, under each of them, or in their own box.
+    // Texts above everything: around the characters, under each of them, on the sign, or in their own box.
     for (const t of brief.texts) {
       let at = layout.texts.find((x) => x.id === t.id);
       if (t.place === "free" && t.box) {
         const b = fromShares(area, t.box);
         at = { id: t.id, box: b, fontSize: Math.round(b.h * 0.78), curve: 0, align: "center" };
+      } else if (t.place === "plaque") {
+        const b = plaqueBox ? fromShares(plaqueBox, t.box ?? PLAQUE_TEXT) : null;
+        at = b ? { id: t.id, box: b, fontSize: Math.round(b.h * 0.78), curve: t.curve ?? 0, align: "center" } : undefined;
       } else if (t.place === "under" || t.place === "on") {
-        const i = brief.subjects.findIndex((x) => x.id === t.subject);
-        const sb = i >= 0 && own.has(i) ? subjectBox(i) : null;
-        const onSb = sb ? { x: box.x + sb.x * k, y: box.y + sb.y * k, w: sb.w * k, h: sb.h * k } : null;
-        const brim = t.place === "on" && !t.box && onSb ? brims.get(i) : null;
+        const i = sb.subjects.findIndex((x) => x.id === t.subject);
+        const sbx = i >= 0 && ownSet.has(i) ? P.subjectBox(i) : null;
+        const onSb = sbx ? { x: box.x + sbx.x * k, y: box.y + sbx.y * k, w: sbx.w * k, h: sbx.h * k } : null;
+        const brim = t.place === "on" && !t.box && onSb ? P.brims.get(i) : null;
         if (t.place === "on" && onSb && t.box) {
           // Shares of that character's own box (a name on the hat's brim).
           const b = fromShares(onSb, t.box);

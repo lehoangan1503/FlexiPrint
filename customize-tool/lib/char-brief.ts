@@ -13,6 +13,7 @@ import type {
   CtCharElement,
   CtCharElementPlace,
   CtCharLineup,
+  CtCharVersionOf,
   CtCharPhotoTreat,
   CtCharSetKind,
   CtCharCut,
@@ -99,6 +100,7 @@ export const CHAR_ELEMENT_PLACE_LABEL: Record<CtCharElementPlace, string> = {
   above: "Trên đầu nhân vật",
   bottom: "Dải dưới (nền đất, mây)",
   free: "Tự đặt (ô vị trí)",
+  plaque: "Biển trước nhân vật (tay tì lên)",
 };
 
 /** Vietnamese labels of a bộ ảnh khách's element places. */
@@ -107,6 +109,7 @@ export const ELEMENT_PLACE_LABEL: Record<CtCharElementPlace, string> = {
   above: "Trên đầu (vòng sáng, vương miện)",
   bottom: "Dải dưới che phần cắt (mây, hoa)",
   free: "Tự đặt",
+  plaque: "Biển phía trước",
 };
 
 /** Vietnamese labels of how a zone shows the customer's photo. */
@@ -130,7 +133,7 @@ const idOf = (v: unknown): string => (typeof v === "string" && /^[\w-]{1,64}$/.t
 const uuidOrNull = (v: unknown): string | null => (typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v) ? v : null);
 
 const CUTS: CtCharCut[] = ["rect", "alpha", "frame"];
-const ELEMENT_PLACES: CtCharElementPlace[] = ["behind", "above", "bottom", "free"];
+const ELEMENT_PLACES: CtCharElementPlace[] = ["behind", "above", "bottom", "free", "plaque"];
 const TREATS: CtCharPhotoTreat[] = ["ai", "face", "photo"];
 const AI_REF = /^ai:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -192,7 +195,7 @@ function parseElement(raw: unknown): CtCharElement | null {
     shownWhen: parseShownWhen(o.shownWhen),
   };
 }
-const PLACES: CtCharTextPlace[] = ["top", "bottom", "left", "right", "under", "free", "on"];
+const PLACES: CtCharTextPlace[] = ["top", "bottom", "left", "right", "under", "free", "on", "plaque"];
 
 function parseTextField(raw: unknown): CtCharTextField | null {
   const o = rec(raw);
@@ -254,6 +257,10 @@ function parseSlot(raw: unknown): CtCharSlot | null {
     optional: o.optional === true,
     follows: typeof o.follows === "string" && o.follows ? o.follows : null,
     shownWhen: parseShownWhen(o.shownWhen),
+    group: typeof o.group === "string" && /^[\w-]{1,40}$/.test(o.group) ? o.group : null,
+    on: typeof o.on === "string" && /^[\w-]{1,40}$/.test(o.on) ? o.on : null,
+    restyle: o.restyle === true,
+    headwear: o.headwear === true,
   };
 }
 
@@ -274,7 +281,13 @@ function parseSubject(raw: unknown): CtCharSubject | null {
 function parseLineup(raw: unknown): CtCharLineup | null {
   const o = rec(raw);
   if (o.mode !== "one" && o.mode !== "count") return null;
-  return { mode: o.mode, label: s(o.label, 80) || (o.mode === "one" ? "Choose character" : "Number of people") };
+  return { mode: o.mode, label: s(o.label, 80) || (o.mode === "one" ? "Choose character" : "Number of people"), ...(o.drawn === true ? { drawn: true } : {}) };
+}
+
+function parseVersionOf(raw: unknown): CtCharVersionOf | null {
+  const o = rec(raw);
+  const id = uuidOrNull(o.id);
+  return id ? { id, name: s(o.name, 40), index: Math.max(0, Math.round(typeof o.index === "number" ? o.index : 0)) } : null;
 }
 
 export function parseCharBrief(raw: unknown): CtCharBrief {
@@ -312,6 +325,7 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
       .slice(0, 4),
     elements: arr(o.elements).map(parseElement).filter((x): x is CtCharElement => x !== null).slice(0, 10),
     lineup: parseLineup(o.lineup),
+    versionOf: parseVersionOf(o.versionOf),
     framing: o.framing === "bust" ? "bust" : "full",
     choosers: arr(o.choosers).map(parseChooser).filter((x): x is CtCharChooser => x !== null).slice(0, 24),
     charactersBox: parseBox(o.charactersBox),
@@ -353,7 +367,8 @@ const KIND_WORD: Record<CtCharSubject["kind"], string> = { person: "person", pet
 export function subjectRef(brief: CtCharBrief, index: number): string {
   const sub = brief.subjects[index];
   if (!sub) return "the character";
-  const short = sub.description.split(/[,.;]/)[0].trim();
+  // "a little girl about 6, …" → "little girl about 6" (said after "the").
+  const short = sub.description.split(/[,.;]/)[0].trim().replace(/^(a|an|the)\s+/i, "");
   const same = brief.subjects.filter((x) => x.kind === sub.kind);
   const rank = same.indexOf(sub);
   const wears = sub.slots
@@ -401,7 +416,8 @@ export const CLEAN_PARTS =
  * five — in a square each would be tiny). Set by the brief before the master, never changed after.
  */
 export function setAspect(brief: CtCharBrief): "1:1" | "3:2" {
-  return brief.kind !== "photo" && brief.subjects.length >= 4 ? "3:2" : "1:1";
+  // Half figures in a row (behind a sign) are wide already at three.
+  return brief.kind !== "photo" && brief.subjects.length >= (brief.framing === "bust" ? 3 : 4) ? "3:2" : "1:1";
 }
 
 /** The characters of a lineup are apart: each one's own pixels are its body file (server/char/product.ts splits
@@ -411,6 +427,11 @@ const LINEUP_LINE: Record<CtCharLineup["mode"], string> = {
   count:
     "The customer picks how many of them are in the picture (versions with fewer people leave some out): draw them in ONE row, the same scale, side by side close together — shoulders may just touch, but NOBODY overlaps or stands in front of another, every head, hat and hand fully visible — each one complete on its own.",
 };
+
+/** Every version drawn as its own picture (lineup.drawn, a version set): nobody is ever cut out of it, but each
+ * character is cut from its own side — a small gap keeps the sides apart. */
+const DRAWN_LINE =
+  "Side by side in ONE row, close together like the reference, with a small clear gap between neighbours (nobody touches or overlaps another one — no hat, hair or hand over a neighbour), every head, hat and hand fully visible, each one complete on its own.";
 
 /**
  * ONE prompt for the master, from the brief. Everything the layers need is asked here once: every subject full,
@@ -431,7 +452,9 @@ export function masterPrompt(brief: CtCharBrief): string {
     lines.push(`${head}${sub.description.replace(/\.$/, "")}${looks.length ? `; ${looks.join("; ")}` : ""}.`);
   });
   if (brief.scene) lines.push(`Arrangement: ${brief.scene.replace(/\.$/, "")}.`);
-  if (brief.lineup && brief.subjects.length > 1) lines.push(LINEUP_LINE[brief.lineup.mode]);
+  const drawn = brief.lineup?.drawn === true || !!brief.versionOf;
+  if (drawn && brief.subjects.length > 1) lines.push(DRAWN_LINE);
+  else if (brief.lineup && brief.subjects.length > 1) lines.push(LINEUP_LINE[brief.lineup.mode]);
   if (brief.product.layout) lines.push(`On the product: ${brief.product.layout.replace(/\.$/, "")}.`);
   for (const z of brief.photoZones)
     lines.push(
@@ -440,10 +463,10 @@ export function masterPrompt(brief: CtCharBrief): string {
         : `${z.where}: an empty plain light-grey area with a clean edge (a photo goes there later).`,
     );
   const frame = setAspect(brief) === "3:2" ? "A wide landscape picture" : "A square picture";
-  const touch = brief.lineup ? "" : "; they may touch, but no one hides another one's clothes, hair or face";
+  const touch = brief.lineup || brief.versionOf ? "" : "; they may touch, but no one hides another one's clothes, hair or face";
   lines.push(
     brief.framing === "bust"
-      ? `${frame}: ${brief.subjects.length > 1 ? "everyone" : "the character"} shown from the chest up (half figure, like leaning on a counter), all cut off by the SAME straight horizontal line near the bottom of the picture (a sign is placed in front of it later); heads, hats and hands fully inside the picture with a generous empty margin above and at the sides${brief.subjects.length > 1 ? touch : ""}.`
+      ? `${frame}: ${brief.subjects.length > 1 ? "everyone" : "the character"} shown from the chest up (half figure, like leaning on a counter: the elbows rest on it), all cut off by the SAME straight horizontal line at the elbows near the bottom of the picture (a sign is placed in front of it later — it covers only that edge, the arms and hands stay fully visible above it); heads, hats and hands fully inside the picture with a generous empty margin above and at the sides${brief.subjects.length > 1 ? touch : ""}.`
       : brief.subjects.length > 1
         ? `${frame}: everyone fully visible head to toe INSIDE the picture, nobody cropped, the group centred with a generous empty margin all around (scale the group down to fit)${touch}.`
         : `${frame}: the full body fully visible head to toe INSIDE the picture, not cropped, centred with a generous empty margin all around (scale the figure down to fit).`,
@@ -520,6 +543,13 @@ export function photoMasterPrompt(brief: CtCharBrief): string {
   return lines.join("\n");
 }
 
+/** A sign in front of the characters (place "plaque"): long and low, its ends decorated, its middle plain for the
+ * lettering — the product stretches the middle to each version's width, so nothing may cross it. */
+const PLAQUE_SHAPE =
+  "A long low horizontal sign seen straight from the front, about 3.5 times as wide as it is tall, filling the picture's width: " +
+  "the decorations ONLY at its two ends (each end's decoration within the outer quarter of the sign); the whole middle half is plain " +
+  "surface for lettering — no decoration, no text, no knots or marks crossing it, an even grain running straight along the sign.";
+
 /** The aspect an element's picture is drawn at; a placed one (box) by its box's shape on the piece (`areaRatio` = the
  * safe area's width / height): a ribbon banner wide, a tree tall. */
 export function elementAspect(e: CtCharElement, areaRatio = 1): string {
@@ -527,7 +557,7 @@ export function elementAspect(e: CtCharElement, areaRatio = 1): string {
     const r = (e.box.w / e.box.h) * areaRatio;
     return r > 1.25 ? "3:2" : r < 0.8 ? "2:3" : "1:1";
   }
-  return e.place === "behind" || e.place === "bottom" || e.place === "above" ? "3:2" : "1:1";
+  return e.place === "behind" || e.place === "bottom" || e.place === "above" || e.place === "plaque" ? "3:2" : "1:1";
 }
 
 /**
@@ -542,6 +572,7 @@ export function elementPrompt(brief: CtCharBrief, e: CtCharElement, look: string
     above: "Seen slightly from the front, flat and wide, floating.",
     bottom: `A wide horizontal band filling the whole width of the picture edge to edge: its top edge soft and organic, its bottom straight along the picture's bottom edge, about half of the picture tall — it is laid over the bottom of the body of ${who} and over the piece's bottom edge, the lettering is printed on it, so it is solid and calm (no holes, no gaps) with nothing busy in it.`,
     free: "",
+    plaque: PLAQUE_SHAPE,
   };
   return [
     `Reference picture 1 is the finished design: match its drawing style, colours, line work and lighting exactly.`,
@@ -565,6 +596,7 @@ function charElementPrompt(brief: CtCharBrief, e: CtCharElement, look: string, b
     above: "Seen slightly from the front, flat and wide, floating.",
     bottom: "A wide horizontal band filling the whole width of the picture edge to edge: its top edge soft and organic, its bottom straight along the picture's bottom edge — the characters stand / sit on it, so it is calm, with nothing tall in it.",
     free: "",
+    plaque: PLAQUE_SHAPE,
   };
   return [
     "Reference picture 1 shows the characters of this design: match their drawing style, colours, line work, rendering and lighting exactly.",

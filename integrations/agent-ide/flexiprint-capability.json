@@ -4,13 +4,6 @@
     "short": "FlexiPrint library + tasks",
     "tools": [],
     "mcpServers": {
-      "flexiprint": {
-        "type": "http",
-        "url": "https://flexiprint.next.lc/api/customize-tool/mcp",
-        "headers": {
-          "Authorization": "Bearer <CT_AGENT_TOKEN của FlexiPrint>"
-        }
-      },
       "flexi2": {
         "type": "http",
         "url": "https://flexi2.next.lc/api/customize-tool/mcp",
@@ -19,6 +12,6 @@
         }
       }
     },
-    "hint": "Dữ liệu thật của FlexiPrint: hai bản (server flexiprint = VPS, flexi2 = máy công ty) — tin nhắn task nói bản nào. Đọc resource flexiprint://guide/overview trước."
+    "hint": "Dữ liệu thật của FlexiPrint trên flexi2 (flexi2.next.lc, máy công ty) — MCP server duy nhất: flexi2. Đọc resource flexiprint://guide/overview trước."
   }
 }

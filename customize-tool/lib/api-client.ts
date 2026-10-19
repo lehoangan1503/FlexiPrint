@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type {
+import type { CtCharVersionCard,
   CtPackImage,
   CtAgentStatus,
   CtAgentTask,
@@ -271,6 +271,8 @@ export const charApi = {
   list: () => call<{ projects: CtCharProject[]; thumbs: Record<string, string> }>("char/projects"),
   create: (body: { name: string; brief?: CtCharBrief }) => call<{ project: CtCharProject }>("char/projects", json("POST", body)).then((r) => r.project),
   get: (id: string) => call<{ project: CtCharProject; images: CtCharImage[] }>(`char/projects/${id}`),
+  /** A lineup drawn version by version: each smaller version's own set (server/char/versions.ts). */
+  versions: (id: string) => call<{ versions: CtCharVersionCard[] }>(`char/projects/${id}/versions`).then((r) => r.versions),
   /** An idea's preview picture becomes a master candidate (the editor took that direction). */
   adoptMaster: (id: string, imageId: string) => call<{ image: CtCharImage }>(`char/projects/${id}/masters/${imageId}/adopt`, json("POST", {})).then((r) => r.image),
   update: (id: string, body: { name?: string; brief?: CtCharBrief }) => call<{ project: CtCharProject }>(`char/projects/${id}`, json("PATCH", body)).then((r) => r.project),

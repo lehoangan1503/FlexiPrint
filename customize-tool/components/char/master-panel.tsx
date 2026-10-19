@@ -15,6 +15,7 @@ import { charApi } from "../../lib/api-client";
 import { imageModelLabel } from "../../lib/image-models";
 import { CHECKER_STYLE, CtButton, CtModal, CtTextarea, cx } from "../ui";
 import type { CharCtx } from "./char-project";
+import { StepGuide } from "./step-guide";
 
 export function MasterPanel(ctx: CharCtx) {
   const { project, images, editable } = ctx;
@@ -46,6 +47,12 @@ export function MasterPanel(ctx: CharCtx) {
   return (
     <div className="grid gap-6 p-6 xl:grid-cols-[440px_1fr]">
       <div className="space-y-4">
+        <StepGuide title="Ảnh master = ảnh dùng để custom">
+          <p>
+            <b>Mọi clipart khách chọn đều được cắt từ chính tấm này</b> — sai ở master là sai ở cả bộ. Duyệt kỹ, chỉ bấm Duyệt khi <b>thật sự ưng ý nhất</b>.
+          </p>
+          <p>Chưa ưng: bấm “Sửa” trên tấm gần đúng nhất, hoặc cho @flexiprint tạo thêm. Duyệt xong, bước 3 và 4 tự chạy.</p>
+        </StepGuide>
         {approved ? (
           <div className="rounded-xl border border-emerald-500/50 bg-emerald-500/10 p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
@@ -54,7 +61,7 @@ export function MasterPanel(ctx: CharCtx) {
             <p className="mt-1 text-xs text-muted-foreground">@flexiprint tự làm tiếp bước 3 (clipart) và bước 4 (sản phẩm, mockup) — theo dõi ở bước 3, bấm Dừng nếu cần sửa. Muốn đổi master thì bỏ duyệt (chỉ được khi chưa cắt layer).</p>
             <div className="mt-3 flex gap-2">
               <CtButton size="sm" variant="primary" onClick={() => ctx.goto("layers")}>
-                Sang bước Layer <ArrowRight className="h-3.5 w-3.5" />
+                Sang bước 3 <ArrowRight className="h-3.5 w-3.5" />
               </CtButton>
               {editable && project.status === "master" && (
                 <CtButton size="sm" onClick={() => void approve(null)}>

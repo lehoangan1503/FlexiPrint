@@ -17,6 +17,7 @@ import { CT_CONFIG, ctGoogleFontsHref } from "../../config";
 import type { CharCtx } from "./char-project";
 import { BackdropSection, BlankSection } from "./blank-section";
 import { ElementGallery } from "./elements-panel";
+import { AutoStepGuide } from "./step-guide";
 
 export function ProductStep(ctx: CharCtx) {
   const { project } = ctx;
@@ -53,6 +54,7 @@ export function ProductStep(ctx: CharCtx) {
   if (waiting)
     return (
       <div className="space-y-6 p-6">
+        <AutoStepGuide what="@flexiprint dựng sản phẩm, nền và mockup" />
         <BlankSection {...ctx} />
         <BackdropSection {...ctx} />
         {project.brief.kind !== "photo" && project.brief.elements.length > 0 && project.master_id && <ElementGallery {...ctx} />}
@@ -64,6 +66,7 @@ export function ProductStep(ctx: CharCtx) {
     <div className="space-y-6 p-6">
       {/* The text layer is drawn with the product's font. */}
       <link rel="stylesheet" href={ctGoogleFontsHref()} />
+      <AutoStepGuide what="@flexiprint dựng sản phẩm, nền và mockup" />
       <BlankSection {...ctx} />
       <BackdropSection {...ctx} />
       {project.brief.kind !== "photo" && project.brief.elements.length > 0 && <ElementGallery {...ctx} />}

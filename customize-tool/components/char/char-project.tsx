@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * /v2/:id — one bộ nhân vật, four steps: Brief → Master → Layer → Sản phẩm. The brief saves itself; pictures are
+ * /v2/:id — one bộ nhân vật, four steps: mô tả → ảnh master → cắt clipart → sản phẩm (3 and 4 run by themselves). The brief saves itself; pictures are
  * made in the background (the page polls while one is running).
  */
 
@@ -22,19 +22,20 @@ import { ProductStep } from "./product-step";
 
 type Step = "brief" | "master" | "layers" | "product";
 
+// Named for the editor (asked 2026-10-19): 1 and 2 are theirs to review, 3 and 4 run by themselves.
 const STEPS: Array<{ id: Step; label: string }> = [
-  { id: "brief", label: "1. Brief" },
-  { id: "master", label: "2. Master" },
-  { id: "layers", label: "3. Layer" },
-  { id: "product", label: "4. Sản phẩm" },
+  { id: "brief", label: "1. Mô tả bộ clipart" },
+  { id: "master", label: "2. Ảnh master" },
+  { id: "layers", label: "3. Cắt clipart · tự động" },
+  { id: "product", label: "4. Sản phẩm · tự động" },
 ];
 
 /** A bộ ảnh khách (brief.kind "photo"): no cut — step 3 draws the pieces around the customer's photo. */
 const PHOTO_STEPS: Array<{ id: Step; label: string }> = [
-  { id: "brief", label: "1. Brief" },
-  { id: "master", label: "2. Master" },
-  { id: "layers", label: "3. Phần tử" },
-  { id: "product", label: "4. Sản phẩm" },
+  { id: "brief", label: "1. Mô tả bộ ảnh" },
+  { id: "master", label: "2. Ảnh master" },
+  { id: "layers", label: "3. Phần tử · tự động" },
+  { id: "product", label: "4. Sản phẩm · tự động" },
 ];
 
 export interface CharCtx {

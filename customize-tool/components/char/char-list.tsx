@@ -86,7 +86,7 @@ export function CharList({ currentUserId, admin = false }: { currentUserId: stri
           <h1 className="text-lg font-semibold">Bộ nhân vật v2</h1>
           <div className="ml-auto flex items-center gap-2">
             <KindHelpButton />
-            <CtButton variant="primary" onClick={() => void create()} disabled={creating} title="Một bộ mới — chọn Bộ nhân vật hay Bộ ảnh khách ở bước 1 (Brief)">
+            <CtButton variant="primary" onClick={() => void create()} disabled={creating} title="Một bộ mới — chọn Bộ nhân vật hay Bộ ảnh khách ở bước 1">
               {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Bộ mới
             </CtButton>
           </div>
@@ -95,10 +95,10 @@ export function CharList({ currentUserId, admin = false }: { currentUserId: stri
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <ol className="mb-6 grid gap-2 text-xs text-muted-foreground sm:grid-cols-4">
           {[
-            ["1. Brief", "Ý tưởng (mơ hồ cũng được) → AI gợi ý 3 hướng → chọn, sửa."],
-            ["2. Master", "AI vẽ 1 tấm gốc có đủ nhân vật. Sửa tới khi đúng ý rồi duyệt."],
-            ["3. Layer", "Cắt tự động từ master đã duyệt — cùng 1 khung, không lệch px."],
-            ["4. Sản phẩm", "Tạo sản phẩm + file in + mockup từ bộ layer (dùng lại nhiều lần)."],
+            ["1. Mô tả bộ clipart", "Ý tưởng → @flexiprint gợi ý → bạn review option, tên khách gõ và nền (quan trọng nhất)."],
+            ["2. Ảnh master", "Tấm gốc mọi clipart cắt ra từ đó. Duyệt kỹ — chưa ưng thì tạo lại / sửa."],
+            ["3. Cắt clipart · tự động", "Tự chạy sau khi duyệt master. Xem nếu muốn; sửa tay hoặc nhờ @flexiprint ở ô chat."],
+            ["4. Sản phẩm · tự động", "Tự dựng sản phẩm, file in, nền và mockup từ bộ clipart."],
           ].map(([t, d]) => (
             <li key={t} className="rounded-lg border bg-card p-3">
               <div className="font-semibold text-foreground">{t}</div>

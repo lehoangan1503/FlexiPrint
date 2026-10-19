@@ -160,7 +160,7 @@ const CHAR_STEP_TEXT: Record<CtCharTaskStep, string> = {
   auto: "Master đã duyệt — tự làm hết bước 3 (ảnh để cắt, cắt clipart) và bước 4 (nền, phần tử, sản phẩm, mockup), tự kiểm tra từng bước, đến khi xong sản phẩm",
 };
 
-export const CHAT_TAB_TEXT: Record<CtCharChatTab, string> = { brief: "1. Brief", master: "2. Master", layers: "3. Layer", product: "4. Sản phẩm" };
+export const CHAT_TAB_TEXT: Record<CtCharChatTab, string> = { brief: "1. Mô tả bộ clipart (brief)", master: "2. Ảnh master", layers: "3. Cắt clipart", product: "4. Sản phẩm" };
 
 /**
  * This instance's MCP server in the agent's capability (CT_AGENT_MCP): "flexiprint" (the VPS) or "flexi2" (an-vm) —

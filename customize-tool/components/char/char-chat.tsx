@@ -16,7 +16,7 @@ import { FLOAT_BTN, cx } from "../ui";
 import { AgentProgress } from "../library/agent-brain";
 import type { useCharAgent } from "./char-agent";
 
-const TAB_LABEL: Record<CtCharChatTab, string> = { brief: "1. Brief", master: "2. Master", layers: "3. Layer", product: "4. Sản phẩm" };
+const TAB_LABEL: Record<CtCharChatTab, string> = { brief: "1. Mô tả bộ clipart", master: "2. Ảnh master", layers: "3. Cắt clipart", product: "4. Sản phẩm" };
 const SECTION_LABEL: Record<string, string> = { "3a": "3a. Master cỡ in", "3b": "3b. AI vẽ ảnh để cắt", "3c": "3c. Bộ custom" };
 /** A picture dragged from the page carries this (set on dragstart below). */
 const PAGE_PICTURE = "application/x-flexiprint-picture";

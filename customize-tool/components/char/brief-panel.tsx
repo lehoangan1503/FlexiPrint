@@ -19,6 +19,7 @@ import { charApi } from "../../lib/api-client";
 import { CtButton, CtCheckbox, CtField, CtInput, CtModal, CtSelect, CtTextarea, cx } from "../ui";
 import type { CharCtx } from "./char-project";
 import { RefPictures } from "./ref-pictures";
+import { StepGuide } from "./step-guide";
 import type { CtPrintTemplate } from "../../types/print";
 import { layoutHint } from "../../lib/print-template";
 import { printApi } from "../../lib/print-api";
@@ -55,6 +56,18 @@ export function BriefPanel(all: CharCtx) {
         <span className="text-xs text-muted-foreground">Brief của hướng đã chọn — sửa trực tiếp, hoặc quay lại brainstorm để @flexiprint đề xuất thêm.</span>
       </div>
       <div className="min-w-0 space-y-6 p-6">
+        <StepGuide title="Bước 1 — mô tả chung về bộ clipart: bạn chỉ cần review">
+          <p>@flexiprint đã viết sẵn mô tả từ ý tưởng, giữ nguyên cấu trúc. Bạn kiểm tra lại:</p>
+          <ul className="list-disc space-y-0.5 pl-4">
+            <li>
+              <b>Các option khách chọn</b> — bấm <b>Xem trước</b> ở mục Custom option để hình dung như trang sản phẩm.
+            </li>
+            <li>
+              <b>Chữ khách gõ (custom name)</b> và <b>nền (custom background)</b> — phần quan trọng nhất, khách nhìn thấy đầu tiên.
+            </li>
+            <li>Nền và cảnh mockup cũng là option của sản phẩm: AI vẽ ở bước 4, sửa được cả sau khi duyệt master.</li>
+          </ul>
+        </StepGuide>
         {locked && (
           <p className="rounded-md bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
             Master đã duyệt — brief bị khoá (chữ, nền, cảnh mockup vẫn sửa được). Muốn đổi phần khác: về bước Master, bỏ duyệt master (các ảnh để cắt clipart theo brief cũ sẽ không còn khớp).
@@ -615,7 +628,7 @@ function BriefForm({ productEditable, ...ctx }: CharCtx & { productEditable: boo
 
       <div className="flex justify-end">
         <CtButton variant="primary" disabled={photoSet ? !brief.photoZones.length : !brief.subjects.length} onClick={() => ctx.goto("master")}>
-          Sang bước Master <ArrowRight className="h-4 w-4" />
+          Sang bước 2 · Ảnh master <ArrowRight className="h-4 w-4" />
         </CtButton>
       </div>
     </div>
@@ -901,23 +914,30 @@ function PictureSlot({ ctx, kind, label, id, onPick }: { ctx: CharCtx; kind: "re
 
 /**
  * "Xem trước" of the custom options: the master on the left (the approved one, else the newest), on the right every
- * option the customer will pick, laid out like the product page — only to see it, nothing works yet.
+ * option the customer will pick, laid out like the product page. Only the background can be clicked (asked
+ * 2026-10-19): once step 4 has drawn it, the master is shown on it (multiply — the master's white drops out).
  */
 function OptionsPreview({ ctx }: { ctx: CharCtx }) {
   const { project, images } = ctx;
   const brief = project.brief;
   const masters = images.filter((im) => im.kind === "master" && im.status === "done");
   const master = masters.find((im) => im.id === project.master_id) ?? [...masters].reverse().find((im) => im.role === "master") ?? [...masters].reverse()[0] ?? null;
+  const [backdropId, setBackdropId] = useState<string | null>(brief.backdrops[0]?.id ?? null);
+  const backdropPic = (id: string) => [...images].reverse().find((im) => im.kind === "blank" && im.role === `backdrop:${id}` && im.status === "done") ?? null;
+  const shownBackdrop = backdropId ? backdropPic(backdropId) : null;
   const short = (d: string) => {
     const t = d.split(/[,.;]/)[0].trim();
     return t ? t[0].toUpperCase() + t.slice(1) : "";
   };
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      <div className="flex aspect-square items-center justify-center self-start overflow-hidden rounded-xl border bg-white lg:sticky lg:top-20">
+      <div
+        className="flex aspect-square items-center justify-center self-start overflow-hidden rounded-xl border bg-white bg-cover bg-center lg:sticky lg:top-20"
+        style={shownBackdrop ? { backgroundImage: `url(${shownBackdrop.thumb_url || shownBackdrop.url})` } : undefined}
+      >
         {master ? (
           // eslint-disable-next-line @next/next/no-img-element -- our R2 preview
-          <img src={master.thumb_url || master.url} alt="master" className="h-full w-full object-contain" />
+          <img src={master.thumb_url || master.url} alt="master" className={cx("h-full w-full object-contain", shownBackdrop && "mix-blend-multiply")} />
         ) : (
           <span className="p-6 text-center text-sm text-muted-foreground">Chưa có master — sang bước 2 để vẽ.</span>
         )}
@@ -989,18 +1009,37 @@ function OptionsPreview({ ctx }: { ctx: CharCtx }) {
             <span className="inline-flex rounded-md border border-dashed bg-white px-3 py-2 text-xs text-[#8a7f73]">Upload photo</span>
           </div>
         ))}
-        {brief.backdrops.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="text-sm font-medium">Background</div>
-            <div className="flex flex-wrap gap-1.5">
-              {brief.backdrops.map((b) => (
-                <span key={b.id} className="rounded-md border bg-white px-2.5 py-1 text-xs">
-                  {b.name}
-                </span>
-              ))}
-            </div>
+        <div className="space-y-1.5">
+          <div className="text-sm font-medium">
+            Background {brief.backdrops.length > 0 && <span className="text-[#c0392b]">*</span>}
           </div>
-        )}
+          {brief.backdrops.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {brief.backdrops.map((b) => {
+                const pic = backdropPic(b.id);
+                return (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => setBackdropId(b.id)}
+                    className={cx("flex items-center gap-1.5 rounded-md border bg-white py-1 pl-1 pr-2.5 text-xs", backdropId === b.id && "border-[#d9814a] ring-1 ring-[#d9814a]")}
+                  >
+                    {pic ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- our R2 preview
+                      <img src={pic.thumb_url || pic.url} alt="" className="h-6 w-6 rounded object-cover" />
+                    ) : (
+                      <span className="h-6 w-6 rounded bg-[#e8e2d8]" />
+                    )}
+                    {b.name || "(chưa tên)"}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-xs text-[#8a7f73]">Chưa có nền — thêm ở mục “Nền & mockup” bên dưới (không có nền = màu phôi).</p>
+          )}
+          {brief.backdrops.length > 0 && !brief.backdrops.some((b) => backdropPic(b.id)) && <p className="text-[11px] text-[#8a7f73]">Ảnh nền AI vẽ ở bước 4 — đến lúc đó bấm vào nền để thấy master trên nền.</p>}
+        </div>
         {brief.texts.map((t) => (
           <div key={t.id} className="space-y-1.5">
             <div className="text-sm font-medium">
@@ -1013,7 +1052,17 @@ function OptionsPreview({ ctx }: { ctx: CharCtx }) {
         ))}
         {!brief.subjects.some((x) => x.slots.length) && !brief.texts.length && !brief.photoZones.length && <p className="text-xs text-[#8a7f73]">Chưa có option nào cho khách.</p>}
         <div className="rounded-md bg-[#d9814a] py-2 text-center text-sm font-semibold text-white opacity-80">Add to cart</div>
-        <p className="text-[11px] text-[#8a7f73]">Chỉ để nhìn trực quan — chưa bấm chọn được.</p>
+        {brief.mockups.length > 0 && (
+          <div className="space-y-1 border-t border-[#e8e2d8] pt-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-[#8a7f73]">Ảnh mockup (AI tạo ở bước 4)</div>
+            <ul className="list-disc space-y-0.5 pl-4 text-xs">
+              {brief.mockups.filter((m) => m.trim()).map((m) => (
+                <li key={m}>{m}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <p className="text-[11px] text-[#8a7f73]">Bấm nền để thử; các option khác chỉ để nhìn trực quan.</p>
       </div>
     </div>
   );

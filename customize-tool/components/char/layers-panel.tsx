@@ -17,6 +17,7 @@ import { CHECKER_STYLE, CtButton, CtModal, FLOAT_BTN, cx } from "../ui";
 import type { CharCtx } from "./char-project";
 import { ProductStep } from "./product-step";
 import { CustomSection, CutEditor, MatteSection, type CutEdit } from "./cut-panel";
+import { AutoStepGuide } from "./step-guide";
 
 type Sub = "matte" | "edits" | "custom";
 
@@ -44,6 +45,7 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
   const onEdit = (e: CutEdit) => setEdit(e);
   return (
     <div className="space-y-4 p-6">
+      <AutoStepGuide what="@flexiprint cắt clipart từ master" />
       <nav className="flex flex-wrap items-center gap-1 text-sm">
         {tabs.map((t, i) => (
           <div key={t.id} className="flex items-center gap-1">
@@ -59,9 +61,9 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
       {!project.master_id ? (
         <div className="rounded-xl border bg-card p-6 text-sm">
           <p className="font-medium">Bước 3 bắt đầu khi đã có master được duyệt.</p>
-          <p className="mt-1 text-muted-foreground">Sang tab “2. Master”, cho @flexiprint vẽ rồi bấm Duyệt 1 bản. Duyệt xong, @flexiprint tự làm hết: 3a master cỡ in → 3b búp bê giấy và từng kiểu vẽ lên búp bê → 3c cắt clipart và ráp sản phẩm → bước 4 nền, phần tử, mockup. Bạn chỉ xem; cần sửa thì bấm Dừng và nhắn ở ô chat.</p>
+          <p className="mt-1 text-muted-foreground">Sang tab “2. Ảnh master”, cho @flexiprint vẽ rồi bấm Duyệt 1 bản. Duyệt xong, @flexiprint tự làm hết: 3a master cỡ in → 3b búp bê giấy và từng kiểu vẽ lên búp bê → 3c cắt clipart và ráp sản phẩm → bước 4 nền, phần tử, mockup. Bạn chỉ xem; cần sửa thì bấm Dừng và nhắn ở ô chat.</p>
           <CtButton className="mt-3" onClick={() => ctx.goto("master")}>
-            Sang bước Master →
+            Sang bước 2 →
           </CtButton>
         </div>
       ) : (

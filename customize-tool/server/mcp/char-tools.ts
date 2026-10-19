@@ -52,7 +52,7 @@ const COMMON = [
 
 /** A lineup drawn version by version (brief.lineup.drawn) — said in the auto and chat steps. */
 const DRAWN_LINEUP =
-  "A LINEUP DRAWN VERSION BY VERSION (set.brief.lineup.drawn, asked 2026-10-19): this set is the biggest version (every subject); set.versions lists a VERSION SET per smaller version (set_id, its subjects, masters, 3b pictures, cut). On approval of this set's master the server made each version set and drew 2 masters for it from the approved one. FIRST plan this set's 3b pictures (char_plan_pictures): every version set follows that plan (the characters it lacks dropped) and starts drawing it as soon as its master is approved. For each version: view_image both masters — the same characters as the approved master (faces, hair, outfits, proportions, how big the grandma is next to the children), only the listed ones, nobody cropped, small gaps, the same framing — then char_approve_master {task_id, set_id, image_id} (char_refine_master / char_draw_masters with set_id when neither is right). An approved version set runs 3a → 3b → 3c BY ITSELF on the server (minutes): watch get_task set.versions, view_image its 3b pictures like this set's; a wrong one → char_run_edits {task_id, set_id, prompts} then char_cut {task_id, set_id, what: \"plan\"}; char_status {task_id, set_id} waits. The product is built by the server once this set AND every version set are cut; after step 4 (backdrops, elements) char_remake_product rebuilds it. A version that needs other pictures than the plan gives it: char_plan_pictures with its set_id (its own plan from then on).";
+  "A LINEUP DRAWN VERSION BY VERSION (set.brief.lineup.drawn, asked 2026-10-19): this set is the biggest version (every subject); set.versions — or char_versions {task_id} (small: use it when get_task is too big to read) — lists a VERSION SET per smaller version (set_id, its subjects, masters, 3b pictures, cut). On approval of this set's master the server made each version set and drew 2 masters for it from the approved one. FIRST plan this set's 3b pictures (char_plan_pictures): every version set follows that plan (the characters it lacks dropped) and starts drawing it as soon as its master is approved. For each version: view_image both masters — the same characters as the approved master (faces, hair, outfits, proportions, how big the grandma is next to the children), only the listed ones, nobody cropped, small gaps, the same framing — then char_approve_master {task_id, set_id, image_id} (char_refine_master / char_draw_masters with set_id when neither is right). An approved version set runs 3a → 3b → 3c BY ITSELF on the server (minutes): watch get_task set.versions, view_image its 3b pictures like this set's; a wrong one → char_run_edits {task_id, set_id, prompts} then char_cut {task_id, set_id, what: \"plan\"}; char_status {task_id, set_id} waits. The product is built by the server once this set AND every version set are cut; after step 4 (backdrops, elements) char_remake_product rebuilds it. A version that needs other pictures than the plan gives it: char_plan_pictures with its set_id (its own plan from then on).";
 
 const BRAINSTORM_INSTRUCTIONS = [
   ...COMMON,
@@ -493,10 +493,11 @@ async function versionsView(db: CtServiceClient, p: CtCharProject): Promise<unkn
         approvedMasterId: k.master_id,
         masters: images.filter((im) => im.kind === "master").map((m) => ({ id: m.id, status: m.status, url: m.url, approved: m.id === k.master_id, ...(m.error ? { error: clip(m.error, 200) } : {}) })),
         masterAtPrintSize: k.cut?.matte ? { status: k.cut.matte.status, error: k.cut.matte.error } : null,
+        // Compact (get_task of a big lineup passed 170 KB and the agent could not read it, 2026-10-19).
         edits: k.master_id
           ? planEdits(k.brief).map((e) => {
               const im = latest.get(e.role);
-              return { role: e.role, label: e.label, status: im?.status ?? "missing", url: im?.url ?? null, ...(im?.error ? { error: clip(im.error, 200) } : {}) };
+              return { role: e.role, status: im?.status ?? "missing", ...(im?.status === "done" ? { url: im.url } : {}), ...(im?.error ? { error: clip(im.error, 160) } : {}) };
             })
           : [],
         plan: k.cut?.plan ? { status: k.cut.plan.status, error: k.cut.plan.error, failedChecks: k.cut.plan.checks.filter((c) => !c.ok) } : null,
@@ -540,6 +541,18 @@ async function selfTask(db: CtServiceClient, userId: string, projectId: string, 
 }
 
 export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
+  {
+    name: "char_versions",
+    description:
+      "A lineup drawn version by version (brief.lineup.drawn): every VERSION SET of the task's set — set_id, version name, subjects, masters (id, url, approved), 3a / 3b / 3c status and failed checks — small (get_task carries the whole set and can be too big to read). Use the set_id with char_approve_master / char_run_edits / char_cut / char_status.",
+    inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, project } = await openCharTask(ctx, args.task_id);
+      if (!project.brief.lineup?.drawn) return json({ versions: [], note: "This set is not drawn version by version." });
+      return json({ versions: await versionsView(db, project) });
+    },
+  },
   {
     name: "char_create_set",
     description:

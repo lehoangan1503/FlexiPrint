@@ -16,6 +16,9 @@
  *                        part of it taken away) — ONLY the option's thumbnail in the shop, never cut, never a clipart
  *                        (asked 2026-10-15: a glass whose stem the hand hides showed as a floating bowl + foot)
  *
+ * Since 2026-10-19 @flexiprint plans a set's pictures itself (brief.pictures, lib/char-pictures.ts): planEdits and
+ * optionPictures return that plan; the rules below are only the plan of a set without one.
+ *
  * A file is its picture's pixels where they differ from the doll (services/layer-kit part_region): stacked on the doll
  * it is exactly that 3b picture, and the doll is never touched. The doll wears flat magenta where clothes go so that any
  * garment drawn over it differs clearly (a cream cardigan over a white tank top left holes, tested 2026-10-14).
@@ -23,6 +26,7 @@
 
 import type { CtCharBrief, CtCharSlot } from "../types";
 import { shownByDefault, subjectRef } from "./char-brief";
+import { agentEdits, agentOptionPictures } from "./char-pictures";
 
 export interface CtCharEditPlan {
   role: string;
@@ -44,6 +48,10 @@ export interface CtCharOptionPicture {
   role: string;
   /** The picture it is cut against (a slot "on" a group: that group's first picture); absent = the doll. */
   against?: string;
+  /** layer-kit's id of the picture (several options can share one); absent = from the slot / group. */
+  pictureId?: string;
+  /** Thin features (a face's eyes, brows, mouth); absent = told by the part's name. */
+  fine?: boolean;
 }
 
 /** The role of a group's option picture. */
@@ -99,6 +107,7 @@ export function slotLabel(brief: CtCharBrief, subjectIndex: number, slot: CtChar
 /** Every option picture drawn on the doll: all options of a shape / texture slot, the first of a colour slot. Options
  * of a group share one picture per position. */
 export function optionPictures(brief: CtCharBrief): CtCharOptionPicture[] {
+  if (brief.pictures?.length) return agentOptionPictures(brief);
   return brief.subjects.flatMap((sub, i) =>
     sub.slots.flatMap((slot) =>
       (slot.mode === "color" ? slot.options.slice(0, 1) : slot.options).map((o, index) => ({
@@ -235,6 +244,7 @@ function groupPrompt(brief: CtCharBrief, list: CtCharOptionPicture[]): string {
 }
 
 export function planEdits(brief: CtCharBrief): CtCharEditPlan[] {
+  if (brief.pictures?.length) return agentEdits(brief);
   const out: CtCharEditPlan[] = [
     { role: "work", label: "Master làm việc", source: "master", prompt: "" },
     { role: "base", label: "Búp bê giấy (bỏ mọi phần khách đổi)", source: "work", prompt: basePrompt(brief), transparent: true },

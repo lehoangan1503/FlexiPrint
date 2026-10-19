@@ -27,6 +27,8 @@ phẩm) và `instructions` — làm ĐÚNG theo `instructions` của bước đ�
 Khách chọn số người (bà + 1…4 cháu) và mỗi số người phải là MỘT ẢNH RIÊNG (cắt từ ảnh đông người trông nham nhở):
 `lineup {mode: "count", label, drawn: true}`. Bộ chính = bản đông nhất. Duyệt master bộ chính → server tạo **bộ
 phiên bản** cho mỗi bản nhỏ hơn (`get_task set.versions`, mỗi bản có `set_id`) và vẽ 2 master từ master đã duyệt.
+**Lập kế hoạch 3b của bộ chính (`char_plan_pictures`) TRƯỚC khi duyệt master các bản**: mỗi bản dùng kế hoạch đó
+(tự bỏ nhân vật nó không có); bản cần khác thì `char_plan_pictures` với `set_id`.
 Agent: `view_image` → `char_approve_master {task_id, set_id, image_id}` (sai thì `char_refine_master` /
 `char_draw_masters` với `set_id`). Duyệt xong server tự chạy 3a → 3b → 3c cho bản đó; agent soát ảnh 3b, ảnh sai →
 `char_run_edits {set_id}` + `char_cut {set_id, what: "plan"}`. Sản phẩm tự dựng khi mọi bản cắt xong.
@@ -56,7 +58,10 @@ Cùng một phiên từ đầu tới cuối; người dùng theo dõi trên tran
    option gì không.
 5. Master: `char_draw_masters` (2 bản) → `char_wait` → `view_image` → sửa / vẽ lại → gửi người dùng xem (link +
    số thứ tự) và **chờ họ chọn**. Họ chọn xong: `char_approve_master`.
-6. Sau khi duyệt, làm hết như bước **auto** (instructions của `get_task`): 3b `char_run_edits` → soát từng ảnh (đúng 1
+6. Sau khi duyệt, làm hết như bước **auto** (instructions của `get_task`): **tự lập kế hoạch 3b**
+   `char_plan_pictures` (luật: `get_task set.picturePlan.rules` — búp bê `base` + ít ảnh nhất cho mọi option, mỗi ảnh
+   1 phần / nhân vật, cùng loại phần của mọi nhân vật chung 1 ảnh qua `lines`; không có luật nào trong code quyết thay)
+   → 3b `char_run_edits {roles: toDraw}` → soát từng ảnh (đúng 1
    phần thêm vào búp bê; không vẽ nền; không lộ hồng tím; phần mảnh vẽ đậm) → 3c `char_cut what "plan"` →
    `char_status` (mọi check đạt) → bước 4 `char_draw_backdrops` + `char_draw_elements` → `char_remake_product` →
    `render_artwork` vài tổ hợp → chỉnh bố cục (box) nếu chưa giống mẫu → `make_product_mockups` → xem.

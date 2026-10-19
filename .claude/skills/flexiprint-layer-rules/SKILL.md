@@ -38,7 +38,9 @@ Read it before touching layered-art code. Code consequences:
 
 Never: a segmentation model choosing edges (SAM), seeds/paint pictures, "unwrap" pictures, parts drawn alone and
 fitted ("whole"), per-case post-processing heuristics (trim / grow / fill-by-colour / front_of …). Every one of those
-was tried until 2026-10-14 and produced seams and clipart that did not match 3b. A wrong file is fixed by drawing its
+was tried until 2026-10-14 and produced seams and clipart that did not match 3b. WHICH 3b pictures a set has is
+planned by @flexiprint for that set (char_plan_pictures → brief.pictures, lib/char-pictures.ts, since 2026-10-19) —
+never add product-type rules to lib/char-plan.ts (it is only the plan of older sets without one). A wrong file is fixed by drawing its
 3b picture again (or by hand in the file editor) — not by another rule in the cut.
 
 Background: research of macorner's dress-up products (2026-10-07). Every option file is the full master canvas;

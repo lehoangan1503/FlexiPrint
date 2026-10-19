@@ -1,7 +1,8 @@
 /**
  * Layers of a bộ nhân vật, from the approved master (layer-rules: one canvas, in-place edits, nothing re-drawn).
  *
- *   POST char/projects/:id/edits  {roles?} → { images } the planned edits (lib/char-plan.ts) still missing — or
+ *   POST char/projects/:id/edits  {roles?} → { images } the planned edits (the agent's brief.pictures, lib/char-pictures.ts;
+ *                                 else lib/char-plan.ts) still missing — or
  *                                 the given roles again — made in the background, in waves (work → base → every
  *                                 option on the doll); each edit's registration is measured (layer-kit /align)
  *   POST char/projects/:id/layers → { project } layers.status "building", then "done" / "failed": layer-kit /cut
@@ -19,6 +20,7 @@ import { CT_TABLES } from "../../config";
 import type { CtAsset, CtCharAlign, CtCharCutState, CtCharImage, CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject, CtCharSlot } from "../../types";
 import { DOLL_COLOUR, isFace, isThumbRole, optionPictures, planEdits, slotLabel, type CtCharEditPlan } from "../../lib/char-plan";
 import { latestEditsOf } from "../../lib/char-images";
+import { checkPictures } from "../../lib/char-pictures";
 import type { CtSession } from "../supabase";
 import { ctLibraryPath, ctRemove, ctStoragePath, ctUpload } from "../storage";
 import { findProductFolder } from "../artworks";
@@ -105,7 +107,8 @@ export async function runEditRoles(db: Db, userId: string, p: CtCharProject, a: 
     const last = latest.get(role);
     // The agent's last prompt is kept for a redo — unless the option it was written for changed since (its label is
     // the option's name: "Side Braid" renamed "Chin Bob" was drawn again as a braid, 2026-10-14).
-    const agentLast = last?.meta.taskId && last.prompt && (!e || last.note === e.label) ? last.prompt : "";
+    // A plan of the agent's own (brief.pictures) IS its prompt: a redo asks what the plan says now.
+    const agentLast = !p.brief.pictures?.length && last?.meta.taskId && last.prompt && (!e || last.note === e.label) ? last.prompt : "";
     const prompt = a.prompts?.[role]?.trim() || agentLast || e?.prompt || "";
     const byAgent = !!a.prompts?.[role]?.trim() || !!agentLast;
     const taskId = a.prompts?.[role]?.trim() ? a.taskId : last?.meta.taskId;
@@ -243,10 +246,15 @@ export interface KitPlanInput {
 
 /** The picture id of option `index` of a slot (layer-kit); a group's options share their picture's. */
 const optionId = (slotId: string, index: number): string => `opt.${slotId}.${index}`;
-const pictureIdOf = (x: { slot: CtCharSlot; index: number }): string => (x.slot.group ? `grp.${x.slot.group}.${x.index}` : optionId(x.slot.id, x.index));
+const pictureIdOf = (x: { slot: CtCharSlot; index: number; pictureId?: string }): string => x.pictureId ?? (x.slot.group ? `grp.${x.slot.group}.${x.index}` : optionId(x.slot.id, x.index));
 
 /** The edits the plan step needs (layer-kit /plan), or why it can't run yet. */
 export function kitPlanInput(p: CtCharProject, latest: Map<string, CtCharImage>): { plan: KitPlanInput } | { missing: string[] } {
+  // The agent's plan must still draw every option (an option added to the brief after it was written).
+  if (p.brief.pictures?.length) {
+    const errors = checkPictures(p.brief, p.brief.pictures, !p.brief.versionOf);
+    if (errors.length) return { missing: errors.map((e) => `Kế hoạch 3b: ${e}`) };
+  }
   // Thumbnail pictures are never cut: the set can be cut without them.
   const plan = planEdits(p.brief).filter((e) => !isThumbRole(e.role));
   const missing = plan.filter((e) => latest.get(e.role)?.status !== "done").map((e) => e.label);
@@ -265,16 +273,11 @@ export function kitPlanInput(p: CtCharProject, latest: Map<string, CtCharImage>)
     const key = `${x.slot.id}#${x.index}`;
     const against = x.against ? url(x.against) : undefined;
     sigs[key] = [url(x.role), doll, ...(against ? [against] : [])].join("|");
-    return { key, slot: x.slot.id, label: `${slotLabel(p.brief, x.subject, x.slot)}: ${o.name}`, option: o.name, index: x.index, picture: pictureIdOf(x), url: url(x.role), subject: x.subject, ...(against ? { against } : {}), ...(isFace(x.slot.part) ? { fine: true } : {}) };
+    return { key, slot: x.slot.id, label: `${slotLabel(p.brief, x.subject, x.slot)}: ${o.name}`, option: o.name, index: x.index, picture: pictureIdOf(x), url: url(x.role), subject: x.subject, ...(against ? { against } : {}), ...((x.fine ?? isFace(x.slot.part)) ? { fine: true } : {}) };
   });
   const zones = p.brief.photoZones.map((z) => ({ id: z.id, label: z.label, mask: url(`zone:${z.id}`) }));
   for (const z of zones) sigs[`zone:${z.id}`] = [z.mask, doll].join("|");
   return { plan: { doll, key: DOLL_COLOUR.hex, subjects: p.brief.subjects.length, options, zones, sigs } };
-}
-
-/** The first slot of a group (its option 0 is the group's first picture). */
-function firstOfGroup(brief: CtCharProject["brief"], group: string): string {
-  return brief.subjects.flatMap((sub) => sub.slots).find((sl) => sl.group === group)?.id ?? "";
 }
 
 /** layer-kit /cut input: the doll, every option picture + its region, slots as the brief has them. */
@@ -288,6 +291,14 @@ function cutInput(p: CtCharProject): Record<string, unknown> {
   const piece = (key: string) => plan.pieces.find((x) => x.key === key);
   const body = piece("body");
   if (!body) throw new Error("Phác thảo thiếu vùng thân — phác thảo lại");
+  // A wrapping part cut against another picture (hair under the hats of the outfit picture) lies in front where that
+  // picture's figure is (the sweaters): that picture, as the plan step saved it.
+  const options = optionPictures(p.brief);
+  const figureOf = (slotId: string): string | undefined => {
+    const x = options.find((y) => y.slot.id === slotId && y.against);
+    const host = x ? options.find((y) => y.role === x.against) : undefined;
+    return host ? piece(`${host.slot.id}#${host.index}`)?.picture : undefined;
+  };
   const slots = p.brief.subjects.flatMap((sub, i) =>
     sub.slots.map((slot) => ({
       key: slot.id,
@@ -300,8 +311,7 @@ function cutInput(p: CtCharProject): Record<string, unknown> {
         return { name: o.name, hex: slot.mode === "color" ? o.value : null, picture: pc?.picture ?? null, region: pc?.region.url ?? null };
       }),
       colors: slot.mode === "shape" ? slot.colors.map((c) => ({ name: c.name, hex: c.value })) : [],
-      // Hair drawn under the hats of an outfit picture lies in front where that picture's figure is (the sweaters).
-      ...(slot.on && slot.mode === "shape" && slot.wraps && piece(`${firstOfGroup(p.brief, slot.on)}#0`) ? { figure: piece(`${firstOfGroup(p.brief, slot.on)}#0`)!.picture } : {}),
+      ...(slot.mode === "shape" && slot.wraps && figureOf(slot.id) ? { figure: figureOf(slot.id) } : {}),
     })),
   );
   const zones = plan.pieces.filter((x) => x.kind === "zone").map((x) => ({ id: x.key.slice(5), region: x.region.url }));

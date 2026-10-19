@@ -174,7 +174,8 @@ export async function updateCharProject(s: CtSession, id: string, body: unknown)
   const patch: { name?: string; brief?: CtCharBrief } = {};
   if (typeof b.name === "string" && b.name.trim()) patch.name = b.name.trim().slice(0, 200);
   if (b.brief !== undefined) {
-    patch.brief = parseCharBrief(b.brief);
+    // The 3b plan is the agent's (char_plan_pictures): a page holding an older brief never drops or rolls it back.
+    patch.brief = { ...parseCharBrief(b.brief), pictures: parseCharBrief(p.brief).pictures ?? null };
     // The edits, the plan and the layers hang on the brief's slot / option ids: once a master is approved that part
     // is frozen (texts, backgrounds, mockup scenes, material — step 4 — stay editable).
     if (p.master_id && masterBriefKey(patch.brief) !== masterBriefKey(parseCharBrief(p.brief))) return jsonError("Master đã duyệt — brief bị khoá (trừ chữ, nền, mockup, vật liệu). Bỏ duyệt master (về bước Master) nếu muốn đổi brief", 409);

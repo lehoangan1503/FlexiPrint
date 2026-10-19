@@ -28,6 +28,7 @@ import type {
   CtCharTextField,
   CtCharTextPlace,
 } from "../types";
+import { parsePictures } from "./char-pictures";
 
 const uid = (): string => crypto.randomUUID();
 
@@ -287,7 +288,7 @@ function parseLineup(raw: unknown): CtCharLineup | null {
 function parseVersionOf(raw: unknown): CtCharVersionOf | null {
   const o = rec(raw);
   const id = uuidOrNull(o.id);
-  return id ? { id, name: s(o.name, 40), index: Math.max(0, Math.round(typeof o.index === "number" ? o.index : 0)) } : null;
+  return id ? { id, name: s(o.name, 40), index: Math.max(0, Math.round(typeof o.index === "number" ? o.index : 0)), ...(o.ownPictures === true ? { ownPictures: true } : {}) } : null;
 }
 
 export function parseCharBrief(raw: unknown): CtCharBrief {
@@ -349,6 +350,7 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
       .filter((x): x is CtCharBackdrop => x !== null)
       .slice(0, 8),
     mockups: arr(o.mockups).map((m) => s(m, 300)).filter(Boolean).slice(0, 6),
+    pictures: parsePictures(o.pictures),
   };
 }
 

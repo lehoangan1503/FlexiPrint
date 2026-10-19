@@ -5,8 +5,9 @@
  *   brainstorm  get_task gives the brief rules → submit_result {summary, questions, ideas} → a new idea round
  *   master      char_draw_masters (the agent's own prompt) → char_wait → view_image → char_refine_master … →
  *               submit_result {summary, image_ids: recommended, best first}; the editor approves one
- *   edits       get_task lists the planned in-place edits (lib/char-plan.ts) with a starting prompt each →
- *               char_run_edits {prompts by role} → char_wait → view_image → redo the wrong ones → submit_result
+ *   edits       the agent plans the 3b pictures itself (char_plan_pictures → brief.pictures, lib/char-pictures.ts;
+ *               a set without a plan keeps lib/char-plan.ts) → char_run_edits → char_wait → view_image → redo the
+ *               wrong ones → submit_result
  *
  * Every picture uses the team's image model (server/char/projects.ts). A bộ nhân vật's tasks are one agent_ide
  * session (server/agent/tasks.ts), so "như lần trước" refers to the earlier steps.
@@ -17,7 +18,8 @@ import { siteUrl } from "../site-url";
 import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharProject, CtCharRefUse, CtCharTaskResult } from "../../types";
 import { REF_USES, REF_USE_INFO, masterPrompt, parseCharBrief, shownByDefault } from "../../lib/char-brief";
 import { saveCharFile } from "../char/files";
-import { KEEP, KEEP_CLEAR, planEdits, tailOf } from "../../lib/char-plan";
+import { KEEP, KEEP_CLEAR, optionPictures, planEdits, tailOf } from "../../lib/char-plan";
+import { PICTURE_PLAN_RULES, checkPictures, parsePictures } from "../../lib/char-pictures";
 import { latestEditsOf } from "../../lib/char-images";
 import { CT_IMAGE_MODEL, imageModelLabel } from "../../lib/image-models";
 import type { CtServiceClient } from "../supabase";
@@ -27,7 +29,7 @@ import { KEEP_REFINE, drawIdeaPreviews, drawMasters, loadImages, loadProject, pr
 import { startBackdrops } from "../char/backdrops";
 import { withTemplateProduct } from "../char/blank";
 import { remakeSetProduct, versionSetsOf } from "../char/product";
-import { remakeDrawnProduct, runVersionChain, startVersionSets } from "../char/versions";
+import { followParentPlan, remakeDrawnProduct, runVersionChain, startVersionSets } from "../char/versions";
 import { runEditRoles, startBuild } from "../char/layers";
 import { failLostPlan, startMatte, startPlan } from "../char/cut";
 import { SAMPLE_ROLE, elementPictures, latestElementImages, startElements } from "../char/elements";
@@ -50,7 +52,7 @@ const COMMON = [
 
 /** A lineup drawn version by version (brief.lineup.drawn) — said in the auto and chat steps. */
 const DRAWN_LINEUP =
-  "A LINEUP DRAWN VERSION BY VERSION (set.brief.lineup.drawn, asked 2026-10-19): this set is the biggest version (every subject); set.versions lists a VERSION SET per smaller version (set_id, its subjects, masters, 3b pictures, cut). On approval of this set's master the server made each version set and drew 2 masters for it from the approved one. For each version: view_image both masters — the same characters as the approved master (faces, hair, outfits, proportions, how big the grandma is next to the children), only the listed ones, nobody cropped, small gaps, the same framing — then char_approve_master {task_id, set_id, image_id} (char_refine_master / char_draw_masters with set_id when neither is right). An approved version set runs 3a → 3b → 3c BY ITSELF on the server (minutes): watch get_task set.versions, view_image its 3b pictures like this set's; a wrong one → char_run_edits {task_id, set_id, prompts} then char_cut {task_id, set_id, what: \"plan\"}; char_status {task_id, set_id} waits. The product is built by the server once this set AND every version set are cut; after step 4 (backdrops, elements) char_remake_product rebuilds it. GROUP pictures (slot.group): one picture draws option k for every subject of the group (role group:<group>:<k>); hair \"on\" the outfit group is drawn on the outfit's first picture, UNDER the hats, and cut against it.";
+  "A LINEUP DRAWN VERSION BY VERSION (set.brief.lineup.drawn, asked 2026-10-19): this set is the biggest version (every subject); set.versions lists a VERSION SET per smaller version (set_id, its subjects, masters, 3b pictures, cut). On approval of this set's master the server made each version set and drew 2 masters for it from the approved one. FIRST plan this set's 3b pictures (char_plan_pictures): every version set follows that plan (the characters it lacks dropped) and starts drawing it as soon as its master is approved. For each version: view_image both masters — the same characters as the approved master (faces, hair, outfits, proportions, how big the grandma is next to the children), only the listed ones, nobody cropped, small gaps, the same framing — then char_approve_master {task_id, set_id, image_id} (char_refine_master / char_draw_masters with set_id when neither is right). An approved version set runs 3a → 3b → 3c BY ITSELF on the server (minutes): watch get_task set.versions, view_image its 3b pictures like this set's; a wrong one → char_run_edits {task_id, set_id, prompts} then char_cut {task_id, set_id, what: \"plan\"}; char_status {task_id, set_id} waits. The product is built by the server once this set AND every version set are cut; after step 4 (backdrops, elements) char_remake_product rebuilds it. A version that needs other pictures than the plan gives it: char_plan_pictures with its set_id (its own plan from then on).";
 
 const BRAINSTORM_INSTRUCTIONS = [
   ...COMMON,
@@ -74,8 +76,9 @@ const MASTER_INSTRUCTIONS = [
 
 const EDITS_INSTRUCTIONS = [
   ...COMMON,
-  "STEP edits (UI: 3b \"AI vẽ ảnh để cắt clipart\") — the pictures the clipart files are cut from (\"edits\" lists every one: role, what it is for, the source it is drawn from, a starting prompt, and the current result if any). The server decides WHICH pictures exist; you write HOW each is asked. How the set is cut (rebuilt 2026-10-14, pixel lock): the PAPER DOLL is the body file; every option is drawn ON the doll, in place; a clipart file = the option picture's pixels where it differs from the doll — nothing is segmented or guessed. So the doll + a file IS that picture: what you see in a picture is exactly what the customer gets.",
+  "STEP edits (UI: 3b \"AI vẽ ảnh để cắt clipart\") — the pictures the clipart files are cut from (\"edits\" lists every one: role, what it is for, the source it is drawn from, a starting prompt, and the current result if any). YOU decide which pictures exist (char_plan_pictures, rules in \"picturePlan.rules\") and how each is asked. How the set is cut (rebuilt 2026-10-14, pixel lock): the PAPER DOLL is the body file; every option is drawn ON the doll, in place; a clipart file = the option picture's pixels where it differs from the doll — nothing is segmented or guessed. So the doll + a file IS that picture: what you see in a picture is exactly what the customer gets.",
   "Roles: work = the approved master itself (no prompt) · base = the paper doll: every part the customer changes taken off (bald, a flat magenta tank top and shorts, empty hands) — the body file and the canvas of every option · shape:<slot>:<option> = one option drawn on the doll (every option of a shape / texture part, the first option of a colour part — its other colours are recolours of that picture) · zone:<zone> = a customer-photo zone painted magenta on the doll · thumb:<slot>:<option> = a held item / accessory drawn ALONE and complete from its option picture (the part the hand hides drawn too) — only the option's thumbnail in the shop, never cut (its server ending asks for the object alone, centred, transparent).",
+  "0. No plan yet (picturePlan.byAgent false and nothing drawn): char_plan_pictures first — a plan of your own for this set.",
   "1. For each edit write a prompt that changes EXACTLY one thing on the named subject (say which one: \"the second character from the left\") WITHOUT the ending sentence: the server appends keepSentence (zones — drawn on white) or clearSentence (every other picture — drawn on a transparent background). base: a family-friendly paper-doll dress-up base (worded so; plainly \"remove her dress\" is refused), the bodies exactly as they were. An option: the hairstyle / garment / item in the same art style, sitting naturally on the doll — a garment covers the magenta underwear completely where it is worn (an open jacket shows it only in its opening); nothing else of the doll moves.",
   "2. char_run_edits(task_id, prompts: {role: prompt}, roles: [...]) — the doll is made first automatically; \"roles\" runs a role with its starting prompt (get_task \"startingPromptExamples\"); give a prompt only where you want a different one. → char_wait → view_image the results (a few at a time).",
   "3. Check each: transparent background; the doll's body, face, arms and hands did NOT move or change (a layer can only ADD to the doll — an arm drawn in a new place leaves the old arm visible); no magenta shows on a garment (it is a chroma key: never part of a clipart); the part looks right in the art style. Wrong → a better prompt and char_run_edits for that role again (at most ~3 tries per role). After the cut, the plan checks say it too (\"Khớp\" = the picture moved, \"xoá / dời … px của búp bê\" = it changed the doll).",
@@ -89,6 +92,7 @@ const CHAT_INSTRUCTIONS = [
   "Do exactly what is asked, nothing else, then check it with view_image. The tools:",
   "- brief: char_update_brief(task_id, brief) — the whole brief back (from \"set.brief\" with your change). Once a master is approved only additions are allowed (a new option / colour / slot / zone; existing ids and every slot's first option stay) — after one, run its 3b picture (char_run_edits) and re-cut (char_cut).",
   "- master: char_draw_masters / char_refine_master → char_wait → view_image. The editor approves a master themself (say which one you recommend).",
+  "- 3b plan: char_plan_pictures(task_id, pictures) — WHICH pictures the set has and what each draws (\"picturePlan.rules\"); a new option in the brief needs a picture in the plan. Change a prompt for good in the plan; char_run_edits prompts are one-off.",
   "- 3b pictures: char_run_edits(task_id, prompts {role: prompt}, roles) — a redone picture redoes what is drawn from it; then char_cut so the files follow.",
   "- cut: char_cut(task_id, \"plan\") finds every region again from the 3b pictures and cuts the files; char_cut(task_id, \"build\") cuts the files (and remakes the product) from the current regions. char_status(task_id) waits for it and returns the checks and the new files — view_image the files you changed (and a combination of them) before you say it is fixed.",
   "- approve a master: ONLY when the editor's request hands you the whole set (\"làm hết\", \"tự duyệt\") — char_approve_master(task_id, image_id); it starts 3a. Otherwise recommend one and let them approve.",
@@ -105,7 +109,7 @@ const AUTO_INSTRUCTIONS = [
   ...COMMON,
   "STEP auto — the editor approved a master; everything after it is yours, on your own, until the product is finished (asked 2026-10-18: the editor only writes the request and approves the master; \"Dừng\" cancels this task — a cancelled task's tools refuse: stop at once). Same tools as a chat request. Check each stage with view_image before the next; fix what is wrong yourself (redraw a picture — never patch the cut); report_progress in Vietnamese at every stage (what is done, what you redid and why). Order:",
   "1. Bộ nhân vật: char_status waits for 3a (the master at print size, started on approval). Bộ ảnh khách (brief.kind \"photo\"): skip to 4.",
-  "2. 3b: get_task \"set.edits\" lists every picture — char_run_edits with roles (all missing ones; your own prompts where the starting one is weak) → char_wait → view_image EVERY picture (a grid of a few at a time): transparent; the doll unchanged; exactly ONE part added (no stole on the gown picture, no gown on the stole picture, pants never recolour the top); no magenta on a part; thin parts on small figures drawn bold. Redraw the wrong ones (≤ 3 tries each).",
+  "2. 3b: PLAN the pictures yourself — char_plan_pictures (rules in \"picturePlan.rules\"): from the brief and the approved master decide the doll and the fewest pictures that give every option a clean cut (group the same kind of part of every character into one picture; hair under hats drawn on / cut against the outfit picture; no rule in the code decides this for you). Then get_task \"set.edits\" lists them — char_run_edits with roles (all missing ones) → char_wait → view_image EVERY picture (a grid of a few at a time): transparent; the doll unchanged; exactly ONE part added (no stole on the gown picture, no gown on the stole picture, pants never recolour the top); no magenta on a part; thin parts on small figures drawn bold. Redraw the wrong ones (≤ 3 tries each).",
   "3. 3c: char_cut what \"plan\" (finds the regions, cuts the files, makes the product) → char_status → every failed check: redraw its picture, char_cut \"plan\" again. Then view_image the product (render_artwork mode print — each version / a few option sets).",
   "4. Step 4: char_draw_backdrops and char_draw_elements (every missing picture) → char_wait → view_image each → redraw the wrong ones → char_remake_product → render_artwork (print, a few option sets: versions, themes, colours, names) → fix the layout in the brief (charactersBox, element / text boxes) with char_update_brief + char_remake_product when it does not read like the reference → make_product_mockups (2–3 option sets × the brief's scenes) → wait_product_mockups → view_image.",
   "5. submit_result {summary: Vietnamese — what was made (versions, options, mockups), what you fixed, what is still worth a look; image_ids: a few mockups}. Then the editor asks for changes in the chat.",
@@ -243,6 +247,18 @@ function chatView(task: CtAgentTask, p: CtCharProject, images: CtCharImage[], nu
           })
         : [],
       startingPromptExamples: p.master_id && p.brief.kind !== "photo" ? startingPromptExamples(p.brief) : [],
+      // The 3b plan: yours (brief.pictures) or none yet — the rules for writing one.
+      ...(p.brief.kind !== "photo"
+        ? {
+            picturePlan: {
+              byAgent: !!p.brief.pictures?.length,
+              pictures: p.brief.pictures?.length ?? 0,
+              files: p.brief.pictures?.length ? optionPictures(p.brief).length : 0,
+              ...(p.brief.pictures?.length ? { problems: checkPictures(p.brief, p.brief.pictures, !p.brief.versionOf) } : {}),
+              rules: PICTURE_PLAN_RULES,
+            },
+          }
+        : {}),
       masterAtPrintSize: p.cut?.matte ? { status: p.cut.matte.status, error: p.cut.matte.error, url: p.cut.matte.colourUrl, alphaUrl: p.cut.matte.alpha?.url ?? null, width: p.cut.matte.width, height: p.cut.matte.height } : null,
       plan: plan
         ? {
@@ -669,6 +685,9 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
       if (!["edits", "chat", "auto"].includes(task.input.char?.step ?? "")) throw new Error("char_run_edits is for the edits step");
       if (!project.master_id) throw new Error("No approved master yet — the editor approves one first");
+      // A new set's 3b pictures are planned by the agent (asked 2026-10-19), not by the built-in rules.
+      if (!project.brief.pictures?.length && !project.brief.versionOf && !(await loadImages(db, project.id)).some((im) => im.kind === "edit" && im.role !== "work"))
+        throw new Error("Plan the 3b pictures first: char_plan_pictures (get_task picturePlan.rules)");
       const plan = planEdits(project.brief);
       const prompts: Record<string, string> = {};
       for (const [role, v] of Object.entries(record(args.prompts))) {
@@ -681,6 +700,59 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const rows = await runEditRoles(db, task.user_id!, project, { roles, prompts, taskId: task.id });
       await progress(db, task.id, `Đang chạy ${rows.length} bản sửa: ${rows.map((r) => r.note || r.role).slice(0, 8).join(", ")}${rows.length > 8 ? "…" : ""}`);
       return json({ started: rows.map((r) => ({ image_id: r.id, role: r.role })), next: "char_wait with these ids (the pictures others are drawn from finish first), then view_image." });
+    },
+  },
+  {
+    name: "char_plan_pictures",
+    description:
+      "Bộ nhân vật: YOUR plan of the 3b pictures the clipart files are cut from — which pictures exist, what each is drawn from, says and draws (rules: get_task picturePlan.rules). Checked against the brief (every option drawn once, sources exist, no loop), then saved as brief.pictures; a lineup's version sets follow it. → what must be drawn (new / changed prompt) → char_run_edits {roles}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        ...SET_ARG,
+        pictures: {
+          type: "array",
+          items: { type: "object" },
+          description:
+            "[{role, label (Vietnamese), source (\"work\" for base, else a role), prompt (English, no ending sentence), lines?: [{subject: subject id, text: \"{who}: …\"}], covers: [{slot: slot id, option: option id}], against?: role, fine?: true}] — base (the doll) and zone:<id> per photo zone required.",
+        },
+        dry_run: { type: "boolean", description: "Only check it (nothing saved)." },
+      },
+      required: ["task_id", "pictures"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
+      if (!["edits", "chat", "auto"].includes(task.input.char?.step ?? "")) throw new Error("char_plan_pictures is for chat / auto / edits requests");
+      if (project.brief.kind === "photo") throw new Error("A bộ ảnh khách has no 3b pictures (char_draw_elements)");
+      if (project.layers?.status === "building") throw new Error("The set is being cut — char_status, then plan again");
+      const pictures = parsePictures(args.pictures);
+      if (!pictures) throw new Error("pictures: a non-empty array of pictures");
+      const errors = checkPictures(project.brief, pictures);
+      if (errors.length) throw new Error(`Plan not saved:\n- ${errors.join("\n- ")}`);
+      const of = project.brief.versionOf;
+      const brief = { ...project.brief, pictures, ...(of ? { versionOf: { ...of, ownPictures: true } } : {}) };
+      const edits = planEdits(brief).filter((e) => e.role !== "work");
+      const latest = latestEditsOf(await loadImages(db, project.id));
+      // To draw: never drawn, failed, or asked differently now (its prompt or source changed).
+      const toDraw = edits.filter((e) => {
+        const im = latest.get(e.role);
+        return !im || im.status === "failed" || (im.status === "done" && (im.prompt !== e.prompt || (im.meta as { sourceId?: string }).sourceId !== latest.get(e.source)?.id)) ;
+      });
+      if (args.dry_run !== true) {
+        const { error } = await db.from(CT_TABLES.charProjects).update({ brief }).eq("id", project.id);
+        if (error) throw new Error(error.message);
+        if (!of) for (const k of await versionSetsOf(db, project.id)) await followParentPlan(db, k).catch((e: Error) => console.warn("[ct] version plan", e.message));
+        await progress(db, task.id, `Kế hoạch 3b: ${pictures.length} ảnh, ${optionPictures(brief).length} file — ${toDraw.length} ảnh cần vẽ`);
+      }
+      return json({
+        saved: args.dry_run !== true,
+        pictures: pictures.length,
+        files: optionPictures(brief).length,
+        toDraw: toDraw.map((e) => e.role),
+        next: toDraw.length ? "char_run_edits {task_id, roles: toDraw} → char_wait → view_image each, then char_cut \"plan\"." : "Nothing new to draw — char_cut \"plan\" if the plan changed what is cut against what.",
+      });
     },
   },
   {
@@ -742,6 +814,8 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       // The references are char_add_reference's: a whole brief written without them keeps them (2026-10-19: one dropped
       // the sample picture just added, and the masters were drawn without it).
       if (!Array.isArray(next.refs) || !next.refs.length) next.refs = project.brief.refs;
+      // The 3b plan is char_plan_pictures': a brief written without it keeps it.
+      if (next.pictures === undefined) next.pictures = project.brief.pictures ?? null;
       // Fields the parser drops silently: say what shape they take (the agent tried "lineup" five ways, 2026-10-18).
       const lu = record(next.lineup);
       if (next.lineup != null && lu.mode !== "one" && lu.mode !== "count") throw new Error('lineup must be {"mode": "one" | "count", "label": "Number of Grandchildren"} (or null)');

@@ -162,6 +162,8 @@ export interface CtCharVersionOf {
   name: string;
   /** Its position among the parent's versions (0 = the first). */
   index: number;
+  /** Its 3b plan was written for it (char_plan_pictures with its set_id); else it follows the parent's plan. */
+  ownPictures?: boolean;
 }
 
 /**
@@ -327,6 +329,48 @@ export interface CtCharBrief {
   backdrops: CtCharBackdrop[];
   /** Lifestyle mockup scenes. */
   mockups: string[];
+  /** The 3b pictures, planned by @flexiprint for THIS set (lib/char-pictures.ts). Absent = the older built-in plan
+   * (lib/char-plan.ts rules). */
+  pictures?: CtCharPlanPicture[] | null;
+}
+
+/**
+ * One 3b picture of an agent's plan (asked 2026-10-19: what to draw is decided per set by @flexiprint — products are
+ * too varied for rules in code). The server only checks the plan, draws it in order and cuts it: a clipart file is the
+ * picture's pixels that differ from the doll (or from `against`), on its subject's own side of the canvas.
+ */
+export interface CtCharPlanPicture {
+  /** "base" = the paper doll (body file, drawn from "work") · "zone:<photo zone id>" · "thumb:<slot id>:<option id>"
+   * (a shop thumbnail, never cut) · any other id of the agent's ("hair-1", "outfit-xmas"). */
+  role: string;
+  /** Vietnamese, for the page. */
+  label: string;
+  /** What it is drawn from: "work" (the approved master) or another picture's role. */
+  source: string;
+  /** English: the change, said once for everyone (the server adds the keep-everything sentence). */
+  prompt: string;
+  /** One line per character, kept only in a set that has that character (a version without them drops it). */
+  lines?: CtCharPictureLine[];
+  /** The options this picture draws, at most one slot per subject (each subject's file is cut on its own side). */
+  covers: CtCharPictureCover[];
+  /** Cut against this picture instead of the doll (hair drawn under the hats of the outfit picture). */
+  against?: string | null;
+  /** Thin features (eyes, brows, a mouth): small pieces kept. */
+  fine?: boolean;
+}
+
+export interface CtCharPictureLine {
+  /** Subject id. */
+  subject: string;
+  /** English; "{who}" = how the image model is told which character it is. */
+  text: string;
+}
+
+export interface CtCharPictureCover {
+  /** Slot id. */
+  slot: string;
+  /** Option id. */
+  option: string;
 }
 
 export type CtCharStatus = "brief" | "master" | "layers" | "product";

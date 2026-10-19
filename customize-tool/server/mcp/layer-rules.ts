@@ -71,11 +71,14 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
 - One image model only: GPT Image 2.5 (company API, quality high). Every picture a file is cut from is drawn on a
   TRANSPARENT background — its alpha is the cut-out; nothing is matted afterwards. Never ask GPT to "remove the
   background" of an existing picture (tested 2026-10-12: it re-framed the figure ~20 %).
-- Pictures (lib/char-plan.ts): base = the PAPER DOLL drawn from the master (every part the customer changes taken
-  off: bald, flat magenta #D81BD8 tank top + shorts, empty hands) · EVERY option drawn ON the doll, in place (all
-  options of a shape / texture part, the first option of a colour part — its other colours are recolours of that
-  file) · zones painted magenta on the doll. No other picture. The doll is the canvas: fix the doll (legs, body) and
-  every option is drawn again on it.
+- Pictures: PLANNED BY @flexiprint per set since 2026-10-19 (char_plan_pictures → brief.pictures,
+  lib/char-pictures.ts PICTURE_PLAN_RULES; a set without a plan keeps the old lib/char-plan.ts rules). Always:
+  base = the PAPER DOLL drawn from the master (every part the customer changes taken off: bald, flat magenta #D81BD8
+  tank top + shorts, empty hands, blank face) · every option drawn IN PLACE on the doll or on another picture of the
+  plan (hair under the hats of the outfit picture, cut against it) — one part per character per picture, the same
+  part of every character may share one · colour parts draw only their first option (the rest are recolours) ·
+  zones painted magenta on the doll. The doll is the canvas: fix the doll (legs, body) and every option is drawn
+  again on it.
 - Every option is registered onto the doll: affine + local flow trusted where the moved picture matches (≤ 8 px — the
   AI shifts a pair of legs 3–4 px now and then), residual ≤ 0.6 px.
 - The body file IS the doll. An option file = its picture's pixels where they differ from the doll (layer-kit

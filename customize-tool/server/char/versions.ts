@@ -7,6 +7,8 @@
  *
  *   parent master approved → startVersionSets: a version set per smaller version + 2 masters each (in the background)
  *   a version's master approved → runVersionChain: 3a → every 3b picture → 3c regions → files, on its own
+ *   3b plan: a version set follows its parent's (brief.pictures, lib/char-pictures.ts — the characters it lacks dropped)
+ *   unless the agent wrote one for it (versionOf.ownPictures)
  *   every set of the lineup cut → remakeDrawnProduct: the parent's product, all versions in it
  */
 
@@ -113,6 +115,19 @@ function editState(p: CtCharProject, images: CtCharImage[]): { missing: string[]
   return { missing: plan.filter((e) => latest.get(e.role)?.status !== "done").map((e) => e.role), running: plan.some((e) => latest.get(e.role)?.status === "running") };
 }
 
+/** A version set without a 3b plan of its own takes its parent's current one (written after the version was made). */
+export async function followParentPlan(db: Db, p: CtCharProject): Promise<CtCharProject> {
+  const of = p.brief.versionOf;
+  if (!of || of.ownPictures) return p;
+  const parent = await loadProject(db, of.id);
+  const pictures = parent?.brief.pictures ?? null;
+  if (JSON.stringify(pictures) === JSON.stringify(p.brief.pictures ?? null)) return p;
+  const brief = { ...p.brief, pictures };
+  const { error } = await db.from(CT_TABLES.charProjects).update({ brief }).eq("id", p.id);
+  if (error) throw new Error(error.message);
+  return { ...p, brief };
+}
+
 /** Busy chains, so a second approval does not start another. */
 const chains = new Set<string>();
 
@@ -126,6 +141,7 @@ export async function runVersionChain(db: Db, userId: string, id: string): Promi
   try {
     let { p } = await waitFor(db, id, () => true, 1);
     if (!p.master_id || !p.brief.versionOf) return;
+    p = await followParentPlan(db, p);
     if (p.cut?.matte?.status !== "done") {
       if (p.cut?.matte?.status !== "running") p = await startMatte(db, userId, p);
       ({ p } = await waitFor(db, id, (x) => x.cut?.matte?.status !== "running", 30));

@@ -364,6 +364,7 @@ class PlanOption(BaseModel):
     subject: int = 0       # whose part it is (left → right): its region stays on that figure's side of the doll
     url: str
     fine: bool = False     # thin features (eyes, brows, a mouth): small pieces and thin lines are the part
+    spread: bool = False   # a part in pieces far apart (a hat + a sweater): every piece on its side is the part
     against: str | None = None  # the picture it is cut against instead of the doll (hair drawn under the hats of
                                 # another option picture): its region = what it drew anew on THAT picture
 
@@ -439,7 +440,7 @@ def _plan(body: PlanBody, out_dir: str) -> dict:
         for o in opts:
             own = lands.setdefault(o.subject, territory(doll[..., 3], o.subject, body.subjects))
             ref = registered[o.against] if o.against else doll
-            m, info = part_region(ref, reg, body.key, own, o.fine)
+            m, info = part_region(ref, reg, body.key, own, o.fine, o.spread)
             if m.any():
                 k = cv2.dilate(m.astype(np.uint8), kernel(48)).astype(bool)
                 keep_all = k if keep_all is None else (keep_all | k)

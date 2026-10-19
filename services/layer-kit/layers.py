@@ -409,7 +409,7 @@ def columns(doll_a: np.ndarray, subject: int, count: int) -> np.ndarray | None:
     return out
 
 
-def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: np.ndarray | None = None, fine: bool = False) -> tuple[np.ndarray, dict]:
+def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: np.ndarray | None = None, fine: bool = False, spread: bool = False) -> tuple[np.ndarray, dict]:
     """The pixels an option picture (registered onto the doll, both RGBA on one canvas) drew anew: a clearly different
     colour where both are figure, or figure where the doll has none (hair past the head, a skirt past the legs).
     The re-drawn outlines (a 1–2 px line where a contour moved a fraction of a pixel) and specks are not the part;
@@ -443,7 +443,10 @@ def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: 
         main = lab == int(np.argmax(sizes)) + 1
         dist = cv2.distanceTransform((~main).astype(np.uint8), cv2.DIST_L2, 5)
         near = ndi.minimum(dist, lab, range(1, n + 1))
-        keep = [i + 1 for i in range(n) if sizes[i] >= (30 if fine else 300) * s * s and near[i] <= (0.05 if fine else 0.08) * max(H, W)]
+        # A part in pieces far apart (an outfit = a hat above the face + a sweater below it — on a big figure a whole
+        # face apart, 2026-10-19) keeps every real piece on its own side.
+        reach = 0.6 if spread else 0.05 if fine else 0.08
+        keep = [i + 1 for i in range(n) if sizes[i] >= (30 if fine else 300) * s * s and near[i] <= reach * max(H, W)]
         m = np.isin(lab, keep)
     # A small hole inside the part where it happens to match the doll (a highlight on a white collar) is the part's.
     inv = ~m

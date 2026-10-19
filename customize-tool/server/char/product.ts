@@ -1075,7 +1075,9 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       }
       if (at) {
         const parent = parentOf(t.shownWhen);
-        const r = textRegion(product.id, mainId, t, at, backdrops.length > 0, order++);
+        // A name on a hat and the line on the sign get the light halo too: the theme changes what is under them (dark red on
+        // a black witch hat / dark Halloween wood could not be read, 2026-10-20).
+        const r = textRegion(product.id, mainId, t, at, backdrops.length > 0 || t.place === "on" || t.place === "plaque", order++);
         regions.push({ ...r, ...(lineup ? { name: `Chữ — ${t.label} [${v.name}]` } : {}), ...(parent ? { config: { ...r.config, parent } } : {}) });
       }
     }

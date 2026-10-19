@@ -67,7 +67,8 @@ export function textRegion(productId: string, mainId: string, t: CtCharTextField
         placeholder: t.kind === "input" ? `Example: ${t.defaultText}` : "",
         defaultText: first,
         choices: t.kind === "choice" ? t.choices : [],
-        maxChars: Math.max(t.maxChars, ...t.choices.map((c) => c.length)),
+        // A fixed line is never cut ("This Grandma Belongs To" lost its "To" at 20, 2026-10-19).
+        maxChars: Math.max(t.maxChars, ...t.choices.map((c) => c.length), t.kind === "fixed" ? t.defaultText.length : 0),
         fontFamily: font.family,
         // Bold for a slogan, a fixed line (the sign) and a name on a hat — like the samples.
         fontWeight: font.weights.includes(700) && (t.kind !== "input" || t.place === "on") ? 700 : font.weights[0],
@@ -518,9 +519,11 @@ async function stretchPlank(png: Buffer, aspect: number): Promise<Buffer> {
   while (m0 > 0 && plain(m0 - 1)) m0--;
   while (m1 < W0 - 1 && plain(m1 + 1)) m1++;
   // A little inside the plain run (the decorations' soft edges).
+  // Each end at least a fifth of the sign: a decoration lying on the plank (holly that does not rise above its top
+  // edge) is no dip in the outline (2026-10-19: the right end lost its holly).
   const pad = Math.round((m1 - m0) * 0.04);
-  m0 += pad;
-  m1 -= pad;
+  m0 = Math.max(m0 + pad, Math.round(W0 * 0.22));
+  m1 = Math.min(m1 - pad, W0 - 1 - Math.round(W0 * 0.22));
   const left = m0;
   const right = W0 - 1 - m1;
   const run = m1 - m0 + 1;
@@ -760,7 +763,9 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       if (i < 0 || brims.has(i)) continue;
       const hatSlot = sb.subjects[i].slots.find((sl) => sl.headwear) ?? sb.subjects[i].slots.find((sl) => HAT.test(sl.part));
       const sl = hatSlot && sset.slots.find((x) => x.key === hatSlot.id || x.key === `${hatSlot.id}:front`);
-      const file = sl?.files[0];
+      // The default option's hat (the files come in any order: the witch hat's brim put the names over the Santa hats).
+      const first = hatSlot?.options[0]?.name;
+      const file = sl?.files.find((f) => f.option === first && (f.color === "" || f.color === hatSlot?.colors[0]?.name)) ?? sl?.files[0];
       brims.set(i, file ? await brimBox(hatSlot?.headwear ? (await splitHeadwear(await bytes(file.url))).hat : await bytes(file.url)) : null);
     }
     return { sb, sset, slotOf, slotSubject, subjectBox, cropOf, slots, hatSlots, groupsOf, bodies, bodyCliparts, brims };

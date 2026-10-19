@@ -30,6 +30,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const VERSION_REF_NOTE =
   "The approved design with every character: draw the SAME characters exactly — faces, hair, outfits, colours, line work, proportions and how big each one is next to the others — only the ones listed, in this arrangement.";
 
+/** A version set's master prompt: the brief's, opened by how many are in it (the reference shows more). */
+export function versionMasterPrompt(brief: CtCharBrief): string {
+  const n = brief.subjects.length;
+  return `Draw EXACTLY ${n} characters — the reference picture shows more people: leave every other one out entirely, and lay these ${n} out anew as described.\n${masterPrompt(brief)}`;
+}
+
 /** The brief of version `index` of `parent`: its subjects only, no product parts (texts, decorations, backgrounds and
  * mockups are the parent's), drawn from the parent's master. */
 function versionBrief(parent: CtCharProject, index: number, refId: string): CtCharBrief {
@@ -40,7 +46,10 @@ function versionBrief(parent: CtCharProject, index: number, refId: string): CtCh
     subjects: v.subjects.map((i) => b.subjects[i]),
     lineup: null,
     versionOf: { id: parent.id, name: v.name, index },
-    refs: [{ id: refId, use: "sample", note: VERSION_REF_NOTE }],
+    // "character", not "sample": a sample's layout was copied — versions of 1 and 2 grandchildren came back with all
+    // five people (2026-10-19).
+    refs: [{ id: refId, use: "character", note: VERSION_REF_NOTE }],
+    scene: `${v.subjects.length} people in this picture, nobody else: ${v.subjects.map((i) => b.subjects[i].name || b.subjects[i].description.split(/[,.;]/)[0]).join(", ")} (left to right). The pose and look of everyone as in this description: ${b.scene}`.slice(0, 1000),
     texts: [],
     elements: [],
     backdrops: [],
@@ -79,7 +88,7 @@ export async function startVersionSets(db: Db, userId: string, parent: CtCharPro
     const brief = versionBrief(parent, i, ref.id);
     const { data: row, error: e2 } = await db.from(CT_TABLES.charProjects).update({ brief }).eq("id", p.id).select("*").single<CtCharProject>();
     if (e2 || !row) throw new Error(e2?.message ?? "Không lưu được brief");
-    await drawMasters(db, userId, row, { prompt: masterPrompt(brief), count: 2 });
+    await drawMasters(db, userId, row, { prompt: versionMasterPrompt(brief), count: 2 });
     out.push(row);
   }
   return out;

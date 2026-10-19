@@ -5,7 +5,7 @@
  * without ids. Linked layers (a back half of hair) are never asked: they follow their leader (lib/design resolveLinked).
  */
 
-import { CT_MAIN_KEY, type CtRegion, type CtSelection } from "../types";
+import { CT_MAIN_KEY, type CtAsset, type CtRegion, type CtSelection } from "../types";
 import { defaultRegionSelection, isLinkedLayer, mainVersions, normalizeProductConfig, normalizeRegion, regionGroups, resolveLinked, textMode } from "../lib/design";
 import { onVersion } from "../lib/layout";
 
@@ -108,7 +108,10 @@ export function selectionFromNames(b: ArtworkBundle, wanted: Record<string, stri
     const options = regionGroups(r, b.items, b.assets).flatMap((g) => g.options);
     const parts = value.split(/[·,]/).map(norm).filter(Boolean);
     const exact = options.filter((a) => a.id === value || norm(a.name) === norm(value));
-    const found = exact.length ? exact : options.filter((a) => parts.every((p) => norm(a.name).includes(p)));
+    // Whole "·" groups before substrings: "Grandpa" is inside "Grandma or Grandpa? · Grandma" too (2026-10-19).
+    const groups = (a: CtAsset) => a.name.split("·").map(norm);
+    const whole = options.filter((a) => parts.every((p) => groups(a).includes(p)));
+    const found = exact.length ? exact : whole.length ? whole : options.filter((a) => parts.every((p) => norm(a.name).includes(p)));
     if (found.length !== 1) {
       errors.push(`"${key}": ${found.length ? `"${value}" matches ${found.length} options` : `no option "${value}"`} — options: ${options.map((a) => a.name).join(" | ")}`);
       continue;

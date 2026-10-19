@@ -62,7 +62,7 @@ Có **hai bản** FlexiPrint, mỗi bản một MCP server, dữ liệu riêng: 
    - Bước `chat`: làm đúng yêu cầu người dùng gõ ở ô chat của trang bộ.
    - Task `content` (trang Deploy) → skill `flexiprint-content`.
 2. **Người trong công ty nhờ trực tiếp trên agent_ide** (làm sản phẩm mới, sửa bộ đang có) → skill `flexiprint-char`,
-   mục "Làm trọn một bộ trên agent_ide": tạo bộ bằng `char_create_set`, **in link bộ** (`https://flexiprint.next.lc/v2/<id>`)
+   mục "Làm trọn một bộ trên agent_ide": tạo bộ bằng `char_create_set`, **in link bộ** mà tool trả về (đúng bản đang dùng: `https://flexi2.next.lc/v2/<id>` hay `https://flexiprint.next.lc/v2/<id>`)
    để mọi người mở theo dõi, rồi làm từng bước; dừng hỏi đúng ở những chỗ cần người quyết (chốt hướng brief, duyệt master,
    ưng sản phẩm chưa) — cùng một phiên, người dùng trả lời là làm tiếp.
 3. **Lỗi / thiếu tính năng của FlexiPrint** (tool trả lỗi, sản phẩm sai do code, người dùng nhờ sửa) → skill

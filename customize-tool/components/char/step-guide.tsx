@@ -25,8 +25,8 @@ export function AutoStepGuide({ what }: { what: string }) {
       <p>
         Duyệt master xong, @flexiprint tự làm hết, <b>bạn không cần bấm gì</b>. Muốn thì mở ra xem từng phần.
       </p>
-      <p className="flex flex-wrap items-center gap-1">
-        Clipart kết quả <b>sửa tay được</b> (bấm vào file), hoặc <MessageSquare className="inline h-3.5 w-3.5" /> <b>nhờ @flexiprint sửa tiếp</b>: gõ yêu cầu vào ô chat ở dưới cùng màn hình.
+      <p>
+        Clipart kết quả <b>sửa tay được</b> (bấm vào file), hoặc <MessageSquare className="inline h-3.5 w-3.5 align-[-2px]" /> <b>nhờ @flexiprint sửa tiếp</b>: gõ yêu cầu vào ô chat ở dưới cùng màn hình.
       </p>
     </StepGuide>
   );

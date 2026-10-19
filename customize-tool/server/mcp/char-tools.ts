@@ -13,6 +13,7 @@
  */
 
 import { CT_TABLES } from "../../config";
+import { siteUrl } from "../site-url";
 import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharProject, CtCharRefUse, CtCharTaskResult } from "../../types";
 import { REF_USES, REF_USE_INFO, masterPrompt, parseCharBrief, shownByDefault } from "../../lib/char-brief";
 import { saveCharFile } from "../char/files";
@@ -432,7 +433,7 @@ async function openCharTask(ctx: CtMcpContext, id: unknown): Promise<{ db: CtSer
   return { db: taskDb(ctx), task, project: projectRow(project) };
 }
 
-const SITE = () => process.env.NEXT_PUBLIC_SITE_URL ?? "https://flexiprint.next.lc";
+const SITE = siteUrl;
 /** The set's page, for the people following along (the agent prints it in its session). */
 const setUrl = (id: string) => `${SITE()}/v2/${id}`;
 
@@ -494,7 +495,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   {
     name: "char_open_task",
     description: "agent_ide: a new chat task on an EXISTING set (set id or its /v2 url) to work on it from your session — returns task_id and the page url (print it). One per request / phase; submit_result when it is done.",
-    inputSchema: { type: "object", properties: { project: { type: "string", description: "Set id or https://flexiprint.next.lc/v2/<id>." }, request: { type: "string", description: "What you are asked (their words)." } }, required: ["project"] },
+    inputSchema: { type: "object", properties: { project: { type: "string", description: "Set id or its page url (…/v2/<id>)." }, request: { type: "string", description: "What you are asked (their words)." } }, required: ["project"] },
     callers: ["agent"],
     run: async (ctx, args) => {
       const db = taskDb(ctx);

@@ -28,6 +28,7 @@ import { str } from "../ai/llm";
 import { aiStyleRef, isAiStyleRef, withAiStyles } from "../../lib/photo-styles";
 import { normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { ctLibraryPath, ctUpload } from "../storage";
+import { siteUrl } from "../site-url";
 import { frameRegion, makeTemplateProduct, productPrintOf, type PrintDb } from "../print-products";
 import { loadArtwork, renderArtwork, safeReport } from "../print-render";
 import { productOptions, selectionFromNames } from "../product-options";
@@ -208,7 +209,7 @@ async function sessionFor(ctx: CtMcpContext, ownerId: string | null): Promise<Ct
   return serviceSession(ctx.service, ownerId);
 }
 
-const editorUrl = (id: string) => `${process.env.NEXT_PUBLIC_SITE_URL ?? "https://flexiprint.next.lc"}${CT_CONFIG.basePath}/${id}`;
+const editorUrl = (id: string) => `${siteUrl()}${CT_CONFIG.basePath}/${id}`;
 
 export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
   {

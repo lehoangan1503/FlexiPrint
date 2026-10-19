@@ -67,7 +67,7 @@ English. Read flexiprint://guide/layer-rules first.
    the decorations, where the names sit — unless their words say otherwise; only what neither says gets the
    defaults (full body, standing side by side). Missing a deciding fact (what product, real size, how many
    characters, what the customer can change)? Ask once, briefly, and end your turn.
-2. char_create_set {name, idea} → PRINT the set url (https://flexiprint.next.lc/v2/<id>). Their pictures →
+2. char_create_set {name, idea} → PRINT the set url it returns (this server's own address — flexiprint.next.lc or flexi2.next.lc — never another one). Their pictures →
    char_add_reference (url, or image_base64 of a file in the session; use sample/style/…; note = what to take).
 3. Khuôn in: list_print_templates. None at the real size → create_print_template (a 120×40 cm rug at 150 dpi, a
    die-cut acrylic square…) — never a small khuôn for a big product.

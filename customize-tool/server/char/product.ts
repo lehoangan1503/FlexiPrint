@@ -338,6 +338,55 @@ export async function cleanKey(png: Buffer, body: boolean): Promise<Buffer> {
 }
 
 /** [x, y, w, h] of the visible pixels. */
+/** A hat's brim / cuff on its file (canvas coordinates): the widest band of rows in its lower part — where a name goes
+ * on a Santa hat's cuff, a witch hat's band, a beanie's fold (asked 2026-10-19: names on the hats, no box in the brief). */
+async function brimBox(png: Buffer): Promise<CtLayoutBox | null> {
+  const { data, info } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
+  const rows: Array<{ x0: number; x1: number }> = [];
+  let top = -1;
+  let bottom = -1;
+  for (let y = 0; y < info.height; y++) {
+    let x0 = -1;
+    let x1 = -1;
+    for (let x = 0; x < info.width; x++)
+      if (data[y * info.width + x] > 128) {
+        if (x0 < 0) x0 = x;
+        x1 = x;
+      }
+    rows.push({ x0, x1 });
+    if (x0 >= 0) {
+      if (top < 0) top = y;
+      bottom = y;
+    }
+  }
+  if (top < 0) return null;
+  const h = bottom - top + 1;
+  const width = (y: number) => (rows[y].x0 < 0 ? 0 : rows[y].x1 - rows[y].x0 + 1);
+  // The lower 60 % (the pom-pom / tip is above or beside it); the widest row, then the rows around it nearly as wide.
+  let best = -1;
+  for (let y = top + Math.floor(h * 0.4); y <= bottom; y++) if (best < 0 || width(y) > width(best)) best = y;
+  const wide = width(best) * 0.85;
+  let y0 = best;
+  let y1 = best;
+  while (y0 > top && width(y0 - 1) >= wide) y0--;
+  while (y1 < bottom && width(y1 + 1) >= wide) y1++;
+  // A thin band still gets a readable line (≥ 14 % of the hat).
+  const need = Math.round(h * 0.14) - (y1 - y0 + 1);
+  if (need > 0) {
+    y0 = Math.max(top, y0 - Math.ceil(need / 2));
+    y1 = Math.min(bottom, y1 + Math.floor(need / 2));
+  }
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  for (let y = y0; y <= y1; y++)
+    if (rows[y].x0 >= 0) {
+      x0 = Math.min(x0, rows[y].x0);
+      x1 = Math.max(x1, rows[y].x1);
+    }
+  const inset = (x1 - x0) * 0.12;
+  return { x: x0 + inset, y: y0, w: x1 - x0 - 2 * inset, h: y1 - y0 + 1 };
+}
+
 async function alphaBox(png: Buffer): Promise<CtLayoutBox | null> {
   const { data, info } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
   let x0 = info.width;
@@ -574,6 +623,17 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       })(),
     );
 
+  // A name "on" a character with no box of its own sits on that character's hat brim (its first hat file).
+  const HAT = /\b(hat|cap|beanie|helmet|crown|hood)\b|mũ|nón/i;
+  const brims = new Map<number, CtLayoutBox | null>();
+  for (const t of brief.texts.filter((x) => x.place === "on" && !x.box)) {
+    const i = brief.subjects.findIndex((x) => x.id === t.subject);
+    if (i < 0 || brims.has(i)) continue;
+    const hat = brief.subjects[i].slots.find((sl) => HAT.test(sl.part));
+    const slot = hat && set.slots.find((sl) => sl.key === hat.id || sl.key === `${hat.id}:front`);
+    brims.set(i, slot?.files[0] ? await brimBox(await bytes(slot.files[0].url)) : null);
+  }
+
   // ---- the versions ----
   const mains: CtAsset[] = [main];
   for (const v of versions.slice(1)) mains.push(await upload(sheetPng, "main", v.name));
@@ -767,10 +827,14 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         const i = brief.subjects.findIndex((x) => x.id === t.subject);
         const sb = i >= 0 && own.has(i) ? subjectBox(i) : null;
         const onSb = sb ? { x: box.x + sb.x * k, y: box.y + sb.y * k, w: sb.w * k, h: sb.h * k } : null;
+        const brim = t.place === "on" && !t.box && onSb ? brims.get(i) : null;
         if (t.place === "on" && onSb && t.box) {
           // Shares of that character's own box (a name on the hat's brim).
           const b = fromShares(onSb, t.box);
           at = { id: t.id, box: b, fontSize: Math.round(b.h * 0.78), curve: t.curve ?? 0, align: "center" };
+        } else if (brim) {
+          const b = { x: box.x + brim.x * k, y: box.y + brim.y * k, w: brim.w * k, h: brim.h * k };
+          at = { id: t.id, box: b, fontSize: Math.round(b.h * 0.72), curve: t.curve ?? 0, align: "center" };
         } else at = onSb && t.place === "under" ? underText(t, onSb, area, D) : undefined;
       }
       if (at) {

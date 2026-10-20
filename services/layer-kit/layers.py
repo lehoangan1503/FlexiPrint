@@ -428,6 +428,39 @@ def new_pixels(doll: np.ndarray, opt: np.ndarray, key: str | None, fine: bool) -
     return m, keyed
 
 
+def flood(lab: np.ndarray, inside: np.ndarray) -> None:
+    """Labels (>0) grown into the unlabelled pixels of `inside`, one px a step (in place): each pixel to the label that
+    reaches it first through `inside`."""
+    for _ in range(4 * max(lab.shape)):
+        grown = ndi.grey_dilation(lab, size=3)
+        add = (lab == 0) & inside & (grown > 0)
+        if not add.any():
+            break
+        lab[add] = grown[add]
+
+
+def split_figures(figure: np.ndarray, count: int) -> np.ndarray | None:
+    """The doll's figures (bool mask) as labels 1..count left → right, each its own outline: figures that touch (an ear
+    against a neighbour's, shoulders) are thinned until they come apart, then grown back inside the figure — the line
+    between two runs along where they touch, not down a column. None when they never come apart."""
+    for e in range(0, max(figure.shape) // 8):
+        thin = cv2.erode(figure.astype(np.uint8), kernel(e)).astype(bool) if e else figure
+        lab, n = ndi.label(thin)
+        if n < count:
+            continue
+        sizes = ndi.sum(thin, lab, range(1, n + 1))
+        order = np.argsort(sizes)[::-1]
+        if sizes[order[count - 1]] < 0.25 * sizes[order[:count]].mean():
+            continue
+        keep = sorted(order[:count] + 1, key=lambda i: float(np.where(lab == i)[1].mean()))
+        out = np.zeros(figure.shape, np.int32)
+        for k, i in enumerate(keep):
+            out[lab == i] = k + 1
+        flood(out, figure)
+        return out
+    return None
+
+
 def shared_lands(doll: np.ndarray, opt: np.ndarray, key: str | None, count: int, fine: bool, doll_a: np.ndarray) -> list[np.ndarray] | None:
     """Whose each pixel is on a picture of a set with several subjects (a group: every grandchild's hair in one; or one
     subject's picture where the AI re-drew a neighbour's hair too).
@@ -436,7 +469,7 @@ def shared_lands(doll: np.ndarray, opt: np.ndarray, key: str | None, count: int,
     file the grandma's curls on her side of it. Here the new pixels go to the subject they are joined to: flooded through
     them from what each subject drew over its own doll figure, the first to reach a pixel owns
     it — hair over a neighbour's shoulder stays with its head, a neighbour's curls go with theirs; where two parts meet,
-    the line runs along the contact. A piece joined to nobody keeps the doll's side."""
+    the line runs along the contact. A piece joined to nobody keeps the doll's side (territory)."""
     if count < 2:
         return None
     H, W = doll.shape[:2]
@@ -450,20 +483,19 @@ def shared_lands(doll: np.ndarray, opt: np.ndarray, key: str | None, count: int,
     w, h = max(1, W // f), max(1, H // f)
     small = lambda x: cv2.resize(x.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
     ms = small(m)
-    lab = np.zeros((h, w), np.int32)
-    figure = small(doll_a > 0.5)
+    # What a subject drew over its own doll figure (the figures told apart by their outlines, not by columns) is its
+    # own — except next to another figure, where a neighbour's lock may hang over it; that, and what lies past the
+    # figures, goes to whoever reaches it first.
+    figs = split_figures(small(doll_a > 0.5), count)
+    if figs is None:
+        return None
     r = max(2, round(0.025 * max(w, h)))
-    for k, t in enumerate(sides):
-        # What it drew over its own doll figure is its own (nobody's hair or hat covers another one — the brief's rule),
-        # away from where its side meets the next one's (touching figures are split there by a straight line).
-        side = cv2.erode(small(t).astype(np.uint8), kernel(r), borderType=cv2.BORDER_REPLICATE).astype(bool)
-        lab[side & figure & ms] = k + 1
-    for _ in range(4 * max(w, h)):
-        grown = ndi.grey_dilation(lab, size=3)
-        add = (lab == 0) & ms & (grown > 0)
-        if not add.any():
-            break
-        lab[add] = grown[add]
+    lab = np.zeros((h, w), np.int32)
+    for k in range(count):
+        mine = figs == k + 1
+        others = cv2.dilate(((figs > 0) & ~mine).astype(np.uint8), kernel(r)).astype(bool)
+        lab[mine & ~others & ms] = k + 1
+    flood(lab, ms)
     big = cv2.resize(lab.astype(np.uint16), (W, H), interpolation=cv2.INTER_NEAREST).astype(np.int32)
     return [(big == k + 1) | ((big == 0) & t) for k, t in enumerate(sides)]
 

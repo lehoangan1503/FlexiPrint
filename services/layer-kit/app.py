@@ -437,12 +437,13 @@ def _plan(body: PlanBody, out_dir: str) -> dict:
         reg = reg_of(url, opts[0].label)
         a = aligns[url]
         keep_all: np.ndarray | None = None
-        # A picture of several subjects' options: whose each new pixel is, from the picture itself (layers.shared_lands).
+        # Whose each new pixel is, from the picture itself (layers.shared_lands) — also on one subject's picture: the AI
+        # re-draws a neighbour's hair beside the grandma's (2026-10-20: black and blonde locks in her hair file).
         shared: dict[tuple[str, bool], list[np.ndarray] | None] = {}
         for o in opts:
             ref = registered[o.against] if o.against else doll
             own = lands.setdefault(o.subject, territory(doll[..., 3], o.subject, body.subjects))
-            if len({x.subject for x in opts}) > 1:
+            if body.subjects > 1:
                 sk = (o.against or "", bool(o.fine))
                 if sk not in shared:
                     shared[sk] = shared_lands(ref, reg, body.key, body.subjects, bool(o.fine), doll[..., 3])

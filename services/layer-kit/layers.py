@@ -429,7 +429,8 @@ def new_pixels(doll: np.ndarray, opt: np.ndarray, key: str | None, fine: bool) -
 
 
 def shared_lands(doll: np.ndarray, opt: np.ndarray, key: str | None, count: int, fine: bool, doll_a: np.ndarray) -> list[np.ndarray] | None:
-    """Whose each pixel is on a picture several subjects' options are drawn in (a group: every grandchild's hair in one).
+    """Whose each pixel is on a picture of a set with several subjects (a group: every grandchild's hair in one; or one
+    subject's picture where the AI re-drew a neighbour's hair too).
     Asked 2026-10-20 ("nhân vật như được cắt thẳng xuống", "vẫn còn thừa phần của nhân vật khác"): the doll's sides
     (territory — straight columns when the figures touch) cut a girl's waves where they passed the line and gave her
     file the grandma's curls on her side of it. Here the new pixels go to the subject they are joined to: flooded through

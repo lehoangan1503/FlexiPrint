@@ -404,6 +404,45 @@ async function brimBox(png: Buffer): Promise<CtLayoutBox | null> {
   return { x: x0 + inset, y: y0, w: x1 - x0 - 2 * inset, h: y1 - y0 + 1 };
 }
 
+/** Only the big connected pieces of a picture (≥ 5 % of the biggest): specks and slivers apart from it go. */
+async function mainPieces(png: Buffer): Promise<Buffer> {
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const W = info.width;
+  const H = info.height;
+  const n = W * H;
+  const label = new Int32Array(n).fill(-1);
+  const sizes: number[] = [];
+  const stack = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    if (label[i] >= 0 || data[i * 4 + 3] <= 8) continue;
+    const id = sizes.length;
+    let count = 0;
+    let top = 0;
+    stack[top++] = i;
+    label[i] = id;
+    while (top) {
+      const j = stack[--top];
+      count++;
+      const x = j % W;
+      const near = [x > 0 ? j - 1 : -1, x < W - 1 ? j + 1 : -1, j >= W ? j - W : -1, j < n - W ? j + W : -1];
+      for (const k of near)
+        if (k >= 0 && label[k] < 0 && data[k * 4 + 3] > 8) {
+          label[k] = id;
+          stack[top++] = k;
+        }
+    }
+    sizes.push(count);
+  }
+  const big = sizes.reduce((m, x) => Math.max(m, x), 0);
+  let dropped = 0;
+  for (let i = 0; i < n; i++)
+    if (label[i] >= 0 && sizes[label[i]] < big * 0.05) {
+      data[i * 4 + 3] = 0;
+      dropped++;
+    }
+  return dropped ? sharp(data, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer() : png;
+}
+
 async function alphaBox(png: Buffer): Promise<CtLayoutBox | null> {
   const { data, info } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
   let x0 = info.width;
@@ -773,12 +812,14 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
           .composite(stack.map((input) => ({ input })))
           .png()
           .toBuffer();
-        const u = await alphaBox(all);
+        // The character alone: a neighbour's ear or lock the body split / a cut left at the edge goes.
+        const one = await mainPieces(all);
+        const u = await alphaBox(one);
         if (!u) return undefined;
         const side = Math.round(Math.min(Math.max(u.w, u.h) * 1.06, sset.width, sset.height));
         const left = Math.round(Math.min(Math.max(0, u.x + u.w / 2 - side / 2), sset.width - side));
         const top = Math.round(Math.min(Math.max(0, u.y + u.h / 2 - side / 2), sset.height - side));
-        const png = await sharp(all).extract({ left, top, width: side, height: side }).resize(480, 480).webp({ quality: 86, alphaQuality: 90 }).toBuffer();
+        const png = await sharp(one).extract({ left, top, width: side, height: side }).resize(480, 480).webp({ quality: 86, alphaQuality: 90 }).toBuffer();
         return (await saveCharRaw(src.p.user_id ?? s.user.id, src.p.id, "thumb", png, "image/webp")).url;
       })().catch((e: Error) => {
         console.warn("[ct] option thumb", e.message);

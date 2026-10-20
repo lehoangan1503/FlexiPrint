@@ -428,6 +428,11 @@ def new_pixels(doll: np.ndarray, opt: np.ndarray, key: str | None, fine: bool) -
     return m, keyed
 
 
+# How much further (Lab ΔE) from a subject's own colour than from the nearest subject's a pixel may be and still be
+# taken by it first (shared_lands): blonde next to blonde is decided by distance, white curls never take black hair.
+OWN_COLOUR_DE = 12.0
+
+
 def flood(lab: np.ndarray, inside: np.ndarray) -> None:
     """Labels (>0) grown into the unlabelled pixels of `inside`, one px a step (in place): each pixel to the label that
     reaches it first through `inside`."""
@@ -495,8 +500,27 @@ def shared_lands(doll: np.ndarray, opt: np.ndarray, key: str | None, count: int,
         mine = figs == k + 1
         others = cv2.dilate(((figs > 0) & ~mine).astype(np.uint8), kernel(r)).astype(bool)
         lab[mine & ~others & ms] = k + 1
+    # First each subject only into what is the colour of its own part (the grandma's white curls do not take the black
+    # lock touching them, 2026-10-20), then the rest by distance.
+    col = cv2.resize(to_lab(on_white(opt[..., :3], opt[..., 3])), (w, h), interpolation=cv2.INTER_AREA)
+    means = [col[lab == k + 1].mean(axis=0) if (lab == k + 1).any() else None for k in range(count)]
+    dist = np.stack([np.linalg.norm(col - mu, axis=2) if mu is not None else np.full((h, w), np.inf, np.float32) for mu in means])
+    best = dist.min(axis=0)
+    for _ in range(4 * max(w, h)):
+        moved = False
+        for k in range(count):
+            if means[k] is None:
+                continue
+            add = cv2.dilate((lab == k + 1).astype(np.uint8), kernel(1)).astype(bool) & (lab == 0) & ms & (dist[k] <= best + OWN_COLOUR_DE)
+            if add.any():
+                lab[add] = k + 1
+                moved = True
+        if not moved:
+            break
     flood(lab, ms)
-    big = cv2.resize(lab.astype(np.uint16), (W, H), interpolation=cv2.INTER_NEAREST).astype(np.int32)
+    # Back to the canvas with smooth lines between two subjects (a nearest-neighbour resize left 4 px steps along where
+    # two hats touch): each label's share interpolated, the biggest one wins.
+    big = np.argmax(np.stack([cv2.resize((lab == k).astype(np.float32), (W, H), interpolation=cv2.INTER_LINEAR) for k in range(count + 1)]), axis=0)
     return [(big == k + 1) | ((big == 0) & t) for k, t in enumerate(sides)]
 
 

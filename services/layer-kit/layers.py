@@ -409,15 +409,8 @@ def columns(doll_a: np.ndarray, subject: int, count: int) -> np.ndarray | None:
     return out
 
 
-def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: np.ndarray | None = None, fine: bool = False, spread: bool = False) -> tuple[np.ndarray, dict]:
-    """The pixels an option picture (registered onto the doll, both RGBA on one canvas) drew anew: a clearly different
-    colour where both are figure, or figure where the doll has none (hair past the head, a skirt past the legs).
-    The re-drawn outlines (a 1–2 px line where a contour moved a fraction of a pixel) and specks are not the part;
-    changes on another subject (`own`: this subject's territory) or far from the part's main piece neither; nor
-    anything in the doll's underwear colour `key` (the AI
-    re-draws the underwear a little where a jacket opens — a line along its edge, 2026-10-14).
-    → (region, {px, lost}): `lost` = doll figure the picture took away (an arm moved, a hand erased) — a layer can only
-    add, so that picture must be drawn again."""
+def new_pixels(doll: np.ndarray, opt: np.ndarray, key: str | None, fine: bool) -> tuple[np.ndarray, np.ndarray]:
+    """What an option picture drew anew on the doll, before it is given to anyone: (region, keyed). See part_region."""
     H, W = doll.shape[:2]
     s = max(H, W) / 1024
     da, oa = doll[..., 3], opt[..., 3]
@@ -432,6 +425,61 @@ def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: 
     if not fine:
         changed = cv2.morphologyEx(changed.astype(np.uint8), cv2.MORPH_OPEN, kernel(max(1, round(1.5 * s)))).astype(bool)
     m = cv2.morphologyEx((changed | grown).astype(np.uint8), cv2.MORPH_CLOSE, kernel(max(2, round(3 * s)))).astype(bool) & (oa > 0.02)
+    return m, keyed
+
+
+def shared_lands(doll: np.ndarray, opt: np.ndarray, key: str | None, count: int, fine: bool, doll_a: np.ndarray) -> list[np.ndarray] | None:
+    """Whose each pixel is on a picture several subjects' options are drawn in (a group: every grandchild's hair in one).
+    Asked 2026-10-20 ("nhân vật như được cắt thẳng xuống", "vẫn còn thừa phần của nhân vật khác"): the doll's sides
+    (territory — straight columns when the figures touch) cut a girl's waves where they passed the line and gave her
+    file the grandma's curls on her side of it. Here the new pixels go to the subject they are joined to: flooded through
+    them from what each subject drew over its own doll figure, the first to reach a pixel owns
+    it — hair over a neighbour's shoulder stays with its head, a neighbour's curls go with theirs; where two parts meet,
+    the line runs along the contact. A piece joined to nobody keeps the doll's side."""
+    if count < 2:
+        return None
+    H, W = doll.shape[:2]
+    # `doll` is what the picture is compared with (the doll, or the picture it is cut against); the sides are the doll's.
+    sides = [territory(doll_a, k, count) for k in range(count)]
+    if any(t is None for t in sides):
+        return None
+    m, _ = new_pixels(doll, opt, key, fine)
+    # On a quarter grid (a flood step per px; a whole lock is a few hundred).
+    f = 4
+    w, h = max(1, W // f), max(1, H // f)
+    small = lambda x: cv2.resize(x.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
+    ms = small(m)
+    lab = np.zeros((h, w), np.int32)
+    figure = small(doll_a > 0.5)
+    r = max(2, round(0.025 * max(w, h)))
+    for k, t in enumerate(sides):
+        # What it drew over its own doll figure is its own (nobody's hair or hat covers another one — the brief's rule),
+        # away from where its side meets the next one's (touching figures are split there by a straight line).
+        side = cv2.erode(small(t).astype(np.uint8), kernel(r), borderType=cv2.BORDER_REPLICATE).astype(bool)
+        lab[side & figure & ms] = k + 1
+    for _ in range(4 * max(w, h)):
+        grown = ndi.grey_dilation(lab, size=3)
+        add = (lab == 0) & ms & (grown > 0)
+        if not add.any():
+            break
+        lab[add] = grown[add]
+    big = cv2.resize(lab.astype(np.uint16), (W, H), interpolation=cv2.INTER_NEAREST).astype(np.int32)
+    return [(big == k + 1) | ((big == 0) & t) for k, t in enumerate(sides)]
+
+
+def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: np.ndarray | None = None, fine: bool = False, spread: bool = False) -> tuple[np.ndarray, dict]:
+    """The pixels an option picture (registered onto the doll, both RGBA on one canvas) drew anew: a clearly different
+    colour where both are figure, or figure where the doll has none (hair past the head, a skirt past the legs).
+    The re-drawn outlines (a 1–2 px line where a contour moved a fraction of a pixel) and specks are not the part;
+    changes on another subject (`own`: this subject's territory) or far from the part's main piece neither; nor
+    anything in the doll's underwear colour `key` (the AI
+    re-draws the underwear a little where a jacket opens — a line along its edge, 2026-10-14).
+    → (region, {px, lost}): `lost` = doll figure the picture took away (an arm moved, a hand erased) — a layer can only
+    add, so that picture must be drawn again."""
+    H, W = doll.shape[:2]
+    s = max(H, W) / 1024
+    da, oa = doll[..., 3], opt[..., 3]
+    m, keyed = new_pixels(doll, opt, key, fine)
     if own is not None:
         m &= own
     # A part is one subject's and lies together: its biggest piece and what is near it (the two fronts of an open jacket,
@@ -446,7 +494,17 @@ def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: 
         # A part in pieces far apart (an outfit = a hat above the face + a sweater below it — on a big figure a whole
         # face apart, 2026-10-19) keeps every real piece on its own side.
         reach = 0.6 if spread else 0.05 if fine else 0.08
-        keep = [i + 1 for i in range(n) if sizes[i] >= (30 if fine else 300) * s * s and near[i] <= reach * max(H, W)]
+        real = [i for i in range(n) if sizes[i] >= (30 if fine else 300) * s * s]
+        keep = [i + 1 for i in real if near[i] <= reach * max(H, W)]
+        # A face's features lie apart (two eyes, two brows, a mouth): each near the one before it, not all near the
+        # biggest — the open eye of a wink was the biggest, the winking one and a brow were left out (2026-10-20).
+        while fine:
+            dist = cv2.distanceTransform((~np.isin(lab, keep)).astype(np.uint8), cv2.DIST_L2, 5)
+            near = ndi.minimum(dist, lab, range(1, n + 1))
+            more = [i + 1 for i in real if i + 1 not in keep and near[i] <= reach * max(H, W)]
+            if not more:
+                break
+            keep += more
         m = np.isin(lab, keep)
     # A small hole inside the part where it happens to match the doll (a highlight on a white collar) is the part's.
     inv = ~m

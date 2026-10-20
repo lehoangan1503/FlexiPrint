@@ -274,7 +274,15 @@ export async function editLayerFile(db: Db, userId: string, p: CtCharProject, bo
   const next: CtCharLayerSet = { ...set, slots: set.slots.map((s) => ({ ...s, files: [...s.files] })) };
   const r = { olds: [] as CtCharImage[], news: [] as CtCharImage[], paths: [] as string[] };
   const add = (x: typeof r) => (r.olds.push(...x.olds), r.news.push(...x.news), r.paths.push(...x.paths));
-  if (mask) add(await applyMask(db, userId, p, next, g, mask, true));
+  if (mask) {
+    // Every colour of the option is the same cut-out recoloured (layer-kit): the edit goes to each, in its own colours
+    // (asked 2026-10-20: "sửa 1 màu, tất cả các màu còn lại cũng update theo"). One version on the opened file holds
+    // them all for "Hoàn tác".
+    const colours = next.slots.find((sl) => sl.key === g.slot)!.files.filter((f) => f.option === g.file.option);
+    const version: CtCharFileVersion = { at: new Date().toISOString(), files: colours.map(({ history: _h, ...was }) => ({ slot: g.slot, file: was })) };
+    for (const file of colours) add(await applyMask(db, userId, p, next, { slot: g.slot, file }, mask, false));
+    next.slots = next.slots.map((sl) => (sl.key !== g.slot ? sl : { ...sl, files: sl.files.map((x) => (x.option === g.file.option && x.color === g.file.color ? { ...x, history: [...(g.file.history ?? []), version].slice(-8) } : x)) }));
+  }
   if (dx || dy) {
     const now = fileOf(next, next.slots.find((sl) => sl.key === g.slot)?.files.find((f) => f.option === g.file.option && f.color === g.file.color)?.imageId ?? "")!;
     add(await moveFiles(db, userId, p, next, moveGroup(next, now), dx, dy, now));

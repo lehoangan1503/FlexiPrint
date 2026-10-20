@@ -107,3 +107,29 @@ export function underText(t: CtCharTextField, subjectBox: CtLayoutBox, area: CtL
   const y = Math.min(subjectBox.y + subjectBox.h + 0.01 * D, area.y + area.h - h);
   return { id: t.id, box: { x: subjectBox.x + subjectBox.w / 2 - w / 2, y, w, h }, fontSize: Math.round(h * 0.72), curve: 0, align: "center" };
 }
+
+/** The option each chooser shows (chooser id → option id): its first (the master's) unless picked. */
+export type CtChooserPicks = Record<string, string>;
+
+/** Is a layer-set slot (key "c1_hair_boy:front") there with these chooser picks? Only a part with shownWhen comes and
+ * goes (asked 2026-10-20: a grandchild's boy and girl hair stacked in step 3 — show one of them). */
+export function slotShown(brief: CtCharBrief, slotKey: string, picks: CtChooserPicks): boolean {
+  const id = slotKey.split(":")[0];
+  const w = brief.subjects.flatMap((s) => s.slots).find((s) => s.id === id)?.shownWhen;
+  if (!w) return true;
+  const c = brief.choosers?.find((x) => x.id === w.chooser);
+  return !c || (picks[c.id] ?? c.options[0]?.id) === w.option;
+}
+
+/** The choosers that make parts come and go (a grandchild's Boy / Girl), in the brief's order. */
+export function partChoosers(brief: CtCharBrief): NonNullable<CtCharBrief["choosers"]> {
+  const used = new Set(brief.subjects.flatMap((s) => s.slots).flatMap((s) => (s.shownWhen ? [s.shownWhen.chooser] : [])));
+  return (brief.choosers ?? []).filter((c) => used.has(c.id));
+}
+
+/** The picks that show `slotKey` (its chooser on the slot's option), the others kept. */
+export function picksShowing(brief: CtCharBrief, slotKey: string, picks: CtChooserPicks): CtChooserPicks {
+  const id = slotKey.split(":")[0];
+  const w = brief.subjects.flatMap((s) => s.slots).find((s) => s.id === id)?.shownWhen;
+  return w ? { ...picks, [w.chooser]: w.option } : picks;
+}

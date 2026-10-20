@@ -42,7 +42,7 @@ export function LayerFiles({ set, onFix }: { set: CtCharLayerSet; onFix: ((file:
                     <div className="truncate px-1 py-0.5 text-[10px]">{[f.option, f.color].filter(Boolean).join(" · ")}</div>
                   </button>
                   {onFix && (
-                    <button title="Sửa clipart này" onClick={() => onFix(f)} className={`absolute right-1 top-1 p-1.5 ${FLOAT_BTN}`}>
+                    <button title="Sửa clipart này (mọi màu của kiểu)" onClick={() => onFix(f)} className={`absolute right-1 top-1 p-1.5 ${FLOAT_BTN}`}>
                       <Pencil className="h-3 w-3" />
                     </button>
                   )}

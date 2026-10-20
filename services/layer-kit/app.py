@@ -45,7 +45,7 @@ from pydantic import BaseModel
 
 import upscale
 
-from layers import Option, Slot, Zone, _fill, cut, unit, erase_at, kernel, on_white, part_region, region_zone, register, register_option, territory
+from layers import Option, Slot, Zone, _fill, cut, unit, erase_at, kernel, on_white, part_region, region_zone, register, register_option, shared_lands, territory
 
 TOKEN = os.getenv("LAYER_TOKEN", "")
 PRINT_SIDE = int(os.getenv("PRINT_SIDE", "3072"))  # long side wanted for print (≈ 300 dpi at 26 cm)
@@ -437,9 +437,16 @@ def _plan(body: PlanBody, out_dir: str) -> dict:
         reg = reg_of(url, opts[0].label)
         a = aligns[url]
         keep_all: np.ndarray | None = None
+        # A picture of several subjects' options: whose each new pixel is, from the picture itself (layers.shared_lands).
+        shared: dict[tuple[str, bool], list[np.ndarray] | None] = {}
         for o in opts:
-            own = lands.setdefault(o.subject, territory(doll[..., 3], o.subject, body.subjects))
             ref = registered[o.against] if o.against else doll
+            own = lands.setdefault(o.subject, territory(doll[..., 3], o.subject, body.subjects))
+            if len({x.subject for x in opts}) > 1:
+                sk = (o.against or "", bool(o.fine))
+                if sk not in shared:
+                    shared[sk] = shared_lands(ref, reg, body.key, body.subjects, bool(o.fine), doll[..., 3])
+                own = shared[sk][o.subject] if shared[sk] else own
             m, info = part_region(ref, reg, body.key, own, o.fine, o.spread)
             if m.any():
                 k = cv2.dilate(m.astype(np.uint8), kernel(48)).astype(bool)

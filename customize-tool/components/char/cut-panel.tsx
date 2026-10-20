@@ -18,9 +18,11 @@ import type { CharCtx } from "./char-project";
 import { MaskEditor } from "./mask-editor";
 import { MatteFix } from "./matte-fix";
 import { LayerFiles, Thumb, backFile, colourGroups } from "./layer-files";
+import { partChoosers, picksShowing, slotShown, type CtChooserPicks } from "../../lib/char-lineup";
 
-/** `picks`: the option shown per slot in the dress-up preview (LayerView) — the editor shows the clipart in that outfit. */
-export type CutEdit = { kind: "matte" } | { kind: "piece"; key: string } | { kind: "file"; imageId: string; picks?: Record<string, number> } | null;
+/** `picks`: the option shown per slot in the dress-up preview (LayerView), `choose`: its Boy / Girl… picks — the editor
+ * shows the clipart in that outfit. */
+export type CutEdit = { kind: "matte" } | { kind: "piece"; key: string } | { kind: "file"; imageId: string; picks?: Record<string, number>; choose?: CtChooserPicks } | null;
 
 const PALETTE = ["#f97316", "#2563eb", "#16a34a", "#a855f7", "#eab308", "#ec4899", "#06b6d4", "#dc2626", "#84cc16", "#4f46e5"];
 
@@ -247,20 +249,25 @@ function LayerView({ ctx, set, plan, onEdit: edit }: { ctx: CharCtx; set: CtChar
   const [pick, setPick] = useState<Record<string, number>>({});
   const [focus, setFocus] = useState<string | null>(null);
   const [diff, setDiff] = useState(true);
+  // A grandchild a boy OR a girl: only that one's parts are stacked and listed (both hairs lay over each other).
+  const brief = ctx.project.brief;
+  const choosers = partChoosers(brief);
+  const [choose, setChoose] = useState<CtChooserPicks>({});
+  const shownSlot = (s: CtCharLayerSlot) => slotShown(brief, s.key, choose);
   const focused = focus ? set.slots.find((s) => s.key === focus) : null;
   const ff = focused ? focused.files[Math.min(pick[focused.key] ?? 0, focused.files.length - 1)] : null;
   const files = (s: CtCharLayerSlot) => {
     const leader = s.follows ? set.slots.find((x) => x.key === s.follows) : null;
     return { list: s.files, index: Math.min(pick[leader?.key ?? s.key] ?? 0, s.files.length - 1) };
   };
-  const defaults = Object.values(pick).every((v) => v === 0);
+  const defaults = Object.values(pick).every((v) => v === 0) && choosers.every((c) => (choose[c.id] ?? c.options[0]?.id) === c.options[0]?.id);
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_440px]">
       {/* The stack stays in view while the option list on the right scrolls (under the sticky page header). */}
       <div className="lg:sticky lg:top-16 lg:self-start">
         {/* Fits the screen whatever the canvas (a tall single figure was shown at 640 px wide: only the face). */}
         <div className="relative mx-auto max-w-[640px]" style={{ aspectRatio: `${set.width} / ${set.height}`, width: `min(100%, calc(62vh * ${set.width} / ${set.height}))`, ...CHECKER_STYLE }}>
-          {set.slots.map((s) => {
+          {set.slots.filter(shownSlot).map((s) => {
             const { list, index } = files(s);
             const f = list[index];
             return f ? (
@@ -286,15 +293,33 @@ function LayerView({ ctx, set, plan, onEdit: edit }: { ctx: CharCtx; set: CtChar
         )}
       </div>
       <div className="space-y-4">
+        {choosers.length > 0 && (
+          <div className="space-y-1.5 rounded-lg border p-2">
+            <div className="text-[11px] text-muted-foreground">Mỗi người chỉ hiện các lớp của lựa chọn đang bật (như khách chọn):</div>
+            {choosers.map((c) => (
+              <div key={c.id} role="radiogroup" aria-label={c.label} className="flex flex-wrap items-center gap-1 text-[11px]">
+                <span className="w-24 truncate text-muted-foreground">{c.label}</span>
+                {c.options.map((o) => {
+                  const on = (choose[c.id] ?? c.options[0]?.id) === o.id;
+                  return (
+                    <button key={o.id} role="radio" aria-checked={on} onClick={() => setChoose((cur) => ({ ...cur, [c.id]: o.id }))} className={cx("rounded-full border px-2 py-0.5", on ? "border-orange-500 bg-orange-500/10" : "hover:bg-accent")}>
+                      {o.name}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
         <Checks checks={set.checks} plan={plan} onEdit={onEdit} title={`Kiểm tra tự động — ${set.width}×${set.height}px`} />
         {set.slots
-          .filter((s) => !s.follows && s.files.length > 1)
+          .filter((s) => !s.follows && s.files.length > 1 && shownSlot(s))
           .map((s) => (
             <SlotOptions
               key={s.key}
               set={set}
               slot={s}
-              onEdit={onEdit ? (f) => onEdit({ kind: "file", imageId: f.imageId, picks: pick }) : null}
+              onEdit={onEdit ? (f) => onEdit({ kind: "file", imageId: f.imageId, picks: pick, choose }) : null}
               picked={pick[s.key] ?? 0}
               onPick={(i) => {
                 setPick((p) => ({ ...p, [s.key]: i }));
@@ -309,7 +334,7 @@ function LayerView({ ctx, set, plan, onEdit: edit }: { ctx: CharCtx; set: CtChar
               {[ff.option, ff.color].filter(Boolean).length ? ` · ${[ff.option, ff.color].filter(Boolean).join(" · ")}` : ""}”?
             </div>
             <div className="flex flex-wrap gap-2">
-              <CtButton onClick={() => onEdit({ kind: "file", imageId: ff.imageId, picks: pick })}>
+              <CtButton onClick={() => onEdit({ kind: "file", imageId: ff.imageId, picks: pick, choose })}>
                 <Pencil className="h-4 w-4" /> Sửa clipart này
               </CtButton>
               {ff.piece && plan?.pieces.some((x) => x.key === ff.piece) && (
@@ -408,7 +433,7 @@ export function CutEditor(ctx: CharCtx & { edit: CutEdit; onClose: () => void })
         onClose={ctx.onClose}
       />
     );
-  if (edit.kind === "file") return <FileEditor {...ctx} imageId={edit.imageId} picks={edit.picks ?? {}} />;
+  if (edit.kind === "file") return <FileEditor {...ctx} imageId={edit.imageId} picks={edit.picks ?? {}} choose={edit.choose ?? {}} />;
   const pc = plan?.pieces.find((x) => x.key === edit.key);
   const pic = pc ? plan?.pictures.find((x) => x.id === pc.picture) : null;
   if (!plan || !pc || !pic) return null;
@@ -438,7 +463,7 @@ export function CutEditor(ctx: CharCtx & { edit: CutEdit; onClose: () => void })
 /** One clipart file, edited by hand on the set's canvas (server/char/file-edit.ts): the clipart bright, the outfit
  * around it dark, a live preview of the outfit on the right and every clipart of the set on the left (one click opens
  * it — asked 2026-10-14). Saving replaces the file, its thumbnail and the products' copies at once. */
-function FileEditor(ctx: CharCtx & { onClose: () => void; imageId: string; picks: Record<string, number> }) {
+function FileEditor(ctx: CharCtx & { onClose: () => void; imageId: string; picks: Record<string, number>; choose: CtChooserPicks }) {
   const { project } = ctx;
   const set = project.layers;
   // Which clipart is open: by slot + option + colour (a save gives the file a new id).
@@ -449,6 +474,8 @@ function FileEditor(ctx: CharCtx & { onClose: () => void; imageId: string; picks
   });
   const [picks, setPicks] = useState(ctx.picks);
   const slot = set?.slots.find((sl) => sl.key === open.slot);
+  // The other parts of the chooser's pick the open clipart belongs to (a boy's hair: the boy, not the girl's hair too).
+  const choose = picksShowing(project.brief, open.slot, ctx.choose);
   const file = slot?.files.find((f) => f.option === open.option && f.color === open.color);
   if (!set || !slot || !file) return null;
   // A part made of a back + a front layer (hair) is edited by its front alone: the back is the whole part, as drawn.
@@ -462,6 +489,7 @@ function FileEditor(ctx: CharCtx & { onClose: () => void; imageId: string; picks
   const context: Array<{ url: string; moves: boolean }> = [];
   let selfAt = 0;
   for (const sl of set.slots) {
+    if (!slotShown(project.brief, sl.key, choose)) continue;
     if (sl.key === mainSlot) {
       selfAt = context.length;
       continue;
@@ -478,7 +506,7 @@ function FileEditor(ctx: CharCtx & { onClose: () => void; imageId: string; picks
     <MaskEditor
       key={main.imageId}
       title={`Sửa clipart: ${slot.label.replace(/\s+—\s+lớp sau$/i, " — lớp trước")} — ${[file.option, file.color].filter(Boolean).join(" · ")}`}
-      hint="Clipart đang sửa sáng, cả bộ đồ tối phía sau; khung bên phải = nhân vật như ở 3c, đổi ngay khi sửa. Bớt = xoá phần thừa, Thêm = tô lại chỗ thiếu (màu của chính file này), Làm mịn = mép bớt sắc, Di chuyển = kéo cả bộ clipart (trước + sau, mọi màu). Lưu là file, thumbnail và mọi sản phẩm đổi ngay."
+      hint="Clipart đang sửa sáng, cả bộ đồ tối phía sau; khung bên phải = nhân vật như ở 3c, đổi ngay khi sửa. Bớt = xoá phần thừa, Thêm = tô lại chỗ thiếu, Làm mịn = mép bớt sắc — áp cho mọi màu của kiểu này (mỗi màu tô bằng màu của nó), Di chuyển = kéo cả bộ clipart (trước + sau, mọi màu). Lưu là file, thumbnail và mọi sản phẩm đổi ngay."
       width={set.width}
       height={set.height}
       colourUrl={main.plateUrl ?? main.url}

@@ -23,13 +23,13 @@ import type { CtAsset, CtCharBrief, CtCharElement, CtCharShownWhen, CtCharImage,
 import { defaultProductConfig, defaultRegionConfig } from "../../lib/design";
 import { applyMaterialPreset, isMaterialId } from "../../lib/materials";
 import { charLayout, type CtCharLayoutText, type CtLayoutBox } from "../../lib/char-layout";
-import { charElementBoxes, charVersions, fromShares, subjectName, underText, unionBox } from "../../lib/char-lineup";
+import { charElementBoxes, charVersions, fromShares, picksShowing, slotShown, subjectName, underText, unionBox } from "../../lib/char-lineup";
 import { elementPictures, latestElementImages } from "./elements";
 import { latestBackdrops } from "./backdrops";
 import { latestEditsOf } from "../../lib/char-images";
 import * as h from "../handlers";
 import type { CtSession } from "../supabase";
-import { fetchImage } from "./files";
+import { fetchImage, saveCharRaw } from "./files";
 import { NOT_YOURS, canEditProject, jobDb, jsonError, loadImages, loadProject, projectRow, type Db } from "./projects";
 import { getTemplate } from "../print-templates";
 import { makeTemplateProduct, productPrintOf } from "../print-products";
@@ -726,6 +726,67 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       const o = sl?.options.find((x) => x.name === f.option);
       return o ? thumbs.get(`thumb:${sl!.id}:${o.id}`) : undefined;
     };
+    /**
+     * An option's thumbnail = the whole character wearing it, as the product shows them — its body, every other part in
+     * its first option, this option over it — cropped to that character, never the cut piece alone with its holes
+     * (asked 2026-10-20: "thumb là hình hoàn chỉnh, clipart vẫn là clipart gốc"; a face's expression is a face, not eyes
+     * floating in a tile). The 3b pictures cannot be it: they are drawn on the faceless, bald doll.
+     */
+    const madeThumbs = new Map<string, Promise<string | undefined>>();
+    let ownBodies: Promise<Buffer[]> | null = null;
+    const drawnThumbOf = (slot: CtCharLayerSlot, f: CtCharLayerFile): Promise<string | undefined> => {
+      const i = slotSubject(slot);
+      const base = slot.key.split(":")[0];
+      const key = `${i}|${base}|${f.option}|${f.color}`;
+      const hit = madeThumbs.get(key);
+      if (hit) return hit;
+      const made = (async () => {
+        if (i < 0 || !bodyPng) return undefined;
+        ownBodies ??= sb.subjects.length > 1 ? splitBody(bodyPng, centres) : Promise.resolve([bodyPng]);
+        const body = (await ownBodies)[i];
+        // The boy's hair with the boy's parts (his chooser on it), every other chooser on its first option.
+        const picks = picksShowing(sb, slot.key, {});
+        const mine = sset.slots.filter((sl) => sl.key !== "body" && slotSubject(sl) === i && slotShown(sb, sl.key, picks));
+        const fileFor = (sl: CtCharLayerSlot): CtCharLayerFile | undefined => {
+          if (sl.key.split(":")[0] === base) return sl.files.find((x) => x.option === f.option && x.color === f.color);
+          const b = slotOf(sl);
+          if (b?.optional) return undefined;
+          const first = b?.options[0]?.name;
+          const colour = b?.mode === "shape" ? (b.colors[0]?.name ?? "") : "";
+          return sl.files.find((x) => x.option === first && x.color === colour) ?? sl.files[0];
+        };
+        // A headwear outfit: its sweater with the other parts, its hat over the hair (like the product).
+        const pieces = (list: CtCharLayerSlot[], hat: boolean) =>
+          Promise.all(
+            list.flatMap((sl) => {
+              const g = fileFor(sl);
+              const head = slotOf(sl)?.headwear === true && !sl.follows;
+              if (!g || (hat && !head)) return [];
+              return [head ? bytes(g.url).then(splitHeadwear).then((x) => (hat ? x.hat : x.rest)) : bytes(g.url)];
+            }),
+          );
+        const backs = await pieces(mine.filter((sl) => sl.follows), false);
+        const fronts = await pieces(mine.filter((sl) => !sl.follows), false);
+        const hats = await pieces(mine.filter((sl) => !sl.follows), true);
+        const stack = [...backs, body, ...fronts, ...hats];
+        const all = await sharp({ create: { width: sset.width, height: sset.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+          .composite(stack.map((input) => ({ input })))
+          .png()
+          .toBuffer();
+        const u = await alphaBox(all);
+        if (!u) return undefined;
+        const side = Math.round(Math.min(Math.max(u.w, u.h) * 1.06, sset.width, sset.height));
+        const left = Math.round(Math.min(Math.max(0, u.x + u.w / 2 - side / 2), sset.width - side));
+        const top = Math.round(Math.min(Math.max(0, u.y + u.h / 2 - side / 2), sset.height - side));
+        const png = await sharp(all).extract({ left, top, width: side, height: side }).resize(480, 480).webp({ quality: 86, alphaQuality: 90 }).toBuffer();
+        return (await saveCharRaw(src.p.user_id ?? s.user.id, src.p.id, "thumb", png, "image/webp")).url;
+      })().catch((e: Error) => {
+        console.warn("[ct] option thumb", e.message);
+        return undefined;
+      });
+      madeThumbs.set(key, made);
+      return made;
+    };
     /** A slot's groups: shape slots with colours → one group per colour (options = shapes); otherwise one group. */
     const slotGroups = new Map<string, Promise<Array<{ name: string; sub: CtAsset | null }>>>();
     const groupsOf = (slot: CtCharLayerSlot, label: string) => {
@@ -744,7 +805,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
           for (const f of g.files) {
             const swatch = swatchOf(sb, slot.key, f.option, f.color);
             const whole = thumbOf(f);
-            const thumb = thumbPictureOf(slot, f) ?? (whole ? whole.viewUrl || whole.url : undefined);
+            const thumb = thumbPictureOf(slot, f) ?? (await drawnThumbOf(slot, f)) ?? (whole ? whole.viewUrl || whole.url : undefined);
             const a = await clipart(await cleanKey(await pieceOf(slot, f.url), false), [label, f.option, f.color].filter(Boolean).join(" · "), sub?.id ?? null, { charLayerId: f.imageId, ...(swatch ? { swatch } : {}), ...(thumb ? { thumb } : {}) });
             sub ??= a;
           }
@@ -1010,9 +1071,10 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       const coloured = sl.files.some((f) => f.color !== "");
       const w = who(sb, sl.key);
       const part = w.part.replace(/\s*(style|kiểu)$/i, "").trim() || w.part;
-      // A face's expression is picked by its name (its file alone is only eyes and a mouth).
-      const face = slot ? isFace(slot.part) : false;
-      // The styles are picked by their picture (a back half's full clipart — meta.thumb), the colour by its swatch.
+      // A face's expression is picked by its picture too: the character drawn with it (meta.thumb, its file alone is only
+      // eyes and a mouth); by its name only when the set has no plan pictures to make that from.
+      const face = slot ? isFace(slot.part) && !v.src.p.cut?.plan : false;
+      // The styles are picked by their picture (the character drawn in it — meta.thumb), the colour by its swatch.
       regionOf.set(sl.key, imageRegion(sl.label, labelFor(sl), { display: face ? "button" : "image", allowNone: optional, defaultNone: optional, groupLabel: !many ? `${cap(part)} Colour` : `${w.name} — ${part} Colour`, groupDisplay: coloured ? "swatch" : "button" }));
     }
     for (const sl of backs) {

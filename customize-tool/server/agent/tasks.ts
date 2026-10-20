@@ -300,8 +300,19 @@ export async function listAgentTasks(s: CtSession, kind: string | null, collecti
   else q = q.eq("user_id", s.user.id);
   const { data, error } = await q.returns<CtAgentTask[]>();
   if (error) return jsonError(error.message, 500);
+  // A task @flexiprint opened for itself (char_open_task: no agent_ide job of its own) and left "running" kept the set's
+  // chat busy for ever (2026-10-19): closed once it has been quiet for 20 minutes.
+  const now = Date.now();
+  const idle = (data ?? []).filter((t) => t.kind === "char" && t.status === "running" && !t.agent_job_id && now - Date.parse(t.updated_at) > IDLE_SELF_MS);
+  if (idle.length) {
+    const patch = { status: "done" as const, result: { step: "chat" as const, summary: "Task phụ của @flexiprint — tự đóng sau 20 phút không hoạt động.", imageIds: [] }, finished_at: new Date().toISOString() };
+    await s.supabase.from(CT_TABLES.agentTasks).update(patch).in("id", idle.map((t) => t.id));
+    for (const t of idle) Object.assign(t, patch);
+  }
   return NextResponse.json({ tasks: data ?? [] });
 }
+
+const IDLE_SELF_MS = 20 * 60_000;
 
 /** GET ai/agent-tasks/:id */
 export async function getAgentTask(s: CtSession, id: string): Promise<NextResponse> {

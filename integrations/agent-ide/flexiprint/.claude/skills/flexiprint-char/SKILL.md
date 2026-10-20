@@ -69,5 +69,11 @@ Cùng một phiên từ đầu tới cuối; người dùng theo dõi trên tran
 7. Xong: gửi link bộ + link sản phẩm (`list_product_options` có editor url) + vài mockup, nói cái gì còn đáng xem lại.
    `submit_result` task đang mở. Người dùng muốn sửa thì `char_open_task` (hoặc dùng tiếp task cũ nếu còn mở).
 
+## Đừng
+- Kết thúc lượt khi server còn đang chạy (cắt, dựng sản phẩm): gọi `char_status` / `char_wait` lặp lại tới khi xong
+  — lượt kết thúc mà chưa `submit_result` là task **failed**.
+- Tự mở task phụ (`char_open_task`) cho bộ đang có task: dùng `set_id` + `char_versions`; id sản phẩm có trong
+  `char_status` — đừng hỏi người dùng thứ tự tra được.
+
 ## Lỗi của hệ thống
 Tool trả lỗi lạ, sản phẩm sai do code (không phải do ảnh) → skill `flexiprint-dev`: sửa code, deploy, làm tiếp.

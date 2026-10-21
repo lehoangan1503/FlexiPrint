@@ -1170,7 +1170,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
           // circle too big to see).
           const bb = brim.box;
           const b = { x: hit.box.x + bb.x * hit.k, y: hit.box.y + bb.y * hit.k, w: bb.w * hit.k, h: bb.h * hit.k };
-          at = { id: t.id, box: b, fontSize: Math.round(b.h * 0.75), curve: brim.up ? 1 : -1, align: "center", arcRadius: brim.radius ? brim.radius / bb.w : 1000, arcTilt: Math.round(brim.tilt * 10) / 10 };
+          at = { id: t.id, box: b, fontSize: Math.round(b.h * 0.88), curve: brim.up ? 1 : -1, align: "center", arcRadius: brim.radius ? brim.radius / bb.w : 1000, arcTilt: Math.round(brim.tilt * 10) / 10 };
         } else if (t.place === "on" && onSb && t.box) {
           // Shares of that character's own box (a name on a character without a hat).
           const b = fromShares(onSb, t.box);

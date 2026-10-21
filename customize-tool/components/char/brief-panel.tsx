@@ -23,7 +23,7 @@ const KIND_LABEL: Record<CtCharBrief["kind"], string> = { character: "Bộ nhân
 
 /** What the editor writes in the chat for a new set (shown while the brief is empty). */
 const EXAMPLE =
-  "Làm ornament acrylic cắt viền giống ảnh mẫu: bà ở giữa, 1–4 cháu hai bên, chống cằm lên biển gỗ \"This Grandma Belongs To\" (biển chỉ 1/4 chiều cao). Mỗi số cháu vẽ một ảnh riêng. 3 theme Giáng sinh / Halloween / Phục sinh đổi nón, áo, biển. Cháu: 2 kiểu tóc nam, 2 kiểu tóc nữ; bà 2 kiểu tóc; mỗi kiểu 3 màu; 3 biểu cảm cho mọi người. Tên mỗi người trên vành nón.";
+  "Làm ornament acrylic cắt viền giống ảnh mẫu: bà ở giữa, 1–4 cháu hai bên, chống cằm lên biển gỗ \"This Grandma Belongs To\" (biển chỉ 1/4 chiều cao). Mỗi nhân vật vẽ riêng theo dáng (cháu bên phải lật gương), rồi ghép thành bản 1–4 cháu. 3 theme Giáng sinh / Halloween / Phục sinh đổi nón, áo, biển. Cháu: 2 kiểu tóc nam, 2 kiểu tóc nữ; bà 2 kiểu tóc; mỗi kiểu 3 màu; 3 biểu cảm cho mọi người. Tên mỗi người trên vành nón.";
 
 export function BriefPanel(ctx: CharCtx) {
   const { project, images } = ctx;

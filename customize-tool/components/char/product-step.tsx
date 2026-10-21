@@ -43,11 +43,14 @@ export function ProductStep(ctx: CharCtx) {
   }, [loadBundles]);
 
   // The phôi / khuôn and the backgrounds do not need the cut: they are made here any time.
+  // A set drawn pose by pose has no files of its own: its product is built from the poses' files.
   const waiting =
-    project.brief.kind === "photo"
+    project.brief.kind === "photo" || project.brief.poses?.length
       ? project.product_ids.length
         ? null
-        : "@flexiprint đang vẽ phần tử — sản phẩm sẽ hiện ở đây."
+        : project.brief.poses?.length
+          ? "@flexiprint đang cắt từng dáng — sản phẩm được ghép từ các dáng, sẽ hiện ở đây."
+          : "@flexiprint đang vẽ phần tử — sản phẩm sẽ hiện ở đây."
       : project.layers?.status !== "done" || !project.layers.approved
         ? "@flexiprint đang làm bước 3 — sản phẩm được dựng từ bộ clipart, sẽ hiện ở đây."
         : null;

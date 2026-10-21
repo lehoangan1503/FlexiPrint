@@ -18,6 +18,7 @@ import { CT_CONFIG, CT_TABLES } from "../config";
 import type { CtPackImage } from "../types";
 import { fileStem, IMAGE_EXT } from "../lib/file-name";
 import { str } from "./ai/llm";
+import http from "node:http";
 import https from "node:https";
 import sharp from "sharp";
 import { readImageInfo } from "./image-size";
@@ -122,12 +123,12 @@ function cpaSize(aspect: string): { size: string; ratio: number } {
 }
 
 /**
- * A POST that may wait long for its answer (cpa takes ~3 min for a high-quality edit, 2026-10-21): node:https, since
+ * A POST that may wait long for its answer (cpa takes ~3 min for a high-quality edit, 2026-10-21): node:http(s), since
  * the global fetch gives up after 300 s without response headers (UND_ERR_HEADERS_TIMEOUT) whatever its signal says.
  */
 function postLong(url: string, headers: Record<string, string>, body: string, ms: number): Promise<Response> {
   return new Promise((resolve, reject) => {
-    const req = https.request(url, { method: "POST", headers: { ...headers, "Content-Length": String(Buffer.byteLength(body)) } }, (res) => {
+    const req = (url.startsWith("http:") ? http : https).request(url, { method: "POST", headers: { ...headers, "Content-Length": String(Buffer.byteLength(body)) } }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => resolve(new Response(Buffer.concat(chunks), { status: res.statusCode ?? 500, headers: { "content-type": String(res.headers["content-type"] ?? "application/json") } })));

@@ -18,6 +18,7 @@ import { CT_CONFIG, CT_TABLES } from "../config";
 import type { CtPackImage } from "../types";
 import { fileStem, IMAGE_EXT } from "../lib/file-name";
 import { str } from "./ai/llm";
+import https from "node:https";
 import sharp from "sharp";
 import { readImageInfo } from "./image-size";
 import type { CtSession } from "./supabase";
@@ -120,6 +121,24 @@ function cpaSize(aspect: string): { size: string; ratio: number } {
   return { size: ratio === 1 ? "1024x1024" : ratio > 1 ? "1536x1024" : "1024x1536", ratio };
 }
 
+/**
+ * A POST that may wait long for its answer (cpa takes ~3 min for a high-quality edit, 2026-10-21): node:https, since
+ * the global fetch gives up after 300 s without response headers (UND_ERR_HEADERS_TIMEOUT) whatever its signal says.
+ */
+function postLong(url: string, headers: Record<string, string>, body: string, ms: number): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, { method: "POST", headers: { ...headers, "Content-Length": String(Buffer.byteLength(body)) } }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () => resolve(new Response(Buffer.concat(chunks), { status: res.statusCode ?? 500, headers: { "content-type": String(res.headers["content-type"] ?? "application/json") } })));
+      res.on("error", reject);
+    });
+    req.setTimeout(ms, () => req.destroy(Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" })));
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
 /** The company image API (OpenAI-compatible, like services/comfy providers._cpa): references go as data URIs. */
 async function drawCpa(model: string, prompt: string, refs: string[], aspect: string, fit: "crop" | "pad" = "crop", transparent = false): Promise<{ data: Buffer; mime: string }> {
   const key = process.env.CPA_API_KEY;
@@ -147,7 +166,7 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
   let res: Response | null = null;
   for (let attempt = 0; ; attempt++) {
     try {
-      res = await fetch(`${base}/images/${images.length ? "edits" : "generations"}`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(420_000) });
+      res = await postLong(`${base}/images/${images.length ? "edits" : "generations"}`, { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body, 420_000);
       if ((res.status === 524 || res.status === 502 || res.status === 503) && attempt < 3) throw new Error(`cpa ${res.status}`);
       break;
     } catch (e) {

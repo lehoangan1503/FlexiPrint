@@ -20,11 +20,17 @@ export interface CtCharVersion {
   subjects: number[];
 }
 
-/** A subject's customer name: its own, else the first words of its description. */
+/** A subject's customer name: its own, else what the brief calls it elsewhere — its chooser ("Grandchild 1"), its name
+ * field ("Grandma's name" → "Grandma") — else the first words of its description (2026-10-21: a brief without names
+ * put "A cute grandchild with a gender-neutral small child…" on every layer the customer sees). */
 export function subjectName(brief: CtCharBrief, i: number): string {
   const sub = brief.subjects[i];
   if (!sub) return "Character";
   if (sub.name?.trim()) return sub.name.trim();
+  const chooser = brief.choosers?.find((c) => c.subject === sub.id)?.label.trim();
+  if (chooser) return chooser;
+  const field = brief.texts.find((t) => t.subject === sub.id && (t.place === "on" || t.place === "under"))?.label.replace(/[’']s\s+name$|\s+name$/i, "").trim();
+  if (field) return field;
   const x = sub.description.split(/[,.;]/)[0].trim();
   return x ? x[0].toUpperCase() + x.slice(1) : `Character ${i + 1}`;
 }

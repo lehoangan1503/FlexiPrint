@@ -134,6 +134,8 @@ function who(brief: CtCharBrief, slotKey: string): { name: string; part: string 
     const slot = sub.slots.find((s) => s.id === id);
     if (!slot) continue;
     if (sub.name?.trim()) return { name: sub.name.trim(), part: slot.part };
+    // No name: what the brief calls it elsewhere (its chooser, its name field).
+    if (subjectName(brief, i) !== short(sub.description)) return { name: subjectName(brief, i), part: slot.part };
     const name = short(sub.description);
     const same = brief.subjects.filter((x) => short(x.description) === name);
     if (same.length < 2) return { name, part: slot.part };

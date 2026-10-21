@@ -72,6 +72,46 @@ export async function frontMockup(blank: Buffer, print: Buffer, box: CtProductSc
 
 // ---- a die-cut acrylic piece: its phôi IS its outline --------------------------------------------------------
 
+/** Every mockup of a product is one square picture of this side (asked 2026-10-22: "tất cả mockup tạo ra đều phải tuân
+ * thủ cùng 1 tỉ lệ width height ảnh, không tạo ngẫu nhiên") — the AI scenes are asked square too (gpt-image draws a
+ * square as asked: nothing is cropped off). */
+export const MOCKUP_SIDE = 2048;
+export const MOCKUP_ASPECT = "1:1";
+
+/** The visible pixels of a print (its sheet's transparent margin cut off). */
+async function inkOnly(png: Buffer): Promise<Buffer> {
+  const { data, info } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
+  let x0 = info.width;
+  let y0 = info.height;
+  let x1 = -1;
+  let y1 = -1;
+  for (let y = 0; y < info.height; y++)
+    for (let x = 0; x < info.width; x++)
+      if (data[y * info.width + x] > 8) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+  if (x1 < 0) return png;
+  return sharp(png).extract({ left: x0, top: y0, width: x1 - x0 + 1, height: y1 - y0 + 1 }).png().toBuffer();
+}
+
+/** A picture as a MOCKUP_SIDE square: a square one resized; another one centred on its own corner colour (the piece
+ * whole, nothing cropped). */
+async function squared(jpegOrPng: Buffer): Promise<Buffer> {
+  const m = await sharp(jpegOrPng).metadata();
+  const W = m.width ?? MOCKUP_SIDE;
+  const H = m.height ?? MOCKUP_SIDE;
+  if (W !== H) {
+    const { data } = await sharp(jpegOrPng).removeAlpha().extract({ left: 0, top: 0, width: 1, height: 1 }).raw().toBuffer({ resolveWithObject: true });
+    const side = Math.max(W, H);
+    const background = { r: data[0], g: data[1], b: data[2] };
+    jpegOrPng = await sharp(jpegOrPng).removeAlpha().extend({ left: Math.floor((side - W) / 2), right: Math.ceil((side - W) / 2), top: Math.floor((side - H) / 2), bottom: Math.ceil((side - H) / 2), background }).png().toBuffer();
+  }
+  return sharp(jpegOrPng).resize(MOCKUP_SIDE, MOCKUP_SIDE, { kernel: "lanczos3" }).removeAlpha().jpeg({ quality: 92 }).toBuffer();
+}
+
 /** A mask grown by r px (blur, then any trace counts — sharp thresholds before it blurs, so by hand). */
 async function grow(mask: Buffer, w: number, h: number, r: number): Promise<Buffer> {
   // One band out (sharp hands a blurred single band back as three otherwise).
@@ -86,15 +126,19 @@ async function grow(mask: Buffer, w: number, h: number, r: number): Promise<Buff
  * artwork's own outline): the print on a clear plate cut `borderPx` around it, a round clear tab at the top centre
  * with the hanging hole, the plate's edge catching the light, on a soft light backdrop. The AI scenes start from it.
  */
-export async function acrylicFront(print: Buffer, borderPx: number): Promise<Buffer> {
+export async function acrylicFront(sheet: Buffer, borderPx: number): Promise<Buffer> {
+  // The artwork alone (the sheet's empty margin made the piece small in its photo, 2026-10-22), in the middle of a
+  // square: the piece with its tab about three quarters of the width — every mockup of a product the same size.
+  const print = await inkOnly(sheet);
   const m = await sharp(print).metadata();
   const pw = m.width ?? 1024;
   const ph = m.height ?? 1024;
   const tabR = Math.round(Math.max(pw, ph) * 0.055);
-  const pad = Math.round(Math.max(pw, ph) * 0.12) + tabR * 2;
-  const W = pw + 2 * pad;
-  const H = ph + 2 * pad;
-  const art = await sharp(print).ensureAlpha().extend({ top: pad, bottom: pad, left: pad, right: pad, background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+  const W = Math.round(Math.max((pw + 2 * borderPx) / 0.76, (ph + 2 * borderPx + tabR * 3) / 0.7));
+  const H = W;
+  const ax = Math.round((W - pw) / 2);
+  const ay = Math.round((H - ph + tabR * 1.5) / 2);
+  const art = await sharp(print).ensureAlpha().extend({ top: ay, bottom: H - ph - ay, left: ax, right: W - pw - ax, background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
   const alpha = await sharp(art).extractChannel(3).raw().toBuffer();
   const ink = Buffer.alloc(W * H);
   for (let i = 0; i < W * H; i++) ink[i] = alpha[i] > 24 ? 255 : 0;
@@ -469,6 +513,7 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
     const pad = Math.round(Math.max(m.width ?? 0, m.height ?? 0) * 0.08);
     front = await sharp(print).flatten({ background: "#ffffff" }).extend({ top: pad, bottom: pad, left: pad, right: pad, background: "#ffffff" }).jpeg({ quality: 92 }).toBuffer();
   }
+  front = await squared(front);
   const frontAsset = await toProduct(front, label ? `mockup_front_${label.replace(/[^\w]+/g, "_").slice(0, 40)}` : "mockup_front");
   const meta = await sharp(front).metadata();
   const db = ctServiceClient() ?? s.supabase;
@@ -478,9 +523,8 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
     .select("*")
     .single<CtPackImage>();
 
-  // A wide piece (a 120 × 40 cm runner rug) in a wide photo: in a 4:5 one its ends were cut off (2026-10-18).
-  const fm = await sharp(front).metadata();
-  const sceneAspect = (fm.width ?? 1) / (fm.height ?? 1) > 1.6 ? "3:2" : "4:5";
+  // One square for every scene (a 4:5 one was drawn 2:3 and cropped — the ornament's ends were cut off, 2026-10-22).
+  const sceneAspect = MOCKUP_ASPECT;
   const want = scenes.length ? scenes : [`on a bright minimal surface with soft daylight and a few props that suit a ${piece}`];
   const model = CT_IMAGE_MODEL;
   const rows: CtPackImage[] = [];
@@ -489,7 +533,7 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
     ? `${config.material.id === "acrylic_white" ? "white-backed" : "clear"} acrylic ornament, die-cut along the artwork's outline with a thin clear border, a small round clear tab with a hole at the top centre, hung by a gold cord through that hole`
     : piece;
   for (const sc of want) {
-    const prompt = `Lifestyle product photo of this exact ${what} ${sc}. The product is shown as a real physical object in a fitting, beautiful setting (the finished product with any hanger, ribbon or stand it would really have).${sceneAspect === "3:2" ? " The whole product is in the picture, both ends visible." : ""}${dieCut ? " The acrylic is glossy and see-through where nothing is printed, its cut edge catching the light." : ""}${KEEP_PRINT}`;
+    const prompt = `Square lifestyle product photo of this exact ${what} ${sc}. The product is shown as a real physical object in a fitting, beautiful setting (the finished product with any hanger, ribbon or stand it would really have). The WHOLE product is in the picture, centred and big — about 70 % of the picture's width — with clear empty space between it and all four edges of the picture: no part of it (its ends, its edges, its tab) is cut off or touches the frame.${dieCut ? " The acrylic is glossy and see-through where nothing is printed, its cut edge catching the light." : ""}${KEEP_PRINT}`;
     const { data: row } = await db
       .from(CT_TABLES.packImages)
       .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: sc, prompt, refs: [frontAsset.url], aspect: sceneAspect, model })
@@ -503,7 +547,7 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const out = await drawImage(model, row.prompt, [frontAsset.url], sceneAspect, "crop");
-          const jpeg = await sharp(out.data).flatten({ background: "#ffffff" }).jpeg({ quality: 90 }).toBuffer();
+          const jpeg = await squared(await sharp(out.data).flatten({ background: "#ffffff" }).png().toBuffer());
           const asset = await toProduct(jpeg, `mockup_${row.description.split(/\s+/).slice(0, 4).join("_")}`);
           const m = await sharp(jpeg).metadata();
           await db.from(CT_TABLES.packImages).update({ status: "done", url: asset.url, mime: "image/jpeg", width: m.width ?? null, height: m.height ?? null, error: "" }).eq("id", row.id);

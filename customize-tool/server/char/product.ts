@@ -45,6 +45,7 @@ import { AI_BLANK_ROLE, projectBlank } from "./blank";
 import { buildPhotoProduct, trimmed, type KeptZone } from "./photo-product";
 import { CT_FACE_STYLES } from "../../lib/photo-styles";
 import { isFace } from "../../lib/char-plan";
+import { brimArc, splitHeadwear, type CtBrimArc } from "./brim";
 
 /** A personalised text of the brief as a text layer in its box (lib/char-layout). Over a patterned background the
  * letters get a light halo so they read. */
@@ -78,6 +79,7 @@ export function textRegion(productId: string, mainId: string, t: CtCharTextField
         ...(onPattern ? { strokeColor: "#fffaf0", strokeWidth: Math.max(2, Math.round(at.fontSize * (t.kind === "choice" ? 0.16 : 0.12))) } : {}),
         align: at.align,
         curve: at.curve || t.curve || 0,
+        ...(at.arcRadius ? { arcRadius: at.arcRadius, arcTilt: at.arcTilt ?? 0 } : {}),
         uppercase: t.uppercase === true,
       },
     },
@@ -347,69 +349,6 @@ export async function cleanKey(png: Buffer, body: boolean): Promise<Buffer> {
 }
 
 /** [x, y, w, h] of the visible pixels. */
-/** A hat's brim / cuff on its file (canvas coordinates): in its lower part, the band of rows whose solid run through
- * the hat's middle is the longest — the Santa hat's cuff, a witch hat's band, a beanie's fold. Measured through the
- * middle so the pom-pom hanging at the side does not count (it pulled the names below the cuff, 2026-10-19). Asked
- * 2026-10-19: names on the hats, no box in the brief. */
-async function brimBox(png: Buffer): Promise<CtLayoutBox | null> {
-  const { data, info } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
-  const W = info.width;
-  const solid = (x: number, y: number) => data[y * W + x] > 128;
-  let top = -1;
-  let bottom = -1;
-  let left = W;
-  let right = -1;
-  for (let y = 0; y < info.height; y++)
-    for (let x = 0; x < W; x++)
-      if (solid(x, y)) {
-        if (top < 0) top = y;
-        bottom = y;
-        left = Math.min(left, x);
-        right = Math.max(right, x);
-      }
-  if (top < 0) return null;
-  const h = bottom - top + 1;
-  const mid = Math.round((left + right) / 2);
-  // The solid run through the middle column of a row (none when the middle is clear).
-  const run = (y: number): [number, number] | null => {
-    if (!solid(mid, y)) return null;
-    let a = mid;
-    let b = mid;
-    while (a > 0 && solid(a - 1, y)) a--;
-    while (b < W - 1 && solid(b + 1, y)) b++;
-    return [a, b];
-  };
-  const len = (y: number) => {
-    const r = run(y);
-    return r ? r[1] - r[0] + 1 : 0;
-  };
-  let best = -1;
-  for (let y = top + Math.floor(h * 0.4); y <= bottom; y++) if (best < 0 || len(y) > len(best)) best = y;
-  if (best < 0 || len(best) === 0) return null;
-  const wide = len(best) * 0.85;
-  let y0 = best;
-  let y1 = best;
-  while (y0 > top && len(y0 - 1) >= wide) y0--;
-  while (y1 < bottom && len(y1 + 1) >= wide) y1++;
-  // A thin band still gets a readable line (≥ 14 % of the hat).
-  const need = Math.round(h * 0.14) - (y1 - y0 + 1);
-  if (need > 0) {
-    y0 = Math.max(top, y0 - Math.ceil(need / 2));
-    y1 = Math.min(bottom, y1 + Math.floor(need / 2));
-  }
-  let x0 = Infinity;
-  let x1 = -Infinity;
-  for (let y = y0; y <= y1; y++) {
-    const r = run(y);
-    if (r) {
-      x0 = Math.min(x0, r[0]);
-      x1 = Math.max(x1, r[1]);
-    }
-  }
-  const inset = (x1 - x0) * 0.1;
-  return { x: x0 + inset, y: y0, w: x1 - x0 - 2 * inset, h: y1 - y0 + 1 };
-}
-
 /** Only the big connected pieces of a picture (≥ 5 % of the biggest): specks and slivers apart from it go. */
 async function mainPieces(png: Buffer): Promise<Buffer> {
   const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -494,53 +433,6 @@ export async function seamlessTile(raw: Buffer, across = false): Promise<Buffer>
     .toBuffer();
 }
 
-/** The pieces of an outfit file (alpha components): the headwear = the piece with the topmost pixel and every piece
- * that starts above its bottom (a pom-pom apart from the hat); the rest is the top (a sweater). The face lies between
- * them, so they never touch (asked 2026-10-19: the hats lie over the hair, the sweaters under it). */
-async function splitHeadwear(png: Buffer): Promise<{ hat: Buffer; rest: Buffer }> {
-  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const W = info.width;
-  const H = info.height;
-  const n = W * H;
-  const label = new Int32Array(n).fill(-1);
-  const comps: Array<{ minY: number; maxY: number; count: number }> = [];
-  const stack = new Int32Array(n);
-  for (let i = 0; i < n; i++) {
-    if (label[i] >= 0 || data[i * 4 + 3] <= 8) continue;
-    const id = comps.length;
-    const c = { minY: H, maxY: -1, count: 0 };
-    let top = 0;
-    stack[top++] = i;
-    label[i] = id;
-    while (top) {
-      const j = stack[--top];
-      const x = j % W;
-      const y = (j - x) / W;
-      c.count++;
-      if (y < c.minY) c.minY = y;
-      if (y > c.maxY) c.maxY = y;
-      const near = [x > 0 ? j - 1 : -1, x < W - 1 ? j + 1 : -1, y > 0 ? j - W : -1, y < H - 1 ? j + W : -1];
-      for (const k of near)
-        if (k >= 0 && label[k] < 0 && data[k * 4 + 3] > 8) {
-          label[k] = id;
-          stack[top++] = k;
-        }
-    }
-    comps.push(c);
-  }
-  const big = comps.map((c, i) => ({ ...c, i })).filter((c) => c.count >= 200);
-  const first = big.sort((a, b) => a.minY - b.minY)[0];
-  const isHat = new Set(first ? big.filter((c) => c.minY < first.maxY && c.maxY <= first.maxY + (first.maxY - first.minY) * 0.25).map((c) => c.i) : []);
-  const hat = Buffer.alloc(n * 4);
-  const rest = Buffer.alloc(n * 4);
-  for (let i = 0; i < n; i++) {
-    if (!data[i * 4 + 3]) continue;
-    data.copy(isHat.has(label[i]) ? hat : rest, i * 4, i * 4, i * 4 + 4);
-  }
-  const out = (b: Buffer) => sharp(b, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer();
-  return { hat: await out(hat), rest: await out(rest) };
-}
-
 /**
  * A plank sign stretched to `aspect` (w / h) the way a real one is made longer: its decorated ends kept as drawn, the
  * plain middle (the columns where nothing rises above the plank's top edge) mirrored and repeated — one sign picture
@@ -591,8 +483,9 @@ async function stretchPlank(png: Buffer, aspect: number): Promise<Buffer> {
 }
 
 /** The sign in front of the characters (element place "plaque"), shares of the characters' crop: its top a little
- * over their cut-off bottom (the forearms rest on it), a quarter of the piece's height, a little wider than them. */
-const PLAQUE = { top: 0.93, h: 0.31, w: 1.06 };
+ * over their cut-off bottom (the forearms rest on it), a little over a quarter of the piece's height, a little wider
+ * than them (asked 2026-10-22: "gỗ cao hơn 1 tí và chiều rộng ngắn lại"). */
+const PLAQUE = { top: 0.93, h: 0.36, w: 1.03 };
 /** The lettering on the sign: the plain middle, between the decorated ends. */
 const PLAQUE_TEXT = { x: 0.2, y: 0.22, w: 0.6, h: 0.52 };
 
@@ -931,9 +824,10 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       clipart(png, split ? `Body · ${subjectName(sb, i)}` : solo !== undefined ? `Body · ${subjectName(sb, solo)}` : drawn ? `Body · ${src.p.brief.versionOf?.name ?? named[named.length - 1].name}` : "Body", null, bodySlot?.files[0] ? { charLayerId: bodySlot.files[0].imageId } : {}),
     );
 
-    // A name "on" a character with no box of its own sits on that character's hat brim (its first hat file).
-    const brims = new Map<number, CtLayoutBox | null>();
-    for (const t of brief.texts.filter((x) => x.place === "on" && !x.box)) {
+    // A name "on" a character sits on that character's hat brim (its first hat file), following its curve — a box the
+    // brief gives is only used without a hat (a guessed box put the names off the brims, 2026-10-22).
+    const brims = new Map<number, CtBrimArc | null>();
+    for (const t of brief.texts.filter((x) => x.place === "on")) {
       const i = sb.subjects.findIndex((x) => x.id === t.subject);
       if (i < 0 || brims.has(i) || (solo !== undefined && i !== solo)) continue;
       const hatSlot = sb.subjects[i].slots.find((sl) => sl.headwear) ?? sb.subjects[i].slots.find((sl) => HAT.test(sl.part));
@@ -941,7 +835,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       // The default option's hat (the files come in any order: the witch hat's brim put the names over the Santa hats).
       const first = hatSlot?.options[0]?.name;
       const file = sl?.files.find((f) => f.option === first && (f.color === "" || f.color === hatSlot?.colors[0]?.name)) ?? sl?.files[0];
-      brims.set(i, file ? await brimBox(hatSlot?.headwear ? (await splitHeadwear(await bytes(file.url))).hat : await bytes(file.url)) : null);
+      brims.set(i, file ? await brimArc(hatSlot?.headwear ? (await splitHeadwear(await bytes(file.url))).hat : await bytes(file.url)) : null);
     }
     return { src, sb, sset, slotOf, slotSubject, subjectBox, cropOf, slots, hatSlots, groupsOf, bodies, bodyCliparts, brims };
   }
@@ -1256,6 +1150,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       }
     }
     // Texts above everything: around the characters, under each of them, on the sign, or in their own box.
+    const onBrims: CtRegion[] = [];
     for (const t of brief.texts) {
       let at = layout.texts.find((x) => x.id === t.id);
       if (t.place === "free" && t.box) {
@@ -1269,14 +1164,17 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         const hit = parts.map((x) => ({ ...x, i: x.P.sb.subjects.findIndex((y) => y.id === t.subject) })).find((x) => x.i >= 0 && x.pt.subjects.includes(x.i));
         const sbx = hit ? hit.P.subjectBox(hit.i) : null;
         const onSb = hit && sbx ? { x: hit.box.x + sbx.x * hit.k, y: hit.box.y + sbx.y * hit.k, w: sbx.w * hit.k, h: sbx.h * hit.k } : null;
-        const brim = hit && t.place === "on" && !t.box && onSb ? hit.P.brims.get(hit.i) : null;
-        if (t.place === "on" && onSb && t.box) {
-          // Shares of that character's own box (a name on the hat's brim).
+        const brim = hit && t.place === "on" && onSb ? hit.P.brims.get(hit.i) : null;
+        if (hit && brim) {
+          // Centred on the band, as tall as it, the letters on the band's own circle and tilt (a nearly flat band: a
+          // circle too big to see).
+          const bb = brim.box;
+          const b = { x: hit.box.x + bb.x * hit.k, y: hit.box.y + bb.y * hit.k, w: bb.w * hit.k, h: bb.h * hit.k };
+          at = { id: t.id, box: b, fontSize: Math.round(b.h * 0.75), curve: brim.up ? 1 : -1, align: "center", arcRadius: brim.radius ? brim.radius / bb.w : 1000, arcTilt: Math.round(brim.tilt * 10) / 10 };
+        } else if (t.place === "on" && onSb && t.box) {
+          // Shares of that character's own box (a name on a character without a hat).
           const b = fromShares(onSb, t.box);
           at = { id: t.id, box: b, fontSize: Math.round(b.h * 0.78), curve: t.curve ?? 0, align: "center" };
-        } else if (hit && brim) {
-          const b = { x: hit.box.x + brim.x * hit.k, y: hit.box.y + brim.y * hit.k, w: brim.w * hit.k, h: brim.h * hit.k };
-          at = { id: t.id, box: b, fontSize: Math.round(b.h * 0.72), curve: t.curve ?? 0, align: "center" };
         } else at = onSb && t.place === "under" ? underText(t, onSb, area, D) : undefined;
       }
       if (at) {
@@ -1284,8 +1182,16 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         // A name on a hat and the line on the sign get the light halo too: the theme changes what is under them (dark red on
         // a black witch hat / dark Halloween wood could not be read, 2026-10-20).
         const r = textRegion(product.id, mainId, t, at, backdrops.length > 0 || t.place === "on" || t.place === "plaque", order++);
-        regions.push({ ...r, ...(lineup ? { name: `Chữ — ${t.label} [${v.name}]` } : {}), ...(parent ? { config: { ...r.config, parent } } : {}) });
+        const region = { ...r, ...(lineup ? { name: `Chữ — ${t.label} [${v.name}]` } : {}), ...(parent ? { config: { ...r.config, parent } } : {}) };
+        regions.push(region);
+        if (at.arcRadius) onBrims.push(region);
       }
+    }
+    // Every name on a hat in one size (the smallest band's): the grandma's bigger hat does not make her name louder.
+    const brimFont = Math.min(...onBrims.map((r) => r.config.text.fontSize));
+    for (const r of onBrims) {
+      r.config.text.fontSize = brimFont;
+      r.config.text.strokeWidth = Math.max(2, Math.round(brimFont * 0.12));
     }
   }
   await Promise.all(fills);

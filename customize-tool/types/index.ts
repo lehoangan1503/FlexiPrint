@@ -128,6 +128,12 @@ export interface CtTextConfig {
   letterSpacing: number;
   /** -100..100 — bends the baseline into an arc; 0 = straight. */
   curve: number;
+  /** With a curve: the arc's radius as a share of the zone's width — the letters follow THAT circle whatever the text's
+   * length (a name on a hat's brim follows the brim, server/char/product.ts brimArc); only the sign of `curve` counts
+   * then. Absent: the radius follows the text (|curve| = the sweep, 100 = half a circle). */
+  arcRadius?: number;
+  /** With a curve: the arc turned by this many degrees (clockwise) about the zone's centre — a brim on a tilted head. */
+  arcTilt?: number;
   uppercase: boolean;
   /** Preset texts (mode "list"): the customer picks one from a dropdown. */
   choices: string[];

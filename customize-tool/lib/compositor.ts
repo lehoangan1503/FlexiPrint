@@ -362,7 +362,8 @@ export function drawText(
   };
   setFont();
   const spacing = () => (cfg.letterSpacing * size) / 100;
-  const arcFactor = cfg.curve === 0 ? 1 : 1 + Math.abs(cfg.curve) / 400;
+  // A fixed circle (arcRadius): the chord is shorter than the text, the width test on the text itself is enough.
+  const arcFactor = cfg.curve === 0 || cfg.arcRadius ? 1 : 1 + Math.abs(cfg.curve) / 400;
   while (size > 6 && measureSpaced(ctx, text, spacing()) * arcFactor > bounds.w) {
     size -= 1;
     setFont();
@@ -394,12 +395,15 @@ export function drawText(
   }
 
   // Arc: positive curve bows upward (∩), negative downward (∪). The arc
-  // spans up to 180° at |curve| = 100; the radius follows from the text length.
-  const sweep = (Math.abs(cfg.curve) / 100) * Math.PI;
-  const radius = total / sweep;
+  // spans up to 180° at |curve| = 100; the radius follows from the text length — or is arcRadius × the zone's width.
+  const radius = cfg.arcRadius ? cfg.arcRadius * bounds.w : total / ((Math.abs(cfg.curve) / 100) * Math.PI);
+  const sweep = total / radius;
   const up = cfg.curve > 0;
   const cx = bounds.x + bounds.w / 2;
-  const centerY = up ? cy + radius : cy - radius;
+  // The circle's centre: under (∩) or over (∪) the zone's centre, turned by the tilt.
+  const tilt = ((cfg.arcTilt ?? 0) * Math.PI) / 180;
+  const centerX = up ? cx - radius * Math.sin(tilt) : cx + radius * Math.sin(tilt);
+  const centerY = up ? cy + radius * Math.cos(tilt) : cy - radius * Math.cos(tilt);
   ctx.textAlign = "center";
 
   let travelled = 0;
@@ -409,11 +413,13 @@ export function drawText(
     const theta = (mid / total - 0.5) * sweep;
     ctx.save();
     if (up) {
-      ctx.translate(cx + radius * Math.sin(theta), centerY - radius * Math.cos(theta));
-      ctx.rotate(theta);
+      const a = theta + tilt;
+      ctx.translate(centerX + radius * Math.sin(a), centerY - radius * Math.cos(a));
+      ctx.rotate(a);
     } else {
-      ctx.translate(cx + radius * Math.sin(theta), centerY + radius * Math.cos(theta));
-      ctx.rotate(-theta);
+      const a = theta - tilt;
+      ctx.translate(centerX + radius * Math.sin(a), centerY + radius * Math.cos(a));
+      ctx.rotate(-a);
     }
     paint(ch, 0, 0);
     ctx.restore();

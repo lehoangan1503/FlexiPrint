@@ -32,6 +32,9 @@ export interface CtCharLayoutText {
   /** compositor text curve (-100..100): positive bows up (∩). */
   curve: number;
   align: "left" | "center" | "right";
+  /** A name on a hat's brim: the brim's circle (share of the box's width) and tilt (CtTextConfig arcRadius / arcTilt). */
+  arcRadius?: number;
+  arcTilt?: number;
 }
 
 export interface CtCharLayout {

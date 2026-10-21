@@ -543,7 +543,8 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
                 design.live((s) =>
                   updateRegion(s, region.id, (r) => {
                     const n = normalizeRegion(r);
-                    return { ...n, config: { ...n.config, text: { ...n.config.text, curve: Number(e.target.value) } } };
+                    // Bent by hand: the brim's fixed circle (arcRadius, arcTilt) gives way to the slider.
+                    return { ...n, config: { ...n.config, text: { ...n.config.text, curve: Number(e.target.value), arcRadius: undefined, arcTilt: undefined } } };
                   }),
                 )
               }

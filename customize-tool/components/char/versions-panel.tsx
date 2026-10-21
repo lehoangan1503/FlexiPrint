@@ -4,15 +4,18 @@
  * The versions of a lineup drawn version by version (brief.lineup.drawn, asked 2026-10-19): this set is the biggest
  * version, each smaller one is its own set (server/char/versions.ts) — its own master, doll, 3b pictures and cut. Shown
  * on the parent's steps 2 and 3: each version's masters (the approved one ringed) and how far it is; a click opens it.
+ * A set drawn pose by pose shows each pose WHOLE here (asked 2026-10-22: the parent is the one page of the set): every
+ * master of the pose (zoom, approve) and every clipart file it was cut into.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import type { CtCharVersionCard } from "../../types";
+import { LayerFiles } from "./layer-files";
 import { charVersions } from "../../lib/char-lineup";
 import { charApi } from "../../lib/api-client";
-import { cx } from "../ui";
+import { CHECKER_STYLE, CtButton, CtModal, cx } from "../ui";
 import type { CharCtx } from "./char-project";
 
 function stage(v: CtCharVersionCard): { text: string; busy: boolean; ok: boolean } {
@@ -70,6 +73,12 @@ export function VersionsPanel(ctx: CharCtx) {
       </p>
       {!list ? (
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+      ) : poses.length && list.length ? (
+        <div className="space-y-4">
+          {list.map((v) => (
+            <PoseSet key={v.project.id} ctx={ctx} card={v} who={whoIn(v.project.brief.versionOf?.pose)} onChange={load} />
+          ))}
+        </div>
       ) : !list.length ? (
         <p className="text-xs text-muted-foreground">{poses.length ? "Chưa có dáng nào — nhắn @flexiprint “vẽ các dáng” ở ô chat." : project.master_id ? "Đang tạo các phiên bản…" : "Duyệt master xong, các phiên bản nhỏ hơn được tạo và vẽ ở đây."}</p>
       ) : (
@@ -109,5 +118,77 @@ export function VersionsPanel(ctx: CharCtx) {
         </div>
       )}
     </section>
+  );
+}
+
+/** One pose of the parent, whole: its masters (zoom, approve while none is) and its clipart files once cut. */
+function PoseSet({ ctx, card, who, onChange }: { ctx: CharCtx; card: CtCharVersionCard; who: string; onChange: () => Promise<void> }) {
+  const p = card.project;
+  const st = stage(card);
+  const [zoom, setZoom] = useState<CtCharVersionCard["masters"][number] | null>(null);
+  const approve = async (imageId: string) => {
+    try {
+      await charApi.approve(p.id, imageId);
+      await onChange();
+    } catch (e) {
+      ctx.error(e instanceof Error ? e.message : "Không duyệt được");
+    }
+  };
+  const number = (id: string) => card.masters.findIndex((m) => m.id === id) + 1;
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold">{p.brief.versionOf?.name}</span>
+        <span className="text-xs text-muted-foreground">{who}</span>
+        <span className={cx("flex items-center gap-1 text-xs", st.ok ? "text-emerald-600" : "text-muted-foreground")}>
+          {st.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : st.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+          {st.text}
+        </span>
+        <Link href={`/v2/${p.id}`} className="ml-auto flex items-center gap-1 text-xs text-muted-foreground underline">
+          Trang riêng của dáng <ExternalLink className="h-3 w-3" />
+        </Link>
+      </div>
+      <div className="mt-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Master ({card.masters.length})</div>
+      <div className="mt-1 flex flex-wrap gap-2">
+        {card.masters.length ? (
+          card.masters.map((m) => (
+            <div key={m.id} className={cx("w-40 overflow-hidden rounded-md border", m.id === p.master_id && "ring-2 ring-emerald-500")}>
+              <button className="block aspect-square w-full" style={CHECKER_STYLE} disabled={m.status !== "done"} onClick={() => setZoom(m)}>
+                {m.status === "done" ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- our R2 preview
+                  <img src={m.thumbUrl} alt="" className="h-full w-full object-contain" />
+                ) : m.status === "running" ? (
+                  <Loader2 className="m-auto h-4 w-4 animate-spin text-muted-foreground" />
+                ) : (
+                  <span className="p-2 text-[11px] text-destructive">Lỗi</span>
+                )}
+              </button>
+              <div className="flex items-center gap-1 px-1.5 py-1 text-[11px]">
+                #{number(m.id)}
+                {m.id === p.master_id && <span className="ml-auto rounded bg-emerald-500 px-1 text-[10px] text-white">Đã duyệt</span>}
+                {!p.master_id && ctx.editable && m.status === "done" && (
+                  <CtButton size="sm" variant="primary" className="ml-auto h-6 px-2 text-[11px]" onClick={() => void approve(m.id)}>
+                    Duyệt
+                  </CtButton>
+                )}
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="h-40 w-40 rounded-md border border-dashed" />
+        )}
+      </div>
+      {p.layers?.status === "done" && p.layers.slots.length > 0 && (
+        <div className="mt-3">
+          <LayerFiles set={p.layers} onFix={null} />
+        </div>
+      )}
+      <CtModal open={!!zoom} onOpenChange={(o) => !o && setZoom(null)} title={zoom ? `${p.brief.versionOf?.name} — master #${number(zoom.id)}` : ""} wide>
+        {zoom && (
+          // eslint-disable-next-line @next/next/no-img-element -- the original
+          <img src={zoom.url} alt="master" className="mx-auto max-h-[78vh] w-auto object-contain" style={CHECKER_STYLE} />
+        )}
+      </CtModal>
+    </div>
   );
 }

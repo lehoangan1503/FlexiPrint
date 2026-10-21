@@ -55,7 +55,7 @@ export function textSvg(font: opentype.Font, raw: string, cfg: CtTextConfig, bou
     return Math.max(0, chars.reduce((w, ch) => w + adv(ch, size) + spacing, 0) - spacing);
   };
   let size = Math.min(cfg.fontSize, bounds.h);
-  const arcFactor = cfg.curve === 0 ? 1 : 1 + Math.abs(cfg.curve) / 400;
+  const arcFactor = cfg.curve === 0 || cfg.arcRadius ? 1 : 1 + Math.abs(cfg.curve) / 400;
   while (size > 6 && spaced(size) * arcFactor > bounds.w) size -= 1;
   const spacing = (cfg.letterSpacing * size) / 100;
   const scale = size / font.unitsPerEm;
@@ -78,18 +78,22 @@ export function textSvg(font: opentype.Font, raw: string, cfg: CtTextConfig, bou
     return out.join("");
   }
   // Arc: positive curve bows upward (∩), negative downward (∪); each letter centred on its point of the arc.
-  const sweep = (Math.abs(cfg.curve) / 100) * Math.PI;
-  const radius = total / sweep;
+  const radius = cfg.arcRadius ? cfg.arcRadius * bounds.w : total / ((Math.abs(cfg.curve) / 100) * Math.PI);
+  const sweep = total / radius;
   const up = cfg.curve > 0;
   const cx = bounds.x + bounds.w / 2;
-  const centerY = up ? cy + radius : cy - radius;
+  // The circle's centre: under (∩) or over (∪) the zone's centre, turned by the tilt.
+  const tilt = ((cfg.arcTilt ?? 0) * Math.PI) / 180;
+  const centerX = up ? cx - radius * Math.sin(tilt) : cx + radius * Math.sin(tilt);
+  const centerY = up ? cy + radius * Math.cos(tilt) : cy - radius * Math.cos(tilt);
   let travelled = 0;
   for (const ch of chars) {
     const w = adv(ch, size);
     const theta = ((travelled + w / 2) / total - 0.5) * sweep;
-    const px = cx + radius * Math.sin(theta);
-    const py = up ? centerY - radius * Math.cos(theta) : centerY + radius * Math.cos(theta);
-    const deg = ((up ? theta : -theta) * 180) / Math.PI;
+    const a = up ? theta + tilt : theta - tilt;
+    const px = centerX + radius * Math.sin(a);
+    const py = up ? centerY - radius * Math.cos(a) : centerY + radius * Math.cos(a);
+    const deg = ((up ? a : -a) * 180) / Math.PI;
     out.push(glyph(ch, -w / 2, 0, ` transform="translate(${px.toFixed(2)} ${py.toFixed(2)}) rotate(${deg.toFixed(3)})"`));
     travelled += w + spacing;
   }

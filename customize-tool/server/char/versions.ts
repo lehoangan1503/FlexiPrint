@@ -148,7 +148,7 @@ export async function runVersionChain(db: Db, userId: string, id: string): Promi
       ({ p } = await waitFor(db, id, (x) => x.cut?.matte?.status !== "running", 30));
       if (p.cut?.matte?.status !== "done") throw new Error(`3a: ${p.cut?.matte?.error ?? "lỗi"}`);
     }
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       const images = await loadImages(db, id);
       const { missing, running } = editState(p, images);
       if (!missing.length) break;

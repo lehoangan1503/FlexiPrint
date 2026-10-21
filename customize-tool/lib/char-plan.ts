@@ -104,20 +104,48 @@ export function slotLabel(brief: CtCharBrief, subjectIndex: number, slot: CtChar
   return `${kind} ${subjectIndex + 1} — ${slot.part}`;
 }
 
+/**
+ * What a slot's pictures are shared by: its group — unless one subject has two slots in that group (a boy's and a
+ * girl's hair of one grandchild, 2026-10-21: drawn in one picture they would be one blob): then each slot its own.
+ */
+export function groupKey(brief: CtCharBrief, slot: CtCharSlot): string | null {
+  if (!slot.group) return null;
+  const twice = brief.subjects.some((sub) => sub.slots.filter((x) => x.group === slot.group).length > 1);
+  return twice ? `${slot.group}-${slot.id}` : slot.group;
+}
+
+/** The picture of option `index` of a slot. */
+function roleOf(brief: CtCharBrief, slot: CtCharSlot, index: number): string {
+  const key = groupKey(brief, slot);
+  return key ? groupRole(key, index) : `shape:${slot.id}:${slot.options[index]?.id ?? index}`;
+}
+
+/** The picture a slot is drawn on and cut against (slot.on: a group name, or a slot id — 2026-10-21 the agent wrote
+ * the outfit slot's id): that slot's first picture (of the same subject); null = the doll. */
+export function onRoleOf(brief: CtCharBrief, slot: CtCharSlot): string | null {
+  if (!slot.on) return null;
+  const sub = brief.subjects.find((x) => x.slots.includes(slot));
+  const host = sub?.slots.find((x) => x.id === slot.on) ?? sub?.slots.find((x) => x.group === slot.on && x !== slot) ?? brief.subjects.flatMap((x) => x.slots).find((x) => x.id === slot.on);
+  return host ? roleOf(brief, host, 0) : null;
+}
+
 /** Every option picture drawn on the doll: all options of a shape / texture slot, the first of a colour slot. Options
  * of a group share one picture per position. */
 export function optionPictures(brief: CtCharBrief): CtCharOptionPicture[] {
   if (brief.pictures?.length) return agentOptionPictures(brief);
   return brief.subjects.flatMap((sub, i) =>
-    sub.slots.flatMap((slot) =>
-      (slot.mode === "color" ? slot.options.slice(0, 1) : slot.options).map((o, index) => ({
+    sub.slots.flatMap((slot) => {
+      const key = groupKey(brief, slot);
+      const on = onRoleOf(brief, slot);
+      return (slot.mode === "color" ? slot.options.slice(0, 1) : slot.options).map((o, index) => ({
         slot,
         subject: i,
         index,
-        role: slot.group ? groupRole(slot.group, index) : `shape:${slot.id}:${o.id}`,
-        ...(slot.on ? { against: groupRole(slot.on, 0) } : {}),
-      })),
-    ),
+        role: roleOf(brief, slot, index),
+        ...(key ? { pictureId: `grp.${key}.${index}` } : {}),
+        ...(on ? { against: on } : {}),
+      }));
+    }),
   );
 }
 
@@ -252,7 +280,7 @@ export function planEdits(brief: CtCharBrief): CtCharEditPlan[] {
   const pictures = optionPictures(brief);
   const grouped = new Map<string, CtCharOptionPicture[]>();
   for (const x of pictures) {
-    if (!x.slot.group) continue;
+    if (!groupKey(brief, x.slot)) continue;
     grouped.set(x.role, [...(grouped.get(x.role) ?? []), x]);
   }
   for (const x of pictures) {
@@ -261,17 +289,17 @@ export function planEdits(brief: CtCharBrief): CtCharEditPlan[] {
     if (list) {
       if (list[0] !== x) continue;
       // Drawn on the first picture of the group it sits "on" (hair under the hats), or a restyle of its own first.
-      const source = x.slot.on ? groupRole(x.slot.on, 0) : x.slot.restyle && x.index > 0 ? groupRole(x.slot.group!, 0) : "base";
+      const source = onRoleOf(brief, x.slot) ?? (x.slot.restyle && x.index > 0 ? roleOf(brief, x.slot, 0) : "base");
       const names = [...new Set(list.map((y) => y.slot.options[y.index].name))].join(" / ");
       out.push({ role: x.role, label: `${x.slot.part} — lựa chọn ${x.index + 1} cho mọi người: ${names}`, source, prompt: groupPrompt(brief, list), transparent: true });
       continue;
     }
     const label = `${slotLabel(brief, x.subject, x.slot)}: ${x.slot.mode === "color" ? `${o.name} (màu khác = đổi màu file này)` : o.name}`;
-    out.push({ role: x.role, label, source: x.slot.on ? groupRole(x.slot.on, 0) : "base", prompt: optionPrompt(brief, x.slot, x.subject, x.index), transparent: true });
+    out.push({ role: x.role, label, source: onRoleOf(brief, x.slot) ?? "base", prompt: optionPrompt(brief, x.slot, x.subject, x.index), transparent: true });
   }
   // Thumbnails of the parts a hand partly hides (held items, accessories): drawn from each option's own picture.
   for (const x of optionPictures(brief)) {
-    if (x.slot.mode !== "shape" || x.slot.group || isHair(x.slot.part) || isGarment(x.slot.part) || isWorn(x.slot.part) || isFace(x.slot.part)) continue;
+    if (x.slot.mode !== "shape" || groupKey(brief, x.slot) || isHair(x.slot.part) || isGarment(x.slot.part) || isWorn(x.slot.part) || isFace(x.slot.part)) continue;
     const o = x.slot.options[x.index];
     out.push({
       role: `thumb:${x.slot.id}:${o.id}`,

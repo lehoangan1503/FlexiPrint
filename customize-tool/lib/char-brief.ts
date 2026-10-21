@@ -682,6 +682,8 @@ export function briefProblems(brief: CtCharBrief): string[] {
         out.push(`Nhân vật ${i + 1}: phần "${slot.part}" đổi màu — mỗi màu cần mã #rrggbb.`);
       if (slot.mode === "shape" && slot.colors.some((o) => !/^#[0-9a-f]{6}$/.test(o.value)))
         out.push(`Nhân vật ${i + 1}: màu của "${slot.part}" cần mã #rrggbb.`);
+      if (slot.on && !sub.slots.some((x) => x !== slot && (x.id === slot.on || x.group === slot.on)))
+        out.push(`Nhân vật ${i + 1}: "${slot.part}" vẽ trên "${slot.on}" nhưng nhân vật này không có phần nào có id / group đó.`);
     });
   });
   if (brief.product.cut === "alpha" && brief.backdrops.length) out.push("Sản phẩm cắt viền (alpha): nền sẽ nằm trong đường cắt — chắc chắn muốn vậy?");

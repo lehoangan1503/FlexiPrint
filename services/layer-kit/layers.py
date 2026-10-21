@@ -550,15 +550,22 @@ def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: 
         near = ndi.minimum(dist, lab, range(1, n + 1))
         # A part in pieces far apart (an outfit = a hat above the face + a sweater below it — on a big figure a whole
         # face apart, 2026-10-19) keeps every real piece on its own side.
-        reach = 0.6 if spread else 0.05 if fine else 0.08
+        reach = (0.6 if spread else 0.05 if fine else 0.08) * max(H, W)
+        if fine:
+            # A face's features are as far apart as the face is big: a character drawn alone fills its canvas (a pose
+            # set, 2026-10-21 — one eye of each expression was left out at a twentieth of the canvas).
+            fig = (da > 0.5) if own is None else ((da > 0.5) & own)
+            ys, xs = np.nonzero(fig)
+            if len(xs):
+                reach = max(reach, 0.12 * max(int(xs.max() - xs.min()), int(ys.max() - ys.min())))
         real = [i for i in range(n) if sizes[i] >= (30 if fine else 300) * s * s]
-        keep = [i + 1 for i in real if near[i] <= reach * max(H, W)]
+        keep = [i + 1 for i in real if near[i] <= reach]
         # A face's features lie apart (two eyes, two brows, a mouth): each near the one before it, not all near the
         # biggest — the open eye of a wink was the biggest, the winking one and a brow were left out (2026-10-20).
         while fine:
             dist = cv2.distanceTransform((~np.isin(lab, keep)).astype(np.uint8), cv2.DIST_L2, 5)
             near = ndi.minimum(dist, lab, range(1, n + 1))
-            more = [i + 1 for i in real if i + 1 not in keep and near[i] <= reach * max(H, W)]
+            more = [i + 1 for i in real if i + 1 not in keep and near[i] <= reach]
             if not more:
                 break
             keep += more

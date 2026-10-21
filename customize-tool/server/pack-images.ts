@@ -141,12 +141,22 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
       return { image_url: `data:${mime};base64,${raw.toString("base64")}` };
     }),
   );
-  const res = await fetch(`${base}/images/${images.length ? "edits" : "generations"}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, prompt, size, quality: "high", ...(transparent ? { background: "transparent", output_format: "png" } : {}), ...(images.length ? { images } : {}) }),
-    signal: AbortSignal.timeout(300_000),
-  });
+  const body = JSON.stringify({ model, prompt, size, quality: "high", ...(transparent ? { background: "transparent", output_format: "png" } : {}), ...(images.length ? { images } : {}) });
+  // The connection to cpa drops now and then (an-vm 2026-10-21: ETIMEDOUT after 1 s, ECONNRESET after ~30 s, a 524
+  // from Cloudflare) while the API itself works: tried again a few times before the picture counts as failed.
+  let res: Response | null = null;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      res = await fetch(`${base}/images/${images.length ? "edits" : "generations"}`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(420_000) });
+      if ((res.status === 524 || res.status === 502 || res.status === 503) && attempt < 3) throw new Error(`cpa ${res.status}`);
+      break;
+    } catch (e) {
+      const timedOut = e instanceof Error && e.name === "TimeoutError";
+      if (timedOut || attempt >= 3) throw e;
+      console.warn(`[ct] cpa again (${attempt + 1}): ${e instanceof Error ? ((e.cause as { code?: string } | undefined)?.code ?? e.message) : String(e)}`);
+      await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
+    }
+  }
   const json = (await res.json().catch(() => ({}))) as CpaImageResponse;
   if (!res.ok) {
     const msg = typeof json.error === "string" ? json.error : (json.error?.message ?? "lỗi");

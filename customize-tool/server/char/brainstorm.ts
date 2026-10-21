@@ -23,8 +23,21 @@ wins over your own taste; the editor's words win over the picture. Only what nei
 then the defaults: framing "full", standing, side by side. Write what you took into "scene" (pose + arrangement),
 "framing" and the elements / texts, so the master is drawn like the sample.
 Every brief is built like this, so every proposal must respect it:
-- ONE master illustration is drawn once (all characters together, full body or chest up — framing —, flat background). Every option
-  is then an in-place AI edit or a recolour of that master, so every option sits on the same pixels.
+- ONE character: ONE master illustration is drawn once (full body or chest up — framing —, flat background). Every
+  option is then an in-place AI edit or a recolour of that master, so every option sits on the same pixels.
+- TWO OR MORE characters (asked 2026-10-21 — every set with 2+ characters): "poses", never one picture of everyone
+  (characters drawn together got their hair and hats stuck to each other when cut). Each pose = ONE character drawn
+  ALONE, big, on its own square: its own master, doll, option pictures and files. poses: [{id, name (Vietnamese, for
+  the page: "Bà ở giữa"), description (English: the pose, the angle, which way the head tilts — "leaning forward on a
+  sign, chin on both hands, head tilted slightly to the right"), subjects: [subject ids drawn in it — the first is the
+  one drawn], mirrored: [those of them placed mirrored]}]. Subjects standing the same way share a pose (the two
+  grandchildren left of the grandma; the two on the right use it mirrored when the sample is symmetric — a hair parting,
+  a bow on one side or a different tilt that would read wrong flipped = a pose of their own). Subjects of one pose have
+  the same slots (same parts, modes, option and colour counts, in order) — each its own ids, names, choosers. Every
+  subject is in exactly one pose. The versions of the product are then COMPOSED from the poses (char_compose after the
+  cut: where each character stands, how big, who is in front) to look like the sample; "scene" says how they stand
+  together (who in the middle, who overlaps whom) for the composition. No slot "group" / "on" across subjects (each
+  pose is drawn alone); "on" inside one pose is fine (its hair under its hat).
 - Customisable parts must be plain and clearly visible in the master: plain solid-colour clothes (no pattern, no
   print, no text), parts not hidden behind another character.
 - A slot is one customisable part of one character:
@@ -88,20 +101,16 @@ Every brief is built like this, so every proposal must respect it:
   shownWhen); place "on" + subject + box = shares of THAT character's box (a name on the hat's brim), curve -100..100.
 - texts: place "under" + "subject" (subject id) = a name under one character (each person's name on a family rug);
   place "free" + "box" = its own box (the school name on the left of the ribbon, the name on the right).
-- A "count" lineup whose versions must each look made for their number (a grandma with 1, 2, 3 or 4 grandchildren —
-  asked 2026-10-19: cut out of the row of five they looked patchy): lineup.drawn true. The master is the biggest
-  version; the server draws each smaller version as ITS OWN master from it (a version set: own doll, own cut), the
-  product takes every version from its own set. Subjects then stand with a small gap, nobody overlapping.
-- GROUPS (slot "group", asked 2026-10-19 — a picture per option per child was 60+ pictures): the same kind of part of
-  every subject (each grandchild's hair, everyone's face expression, everyone's outfit) gets the same group name; option
-  k of every slot of a group is drawn in ONE picture for everyone. Options are matched by position (a grandma with 2
-  hairstyles and children with 4: the grandma's 2 ride along in the children's first 2 pictures).
+- A "count" lineup (a grandma with 1, 2, 3 or 4 grandchildren) is drawn with poses (above): every version is composed
+  of the same posed characters, so each looks made for its number. (lineup.drawn and slot "group" — every version /
+  every child in one picture — are the older ways, kept only for sets made before 2026-10-21.)
 - Theme outfits (a Santa hat + a Christmas sweater / Halloween / Easter): ONE shape slot per subject, part "outfit (hat
-  and sweater)", "headwear": true (the hat becomes its own layer OVER the hair, the sweater under it), group "outfit",
-  "restyle": true (Halloween / Easter are redrawn from the Santa outfit keeping the hat's band: the hair fits them all),
-  follows = the Theme chooser's id. The hair slots: group "hair", "on": "outfit" (drawn UNDER the hats: no hair sticking
-  out) — 3 colours each in "colors". Face expressions: a shape slot part "face expression", group "face" (the doll's face
-  is blank, every expression is drawn on it). The Theme = a chooser [{id: "theme", label: "Theme", options: Christmas /
+  and sweater)", "headwear": true (the hat becomes its own layer OVER the hair, the sweater under it), group "outfit"
+  (a group name per kind of part — inside a pose it only names the picture), "restyle": true (Halloween / Easter are
+  redrawn from the Santa outfit keeping the hat's band: the hair fits them all), follows = the Theme chooser's id. The
+  hair slots: group "hair", "on": "outfit" (drawn UNDER the hats: no hair sticking out) — 3 colours each in "colors".
+  Face expressions: a shape slot part "face expression", group "face" (the doll's face is blank, every expression is
+  drawn on it). The Theme = a chooser [{id: "theme", label: "Theme", options: Christmas /
   Halloween / Easter}]; the sign = an element with place "plaque", one option per theme, follows "theme"; the slogan on
   it = a text kind "fixed", place "plaque".
 - product.templateId: a khuôn of list_print_templates with the product's REAL size; none fits → create_print_template

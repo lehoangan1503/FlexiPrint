@@ -45,21 +45,33 @@ export function VersionsPanel(ctx: CharCtx) {
     const t = setInterval(() => void load(), 5000);
     return () => clearInterval(t);
   }, [busy, load]);
-  if (!project.brief.lineup?.drawn) return null;
+  const poses = project.brief.poses ?? [];
+  if (!project.brief.lineup?.drawn && !poses.length) return null;
   const names = charVersions(project.brief);
   const biggest = names[names.length - 1]?.name ?? "";
+  /** Who a pose is drawn as and placed as ("(lật)" = mirrored). */
+  const whoIn = (poseId: string | undefined) => {
+    const pose = poses.find((x) => x.id === poseId);
+    return (pose?.subjects ?? []).map((id) => `${project.brief.subjects.find((x) => x.id === id)?.name || id}${pose?.mirrored.includes(id) ? " (lật)" : ""}`).join(", ");
+  };
   return (
     <section className="rounded-xl border bg-card p-4">
-      <h3 className="text-sm font-semibold">
-        Phiên bản — {project.brief.lineup.label} ({names.length})
-      </h3>
+      <h3 className="text-sm font-semibold">{poses.length ? `Dáng — mỗi nhân vật vẽ riêng (${poses.length})` : `Phiên bản — ${project.brief.lineup?.label} (${names.length})`}</h3>
       <p className="mb-3 text-xs text-muted-foreground">
-        Mỗi phiên bản là một ảnh riêng (không cắt từ ảnh đông người): bản <b>{biggest}</b> là chính bộ này; các bản nhỏ hơn có bộ riêng, master vẽ lại từ master đã duyệt, rồi tự cắt clipart. @flexiprint chọn master cho từng bản; sản phẩm gom mọi bản khi tất cả cắt xong.
+        {poses.length ? (
+          <>
+            Mỗi dáng là một nhân vật vẽ một mình, to, trên khung vuông riêng: master, búp bê, ảnh 3b và clipart riêng. Nhân vật cùng dáng dùng chung (bên kia lật gương). Khi mọi dáng cắt xong, @flexiprint ghép thành {names.length > 1 ? `${names.length} phiên bản` : "sản phẩm"} giống mẫu.
+          </>
+        ) : (
+          <>
+            Mỗi phiên bản là một ảnh riêng (không cắt từ ảnh đông người): bản <b>{biggest}</b> là chính bộ này; các bản nhỏ hơn có bộ riêng, master vẽ lại từ master đã duyệt, rồi tự cắt clipart. @flexiprint chọn master cho từng bản; sản phẩm gom mọi bản khi tất cả cắt xong.
+          </>
+        )}
       </p>
       {!list ? (
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
       ) : !list.length ? (
-        <p className="text-xs text-muted-foreground">{project.master_id ? "Đang tạo các phiên bản…" : "Duyệt master xong, các phiên bản nhỏ hơn được tạo và vẽ ở đây."}</p>
+        <p className="text-xs text-muted-foreground">{poses.length ? "Chưa có dáng nào — nhắn @flexiprint “vẽ các dáng” ở ô chat." : project.master_id ? "Đang tạo các phiên bản…" : "Duyệt master xong, các phiên bản nhỏ hơn được tạo và vẽ ở đây."}</p>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {list.map((v) => {
@@ -67,9 +79,10 @@ export function VersionsPanel(ctx: CharCtx) {
             return (
               <Link key={v.project.id} href={`/v2/${v.project.id}`} className="block rounded-lg border p-3 hover:bg-accent/40">
                 <div className="flex items-center gap-2 text-sm font-medium">
-                  {project.brief.lineup?.label}: {v.project.brief.versionOf?.name}
+                  {v.project.brief.versionOf?.pose ? v.project.brief.versionOf.name : `${project.brief.lineup?.label}: ${v.project.brief.versionOf?.name}`}
                   <ExternalLink className="ml-auto h-3.5 w-3.5 text-muted-foreground" />
                 </div>
+                {v.project.brief.versionOf?.pose && <div className="truncate text-[11px] text-muted-foreground">{whoIn(v.project.brief.versionOf.pose)}</div>}
                 <div className="mt-2 flex gap-2">
                   {v.masters.length ? (
                     v.masters.slice(-3).map((m) => (

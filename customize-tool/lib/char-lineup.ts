@@ -10,7 +10,7 @@
  *              standing on the area's bottom
  */
 
-import type { CtCharBox, CtCharBrief, CtCharElement, CtCharTextField } from "../types";
+import type { CtCharBox, CtCharBrief, CtCharComposeVersion, CtCharElement, CtCharTextField } from "../types";
 import type { CtCharLayoutText, CtLayoutBox } from "./char-layout";
 
 export interface CtCharVersion {
@@ -132,4 +132,21 @@ export function picksShowing(brief: CtCharBrief, slotKey: string, picks: CtChoos
   const id = slotKey.split(":")[0];
   const w = brief.subjects.flatMap((s) => s.slots).find((s) => s.id === id)?.shownWhen;
   return w ? { ...picks, [w.chooser]: w.option } : picks;
+}
+
+/** Each version of a posed set: as @flexiprint composed it, else everyone side by side in the brief's order (the
+ * ones that stand behind — the always-there grandma — a little bigger, in the middle of the row). */
+export function composedVersions(brief: CtCharBrief): CtCharComposeVersion[] {
+  return charVersions(brief).map((v) => {
+    const own = brief.compose?.find((c) => c.name === v.name);
+    const subjectIds = v.subjects.map((i) => brief.subjects[i].id);
+    if (own && own.people.every((x) => subjectIds.includes(x.subject)) && subjectIds.every((id) => own.people.some((x) => x.subject === id))) return own;
+    return {
+      name: v.name,
+      people: v.subjects.map((i, k) => {
+        const sub = brief.subjects[i];
+        return { subject: sub.id, x: k * 0.8, y: 0, h: sub.always ? 1.15 : 1 };
+      }),
+    };
+  });
 }

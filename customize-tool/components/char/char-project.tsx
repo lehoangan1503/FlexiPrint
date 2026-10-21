@@ -214,7 +214,15 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
       )}
       {project.brief.versionOf && (
         <div className="mx-4 mt-3 rounded-md border border-sky-500/40 bg-sky-500/5 p-3 text-sm">
-          Phiên bản <b>{project.brief.versionOf.name}</b> của một bộ vẽ riêng từng phiên bản — master vẽ lại từ master đã duyệt của bộ chính, duyệt xong tự cắt clipart.{" "}
+          {project.brief.versionOf.pose ? (
+            <>
+              Dáng <b>{project.brief.versionOf.name}</b> của một bộ nhiều nhân vật — nhân vật này vẽ riêng, to, một mình; duyệt master xong tự cắt clipart, sản phẩm ghép các dáng lại.{" "}
+            </>
+          ) : (
+            <>
+              Phiên bản <b>{project.brief.versionOf.name}</b> của một bộ vẽ riêng từng phiên bản — master vẽ lại từ master đã duyệt của bộ chính, duyệt xong tự cắt clipart.{" "}
+            </>
+          )}
           <Link href={`/v2/${project.brief.versionOf.id}`} className="underline">
             Mở bộ chính
           </Link>

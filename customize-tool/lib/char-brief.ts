@@ -14,6 +14,9 @@ import type {
   CtCharElementPlace,
   CtCharLineup,
   CtCharVersionOf,
+  CtCharPose,
+  CtCharComposePerson,
+  CtCharComposeVersion,
   CtCharPhotoTreat,
   CtCharSetKind,
   CtCharCut,
@@ -288,7 +291,45 @@ function parseLineup(raw: unknown): CtCharLineup | null {
 function parseVersionOf(raw: unknown): CtCharVersionOf | null {
   const o = rec(raw);
   const id = uuidOrNull(o.id);
-  return id ? { id, name: s(o.name, 40), index: Math.max(0, Math.round(typeof o.index === "number" ? o.index : 0)), ...(o.ownPictures === true ? { ownPictures: true } : {}) } : null;
+  const pose = typeof o.pose === "string" && /^[\w-]{1,40}$/.test(o.pose) ? o.pose : "";
+  return id ? { id, name: s(o.name, 40), index: Math.max(0, Math.round(typeof o.index === "number" ? o.index : 0)), ...(o.ownPictures === true ? { ownPictures: true } : {}), ...(pose ? { pose } : {}) } : null;
+}
+
+const ids = (v: unknown): string[] => [...new Set(arr(v).filter((x): x is string => typeof x === "string" && /^[\w-]{1,64}$/.test(x)))];
+
+function parsePoses(raw: unknown): CtCharPose[] | null {
+  const list = arr(raw)
+    .map((x): CtCharPose | null => {
+      const o = rec(x);
+      const subjects = ids(o.subjects);
+      if (!subjects.length) return null;
+      return { id: typeof o.id === "string" && /^[\w-]{1,40}$/.test(o.id) ? o.id : crypto.randomUUID().slice(0, 8), name: s(o.name, 60), description: s(o.description, 600), subjects, mirrored: ids(o.mirrored).filter((m) => subjects.includes(m)) };
+    })
+    .filter((x): x is CtCharPose => x !== null)
+    .slice(0, 8);
+  return list.length ? list : null;
+}
+
+const real = (v: unknown, d = 0): number => (typeof v === "number" && Number.isFinite(v) ? v : d);
+
+function parseCompose(raw: unknown): CtCharComposeVersion[] | null {
+  const list = arr(raw)
+    .map((x): CtCharComposeVersion | null => {
+      const o = rec(x);
+      const people = arr(o.people)
+        .map((y): CtCharComposePerson | null => {
+          const r = rec(y);
+          const h = real(r.h);
+          if (typeof r.subject !== "string" || !r.subject || !(h > 0)) return null;
+          return { subject: r.subject.slice(0, 64), x: real(r.x), y: real(r.y), h, ...(typeof r.flip === "boolean" ? { flip: r.flip } : {}) };
+        })
+        .filter((y): y is CtCharComposePerson => y !== null)
+        .slice(0, 8);
+      return people.length ? { name: s(o.name, 40), people } : null;
+    })
+    .filter((x): x is CtCharComposeVersion => x !== null)
+    .slice(0, 12);
+  return list.length ? list : null;
 }
 
 export function parseCharBrief(raw: unknown): CtCharBrief {
@@ -327,6 +368,8 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
     elements: arr(o.elements).map(parseElement).filter((x): x is CtCharElement => x !== null).slice(0, 10),
     lineup: parseLineup(o.lineup),
     versionOf: parseVersionOf(o.versionOf),
+    poses: parsePoses(o.poses),
+    compose: parseCompose(o.compose),
     framing: o.framing === "bust" ? "bust" : "full",
     choosers: arr(o.choosers).map(parseChooser).filter((x): x is CtCharChooser => x !== null).slice(0, 24),
     charactersBox: parseBox(o.charactersBox),
@@ -487,7 +530,7 @@ export function masterPrompt(brief: CtCharBrief): string {
  */
 export function masterBriefKey(brief: CtCharBrief): string {
   // A bộ nhân vật's decorations are drawn alone after the master (like the backgrounds): never frozen either.
-  const { texts: _t, backdrops: _b, mockups: _m, elements: _e, charactersBox: _c, product, ...rest } = brief;
+  const { texts: _t, backdrops: _b, mockups: _m, elements: _e, charactersBox: _c, compose: _co, product, ...rest } = brief;
   const { material: _mat, ...piece } = product;
   // A bộ ảnh khách's pieces are each drawn on their own from the master's look: only the look is frozen — the
   // photo zone, the decorations and their options stay editable after the master (adding a wing style later).
@@ -643,12 +686,42 @@ export function briefProblems(brief: CtCharBrief): string[] {
   });
   if (brief.product.cut === "alpha" && brief.backdrops.length) out.push("Sản phẩm cắt viền (alpha): nền sẽ nằm trong đường cắt — chắc chắn muốn vậy?");
   if (brief.lineup && brief.subjects.length < 2) out.push("Khách chọn nhân vật / số người nhưng brief chỉ có 1 nhân vật.");
+  out.push(...poseProblems(brief));
   brief.texts.forEach((t, i) => {
     if (t.place === "under" && !brief.subjects.some((x) => x.id === t.subject)) out.push(`Chữ ${i + 1} (${t.label}): "dưới nhân vật" nhưng chưa chọn nhân vật nào.`);
   });
   brief.texts.forEach((t, i) => {
     if (t.kind === "choice" && !t.choices.length) out.push(`Chữ ${i + 1} (${t.label}): chưa có câu nào cho khách chọn.`);
   });
+  return out;
+}
+
+/** The pose a subject is drawn in (brief.poses), and whether it is placed mirrored. */
+export function poseOf(brief: CtCharBrief, subjectId: string): { pose: CtCharPose; mirrored: boolean } | null {
+  const pose = brief.poses?.find((p) => p.subjects.includes(subjectId));
+  return pose ? { pose, mirrored: pose.mirrored.includes(subjectId) } : null;
+}
+
+/** A pose's subjects must be interchangeable (one is drawn, the others take its files): same parts, modes, option and
+ * colour counts, in the same order. */
+const slotShape = (sub: CtCharSubject) => sub.slots.map((sl) => `${sl.mode}:${sl.options.length}:${sl.colors.length}:${sl.wraps}:${sl.headwear === true}`).join("|");
+
+export function poseProblems(brief: CtCharBrief): string[] {
+  if (!brief.poses?.length) return [];
+  const out: string[] = [];
+  const seen = new Map<string, string>();
+  for (const p of brief.poses) {
+    for (const id of p.subjects) {
+      if (!brief.subjects.some((x) => x.id === id)) out.push(`Dáng "${p.name || p.id}": không có nhân vật "${id}".`);
+      else if (seen.has(id)) out.push(`Nhân vật "${id}" nằm ở 2 dáng ("${seen.get(id)}" và "${p.name || p.id}").`);
+      seen.set(id, p.name || p.id);
+    }
+    if (!p.description) out.push(`Dáng "${p.name || p.id}": chưa tả dáng (description).`);
+    const subs = p.subjects.map((id) => brief.subjects.find((x) => x.id === id)).filter((x): x is CtCharSubject => !!x);
+    for (const sub of subs.slice(1))
+      if (slotShape(sub) !== slotShape(subs[0])) out.push(`Dáng "${p.name || p.id}": "${sub.name || sub.id}" khác phần / số lựa chọn với "${subs[0].name || subs[0].id}" — cùng dáng phải cùng các phần và lựa chọn theo đúng thứ tự.`);
+  }
+  for (const sub of brief.subjects) if (!seen.has(sub.id)) out.push(`Nhân vật "${sub.name || sub.id}" chưa có dáng nào.`);
   return out;
 }
 

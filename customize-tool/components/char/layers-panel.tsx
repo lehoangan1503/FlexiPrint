@@ -37,6 +37,14 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
     setSection(sub === "matte" ? "3a" : sub === "edits" ? "3b" : "3c");
   }, [sub, setSection]);
   if (ctx.step === "product") return <ProductStep {...ctx} />;
+  // Characters drawn pose by pose: each pose is cut on its own page; the product composes them.
+  if (project.brief.poses?.length)
+    return (
+      <div className="space-y-4 p-6">
+        <AutoStepGuide what="@flexiprint cắt clipart từng dáng rồi ghép phiên bản" />
+        <VersionsPanel {...ctx} />
+      </div>
+    );
   const tabs: Array<{ id: Sub; label: string; ok: boolean; note: string }> = [
     { id: "matte", label: "3a. Master cỡ in", ok: cut?.matte?.status === "done", note: cut?.matte?.status === "running" ? "đang chạy" : "" },
     { id: "edits", label: "3b. AI vẽ ảnh để cắt", ok: ready, note: `${editsDone}/${plan.length}` },

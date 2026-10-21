@@ -69,6 +69,16 @@ export function latestElementImages(images: CtCharImage[]): Map<string, CtCharIm
 
 /** The picture an element is drawn in the look of: the approved master. */
 async function masterUrl(db: Db, p: CtCharProject): Promise<string> {
+  // Characters drawn in their poses: the first pose with an approved master gives the look.
+  if (!p.master_id && p.brief.poses?.length) {
+    const { data: kids } = await db.from(CT_TABLES.charProjects).select("master_id, brief").eq("brief->versionOf->>id", p.id).returns<Array<Pick<CtCharProject, "master_id" | "brief">>>();
+    const order = (k: Pick<CtCharProject, "brief">) => p.brief.poses!.findIndex((x) => x.id === k.brief.versionOf?.pose);
+    const first = (kids ?? []).filter((k) => k.master_id && order(k) >= 0).sort((a, b) => order(a) - order(b))[0];
+    if (!first?.master_id) throw new Error("Duyệt master của ít nhất một dáng trước — các phần tử được vẽ theo nó");
+    const { data } = await db.from(CT_TABLES.charImages).select("url").eq("id", first.master_id).single<{ url: string }>();
+    if (!data?.url) throw new Error("Không thấy master của dáng");
+    return data.url;
+  }
   if (!p.master_id) throw new Error("Duyệt master trước — các phần tử được vẽ theo nó");
   const { data } = await db.from(CT_TABLES.charImages).select("url").eq("id", p.master_id).single<{ url: string }>();
   if (!data?.url) throw new Error("Không thấy master");

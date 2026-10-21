@@ -449,7 +449,10 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
     if (product && lineupOf) {
       await db.from(CT_TABLES.charProjects).update({ layers: { ...layers, approved: true }, status: now.brief.versionOf ? "layers" : now.status === "product" ? "product" : "layers" }).eq("id", p.id);
       await remakeDrawnProduct(db, userId, lineupOf).catch(async (e: Error) => {
-        await db.from(CT_TABLES.charProjects).update({ layers: { ...layers, approved: true, error: `Đã cắt file nhưng chưa tạo được sản phẩm: ${e.message}`.slice(0, 1000) } }).eq("id", lineupOf);
+        // A pose set's parent has no files of its own: the reason stays on the pose set.
+        const on = now.brief.versionOf?.pose ? p.id : lineupOf;
+        const cur = on === p.id ? layers : ((await loadProject(db, on))?.layers ?? layers);
+        await db.from(CT_TABLES.charProjects).update({ layers: { ...cur, approved: true, error: `Đã cắt file nhưng chưa tạo được sản phẩm: ${e.message}`.slice(0, 1000) } }).eq("id", on);
       });
     } else if (product) {
       // "Tạo bộ custom": the cliparts + the finished product, made from this set (the old product goes with the old files).

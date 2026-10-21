@@ -24,7 +24,8 @@ import { fetchImage, saveCharFile } from "./files";
 import { drawMasters, jsonError, loadImages, loadProject, type Db } from "./projects";
 import { runEditRoles } from "./layers";
 import { startMatte, startPlan } from "./cut";
-import { remakeSetProduct, versionSetsOf } from "./product";
+import { remakeSetProduct, serviceSession, versionSetsOf } from "./product";
+import { createAgentTask } from "../agent/tasks";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -190,11 +191,33 @@ export async function remakeDrawnProduct(db: Db, userId: string, parentId: strin
   return run;
 }
 
+/** A chat task for @flexiprint on a posed set whose poses are all cut: compose the versions, then step 4. */
+async function askToCompose(db: Db, userId: string, parent: CtCharProject): Promise<void> {
+  const { data: open } = await db.from(CT_TABLES.agentTasks).select("id").eq("kind", "char").eq("input->char->>projectId", parent.id).in("status", ["pending", "running", "waiting"]).limit(1);
+  if (open?.length) return;
+  const s = await serviceSession(db, userId);
+  const request =
+    "Mọi dáng đã cắt xong, sản phẩm đã dựng tạm (mọi người đứng cạnh nhau). Ghép từng phiên bản bằng char_compose cho giống ảnh mẫu (ai ở giữa, cao thấp, ai đứng trước, lật gương), render_artwork từng phiên bản để kiểm tra, rồi làm bước 4: phần tử (biển), nền nếu có, char_remake_product và mockup. Tự làm hết, không cần hỏi.";
+  const res = await createAgentTask(s, { kind: "char", input: { char: { projectId: parent.id, step: "chat", request, roles: [], tab: "product", section: "" } } });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text().catch(() => "")}`.slice(0, 300));
+}
+
 const building = new Map<string, Promise<string | null>>();
 const again = new Set<string>();
 
 async function buildDrawnProduct(db: Db, userId: string, parentId: string): Promise<string | null> {
   const parent = await loadProject(db, parentId);
+  // Every character drawn in its own pose: the product once every pose set is cut (composed from them).
+  if (parent?.brief.poses?.length) {
+    const kids = await versionSetsOf(db, parentId);
+    if (parent.brief.poses.some((po) => kids.find((k) => k.brief.versionOf?.pose === po.id)?.layers?.status !== "done")) return null;
+    const productId = await remakeSetProduct(db, parent.user_id ?? userId, parent, null);
+    await db.from(CT_TABLES.charProjects).update({ product_ids: [productId], status: "product" }).eq("id", parentId);
+    // The first build has everyone side by side: @flexiprint composes the versions like the sample (unless it is
+    // already working on the set).
+    if (!parent.brief.compose?.length) await askToCompose(db, parent.user_id ?? userId, parent).catch((e: Error) => console.warn("[ct] compose task", e.message));
+    return productId;
+  }
   if (!parent?.brief.lineup?.drawn || parent.layers?.status !== "done") return null;
   const children = await versionSetsOf(db, parentId);
   const need = charVersions(parent.brief).length - 1;

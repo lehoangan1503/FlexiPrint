@@ -164,6 +164,53 @@ export interface CtCharVersionOf {
   index: number;
   /** Its 3b plan was written for it (char_plan_pictures with its set_id); else it follows the parent's plan. */
   ownPictures?: boolean;
+  /** A POSE set (brief.poses of the parent, asked 2026-10-21): one character of the parent drawn alone in this pose —
+   * the pose id; its files are placed in every version of the parent's product by brief.compose. */
+  pose?: string;
+}
+
+/**
+ * A pose of a set with several characters (asked 2026-10-21: "tất cả búp bê nên vẽ độc lập" — characters drawn
+ * together in one picture got their hair and hats stuck to each other when cut): ONE character drawn alone, big, on
+ * its own square canvas — its own master, doll, 3b pictures and files (a pose set, brief.versionOf.pose). Characters
+ * standing the same way share a pose (two grandchildren on the left with the head tilted right): drawn once, placed
+ * twice; one on the other side may use it mirrored. The product's versions are composed of the poses' files
+ * (brief.compose).
+ */
+export interface CtCharPose {
+  id: string;
+  /** For the page, Vietnamese: "Bà ở giữa", "Cháu bên trái". */
+  name: string;
+  /** English, for the image model: the pose, the angle, where the head tilts ("leaning forward, chin on both hands,
+   * head tilted slightly to the right"). The character's look comes from the subject it is drawn as. */
+  description: string;
+  /** The subjects (ids) drawn with this pose; the first is the one drawn, the others have the same parts and options. */
+  subjects: string[];
+  /** Subjects of `subjects` placed mirrored (the grandchildren on the right of a pose drawn facing the middle from the left). */
+  mirrored: string[];
+}
+
+/** One character in a composed version: where its figure goes, in any units the version shares (the server fits the
+ * whole group into the product's characters area). */
+export interface CtCharComposePerson {
+  /** The brief subject id. */
+  subject: string;
+  /** The figure's centre, left → right. */
+  x: number;
+  /** The figure's bottom (its feet / the cut line), downwards. */
+  y: number;
+  /** The figure's height (the grandma 1, the children 0.8). */
+  h: number;
+  /** Mirrored (default: as in its pose's `mirrored`). */
+  flip?: boolean;
+}
+
+/** A version of the product composed of poses (asked 2026-10-21: @flexiprint places the characters of each version
+ * to look like the sample). `people` back → front: a later one is drawn over an earlier one where they overlap. */
+export interface CtCharComposeVersion {
+  /** The version's customer name (lib/char-lineup charVersions: "1", "2"… or the only one ""). */
+  name: string;
+  people: CtCharComposePerson[];
 }
 
 /**
@@ -318,8 +365,12 @@ export interface CtCharBrief {
   choosers?: CtCharChooser[];
   /** Who is in the picture is a customer choice (null = everyone, always). */
   lineup?: CtCharLineup | null;
-  /** This set is one version of another (brief.lineup.drawn there). */
+  /** This set is one version of another (brief.lineup.drawn there) or one of its poses (brief.poses there). */
   versionOf?: CtCharVersionOf | null;
+  /** Every character drawn alone in a pose (a pose set each); null = the characters drawn together in the master. */
+  poses?: CtCharPose[] | null;
+  /** How each version places the poses' characters (@flexiprint, char_compose); null = side by side in order. */
+  compose?: CtCharComposeVersion[] | null;
   /** How much of the characters the master shows: "full" head to toe (default), or "bust" = chest up, cut level at
    * the bottom (a sign / plank element in front hides the cut — "This Grandma Belongs To"). */
   framing?: "full" | "bust";

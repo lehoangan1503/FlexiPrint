@@ -45,6 +45,19 @@ export function MasterPanel(ctx: CharCtx) {
     }
   };
 
+  // Characters drawn alone, pose by pose: each pose has its own masters (approved on its page).
+  if (brief.poses?.length)
+    return (
+      <div className="space-y-4 p-6">
+        <StepGuide title="Mỗi nhân vật một ảnh master riêng">
+          <p>
+            Bộ này có <b>{brief.poses.length} dáng</b>: mỗi dáng là <b>một nhân vật vẽ riêng, to, một mình</b> (không vẽ chung cả nhóm — tóc, nón không dính vào nhau khi cắt). Nhân vật cùng dáng dùng chung một ảnh.
+          </p>
+          <p>@flexiprint vẽ 2 master cho mỗi dáng; bấm vào từng dáng để xem và duyệt. Duyệt xong dáng nào, dáng đó tự cắt clipart; khi đủ các dáng, @flexiprint ghép thành từng phiên bản sản phẩm.</p>
+        </StepGuide>
+        <VersionsPanel {...ctx} />
+      </div>
+    );
   return (
     <div className="grid gap-6 p-6 xl:grid-cols-[440px_1fr]">
       <div className="space-y-4">

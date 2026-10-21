@@ -30,6 +30,8 @@ import { startBackdrops } from "../char/backdrops";
 import { withTemplateProduct } from "../char/blank";
 import { remakeSetProduct, versionSetsOf } from "../char/product";
 import { followParentPlan, remakeDrawnProduct, runVersionChain, startVersionSets } from "../char/versions";
+import { startPoseSets } from "../char/poses";
+import { charVersions } from "../../lib/char-lineup";
 import { runEditRoles, startBuild } from "../char/layers";
 import { failLostPlan, startMatte, startPlan } from "../char/cut";
 import { SAMPLE_ROLE, elementPictures, latestElementImages, startElements } from "../char/elements";
@@ -58,6 +60,10 @@ const COMMON = [
 /** A lineup drawn version by version (brief.lineup.drawn) — said in the auto and chat steps. */
 const DRAWN_LINEUP =
   "A LINEUP DRAWN VERSION BY VERSION (set.brief.lineup.drawn, asked 2026-10-19): this set is the biggest version (every subject); set.versions — or char_versions {task_id} (small: use it when get_task is too big to read) — lists a VERSION SET per smaller version (set_id, its subjects, masters, 3b pictures, cut). On approval of this set's master the server made each version set and drew 2 masters for it from the approved one. FIRST plan this set's 3b pictures (char_plan_pictures): every version set follows that plan (the characters it lacks dropped) and starts drawing it as soon as its master is approved. For each version: view_image both masters — the same characters as the approved master (faces, hair, outfits, proportions, how big the grandma is next to the children), only the listed ones, nobody cropped, small gaps, the same framing — then char_approve_master {task_id, set_id, image_id} (char_refine_master / char_draw_masters with set_id when neither is right). An approved version set runs 3a → 3b → 3c BY ITSELF on the server (minutes): watch get_task set.versions, view_image its 3b pictures like this set's; a wrong one → char_run_edits {task_id, set_id, prompts} then char_cut {task_id, set_id, what: \"plan\"}; char_status {task_id, set_id} waits. The product is built by the server once this set AND every version set are cut; after step 4 (backdrops, elements) char_remake_product rebuilds it. A version that needs other pictures than the plan gives it: char_plan_pictures with its set_id (its own plan from then on).";
+
+/** A set drawn pose by pose (brief.poses) — said in the chat and auto steps. */
+const POSED =
+  "A SET DRAWN POSE BY POSE (set.brief.poses — EVERY set with 2+ characters since 2026-10-21; the editor: \"tất cả búp bê nên vẽ độc lập\"): never one master of everyone. Each pose = ONE character drawn ALONE, big, on its own square (a POSE SET: its own masters, doll, 3b pictures, files); subjects standing the same way share a pose (one drawn, the others take its files; brief.poses[].mirrored = placed flipped). Flow: 1) the brief with poses (char_update_brief; read the sample: who stands where, which way each head tilts, who overlaps whom — write that in scene for the composition) → 2) char_draw_poses (a pose set per pose + 2 masters each) → char_wait → view_image: the same character as the sample / references, ALONE, big, the same style and head size in every pose, the parts plain → char_approve_master {set_id, image_id} per pose when the editor handed you the whole set (else recommend; they approve on the pose's page) — char_refine_master / char_draw_masters with set_id fix one pose → 3) each approved pose runs 3a → 3b → 3c by itself (its 3b plan: the built-in one draws EVERY option of its one character on its doll — a picture per option, colours recoloured; char_plan_pictures with set_id only for something it cannot do) — watch char_versions, view_image its 3b pictures and files; a wrong one → char_run_edits {set_id} then char_cut {set_id, what: plan} → 4) when every pose is cut the server builds the product with everyone side by side; then char_compose: for each version (get_task set.composeVersions) where each character stands, how big, who is in front, mirrored or not — like the sample (the grandma taller in the middle behind, the children leaning in, a little overlap) → render_artwork mode print for each version → char_compose again until it reads like the sample → 5) step 4 as usual (elements, backdrops, char_remake_product, mockups).";
 
 const BRAINSTORM_INSTRUCTIONS = [
   ...COMMON,
@@ -106,6 +112,7 @@ const CHAT_INSTRUCTIONS = [
   "BỘ ẢNH KHÁCH (set.brief.kind \"photo\" — the customer's own photo is the hero: a pet memorial ornament, a portrait): there are no characters, no 3a/3b/3c and no cut. brief.photoZones[0] = the customer's photo (where = what it shows, e.g. \"the customer's pet, sitting\"; treat \"ai\" + styles = the AI style refs the customer picks from — list_ai_styles; \"face\" = head only; box = shares of the safe area, null = laid out). brief.elements = the decorations, each {name, place: behind (wings) | above (halo) | bottom (a band of clouds over the photo's cut body, the texts lie on it) | free (box), mode shape | color (#hex options, the first drawn, the others recoloured), options, perBackdrop (one picture per background in its colours, follows the background)}. Flow: char_update_brief → char_draw_masters (the whole flat design with a SAMPLE pet) → the editor approves (or char_approve_master when handed the whole set) → char_draw_backdrops → char_draw_elements (every element option + the zone's sample: the master's pet alone) → char_wait, view_image each (whole? transparent? same look as the master?) → char_remake_product (keeps a photo zone the editor reshaped; reset_zones true = the layout again) → list_product_options, render_artwork, make_product_mockups.",
   "A bộ nhân vật with a CHOICE OF WHO is in the picture (brief.lineup — a boy OR a girl; 1–5 people of a family): every subject drawn once in the master, standing apart (the server splits the body file per subject); the product gets one version per choice with only its subjects' layers — render_artwork / make_product_mockups pick it with {\"Version\": \"Girl\"} (or the lineup label). Decorations of a bộ nhân vật (brief.elements: a ribbon banner, a year in glitter numbers, trees beside the family, a ground band) are drawn after the master approval with char_draw_elements (each option alone, the master as the style reference) and placed by place / box; texts can be \"under\" a subject or \"free\" in a box; brief.charactersBox places the characters. Backdrops with tile true are seamless pattern squares repeated over the piece (a rug's plaid). A product with no fitting khuôn: create_print_template with the real size first. brief.choosers (boy / girl per child, grandma / grandpa, hats / no hats) + shownWhen on slots / texts / elements, slot follows (an element id: sweaters and hats follow the Theme), subject always (the grandma in every version), texts kind fixed / place on (a name on a hat brim): see briefRules in a brainstorm or the layer rules; render_artwork picks a chooser option by its label ({\"Grandchild 1\": \"Girl\", \"Hats\": \"No Hats\"}).",
   "A bộ nhân vật with a customer FACE (an elf / Santa body with the customers' faces, a die-cut acrylic): a normal character set with brief.photoZones [{where: \"the left elf's face\", treat: \"face\"}] and product.cut \"alpha\" — the master leaves the face empty, the body file gets a hole there and the face sits under it (hat brim, hair edge and collar over it).",
+  POSED,
   DRAWN_LINEUP,
   "submit_result(task_id, {summary: Vietnamese — what you changed, where to see it on the page, what is still off; image_ids: pictures you made, if any}).",
 ].join("\n");
@@ -114,10 +121,11 @@ const AUTO_INSTRUCTIONS = [
   ...COMMON,
   "STEP auto — the editor approved a master; everything after it is yours, on your own, until the product is finished (asked 2026-10-18: the editor only writes the request and approves the master; \"Dừng\" cancels this task — a cancelled task's tools refuse: stop at once). Same tools as a chat request. Check each stage with view_image before the next; fix what is wrong yourself (redraw a picture — never patch the cut); report_progress in Vietnamese at every stage (what is done, what you redid and why). Order:",
   "1. Bộ nhân vật: char_status waits for 3a (the master at print size, started on approval). Bộ ảnh khách (brief.kind \"photo\"): skip to 4.",
-  "2. 3b: PLAN the pictures yourself — char_plan_pictures (rules in \"picturePlan.rules\"): from the brief and the approved master decide the doll and the fewest pictures that give every option a clean cut (group the same kind of part of every character into one picture; hair under hats drawn on / cut against the outfit picture; no rule in the code decides this for you). Then get_task \"set.edits\" lists them — char_run_edits with roles (all missing ones) → char_wait → view_image EVERY picture (a grid of a few at a time): transparent; the doll unchanged; exactly ONE part added (no stole on the gown picture, no gown on the stole picture, pants never recolour the top); no magenta on a part; thin parts on small figures drawn bold. Redraw the wrong ones (≤ 3 tries each).",
+  "2. 3b: PLAN the pictures yourself — char_plan_pictures (rules in \"picturePlan.rules\"): from the brief and the approved master decide the doll and the pictures that give every option a clean cut (one character per picture — a set with several characters is drawn pose by pose; hair under hats drawn on / cut against the outfit picture; no rule in the code decides this for you). Then get_task \"set.edits\" lists them — char_run_edits with roles (all missing ones) → char_wait → view_image EVERY picture (a grid of a few at a time): transparent; the doll unchanged; exactly ONE part added (no stole on the gown picture, no gown on the stole picture, pants never recolour the top); no magenta on a part; thin parts on small figures drawn bold. Redraw the wrong ones (≤ 3 tries each).",
   "3. 3c: char_cut what \"plan\" (finds the regions, cuts the files, makes the product) → char_status → every failed check: redraw its picture, char_cut \"plan\" again. Then view_image the product (render_artwork mode print — each version / a few option sets).",
   "4. Step 4: char_draw_backdrops and char_draw_elements (every missing picture) → char_wait → view_image each → redraw the wrong ones → char_remake_product → render_artwork (print, a few option sets: versions, themes, colours, names) → fix the layout in the brief (charactersBox, element / text boxes) with char_update_brief + char_remake_product when it does not read like the reference → make_product_mockups (2–3 option sets × the brief's scenes) → wait_product_mockups → view_image.",
   "5. submit_result {summary: Vietnamese — what was made (versions, options, mockups), what you fixed, what is still worth a look; image_ids: a few mockups}. Then the editor asks for changes in the chat.",
+  POSED,
   DRAWN_LINEUP,
 ].join("\n");
 
@@ -300,8 +308,10 @@ function chatView(task: CtAgentTask, p: CtCharProject, images: CtCharImage[], nu
           }
         : {}),
       productIds: p.product_ids,
-      // A lineup drawn version by version: each smaller version's own set (its masters, 3b pictures, cut).
+      // A lineup drawn version by version: each smaller version's own set (its masters, 3b pictures, cut); a set drawn
+      // pose by pose: each pose's set, and the versions char_compose places.
       ...(versions.length ? { versions } : {}),
+      ...(p.brief.poses?.length ? { composeVersions: charVersions(p.brief).map((v) => ({ name: v.name, subjects: v.subjects.map((i) => p.brief.subjects[i].id) })) } : {}),
       // Step 4: the backgrounds drawn for brief.backdrops (newest per backdrop last) and the phôi.
       backdropPictures: images.filter((im) => im.kind === "blank" && im.role.startsWith("backdrop:")).map((im) => ({ id: im.id, backdrop: im.role.slice(9), status: im.status, url: im.url, prompt: im.prompt, error: im.error || undefined })),
       blanks: images.filter((im) => im.kind === "blank" && !im.role.startsWith("backdrop:") && im.status === "done").map((im) => ({ id: im.id, role: im.role, url: im.url })),
@@ -483,7 +493,7 @@ async function lineupIds(db: CtServiceClient, projectId: string): Promise<string
 
 /** The version sets of a drawn lineup as get_task shows them: masters, 3b pictures, checks, files — compact. */
 async function versionsView(db: CtServiceClient, p: CtCharProject): Promise<unknown[]> {
-  if (!p.brief.lineup?.drawn) return [];
+  if (!p.brief.lineup?.drawn && !p.brief.poses?.length) return [];
   const kids = await versionSetsOf(db, p.id);
   return Promise.all(
     kids.map(async (k) => {
@@ -491,7 +501,7 @@ async function versionsView(db: CtServiceClient, p: CtCharProject): Promise<unkn
       const latest = latestEditsOf(images);
       return {
         set_id: k.id,
-        version: k.brief.versionOf?.name,
+        ...(k.brief.versionOf?.pose ? { pose: k.brief.versionOf.pose, poseName: k.brief.versionOf.name } : { version: k.brief.versionOf?.name }),
         url: setUrl(k.id),
         status: k.status,
         subjects: k.brief.subjects.map((x) => x.name || x.description.split(/[,.;]/)[0]),
@@ -547,6 +557,56 @@ async function selfTask(db: CtServiceClient, userId: string, projectId: string, 
 
 export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   {
+    name: "char_draw_poses",
+    description:
+      "A set whose characters are drawn alone, pose by pose (brief.poses — every set with 2+ characters since 2026-10-21): makes a POSE SET per pose (one character alone on its own square: masters, doll, 3b pictures and files of its own; the parent's references copied in) and draws 2 masters for each. Missing ones only — a pose that has a set keeps it (redraw its masters: char_draw_masters with set_id). → the pose sets; view_image their masters (char_wait with the ids), approve one per pose (char_approve_master {set_id, image_id}) — each then runs 3a → 3b → 3c by itself.",
+    inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id);
+      if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto" && task.input.char?.step !== "master") throw new Error("char_draw_poses is for chat requests");
+      const sets = await startPoseSets(db, task.user_id!, project);
+      const all = await Promise.all(sets.map(async (k) => ({ set_id: k.id, pose: k.brief.versionOf?.pose, name: k.brief.versionOf?.name, url: setUrl(k.id), masters: (await loadImages(db, k.id)).filter((im) => im.kind === "master").map((m) => ({ id: m.id, status: m.status })) })));
+      await progress(db, task.id, `Đang vẽ master cho ${sets.length} dáng: ${sets.map((k) => k.brief.versionOf?.name).join(", ")}`);
+      return json({ poses: all, next: "char_wait with each pose's master ids (set_id on char_wait is not needed — ids are enough), view_image, then char_approve_master {task_id, set_id, image_id} per pose." });
+    },
+  },
+  {
+    name: "char_compose",
+    description:
+      "A set drawn pose by pose: how each version of the product places its characters, to look like the sample. versions: [{name (the version's customer name — get_task set.composeVersions lists them with their subjects), people: [{subject (brief subject id), x (the figure's centre), y (its bottom — the cut line / feet), h (its height), flip? (mirrored; default = the pose's mirrored list)}]}] — any units, the same within a version and across versions (the grandma h 1, the children 0.8 …); people back → front (a later one is drawn over an earlier one where they overlap — the grandma first when the children lean on her, the inner children over the outer ones…). The server fits each version's whole group into the piece's characters area (the sign under it). Saved in brief.compose, then the product is rebuilt in the background (2–4 min, char_status shows the new product id) → render_artwork mode print for each version, compare with the sample, call again until it reads like it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        versions: { type: "array", items: { type: "object" }, description: "[{name, people: [{subject, x, y, h, flip?}]}] — every version, back → front." },
+      },
+      required: ["task_id", "versions"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id);
+      if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_compose is for chat requests");
+      if (!project.brief.poses?.length) throw new Error("This set is not drawn pose by pose (brief.poses)");
+      const compose = parseCharBrief({ ...project.brief, compose: args.versions }).compose ?? [];
+      const wanted = charVersions(project.brief);
+      const problems: string[] = [];
+      for (const v of wanted) {
+        const c = compose.find((x) => x.name === v.name);
+        const ids = v.subjects.map((i) => project.brief.subjects[i].id);
+        if (!c) problems.push(`version "${v.name}" is missing (subjects ${ids.join(", ")})`);
+        else if (c.people.length !== ids.length || !ids.every((id) => c.people.some((x) => x.subject === id))) problems.push(`version "${v.name}" must place exactly ${ids.join(", ")}`);
+      }
+      if (problems.length) throw new Error(problems.join(" · "));
+      const brief = { ...project.brief, compose };
+      const { error } = await db.from(CT_TABLES.charProjects).update({ brief }).eq("id", project.id);
+      if (error) throw new Error(error.message);
+      void remakeDrawnProduct(db, task.user_id!, project.id).catch((e: Error) => console.warn("[ct] composed product", e.message));
+      await progress(db, task.id, `Đã ghép ${compose.length} phiên bản — đang dựng lại sản phẩm`);
+      return json({ saved: compose.length, next: "The product is rebuilt in the background once every pose set is cut (2–4 min): char_status until productIds change, then render_artwork mode print for each version ({\"<lineup label>\": \"<version>\"})." });
+    },
+  },
+  {
     name: "char_versions",
     description:
       "A lineup drawn version by version (brief.lineup.drawn): every VERSION SET of the task's set — set_id, version name, subjects, masters (id, url, approved), 3a / 3b / 3c status and failed checks — small (get_task carries the whole set and can be too big to read). Use the set_id with char_approve_master / char_run_edits / char_cut / char_status.",
@@ -554,7 +614,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     callers: ["agent"],
     run: async (ctx, args) => {
       const { db, project } = await openCharTask(ctx, args.task_id);
-      if (!project.brief.lineup?.drawn) return json({ versions: [], note: "This set is not drawn version by version." });
+      if (!project.brief.lineup?.drawn && !project.brief.poses?.length) return json({ versions: [], note: "This set is not drawn version by version nor pose by pose." });
       return json({ versions: await versionsView(db, project) });
     },
   },
@@ -653,6 +713,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       if (task.input.char?.step !== "master" && task.input.char?.step !== "chat" && !(task.input.char?.step === "auto" && project.brief.versionOf)) throw new Error("char_draw_masters is for the master step");
       const prompt = clip(str(args.prompt), 8000);
       if (!prompt) throw new Error("prompt is required");
+      if (project.brief.poses?.length) throw new Error("This set's characters are drawn pose by pose: char_draw_poses (first time), or char_draw_masters with set_id = a pose set (char_versions) to redraw that pose's masters");
       const rows = await drawMasters(db, task.user_id!, project, { prompt, count: Number(args.count) || 2, taskId: task.id });
       await progress(db, task.id, `Đang vẽ ${rows.length} master`);
       return json({ image_ids: rows.map((r) => r.id), next: "char_wait with these ids, then view_image." });
@@ -916,7 +977,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const p = await setApprovedMaster(db, project, id);
       if (p.brief.versionOf) {
         void runVersionChain(db, task.user_id!, p.id);
-        await progress(db, task.id, `Đã duyệt master phiên bản ${p.brief.versionOf.name} — server tự làm 3a → 3b → 3c`);
+        await progress(db, task.id, `Đã duyệt master ${p.brief.versionOf.pose ? "dáng" : "phiên bản"} ${p.brief.versionOf.name} — server tự làm 3a → 3b → 3c`);
         return json({ ok: true, next: "The server runs 3a → 3b → 3c for this version on its own (minutes). get_task set.versions shows its pictures: view_image each 3b picture; a wrong one → char_run_edits {set_id, prompts} then char_cut {set_id, what: plan}." });
       }
       if (p.brief.kind === "photo") {
@@ -990,9 +1051,10 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_remake_product is for chat requests");
-      if (project.brief.kind !== "photo" && (project.layers?.status !== "done" || !project.layers.approved)) throw new Error('The files are not cut yet — char_cut("build") first (it makes the product too)');
-      // A drawn lineup's product (every version set) takes minutes: built in the background (an MCP call is cut at ~100 s).
-      if (project.brief.lineup?.drawn) {
+      const posed = !!project.brief.poses?.length;
+      if (project.brief.kind !== "photo" && !posed && (project.layers?.status !== "done" || !project.layers.approved)) throw new Error('The files are not cut yet — char_cut("build") first (it makes the product too)');
+      // A drawn lineup's product (every version / pose set) takes minutes: built in the background (an MCP call is cut at ~100 s).
+      if (project.brief.lineup?.drawn || posed) {
         void remakeDrawnProduct(db, task.user_id!, project.id).catch((e: Error) => console.warn("[ct] drawn product", e.message));
         await progress(db, task.id, "Đang dựng lại sản phẩm (mọi phiên bản, vài phút)");
         return json({ building: true, next: "Built in the background (2–4 min): char_status shows the new productIds when it is done — do not call char_remake_product again meanwhile." });

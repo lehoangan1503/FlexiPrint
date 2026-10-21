@@ -105,6 +105,10 @@ export interface InspectorProps {
 }
 
 /** "Choose state: Texas" — the option a child zone belongs to. */
+
+/** A layer's name as listed: without the " [4]" its version adds (the list only shows the version on the canvas). */
+const layerLabel = (name: string) => name.replace(/ \[[^\]]*\]$/, "");
+
 function parentLabel(regions: CtRegion[], assets: CtAsset[], r: CtRegion): string {
   const p = r.config.parent;
   const parent = p ? regions.find((x) => x.id === p.regionId) : undefined;
@@ -233,8 +237,8 @@ export function Inspector(props: InspectorProps) {
                   }}
                 />
               ) : (
-                <span className="flex-1 truncate" onDoubleClick={(e) => { e.stopPropagation(); setRenaming(r.id); }}>
-                  {r.name}
+                <span className="flex-1 truncate" title={r.name} onDoubleClick={(e) => { e.stopPropagation(); setRenaming(r.id); }}>
+                  {layerLabel(r.name)}
                   {outsideSafe(props.print ?? null, r) && (
                     <span title="Ngoài safe zone — có thể bị cắt khi in">
                       <AlertTriangle className="ml-1 inline h-3 w-3 text-amber-500" />
@@ -1195,7 +1199,7 @@ function ArtworkOptions(props: InspectorProps) {
         const cur = selection[r.id];
         if (r.kind === "text")
           return (
-            <CtField key={r.id} label={r.name}>
+            <CtField key={r.id} label={layerLabel(r.name)}>
               <CtInput value={cur?.kind === "text" ? cur.text : ""} placeholder={r.config.text.placeholder} onChange={(e) => props.onSampleText(r.id, e.target.value)} />
             </CtField>
           );
@@ -1203,7 +1207,7 @@ function ArtworkOptions(props: InspectorProps) {
         return (
           <div key={r.id}>
             <div className="mb-1 flex items-center gap-1 text-[11px]">
-              <span className="truncate font-medium">{r.name}</span>
+              <span className="truncate font-medium">{layerLabel(r.name)}</span>
               <span className="text-muted-foreground">({options.length})</span>
             </div>
             <div className="grid grid-cols-6 gap-1">

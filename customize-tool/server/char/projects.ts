@@ -25,7 +25,7 @@
 
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
-import type { CtCharBrief, CtCharCutState, CtCharIdeaRound, CtCharImage, CtCharImageKind, CtCharMask, CtCharProject, CtCharRef, CtCharRefUse } from "../../types";
+import type { CtAsset, CtCharBrief, CtCharCutState, CtCharIdeaRound, CtCharImage, CtCharImageKind, CtCharMask, CtCharProject, CtCharRef, CtCharRefUse } from "../../types";
 import { REF_USE_INFO, masterBriefKey, masterPrompt, parseCharBrief, setAspect } from "../../lib/char-brief";
 import { CT_IMAGE_MODEL } from "../../lib/image-models";
 import { drawImage } from "../pack-images";
@@ -142,6 +142,20 @@ export async function listCharProjects(s: CtSession): Promise<NextResponse> {
   for (const p of projects) {
     const mine = (masters ?? []).filter((m) => m.project_id === p.id);
     thumbs[p.id] = (mine.find((m) => m.id === p.master_id) ?? mine[0])?.thumb_url ?? "";
+  }
+  // A set drawn pose by pose has no master of its own: its product's front mockup ("Chưa có master" on a finished
+  // set, 2026-10-22).
+  const bare = projects.filter((p) => !thumbs[p.id] && p.product_ids.length);
+  if (bare.length) {
+    const { data: fronts } = await s.supabase
+      .from(CT_TABLES.assets)
+      .select("product_id, url, name")
+      .in("product_id", bare.flatMap((p) => p.product_ids))
+      .eq("role", "mockup")
+      .like("name", "mockup_front%")
+      .order("created_at", { ascending: true })
+      .returns<Array<Pick<CtAsset, "product_id" | "url" | "name">>>();
+    for (const p of bare) thumbs[p.id] = (fronts ?? []).find((f) => f.product_id && p.product_ids.includes(f.product_id))?.url ?? "";
   }
   return NextResponse.json({ projects, thumbs });
 }

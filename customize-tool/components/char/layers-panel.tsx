@@ -42,7 +42,7 @@ export function LayersPanel(ctx: CharCtx & { step: "layers" | "product" }) {
     return (
       <div className="space-y-4 p-6">
         <AutoStepGuide what="@flexiprint cắt clipart từng dáng rồi ghép phiên bản" />
-        <VersionsPanel {...ctx} />
+        <VersionsPanel {...ctx} show="files" />
       </div>
     );
   const tabs: Array<{ id: Sub; label: string; ok: boolean; note: string }> = [

@@ -70,12 +70,14 @@ export function ProductStep(ctx: CharCtx) {
       {/* The text layer is drawn with the product's font. */}
       <link rel="stylesheet" href={ctGoogleFontsHref()} />
       <AutoStepGuide what="@flexiprint dựng sản phẩm, nền và mockup" />
-      <BlankSection {...ctx} />
-      <BackdropSection {...ctx} />
-      {project.brief.kind !== "photo" && project.brief.elements.length > 0 && <ElementGallery {...ctx} />}
+      {/* The product first — what this step is for; what it is made of below. */}
       {project.product_ids.map((pid) => (
         <ProductCard key={pid} productId={pid} bundle={bundles[pid]} />
       ))}
+      {project.brief.kind !== "photo" && project.brief.elements.length > 0 && <ElementGallery {...ctx} />}
+      <BackdropSection {...ctx} />
+      {/* A die-cut piece has no phôi to shoot (its plate is its own outline): nothing to show there. */}
+      {project.brief.product.cut !== "alpha" && <BlankSection {...ctx} />}
     </div>
   );
 }
@@ -110,25 +112,26 @@ function ProductCard({ productId, bundle }: { productId: string; bundle: CtProdu
           <div className="text-sm font-semibold">{bundle?.product.name ?? "…"}</div>
           <div className="text-xs text-muted-foreground">{bundle ? `${bundle.regions.length} layer · ${bundle.assets.length} file` : "Đang tải…"}</div>
         </div>
-        <Link href={`${CT_CONFIG.basePath}/${productId}`} target="_blank" className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent">
-          <ExternalLink className="h-3.5 w-3.5" /> Mở trong editor
+        <Link href={`${CT_CONFIG.basePath}/${productId}`} target="_blank" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background hover:opacity-90">
+          <ExternalLink className="h-4 w-4" /> Mở sản phẩm
         </Link>
       </div>
       {mockups.length > 0 && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {mockups.map((m) => (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+          {/* In the order they were made: each print's front photo, then its scenes — a theme's pictures side by side. */}
+          {[...mockups].sort((a, b) => a.created_at.localeCompare(b.created_at)).map((m) => (
             <figure key={m.id} className="overflow-hidden rounded-lg border bg-white">
               {m.status === "done" && m.url ? (
                 <a href={m.url} target="_blank" rel="noreferrer">
                   {/* eslint-disable-next-line @next/next/no-img-element -- our R2 picture */}
-                  <img src={m.url} alt={m.description} className="aspect-[4/5] w-full object-cover" />
+                  <img src={m.url} alt={m.description} className="aspect-square w-full object-contain" />
                 </a>
               ) : m.status === "running" ? (
-                <div className="flex aspect-[4/5] items-center justify-center">
+                <div className="flex aspect-square items-center justify-center">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
               ) : (
-                <div className="flex aspect-[4/5] items-center justify-center p-2 text-[11px] text-destructive">{m.error}</div>
+                <div className="flex aspect-square items-center justify-center p-2 text-[11px] text-destructive">{m.error}</div>
               )}
               <figcaption className="truncate p-1.5 text-[11px] text-muted-foreground" title={m.description}>
                 {m.description}

@@ -1018,6 +1018,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             layerCounts={layerCounts}
             shownMainId={shownMainId}
             onDropVersion={(drag) => void addVersionFromDrop(drag)}
+            versionLabel={config.main.enabled && config.main.label ? config.main.label : undefined}
           />
         </aside>
 

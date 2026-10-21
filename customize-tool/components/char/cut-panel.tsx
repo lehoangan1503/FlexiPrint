@@ -133,8 +133,11 @@ function Checks({ checks, plan, onEdit, title }: { checks: CtCharLayerCheck[]; p
         {checks.map((c, i) => (
           <li key={i} className="flex items-start gap-1.5">
             {c.ok ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" /> : <XCircle className="mt-0.5 h-3 w-3 shrink-0 text-destructive" />}
-            <span className="flex-1">{c.name}</span>
-            <span className="text-muted-foreground">{c.detail}</span>
+            {/* The detail under the name: a long one ("lệch 3.32 → 0.70 px … vẽ lại ảnh này") squeezed the name to a word a line. */}
+            <span className="min-w-0 flex-1">
+              {c.name}
+              {c.detail && <span className="block text-muted-foreground">{c.detail}</span>}
+            </span>
             {onEdit && c.piece && plan?.pieces.some((x) => x.key === c.piece) && (
               <button className="rounded border px-1 text-[10px] hover:bg-accent" onClick={() => onEdit({ kind: "piece", key: c.piece! })}>
                 Sửa vùng

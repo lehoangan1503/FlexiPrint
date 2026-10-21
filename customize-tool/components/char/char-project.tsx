@@ -162,7 +162,8 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
   const photoSet = project.brief.kind === "photo";
   const done: Record<Step, boolean> = {
     brief: photoSet ? project.brief.photoZones.length > 0 : project.brief.subjects.length > 0,
-    master: !!project.master_id,
+    // A set drawn pose by pose has no master of its own: done once its poses are on (approved, cut).
+    master: !!project.master_id || (!!project.brief.poses?.length && (project.status === "layers" || project.status === "product")),
     layers: project.status === "layers" || project.status === "product",
     product: project.product_ids.length > 0,
   };

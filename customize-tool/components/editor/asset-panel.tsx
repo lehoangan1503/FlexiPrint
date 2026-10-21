@@ -37,6 +37,9 @@ export interface AssetPanelProps {
   shownMainId: string | null;
   /** A library clipart dropped on the version list: one more version. */
   onDropVersion: (drag: CtClipartDrag) => void;
+  /** What the customer is asked for a version ("Number of grandchildren"): each row says it, and its name is written
+   * over its picture. */
+  versionLabel?: string;
 }
 
 export function AssetPanel(props: AssetPanelProps) {
@@ -110,8 +113,10 @@ function VersionRow({ asset, ...props }: AssetPanelProps & { asset: CtAsset }) {
       onClick={() => props.onShow(asset)}
       className={cx("group flex cursor-pointer items-center gap-2 rounded-md border p-1.5", shown ? "border-sky-500 bg-sky-500/10" : "border-transparent hover:bg-accent")}
     >
-      <span className="h-11 w-11 shrink-0 overflow-hidden rounded border" style={CHECKER_STYLE}>
+      <span className="relative h-11 w-11 shrink-0 overflow-hidden rounded border" style={CHECKER_STYLE}>
         <img src={asset.url} alt={asset.name} className="h-full w-full object-contain" loading="lazy" draggable={false} />
+        {/* A version of a lineup is often a blank sheet: its name over it says which one. */}
+        {props.versionLabel && <span className="absolute inset-0 flex items-center justify-center text-base font-semibold text-foreground drop-shadow">{asset.name.slice(0, 3)}</span>}
       </span>
       <div className="min-w-0 flex-1">
         {editing ? (
@@ -129,7 +134,7 @@ function VersionRow({ asset, ...props }: AssetPanelProps & { asset: CtAsset }) {
           />
         ) : (
           <span className="block truncate text-xs font-medium" onDoubleClick={() => setEditing(true)}>
-            {asset.name || "(không tên)"}
+            {props.versionLabel ? `${props.versionLabel}: ${asset.name}` : asset.name || "(không tên)"}
           </span>
         )}
         <span className="text-[11px] text-muted-foreground">{count} layer</span>

@@ -196,7 +196,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                 <figure key={m.id} className="group relative overflow-hidden rounded-lg border bg-white">
                   <a href={m.url} target="_blank" rel="noreferrer">
                     {/* eslint-disable-next-line @next/next/no-img-element -- our R2 picture */}
-                    <img src={m.url} alt={m.name} className="aspect-[4/5] w-full object-cover" loading="lazy" />
+                    <img src={m.url} alt={m.name} className="aspect-square w-full object-contain" loading="lazy" />
                   </a>
                   <button className="absolute right-1 top-1 hidden rounded bg-black/60 p-1 text-white group-hover:block" onClick={() => void remove(m)} aria-label="Xoá mockup">
                     <Trash2 className="h-3.5 w-3.5" />

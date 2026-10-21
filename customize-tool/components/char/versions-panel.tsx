@@ -5,7 +5,7 @@
  * version, each smaller one is its own set (server/char/versions.ts) — its own master, doll, 3b pictures and cut. Shown
  * on the parent's steps 2 and 3: each version's masters (the approved one ringed) and how far it is; a click opens it.
  * A set drawn pose by pose shows each pose WHOLE here (asked 2026-10-22: the parent is the one page of the set): every
- * master of the pose (zoom, approve) and every clipart file it was cut into.
+ * master of the pose (zoom, approve) on step 2, every clipart file it was cut into on step 3.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -29,7 +29,8 @@ function stage(v: CtCharVersionCard): { text: string; busy: boolean; ok: boolean
   return { text: "Chờ chọn master", busy: false, ok: false };
 }
 
-export function VersionsPanel(ctx: CharCtx) {
+/** `show`: what each pose shows — its masters (step 2) or its clipart files (step 3). */
+export function VersionsPanel({ show = "masters", ...ctx }: CharCtx & { show?: "masters" | "files" }) {
   const { project } = ctx;
   const [list, setList] = useState<CtCharVersionCard[] | null>(null);
   const load = useCallback(async () => {
@@ -76,7 +77,7 @@ export function VersionsPanel(ctx: CharCtx) {
       ) : poses.length && list.length ? (
         <div className="space-y-4">
           {list.map((v) => (
-            <PoseSet key={v.project.id} ctx={ctx} card={v} who={whoIn(v.project.brief.versionOf?.pose)} onChange={load} />
+            <PoseSet key={v.project.id} ctx={ctx} card={v} who={whoIn(v.project.brief.versionOf?.pose)} show={show} onChange={load} />
           ))}
         </div>
       ) : !list.length ? (
@@ -122,7 +123,7 @@ export function VersionsPanel(ctx: CharCtx) {
 }
 
 /** One pose of the parent, whole: its masters (zoom, approve while none is) and its clipart files once cut. */
-function PoseSet({ ctx, card, who, onChange }: { ctx: CharCtx; card: CtCharVersionCard; who: string; onChange: () => Promise<void> }) {
+function PoseSet({ ctx, card, who, show, onChange }: { ctx: CharCtx; card: CtCharVersionCard; who: string; show: "masters" | "files"; onChange: () => Promise<void> }) {
   const p = card.project;
   const st = stage(card);
   const [zoom, setZoom] = useState<CtCharVersionCard["masters"][number] | null>(null);
@@ -148,41 +149,48 @@ function PoseSet({ ctx, card, who, onChange }: { ctx: CharCtx; card: CtCharVersi
           Trang riêng của dáng <ExternalLink className="h-3 w-3" />
         </Link>
       </div>
-      <div className="mt-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Master ({card.masters.length})</div>
-      <div className="mt-1 flex flex-wrap gap-2">
-        {card.masters.length ? (
-          card.masters.map((m) => (
-            <div key={m.id} className={cx("w-40 overflow-hidden rounded-md border", m.id === p.master_id && "ring-2 ring-emerald-500")}>
-              <button className="block aspect-square w-full" style={CHECKER_STYLE} disabled={m.status !== "done"} onClick={() => setZoom(m)}>
-                {m.status === "done" ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- our R2 preview
-                  <img src={m.thumbUrl} alt="" className="h-full w-full object-contain" />
-                ) : m.status === "running" ? (
-                  <Loader2 className="m-auto h-4 w-4 animate-spin text-muted-foreground" />
-                ) : (
-                  <span className="p-2 text-[11px] text-destructive">Lỗi</span>
-                )}
-              </button>
-              <div className="flex items-center gap-1 px-1.5 py-1 text-[11px]">
-                #{number(m.id)}
-                {m.id === p.master_id && <span className="ml-auto rounded bg-emerald-500 px-1 text-[10px] text-white">Đã duyệt</span>}
-                {!p.master_id && ctx.editable && m.status === "done" && (
-                  <CtButton size="sm" variant="primary" className="ml-auto h-6 px-2 text-[11px]" onClick={() => void approve(m.id)}>
-                    Duyệt
-                  </CtButton>
-                )}
-              </div>
-            </div>
-          ))
-        ) : (
-          <div className="h-40 w-40 rounded-md border border-dashed" />
-        )}
-      </div>
-      {p.layers?.status === "done" && p.layers.slots.length > 0 && (
-        <div className="mt-3">
-          <LayerFiles set={p.layers} onFix={null} />
-        </div>
+      {show === "masters" && (
+        <>
+          <div className="mt-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Master ({card.masters.length})</div>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {card.masters.length ? (
+              card.masters.map((m) => (
+                <div key={m.id} className={cx("w-40 overflow-hidden rounded-md border", m.id === p.master_id && "ring-2 ring-emerald-500")}>
+                  <button className="block aspect-square w-full" style={CHECKER_STYLE} disabled={m.status !== "done"} onClick={() => setZoom(m)}>
+                    {m.status === "done" ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- our R2 preview
+                      <img src={m.thumbUrl} alt="" className="h-full w-full object-contain" />
+                    ) : m.status === "running" ? (
+                      <Loader2 className="m-auto h-4 w-4 animate-spin text-muted-foreground" />
+                    ) : (
+                      <span className="p-2 text-[11px] text-destructive">Lỗi</span>
+                    )}
+                  </button>
+                  <div className="flex items-center gap-1 px-1.5 py-1 text-[11px]">
+                    #{number(m.id)}
+                    {m.id === p.master_id && <span className="ml-auto rounded bg-emerald-500 px-1 text-[10px] text-white">Đã duyệt</span>}
+                    {!p.master_id && ctx.editable && m.status === "done" && (
+                      <CtButton size="sm" variant="primary" className="ml-auto h-6 px-2 text-[11px]" onClick={() => void approve(m.id)}>
+                        Duyệt
+                      </CtButton>
+                    )}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="h-40 w-40 rounded-md border border-dashed" />
+            )}
+          </div>
+        </>
       )}
+      {show === "files" &&
+        (p.layers?.status === "done" && p.layers.slots.length > 0 ? (
+          <div className="mt-3">
+            <LayerFiles set={p.layers} onFix={null} />
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-muted-foreground">Chưa có file — {st.text.toLowerCase()}.</p>
+        ))}
       <CtModal open={!!zoom} onOpenChange={(o) => !o && setZoom(null)} title={zoom ? `${p.brief.versionOf?.name} — master #${number(zoom.id)}` : ""} wide>
         {zoom && (
           // eslint-disable-next-line @next/next/no-img-element -- the original

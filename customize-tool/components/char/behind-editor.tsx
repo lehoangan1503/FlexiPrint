@@ -13,7 +13,7 @@ import { Brush, Hand, Lasso, Loader2, Minus, Plus, Redo2, Save, Trash2, Undo2, X
 import type { CtBehindStage, CtCharLayerSet, CtCharLayerSlot } from "../../types";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
 import { useNoBrowserZoom } from "./no-browser-zoom";
-import { BRUSH_RING } from "./mask-editor";
+import { BRUSH_RING, BRUSH_RING_STYLE } from "./mask-editor";
 
 type Tool = "lasso" | "brush" | "hand";
 type Op = "add" | "remove";
@@ -449,7 +449,7 @@ export function BehindEditor(props: {
               <Loader2 className="h-4 w-4 animate-spin" /> Đang dựng artwork hoàn chỉnh của sản phẩm…
             </div>
           )}
-          {stage && tool === "brush" && !props.readOnly && <div ref={ring} className={BRUSH_RING} />}
+          {stage && tool === "brush" && !props.readOnly && <div ref={ring} className={BRUSH_RING} style={BRUSH_RING_STYLE} />}
           {stage && (
             <div className="absolute left-0 top-0 origin-top-left" style={{ width: stage.width, height: stage.height, transform: `translate(${z.ox}px, ${z.oy}px) scale(${z.s})` }}>
               <canvas ref={view} width={stage.width} height={stage.height} className="block h-full w-full" />

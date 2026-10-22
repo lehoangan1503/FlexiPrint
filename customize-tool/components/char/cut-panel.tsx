@@ -7,7 +7,7 @@
  *   File cuối  the files cut from both, checked automatically (stacked = master?), looked over, approved, ZIP
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, ExternalLink, Layers, Loader2, Pencil, Scissors, XCircle } from "lucide-react";
 import type { CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharPlan } from "../../types";
@@ -588,18 +588,38 @@ function BehindEditor(ctx: CharCtx & { onClose: () => void; slotKey: string; ima
   const slot = set?.slots.find((sl) => sl.key === ctx.slotKey);
   const file = slot?.files.find((f) => f.imageId === ctx.imageId) ?? slot?.files[0];
   const [blank] = useState(() => (set ? blankMask(set.width, set.height) : ""));
+  // The product's characters around this one (null: loading, "": none).
+  const [backdrop, setBackdrop] = useState<string | null>(null);
+  const option = file?.option ?? "";
+  useEffect(() => {
+    let live = true;
+    charApi
+      .behindContext(project.id, option)
+      .then((u) => live && setBackdrop(u))
+      .catch(() => live && setBackdrop(""));
+    return () => {
+      live = false;
+    };
+  }, [project.id, option]);
   if (!set || !slot || !file) return null;
+  if (backdrop === null)
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 text-sm">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Đang dựng ảnh ghép các nhân vật quanh dáng này…
+      </div>
+    );
   return (
     <MaskEditor
       key={`behind:${slot.key}`}
       title={`Phần nằm sau: ${slot.label} — ${[file.option, file.color].filter(Boolean).join(" · ")}`}
-      hint="Tô / khoanh (Vùng) phần của layer này phải nằm SAU mọi nhân vật khác — vd đuôi nón đang che mặt người bên cạnh. Vùng cam = phần đưa ra sau. Áp cho mọi kiểu / theme của layer; nhân vật lật gương được lật theo. Lưu → sản phẩm của bộ cha dựng lại (2–4 phút). Hoàn tác = bỏ hết."
+      hint="Mờ phía sau = sản phẩm thật (bản đông người nhất) quanh nhân vật này. Khoanh (Vùng) TRỌN phần của layer đè lên người bên cạnh — đường khoanh phải nằm ngoài người đó, không cắt ngang chỗ hai người chồng nhau. Vùng cam = phần đưa ra sau mọi nhân vật; áp cho mọi kiểu / theme của layer, nhân vật lật gương được lật theo. Lưu → sản phẩm bộ cha dựng lại (2–4 phút)."
       width={set.width}
       height={set.height}
       colourUrl={file.url}
       maskUrl={slot.behindUrl ?? blank}
       subjectUrl={file.url}
       tint="#f97316"
+      backdropUrl={backdrop || null}
       startAdd
       canRevert={!!slot.behindUrl}
       readOnly={!ctx.editable}

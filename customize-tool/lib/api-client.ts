@@ -325,6 +325,8 @@ export const charApi = {
   editFile: (id: string, imageId: string, mask: string | null, move?: { dx: number; dy: number } | null) =>
     call<{ project: CtCharProject }>(`char/projects/${id}/layers/file`, json("POST", { imageId, mask, move: move ?? null })).then((r) => r.project),
   /** A pose set's "phần nằm sau" of one layer (server/char/behind.ts): its mask, or null to clear it. */
+  /** The parent's biggest version around this pose, on the pose's canvas (the "phần nằm sau" editor's backdrop). */
+  behindContext: (id: string, option: string) => call<{ url: string }>(`char/projects/${id}/layers/behind/context`, json("POST", { option })).then((r) => r.url),
   setBehind: (id: string, slot: string, mask: string | null) => call<{ project: CtCharProject }>(`char/projects/${id}/layers/behind`, json("POST", { slot, mask })).then((r) => r.project),
   revertFile: (id: string, imageId: string) => call<{ project: CtCharProject }>(`char/projects/${id}/layers/file/revert`, json("POST", { imageId })).then((r) => r.project),
 };

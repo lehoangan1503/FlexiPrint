@@ -7,6 +7,9 @@
  * mask mirrored.
  *
  *   POST char/projects/:id/layers/behind {slot, mask: PNG data URL | null}   — drawn in the editor (null = none)
+ *   POST char/projects/:id/layers/behind/context {option}                    — the parent's biggest version around
+ *        this pose, on the pose's canvas (asked 2026-10-23: drawn without seeing the neighbours, the part that goes
+ *        behind was cut short and the rest of the hat lay over the next grandchild with a straight edge)
  *   MCP char_set_behind {set_id, slot, polygons: [[[x, y], …]] shares of the canvas | []} — set by @flexiprint
  *
  * Only pose sets (brief.versionOf.pose): their parent's product is rebuilt in the background after a change.
@@ -21,6 +24,13 @@ import { saveCharRaw } from "./files";
 import { canEditProject, jobDb, jsonError, loadProject, NOT_YOURS, projectRow, type Db } from "./projects";
 import { pngBytes } from "./file-edit";
 import { remakeDrawnProduct } from "./versions";
+import { loadArtwork, renderArtwork } from "../print-render";
+import { selectionFromNames } from "../product-options";
+import { mainVersions, normalizeProductConfig } from "../../lib/design";
+import { onVersion } from "../../lib/layout";
+import { shapeBounds } from "../../lib/geometry";
+import { composedVersions, subjectName } from "../../lib/char-lineup";
+import { poseOf } from "../../lib/char-brief";
 
 /** The layer slot a mask may go on: a part's own layer (a hair's front half stands for the part). */
 function slotIn(set: CtCharLayerSet, key: string) {
@@ -77,5 +87,67 @@ export async function behindRoute(s: CtSession, id: string, body: unknown): Prom
     return NextResponse.json({ project });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không lưu được", 400);
+  }
+}
+
+/**
+ * The parent's product as the customer sees its biggest version (`option`: the Theme / outfit shown — the file being
+ * edited), cut to where this pose's character stands and scaled onto the pose's canvas: the editor shows it dimmed
+ * behind the layer, so the part that goes behind is drawn around exactly what overlaps the neighbours. The character
+ * used is one standing unmirrored in this pose, the one with the most people around it.
+ */
+export async function behindContext(db: Db, userId: string, p: CtCharProject, option: string): Promise<string> {
+  const set = p.layers;
+  const parentId = p.brief.versionOf?.pose ? p.brief.versionOf.id : null;
+  if (!set || !parentId) throw new Error("Chỉ dùng cho dáng của một bộ ghép dáng");
+  const parent = await loadProject(db, parentId);
+  const productId = parent?.product_ids[0];
+  if (!parent || !productId) throw new Error("Bộ cha chưa có sản phẩm");
+  const b = await loadArtwork(db, productId);
+  if (!b) throw new Error("Không đọc được sản phẩm của bộ cha");
+  const versions = composedVersions(parent.brief);
+  const v = versions[versions.length - 1];
+  const mains = mainVersions(b.assets, b.product.main_asset_id);
+  const main = mains.find((m) => m.name === v?.name) ?? mains[mains.length - 1];
+  if (!v || !main) throw new Error("Sản phẩm chưa có phiên bản");
+  const mine = v.people.filter((x) => {
+    const at = poseOf(parent.brief, x.subject);
+    return !!at && at.pose.id === p.brief.versionOf?.pose && !(x.flip ?? at.mirrored);
+  });
+  const centre = v.people.reduce((n, x) => n + x.x, 0) / Math.max(1, v.people.length);
+  const person = [...mine].sort((a, c) => Math.abs(a.x - centre) - Math.abs(c.x - centre))[0];
+  if (!person) throw new Error("Không có nhân vật nào đứng thẳng (không lật) ở dáng này");
+  const name = subjectName(parent.brief, parent.brief.subjects.findIndex((x) => x.id === person.subject));
+  const body = b.regions.find((r) => onVersion(r, main.id) && r.name.startsWith(`Thân — ${name}`));
+  if (!body) throw new Error(`Không thấy layer thân của ${name}`);
+  const box = shapeBounds(body.shape);
+  const config = normalizeProductConfig(b.product.config);
+  let selection;
+  try {
+    selection = selectionFromNames(b, { [config.main.label || "Version"]: main.name, ...(option ? { Theme: option } : {}) });
+  } catch {
+    selection = selectionFromNames(b, { [config.main.label || "Version"]: main.name });
+  }
+  const W = b.spec?.width ?? b.assets.find((a) => a.id === b.product.main_asset_id)?.width ?? 1000;
+  const H = b.spec?.height ?? b.assets.find((a) => a.id === b.product.main_asset_id)?.height ?? 1000;
+  const print = await renderArtwork(b, selection, Math.max(W, H), "print");
+  // The pose's canvas = the body layer's box on the print: the print moved / scaled into it.
+  const k = set.width / box.w;
+  const png = await sharp({ create: { width: set.width, height: set.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite([{ input: await sharp(print).resize(Math.max(1, Math.round(W * k)), Math.max(1, Math.round(H * k))).png().toBuffer(), left: Math.round(-box.x * k), top: Math.round(-box.y * k) }])
+    .png()
+    .toBuffer();
+  return (await saveCharRaw(userId, p.id, "behind-context", png, "image/png")).url;
+}
+
+/** POST char/projects/:id/layers/behind/context {option} → {url} */
+export async function behindContextRoute(s: CtSession, id: string, body: unknown): Promise<NextResponse> {
+  const p = await loadProject(s.supabase, id);
+  if (!p) return jsonError("Không tìm thấy bộ nhân vật", 404);
+  const option = body && typeof body === "object" && typeof (body as { option?: unknown }).option === "string" ? (body as { option: string }).option : "";
+  try {
+    return NextResponse.json({ url: await behindContext(jobDb(s), p.user_id ?? s.user.id, p, option) });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không dựng được ảnh ghép", 400);
   }
 }

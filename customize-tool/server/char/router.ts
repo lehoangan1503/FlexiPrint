@@ -9,7 +9,7 @@ import { parseCharBrief } from "../../lib/char-brief";
 import { recordEdit } from "../agent/inbox";
 import { approveCharLayers, buildCharLayers, layerFileRoute, startEdits } from "./layers";
 import { cutRoute, startMatte } from "./cut";
-import { behindRoute } from "./behind";
+import { behindContextRoute, behindRoute } from "./behind";
 import { createAgentTask } from "../agent/tasks";
 import { createCharProduct, remakeCharProduct } from "./product";
 import { makeCharBlank } from "./blank";
@@ -74,6 +74,7 @@ function editText(p: CtCharProject, path: string[], method: string, raw: unknown
     const move = b.move && typeof b.move === "object" ? (b.move as { dx?: unknown; dy?: unknown }) : null;
     return `Sửa tay clipart ${fileName(b.imageId)}${b.mask ? " (vẽ lại vùng: cọ / tẩy)" : ""}${move && (Number(move.dx) || Number(move.dy)) ? ` (kéo ${Number(move.dx) || 0}, ${Number(move.dy) || 0} px)` : ""} — mọi màu của kiểu đó đổi theo`;
   }
+  if (action === "layers" && sub === "behind" && subAction === "context") return "";
   if (action === "layers" && sub === "behind") return `${b.mask ? "Vẽ" : "Bỏ"} phần nằm sau của layer ${String(b.slot)} (sửa tay) — phần đó nằm dưới mọi nhân vật, sản phẩm bộ cha dựng lại`;
   if (action === "plan") return `Vùng lớp 3c: ${sub ?? ""}${typeof b.key === "string" ? ` ${b.key}` : ""} (sửa tay)`;
   if (action === "matte") return `Master cỡ in 3a: ${sub ?? ""} (sửa tay)`;
@@ -141,6 +142,7 @@ async function route(req: NextRequest, s: CtSession, path: string[]): Promise<Ne
   if (action === "layers" && sub === "approve") return approveCharLayers(s, id, await json(req));
   if (action === "layers" && sub === "file" && (!subAction || subAction === "revert")) return layerFileRoute(s, id, subAction, await json(req));
   if (action === "layers" && sub === "behind" && !subAction) return behindRoute(s, id, await json(req));
+  if (action === "layers" && sub === "behind" && subAction === "context") return behindContextRoute(s, id, await json(req));
   if ((action === "matte" || action === "plan") && !subAction) return cutRoute(s, id, action, sub, await json(req));
   if (action === "products" && !sub) return createCharProduct(s, id, await json(req));
   if (action === "products" && sub === "remake") return remakeCharProduct(s, id);

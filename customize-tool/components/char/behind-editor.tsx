@@ -102,7 +102,7 @@ export function BehindEditor(props: {
         const pic = (u: string) => pics.get(u) ?? pics.set(u, loadImg(u)).get(u)!;
         const [plates, old] = await Promise.all([
           Promise.all(st.plates.map(async (p) => ({ img: p.url ? await pic(p.url) : null, box: p.box, flip: p.flip, layer: p.layerUrl ? await pic(p.layerUrl) : undefined }))),
-          props.slot.behindUrl ? loadImg(props.slot.behindUrl).catch(() => null) : Promise.resolve(null),
+          set.behindUrl ? loadImg(set.behindUrl).catch(() => null) : Promise.resolve(null),
         ]);
         if (!live) return;
         const mask = canvas(MW, MH);
@@ -380,7 +380,7 @@ export function BehindEditor(props: {
       <div className="flex items-center gap-3 border-b px-3 py-2">
         <div className="mr-2 min-w-0">
           <div className="truncate text-sm font-semibold">{props.title}</div>
-          <div className="truncate text-[11px] text-muted-foreground">Artwork hoàn chỉnh (bản đông người nhất) — đang hiện đúng như sẽ in. Tô / khoanh phần của layer phải nằm SAU người khác: phần đó chui xuống dưới ngay khi vẽ. Áp cho mọi theme và mọi nhân vật dùng dáng này.</div>
+          <div className="truncate text-[11px] text-muted-foreground">Artwork hoàn chỉnh (bản đông người nhất) — đang hiện đúng như sẽ in. Tô / khoanh vùng mà búp bê này phải nằm SAU búp bê bên cạnh: trong vùng đó cả búp bê (mọi layer, giữ thứ tự của nó) chui xuống dưới người khác ngay khi vẽ. Áp cho mọi theme và mọi nhân vật dùng dáng này.</div>
         </div>
         <label className="ml-auto flex items-center gap-1.5 whitespace-nowrap text-xs">
           <input type="checkbox" checked={tint} onChange={(e) => setTint(e.target.checked)} /> Tô cam phần nằm sau

@@ -568,9 +568,6 @@ export interface CtCharLayerSlot {
   files: CtCharLayerFile[];
   /** The back half of a wrapping part follows this slot's choice (layer-rules §6). */
   follows: string | null;
-  /** A pose set's "phần nằm sau" (server/char/behind.ts): mask on the canvas — that part of the layer (every option)
-   * goes under every character in the parent's product. */
-  behindUrl?: string;
 }
 
 /** The "phần nằm sau" editor's artwork (server/char/behind.ts behindStage): the parent's biggest version, whole. */
@@ -608,6 +605,9 @@ export interface CtCharLayerZone {
 
 export interface CtCharLayerSet {
   status: "building" | "done" | "failed";
+  /** A pose set's "phần nằm sau" (server/char/behind.ts): a mask on the canvas — inside it the WHOLE doll (every layer,
+   * in its own order) lies behind every other character of the parent's product. */
+  behindUrl?: string;
   error: string;
   /** Common canvas of every file (the crop of the working master). */
   width: number;

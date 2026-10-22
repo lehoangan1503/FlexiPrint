@@ -338,8 +338,8 @@ function LayerView({ ctx, set, plan, onEdit: edit }: { ctx: CharCtx; set: CtChar
           ))}
         {onEdit && ctx.project.brief.versionOf?.pose && set.slots.find((x) => x.key === "body")?.files[0] && (
           <div className="flex items-center gap-2 text-xs">
-            <span className="text-muted-foreground">Thân{set.slots.find((x) => x.key === "body")?.behindUrl ? " (đang có phần nằm sau)" : ""}</span>
-            <CtButton variant="outline" onClick={() => onEdit({ kind: "behind", slot: "body", imageId: set.slots.find((x) => x.key === "body")!.files[0].imageId })} title="Khoanh phần của thân phải nằm SAU mọi nhân vật khác">
+            <span className="text-muted-foreground">Cả búp bê{set.behindUrl ? " (đang có phần nằm sau)" : ""}</span>
+            <CtButton variant="outline" onClick={() => onEdit({ kind: "behind", slot: "body", imageId: set.slots.find((x) => x.key === "body")!.files[0].imageId })} title="Khoanh vùng búp bê này phải nằm SAU búp bê bên cạnh (mọi layer trong vùng cùng ra sau)">
               <Layers className="h-4 w-4" /> Đưa 1 phần ra sau
             </CtButton>
           </div>
@@ -356,7 +356,7 @@ function LayerView({ ctx, set, plan, onEdit: edit }: { ctx: CharCtx; set: CtChar
               </CtButton>
               {ctx.project.brief.versionOf?.pose && (
                 <CtButton variant="outline" onClick={() => onEdit({ kind: "behind", slot: focused.key, imageId: ff.imageId })} title="Khoanh phần của layer này phải nằm SAU mọi nhân vật khác (đuôi nón che mặt người bên cạnh) — áp cho mọi kiểu / theme của layer, sản phẩm dựng lại">
-                  <Layers className="h-4 w-4" /> Đưa 1 phần ra sau{focused.behindUrl ? " (đang có)" : ""}
+                  <Layers className="h-4 w-4" /> Đưa 1 phần ra sau{set.behindUrl ? " (đang có)" : ""}
                 </CtButton>
               )}
               {ff.piece && plan?.pieces.some((x) => x.key === ff.piece) && (
@@ -588,7 +588,7 @@ function BehindLayer(ctx: CharCtx & { onClose: () => void; slotKey: string; imag
   if (!set || !slot || !file) return null;
   return (
     <BehindEditor
-      title={`Đưa 1 phần ra sau: ${slot.label} — ${[file.option, file.color].filter(Boolean).join(" · ")}`}
+      title={`Đưa 1 phần ra sau — búp bê ${project.brief.versionOf?.name ?? ""} (đang xem: ${[file.option, file.color].filter(Boolean).join(" · ")})`}
       set={set}
       slot={slot}
       load={() => charApi.behindStage(project.id, slot.key, file.option)}

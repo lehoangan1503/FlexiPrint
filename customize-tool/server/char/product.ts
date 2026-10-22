@@ -578,8 +578,9 @@ function posedSet(set: CtCharLayerSet, poseSubject: CtCharSubject, target: CtCha
     flip ? { ...f, url: m(f.url)!, thumbUrl: m(f.thumbUrl) ?? f.thumbUrl, viewUrl: m(f.viewUrl), viewThumbUrl: m(f.viewThumbUrl), bbox: f.bbox?.length === 4 ? [set.width - f.bbox[0] - f.bbox[2], f.bbox[1], f.bbox[2], f.bbox[3]] : f.bbox } : f;
   return {
     ...set,
-    slots: set.slots.map((sl) => ({ ...sl, key: key(sl.key), label: sl.key === "body" ? sl.label : `${name} — ${sl.label.replace(/^Người \d+ — /, "")}`, follows: sl.follows ? key(sl.follows) : sl.follows, files: sl.files.map(file), behindUrl: m(sl.behindUrl) })),
+    slots: set.slots.map((sl) => ({ ...sl, key: key(sl.key), label: sl.key === "body" ? sl.label : `${name} — ${sl.label.replace(/^Người \d+ — /, "")}`, follows: sl.follows ? key(sl.follows) : sl.follows, files: sl.files.map(file) })),
     zones: [],
+    behindUrl: m(set.behindUrl),
   };
 }
 
@@ -767,13 +768,9 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
      * hat and the rest (asked 2026-10-23: the sweater can go behind too). Mirrored characters: the mask url carries the
      * MIRROR prefix like the files.
      */
-    const behindOf = (sl: CtCharLayerSlot): string | undefined => {
-      if (!src.p.brief.versionOf?.pose) return undefined;
-      if (hats.has(sl.key)) return sset.slots.find((x) => x.key === hats.get(sl.key))?.behindUrl;
-      // A back half (hair "lớp sau") goes with its front half's mask: every layer of the clipart.
-      if (sl.follows) return sset.slots.find((x) => x.key === sl.follows)?.behindUrl;
-      return sl.behindUrl;
-    };
+    // The doll's mask holds for every layer of it (asked 2026-10-23: "ra sau" = behind the whole neighbouring doll,
+    // never behind the doll's own body — the sweater alone under everything showed the doll's tank top).
+    const behindOf = (_sl: CtCharLayerSlot): string | undefined => (src.p.brief.versionOf?.pose ? sset.behindUrl : undefined);
     /** `keep`: "out" = the layer without its back part (the layer itself), "in" = its back part only. */
     const pieceOf = async (sl: CtCharLayerSlot, url: string, keep: "in" | "out" = "out"): Promise<Buffer> => {
       let png = await bytes(url);
@@ -895,7 +892,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     };
     const bodyName = split ? undefined : solo !== undefined ? `Body · ${subjectName(sb, solo)}` : drawn ? `Body · ${src.p.brief.versionOf?.name ?? named[named.length - 1].name}` : "Body";
     // A pose's body with a "phần nằm sau" (server/char/behind.ts): the body without it, and the part on its own.
-    const bodyBehind = src.p.brief.versionOf?.pose && bodySlot ? bodySlot.behindUrl : undefined;
+    const bodyBehind = src.p.brief.versionOf?.pose && bodySlot ? sset.behindUrl : undefined;
     const bodyMeta = (keep: "in" | "out"): CtAsset["meta"] =>
       bodySlot?.files[0]
         ? {
@@ -1118,23 +1115,26 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     };
     for (const e of ready.filter((x) => !x.front && x.place !== "plaque")) await placeElement(e);
 
-    // "Phần nằm sau" (server/char/behind.ts): each such part of a layer under every character of the version, linked
-    // to its layer below (it shows what the layer shows: the Theme's hat).
+    // "Phần nằm sau" (server/char/behind.ts): inside a pose's mask the whole doll lies under every character — each of
+    // its layers × the mask, in the doll's own order (back halves, body, parts, hats), each linked to its layer below.
     const behindRegions = new Map<Prepared, Map<string, CtRegion>>();
     for (const { pt, P, box } of parts) {
       const own = new Set(pt.subjects);
-      for (const sl of [...P.slots, ...P.hatSlots]) {
-        if (!own.has(P.slotSubject(sl)) || !P.behindOf(sl)) continue;
+      const mineSl = (sl: CtCharLayerSlot) => own.has(P.slotSubject(sl)) && !!P.behindOf(sl);
+      const map = new Map<string, CtRegion>();
+      const add = (sl: CtCharLayerSlot) => {
         const r = imageRegion(`${sl.label} — phần sau`, `${sl.label} — back`, {}, rect(box));
-        if (!behindRegions.has(P)) behindRegions.set(P, new Map());
-        behindRegions.get(P)!.set(sl.key, r);
+        map.set(sl.key, r);
         fills.push(P.groupsOf(sl, sl.label, "in").then((groups) => groups.forEach((g, gi) => g.sub && addItem(r, g.sub, gi, g.name))));
-      }
-      // The body's back part (a pose drawn alone: one body).
+      };
+      P.slots.filter((sl) => sl.follows && mineSl(sl)).forEach(add);
       for (const back of P.bodyBacks.slice(0, 1)) {
         const r = imageRegion(`Thân — ${P.src.as ? subjectName(P.sb, P.src.as.subject) : ""} — phần sau`, "Body — back", {}, rect(box));
         fills.push(back.then((a) => addItem(r, a, 0)));
       }
+      P.slots.filter((sl) => !sl.follows && sl.key !== "body" && mineSl(sl)).forEach(add);
+      P.hatSlots.filter(mineSl).forEach(add);
+      if (map.size) behindRegions.set(P, map);
     }
 
     // Every part's layers, linked afterwards (a part that follows the Theme needs the sign's region).

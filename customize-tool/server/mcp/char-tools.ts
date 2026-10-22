@@ -610,16 +610,15 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   {
     name: "char_set_behind",
     description:
-      "A set drawn pose by pose: put PART of one layer of a pose BEHIND every character (\"phần nằm sau\") — e.g. the tail of an inner grandchild's Santa hat that lies over the outer grandchild's face (in the sample it goes behind them). set_id = the POSE set (get_task set.versions[].set_id), slot = its layer slot key (char_status / get_task layers; any clipart: body, a face, a hair's front slot — its back half goes with it —, a hat-and-sweater outfit — its hat and its sweater), polygons = [[[x, y], …], …] in shares (0–1) of the pose's square canvas, drawn around the part on the UNMIRRORED pose picture (mirrored characters get it mirrored); [] clears it. Applies to every option of that layer (all themes' hats), so draw around where every option's part lies. The parent's product is rebuilt in the background (2–4 min) → render_artwork to check, then remake the mockups. The editor can draw the same thing by hand (Sửa clipart → Đưa 1 phần ra sau).",
+      "A set drawn pose by pose: put PART of a pose's DOLL behind every other character (\"phần nằm sau\") — e.g. the tail of an inner grandchild's Santa hat that lies over the outer grandchild's face (in the sample it goes behind them). Inside the area the whole doll (every layer, in its own order) goes behind the neighbouring dolls — never behind its own body. set_id = the POSE set (get_task set.versions[].set_id), polygons = [[[x, y], …], …] in shares (0–1) of the pose's square canvas, drawn on the UNMIRRORED pose picture (mirrored characters get it mirrored); [] clears it. One area per pose, for every option and every character in that pose. The parent's product is rebuilt in the background (2–4 min) → render_artwork to check, then remake the mockups. The editor can draw the same thing by hand (Đưa 1 phần ra sau, on the whole artwork).",
     inputSchema: {
       type: "object",
       properties: {
         ...TASK_ARG,
         set_id: { type: "string", description: "The pose set (get_task set.versions[].set_id)." },
-        slot: { type: "string", description: "The layer slot key in that pose set (e.g. the outfit slot id of a hat-and-sweater outfit)." },
         polygons: { type: "array", items: { type: "array" }, description: "[[[x, y], …], …] shares of the pose canvas; [] = none." },
       },
-      required: ["task_id", "set_id", "slot", "polygons"],
+      required: ["task_id", "set_id", "polygons"],
     },
     callers: ["agent"],
     run: async (ctx, args) => {
@@ -627,10 +626,9 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       if (!project.layers) throw new Error("The pose set is not cut yet");
       const polygons = Array.isArray(args.polygons) ? (args.polygons as unknown[]).filter(Array.isArray).map((pg) => (pg as unknown[]).filter((pt): pt is number[] => Array.isArray(pt) && pt.length === 2 && pt.every((v) => typeof v === "number"))) : [];
       const mask = polygons.length ? await polygonMask(project.layers, polygons) : null;
-      const next = await setBehind(db, task.user_id!, project, str(args.slot), mask);
-      const slot = next.layers?.slots.find((sl) => sl.key === str(args.slot) || sl.key === `${str(args.slot)}:front`);
-      await progress(db, task.id, `${mask ? "Đặt" : "Bỏ"} phần nằm sau của ${slot?.label ?? str(args.slot)} — đang dựng lại sản phẩm`);
-      return json({ slot: slot?.key, behindUrl: slot?.behindUrl ?? null, next: "The parent's product is rebuilt in the background (2–4 min): char_status until productIds change, then render_artwork each version and check the part lies behind the neighbour, then the mockups again." });
+      const next = await setBehind(db, task.user_id!, project, "", mask);
+      await progress(db, task.id, `${mask ? "Đặt" : "Bỏ"} phần nằm sau của dáng ${project.brief.versionOf?.name ?? ""} — đang dựng lại sản phẩm`);
+      return json({ behindUrl: next.layers?.behindUrl ?? null, next: "The parent's product is rebuilt in the background (2–4 min): char_status until productIds change, then render_artwork each version and check the part lies behind the neighbour, then the mockups again." });
     },
   },
   {

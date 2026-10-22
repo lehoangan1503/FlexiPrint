@@ -568,6 +568,9 @@ export interface CtCharLayerSlot {
   files: CtCharLayerFile[];
   /** The back half of a wrapping part follows this slot's choice (layer-rules §6). */
   follows: string | null;
+  /** A pose set's "phần nằm sau" (server/char/behind.ts): mask on the canvas — that part of the layer (every option)
+   * goes under every character in the parent's product. */
+  behindUrl?: string;
 }
 
 export interface CtCharLayerCheck {

@@ -9,7 +9,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, Pencil, Scissors, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ExternalLink, Layers, Loader2, Pencil, Scissors, XCircle } from "lucide-react";
 import type { CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharPlan } from "../../types";
 import { charApi } from "../../lib/api-client";
 import { CT_CONFIG } from "../../config";
@@ -22,7 +22,12 @@ import { partChoosers, picksShowing, slotShown, type CtChooserPicks } from "../.
 
 /** `picks`: the option shown per slot in the dress-up preview (LayerView), `choose`: its Boy / Girl… picks — the editor
  * shows the clipart in that outfit. */
-export type CutEdit = { kind: "matte" } | { kind: "piece"; key: string } | { kind: "file"; imageId: string; picks?: Record<string, number>; choose?: CtChooserPicks } | null;
+export type CutEdit =
+  | { kind: "matte" }
+  | { kind: "piece"; key: string }
+  | { kind: "file"; imageId: string; picks?: Record<string, number>; choose?: CtChooserPicks }
+  | { kind: "behind"; slot: string; imageId: string }
+  | null;
 
 const PALETTE = ["#f97316", "#2563eb", "#16a34a", "#a855f7", "#eab308", "#ec4899", "#06b6d4", "#dc2626", "#84cc16", "#4f46e5"];
 
@@ -340,6 +345,11 @@ function LayerView({ ctx, set, plan, onEdit: edit }: { ctx: CharCtx; set: CtChar
               <CtButton onClick={() => onEdit({ kind: "file", imageId: ff.imageId, picks: pick, choose })}>
                 <Pencil className="h-4 w-4" /> Sửa clipart này
               </CtButton>
+              {ctx.project.brief.versionOf?.pose && (
+                <CtButton variant="outline" onClick={() => onEdit({ kind: "behind", slot: focused.key, imageId: ff.imageId })} title="Khoanh phần của layer này phải nằm SAU mọi nhân vật khác (đuôi nón che mặt người bên cạnh) — áp cho mọi kiểu / theme của layer, sản phẩm dựng lại">
+                  <Layers className="h-4 w-4" /> Đưa 1 phần ra sau{focused.behindUrl ? " (đang có)" : ""}
+                </CtButton>
+              )}
               {ff.piece && plan?.pieces.some((x) => x.key === ff.piece) && (
                 <CtButton variant="outline" onClick={() => onEdit({ kind: "piece", key: ff.piece! })} title="Vùng gốc của cả lớp (mọi màu / kiểu cắt từ cùng ảnh) — cần Tạo lại bộ custom">
                   <Scissors className="h-4 w-4" /> Sửa vùng gốc (cả lớp)
@@ -437,6 +447,7 @@ export function CutEditor(ctx: CharCtx & { edit: CutEdit; onClose: () => void })
       />
     );
   if (edit.kind === "file") return <FileEditor {...ctx} imageId={edit.imageId} picks={edit.picks ?? {}} choose={edit.choose ?? {}} />;
+  if (edit.kind === "behind") return <BehindEditor {...ctx} slotKey={edit.slot} imageId={edit.imageId} />;
   const pc = plan?.pieces.find((x) => x.key === edit.key);
   const pic = pc ? plan?.pictures.find((x) => x.id === pc.picture) : null;
   if (!plan || !pc || !pic) return null;
@@ -554,6 +565,46 @@ function FileEditor(ctx: CharCtx & { onClose: () => void; imageId: string; picks
       )}
       onSave={async (png, move) => ctx.setProject(await charApi.editFile(project.id, main.imageId, png, move))}
       onRevert={async () => ctx.setProject(await charApi.revertFile(project.id, main.imageId))}
+      onClose={ctx.onClose}
+    />
+  );
+}
+
+/** A transparent PNG of the set's size: the start of a mask drawn from nothing. */
+function blankMask(w: number, h: number): string {
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  return c.toDataURL("image/png");
+}
+
+/**
+ * "Đưa 1 phần ra sau" (server/char/behind.ts): the part of a pose's layer that goes under every other character — the
+ * tail of a hat over the neighbour's face. Drawn on one of its files; it holds for every option of the layer.
+ */
+function BehindEditor(ctx: CharCtx & { onClose: () => void; slotKey: string; imageId: string }) {
+  const { project } = ctx;
+  const set = project.layers;
+  const slot = set?.slots.find((sl) => sl.key === ctx.slotKey);
+  const file = slot?.files.find((f) => f.imageId === ctx.imageId) ?? slot?.files[0];
+  const [blank] = useState(() => (set ? blankMask(set.width, set.height) : ""));
+  if (!set || !slot || !file) return null;
+  return (
+    <MaskEditor
+      key={`behind:${slot.key}`}
+      title={`Phần nằm sau: ${slot.label} — ${[file.option, file.color].filter(Boolean).join(" · ")}`}
+      hint="Tô / khoanh (Vùng) phần của layer này phải nằm SAU mọi nhân vật khác — vd đuôi nón đang che mặt người bên cạnh. Vùng cam = phần đưa ra sau. Áp cho mọi kiểu / theme của layer; nhân vật lật gương được lật theo. Lưu → sản phẩm của bộ cha dựng lại (2–4 phút). Hoàn tác = bỏ hết."
+      width={set.width}
+      height={set.height}
+      colourUrl={file.url}
+      maskUrl={slot.behindUrl ?? blank}
+      subjectUrl={file.url}
+      tint="#f97316"
+      startAdd
+      canRevert={!!slot.behindUrl}
+      readOnly={!ctx.editable}
+      onSave={async (png) => ctx.setProject(await charApi.setBehind(project.id, slot.key, png))}
+      onRevert={async () => ctx.setProject(await charApi.setBehind(project.id, slot.key, null))}
       onClose={ctx.onClose}
     />
   );

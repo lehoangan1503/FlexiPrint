@@ -73,6 +73,8 @@ export interface MaskEditorProps {
   selfAt?: number;
   /** The "Di chuyển" tool: the clipart (and its other half) can be dragged to a new place. */
   movable?: boolean;
+  /** Start on "Thêm vào lớp" (a mask drawn from nothing — the "phần nằm sau" of a layer). */
+  startAdd?: boolean;
   /** Below the tools (the set's cliparts): `leave(go)` runs `go` once what is unsaved here is saved (or there is none). */
   sidebar?: (leave: (go: () => void) => void) => ReactNode;
 }
@@ -168,7 +170,7 @@ export function MaskEditor(props: MaskEditorProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>("brush");
   // Bớt first: an editor is opened mostly to take off what the AI left over (asked 2026-10-12).
-  const [op, setOp] = useState<Op>("remove");
+  const [op, setOp] = useState<Op>(props.startAdd ? "add" : "remove");
   const [alt, setAlt] = useState(false);
   const [space, setSpace] = useState(false);
   const [size, setSize] = useState(40);

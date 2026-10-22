@@ -46,6 +46,13 @@ never add product-type rules to lib/char-plan.ts (it is only the plan of older s
 Background: research of macorner's dress-up products (2026-10-07). Every option file is the full master canvas;
 hair = full "back" layer + "front" layer with the face/neck erased, the back one following the front choice.
 
+## Part of a layer behind the others — "phần nằm sau" (user 2026-10-22)
+
+When only PART of a front character must go behind its neighbour (a drooping hat tail over the next face), never
+recut or reorder whole layers: mark that part on the pose's layer (`CtCharLayerSlot.behindUrl`, server/char/behind.ts —
+editor "Đưa 1 phần ra sau" or MCP `char_set_behind`). The product splits it into its own linked layer under every
+character (same groups, follows the layer, mirrored with the character). One mask per layer = every option of it.
+
 ## Theme decorations and backgrounds — whole pictures, one size (user 2026-10-22)
 
 - A decoration (the sign / plaque, a band, a frame) and a theme background are ONE whole AI picture. Never piece one

@@ -328,7 +328,22 @@ const keyness = (r: number, g: number, b: number) => Math.min(r, b) - g;
 export async function charClipart(png: Buffer, fx: CtCharFileFx | null | undefined): Promise<Buffer> {
   let out = fx?.flip ? await sharp(png).flop().png().toBuffer() : png;
   if (fx?.part) out = (await splitHeadwear(out))[fx.part];
+  if (fx?.behind) {
+    const mask = await fetchImage(fx.behind.url);
+    out = await keepMask(out, fx.flip ? await sharp(mask).flop().png().toBuffer() : mask, fx.behind.keep);
+  }
   return cleanKey(out, false);
+}
+
+/** A layer's pixels inside ("in") or outside ("out") a mask (server/char/behind.ts: its back part / the rest). */
+async function keepMask(png: Buffer, mask: Buffer, keep: "in" | "out"): Promise<Buffer> {
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const m = await sharp(mask).ensureAlpha().resize(info.width, info.height, { fit: "fill" }).extractChannel(3).raw().toBuffer();
+  for (let i = 0; i < info.width * info.height; i++) {
+    const k = keep === "in" ? m[i] : 255 - m[i];
+    data[i * 4 + 3] = Math.round((data[i * 4 + 3] * k) / 255);
+  }
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
 }
 
 export async function cleanKey(png: Buffer, body: boolean): Promise<Buffer> {
@@ -540,7 +555,7 @@ function posedSet(set: CtCharLayerSet, poseSubject: CtCharSubject, target: CtCha
     flip ? { ...f, url: m(f.url)!, thumbUrl: m(f.thumbUrl) ?? f.thumbUrl, viewUrl: m(f.viewUrl), viewThumbUrl: m(f.viewThumbUrl), bbox: f.bbox?.length === 4 ? [set.width - f.bbox[0] - f.bbox[2], f.bbox[1], f.bbox[2], f.bbox[3]] : f.bbox } : f;
   return {
     ...set,
-    slots: set.slots.map((sl) => ({ ...sl, key: key(sl.key), label: sl.key === "body" ? sl.label : `${name} — ${sl.label.replace(/^Người \d+ — /, "")}`, follows: sl.follows ? key(sl.follows) : sl.follows, files: sl.files.map(file) })),
+    slots: set.slots.map((sl) => ({ ...sl, key: key(sl.key), label: sl.key === "body" ? sl.label : `${name} — ${sl.label.replace(/^Người \d+ — /, "")}`, follows: sl.follows ? key(sl.follows) : sl.follows, files: sl.files.map(file), behindUrl: m(sl.behindUrl) })),
     zones: [],
   };
 }
@@ -724,15 +739,33 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       const sl = sset.slots.find((x) => x.key === of)!;
       return { ...sl, key, label: `${sl.label} — nón` };
     });
-    const pieceOf = async (sl: CtCharLayerSlot, url: string): Promise<Buffer> => {
-      const png = await bytes(url);
-      if (hats.has(sl.key)) return (await splitHeadwear(png)).hat;
-      if (slotOf(sl)?.headwear) return (await splitHeadwear(png)).rest;
-      return png;
+    /**
+     * A pose set's "phần nằm sau" of this layer (server/char/behind.ts) — a headwear outfit's mask is its hat's (the
+     * sweater stays where it is). Mirrored characters: the mask url carries the MIRROR prefix like the files.
+     */
+    const behindOf = (sl: CtCharLayerSlot): string | undefined => {
+      if (!src.p.brief.versionOf?.pose) return undefined;
+      if (hats.has(sl.key)) return sset.slots.find((x) => x.key === hats.get(sl.key))?.behindUrl;
+      return slotOf(sl)?.headwear ? undefined : sl.behindUrl;
+    };
+    /** `keep`: "out" = the layer without its back part (the layer itself), "in" = its back part only. */
+    const pieceOf = async (sl: CtCharLayerSlot, url: string, keep: "in" | "out" = "out"): Promise<Buffer> => {
+      let png = await bytes(url);
+      if (hats.has(sl.key)) png = (await splitHeadwear(png)).hat;
+      else if (slotOf(sl)?.headwear) png = (await splitHeadwear(png)).rest;
+      const behind = behindOf(sl);
+      return behind ? keepMask(png, await bytes(behind), keep) : png;
     };
     /** What pieceOf did to a pose set's file (kept on the clipart: a fix of the file is redone the same way). */
-    const fxOf = (sl: CtCharLayerSlot, url: string): CtCharFileFx | null =>
-      src.p.brief.versionOf?.pose ? { ...(url.startsWith(MIRROR) ? { flip: true } : {}), ...(hats.has(sl.key) ? { part: "hat" as const } : slotOf(sl)?.headwear ? { part: "rest" as const } : {}) } : null;
+    const fxOf = (sl: CtCharLayerSlot, url: string, keep: "in" | "out" = "out"): CtCharFileFx | null => {
+      if (!src.p.brief.versionOf?.pose) return null;
+      const behind = behindOf(sl);
+      return {
+        ...(url.startsWith(MIRROR) ? { flip: true } : {}),
+        ...(hats.has(sl.key) ? { part: "hat" as const } : slotOf(sl)?.headwear ? { part: "rest" as const } : {}),
+        ...(behind ? { behind: { url: behind.startsWith(MIRROR) ? behind.slice(MIRROR.length) : behind, keep } } : {}),
+      };
+    };
 
     // The thumbnail pictures (3b "thumb:<slot>:<option>") by role.
     const thumbs = new Map([...latestEditsOf(src.images)].filter(([role, im]) => role.startsWith("thumb:") && im.status === "done").map(([role, im]) => [role, im.url]));
@@ -806,8 +839,9 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     };
     /** A slot's groups: shape slots with colours → one group per colour (options = shapes); otherwise one group. */
     const slotGroups = new Map<string, Promise<Array<{ name: string; sub: CtAsset | null }>>>();
-    const groupsOf = (slot: CtCharLayerSlot, label: string) => {
-      const hit = slotGroups.get(slot.key);
+    const groupsOf = (slot: CtCharLayerSlot, label: string, keep: "in" | "out" = "out") => {
+      const cacheKey = `${slot.key}|${keep}`;
+      const hit = slotGroups.get(cacheKey);
       if (hit) return hit;
       const colours = [...new Set(slot.files.map((f) => f.color))];
       const grouped = colours.length > 1 || colours[0] !== "";
@@ -823,14 +857,14 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
             const swatch = swatchOf(sb, slot.key, f.option, f.color);
             const whole = thumbOf(f);
             const thumb = thumbPictureOf(slot, f) ?? (await drawnThumbOf(slot, f)) ?? (whole ? whole.viewUrl || whole.url : undefined);
-            const fx = fxOf(slot, f.url);
-            const a = await clipart(await cleanKey(await pieceOf(slot, f.url), false), [label, f.option, f.color].filter(Boolean).join(" · "), sub?.id ?? null, { charLayerId: f.imageId, ...(fx ? { charFx: fx } : {}), ...(swatch ? { swatch } : {}), ...(thumb ? { thumb } : {}) });
+            const fx = fxOf(slot, f.url, keep);
+            const a = await clipart(await cleanKey(await pieceOf(slot, f.url, keep), false), [label, f.option, f.color, keep === "in" ? "back" : ""].filter(Boolean).join(" · "), sub?.id ?? null, { charLayerId: f.imageId, ...(fx ? { charFx: fx } : {}), ...(swatch ? { swatch } : {}), ...(thumb ? { thumb } : {}) });
             sub ??= a;
           }
           return { name: grouped ? g.name : "", sub };
         }),
       );
-      slotGroups.set(slot.key, made);
+      slotGroups.set(cacheKey, made);
       return made;
     };
     const bodyCliparts = bodies.map((png, i) =>
@@ -850,7 +884,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       const file = sl?.files.find((f) => f.option === first && (f.color === "" || f.color === hatSlot?.colors[0]?.name)) ?? sl?.files[0];
       brims.set(i, file ? await brimArc(hatSlot?.headwear ? (await splitHeadwear(await bytes(file.url))).hat : await bytes(file.url)) : null);
     }
-    return { src, sb, sset, slotOf, slotSubject, subjectBox, cropOf, slots, hatSlots, groupsOf, bodies, bodyCliparts, brims };
+    return { src, sb, sset, slotOf, slotSubject, subjectBox, cropOf, slots, hatSlots, groupsOf, behindOf, bodies, bodyCliparts, brims };
   }
   for (const v of versions) for (const pt of v.parts) if (!prepared.has(pt.src.key)) prepared.set(pt.src.key, await prepare(pt.src));
 
@@ -1047,6 +1081,20 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     };
     for (const e of ready.filter((x) => !x.front && x.place !== "plaque")) await placeElement(e);
 
+    // "Phần nằm sau" (server/char/behind.ts): each such part of a layer under every character of the version, linked
+    // to its layer below (it shows what the layer shows: the Theme's hat).
+    const behindRegions = new Map<Prepared, Map<string, CtRegion>>();
+    for (const { pt, P, box } of parts) {
+      const own = new Set(pt.subjects);
+      for (const sl of [...P.slots, ...P.hatSlots]) {
+        if (!own.has(P.slotSubject(sl)) || sl.follows || !P.behindOf(sl)) continue;
+        const r = imageRegion(`${sl.label} — phần sau`, `${sl.label} — back`, {}, rect(box));
+        if (!behindRegions.has(P)) behindRegions.set(P, new Map());
+        behindRegions.get(P)!.set(sl.key, r);
+        fills.push(P.groupsOf(sl, sl.label, "in").then((groups) => groups.forEach((g, gi) => g.sub && addItem(r, g.sub, gi, g.name))));
+      }
+    }
+
     // Every part's layers, linked afterwards (a part that follows the Theme needs the sign's region).
     const linked: Array<{ P: Prepared; sl: CtCharLayerSlot; r: CtRegion }> = [];
     for (const { pt, P, box, k } of parts) {
@@ -1135,6 +1183,14 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       for (const [key, r] of regionOf) {
         const parent = parentOf(P.slotOf(byKey.get(key)!)?.shownWhen);
         if (parent) r.config.parent = parent;
+      }
+      for (const [key, r] of behindRegions.get(P) ?? []) {
+        const lead = regionOf.get(key);
+        if (!lead) continue;
+        r.config.image.follows = lead.id;
+        r.config.image.allowNone = lead.config.image.allowNone;
+        r.config.image.defaultNone = lead.config.image.defaultNone;
+        if (lead.config.parent) r.config.parent = lead.config.parent;
       }
       for (const [key, r] of regionOf) {
         const sl = byKey.get(key)!;

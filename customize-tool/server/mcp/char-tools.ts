@@ -31,6 +31,7 @@ import { withTemplateProduct } from "../char/blank";
 import { remakeSetProduct, versionSetsOf } from "../char/product";
 import { followParentPlan, remakeDrawnProduct, runVersionChain, startVersionSets } from "../char/versions";
 import { startPoseSets } from "../char/poses";
+import { polygonMask, setBehind } from "../char/behind";
 import { charVersions } from "../../lib/char-lineup";
 import { runEditRoles, startBuild } from "../char/layers";
 import { failLostPlan, startMatte, startPlan } from "../char/cut";
@@ -574,7 +575,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   {
     name: "char_compose",
     description:
-      "A set drawn pose by pose: how each version of the product places its characters, to look like the sample. versions: [{name (the version's customer name — get_task set.composeVersions lists them with their subjects), people: [{subject (brief subject id), x (the figure's centre), y (its bottom — the cut line / feet), h (its height), flip? (mirrored; default = the pose's mirrored list)}]}] — any units, the same within a version and across versions (the grandma h 1, the children 0.8 …); people back → front (a later one is drawn over an earlier one where they overlap — the grandma first when the children lean on her, the inner children over the outer ones…). The server fits each version's whole group into the piece's characters area (the sign under it). Saved in brief.compose, then the product is rebuilt in the background (2–4 min, char_status shows the new product id) → render_artwork mode print for each version, compare with the sample, call again until it reads like it.",
+      "A set drawn pose by pose: how each version of the product places its characters, to look like the sample. versions: [{name (the version's customer name — get_task set.composeVersions lists them with their subjects), people: [{subject (brief subject id), x (the figure's centre), y (its bottom — the cut line / feet), h (its height), flip? (mirrored; default = the pose's mirrored list)}]}] — any units, the same within a version and across versions (the grandma h 1, the children 0.8 …); people back → front (a later one is drawn over an earlier one where they overlap — the grandma first when the children lean on her, the inner children over the outer ones…; where only PART of a front character must go behind — a drooping hat tail over the neighbour's face — char_set_behind). The server fits each version's whole group into the piece's characters area (the sign under it). Saved in brief.compose, then the product is rebuilt in the background (2–4 min, char_status shows the new product id) → render_artwork mode print for each version, compare with the sample, call again until it reads like it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -604,6 +605,32 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       void remakeDrawnProduct(db, task.user_id!, project.id).catch((e: Error) => console.warn("[ct] composed product", e.message));
       await progress(db, task.id, `Đã ghép ${compose.length} phiên bản — đang dựng lại sản phẩm`);
       return json({ saved: compose.length, next: "The product is rebuilt in the background once every pose set is cut (2–4 min): char_status until productIds change, then render_artwork mode print for each version ({\"<lineup label>\": \"<version>\"})." });
+    },
+  },
+  {
+    name: "char_set_behind",
+    description:
+      "A set drawn pose by pose: put PART of one layer of a pose BEHIND every character (\"phần nằm sau\") — e.g. the tail of an inner grandchild's Santa hat that lies over the outer grandchild's face (in the sample it goes behind them). set_id = the POSE set (get_task set.versions[].set_id), slot = its layer slot key (char_status / get_task layers: the outfit slot of a headwear outfit = its hat), polygons = [[[x, y], …], …] in shares (0–1) of the pose's square canvas, drawn around the part on the UNMIRRORED pose picture (mirrored characters get it mirrored); [] clears it. Applies to every option of that layer (all themes' hats), so draw around where every option's part lies. The parent's product is rebuilt in the background (2–4 min) → render_artwork to check, then remake the mockups. The editor can draw the same thing by hand (Sửa clipart → Đưa 1 phần ra sau).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        set_id: { type: "string", description: "The pose set (get_task set.versions[].set_id)." },
+        slot: { type: "string", description: "The layer slot key in that pose set (e.g. the outfit slot id of a hat-and-sweater outfit)." },
+        polygons: { type: "array", items: { type: "array" }, description: "[[[x, y], …], …] shares of the pose canvas; [] = none." },
+      },
+      required: ["task_id", "set_id", "slot", "polygons"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
+      if (!project.layers) throw new Error("The pose set is not cut yet");
+      const polygons = Array.isArray(args.polygons) ? (args.polygons as unknown[]).filter(Array.isArray).map((pg) => (pg as unknown[]).filter((pt): pt is number[] => Array.isArray(pt) && pt.length === 2 && pt.every((v) => typeof v === "number"))) : [];
+      const mask = polygons.length ? await polygonMask(project.layers, polygons) : null;
+      const next = await setBehind(db, task.user_id!, project, str(args.slot), mask);
+      const slot = next.layers?.slots.find((sl) => sl.key === str(args.slot) || sl.key === `${str(args.slot)}:front`);
+      await progress(db, task.id, `${mask ? "Đặt" : "Bỏ"} phần nằm sau của ${slot?.label ?? str(args.slot)} — đang dựng lại sản phẩm`);
+      return json({ slot: slot?.key, behindUrl: slot?.behindUrl ?? null, next: "The parent's product is rebuilt in the background (2–4 min): char_status until productIds change, then render_artwork each version and check the part lies behind the neighbour, then the mockups again." });
     },
   },
   {

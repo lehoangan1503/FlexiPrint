@@ -442,6 +442,11 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
       ...(kit.crop ? { crop: kit.crop } : {}),
       extraPaths: [...plates.values()].map((x) => x.path),
     };
+    // A layer's "phần nằm sau" (server/char/behind.ts) stays with the layer.
+    for (const sl of layers.slots) {
+      const was = oldSet?.slots.find((x) => x.key === sl.key)?.behindUrl;
+      if (was) sl.behindUrl = was;
+    }
     // The files the editor had edited by hand get their edits again (each clipart stays as they left it).
     layers.extraPaths!.push(...(await reapplyEdits(db, userId, p, oldSet, layers)));
     const now = (await loadProject(db, p.id)) ?? p;

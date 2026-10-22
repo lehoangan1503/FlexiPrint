@@ -478,6 +478,8 @@ export interface CtAsset {
 export interface CtCharFileFx {
   flip?: boolean;
   part?: "hat" | "rest";
+  /** server/char/behind.ts: the file inside ("in", the back layer) or outside ("out") this mask (unflipped url). */
+  behind?: { url: string; keep: "in" | "out" };
 }
 
 export interface CtAssetMeta {

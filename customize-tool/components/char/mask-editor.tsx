@@ -21,7 +21,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Brush, Droplets, Eye, Hand, History, Lasso, Loader2, Minus, Move, Plus, Redo2, RotateCcw, Save, Sparkles, Undo2, Wand2, X } from "lucide-react";
+import { Brush, Droplets, Hand, History, Lasso, Loader2, Minus, Move, Plus, Redo2, RotateCcw, Save, Sparkles, Undo2, Wand2, X } from "lucide-react";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
 
 type Tool = "brush" | "lasso" | "wand" | "island" | "smooth" | "move" | "hand";
@@ -177,7 +177,6 @@ export function MaskEditor(props: MaskEditorProps) {
   const [soften, setSoften] = useState(2);
   const [contiguous, setContiguous] = useState(true);
   const [viewMode, setViewMode] = useState<View>(props.focusPiece ? "result" : "overlay");
-  const [ghost, setGhost] = useState(!props.focusPiece);
   const [showOthers, setShowOthers] = useState(true);
   const [z, setZ] = useState({ s: 0.2, ox: 0, oy: 0 });
   const [changes, setChanges] = useState(0);
@@ -329,21 +328,8 @@ export function MaskEditor(props: MaskEditorProps) {
       g.globalAlpha = 1;
     };
     if (viewMode === "result") {
-      if (st.context.length) {
-        // The outfit, dimmed and dark: only the clipart being edited keeps its brightness.
-        for (const o of st.context) g.drawImage(o.img, o.moves ? off.dx : 0, o.moves ? off.dy : 0, W, H);
-        g.globalCompositeOperation = "source-atop";
-        g.fillStyle = "rgba(0,0,0,0.78)";
-        g.fillRect(0, 0, W, H);
-        g.globalCompositeOperation = "source-over";
-      }
-      g.save();
-      g.translate(off.dx, off.dy);
-      if (ghost) {
-        g.globalAlpha = 0.16;
-        g.drawImage(st.colour, 0, 0, W, H);
-        g.globalAlpha = 1;
-      }
+      // The finished look (asked 2026-10-23: no dimmed outfit, no faded picture behind): every layer at full
+      // brightness in the product's order, the clipart being edited in its place with what is unsaved.
       t.globalCompositeOperation = "source-over";
       t.clearRect(0, 0, W, H);
       t.drawImage(st.colour, 0, 0, W, H);
@@ -351,7 +337,14 @@ export function MaskEditor(props: MaskEditorProps) {
       t.drawImage(st.mask, 0, 0);
       if (st.subject) t.drawImage(st.subject, 0, 0, W, H);
       t.globalCompositeOperation = "source-over";
-      g.drawImage(st.tmp, 0, 0);
+      const at = Math.min(props.selfAt ?? st.context.length, st.context.length);
+      st.context.forEach((o, i) => {
+        if (i === at) g.drawImage(st.tmp, off.dx, off.dy, W, H);
+        g.drawImage(o.img, o.moves ? off.dx : 0, o.moves ? off.dy : 0, W, H);
+      });
+      if (at >= st.context.length) g.drawImage(st.tmp, off.dx, off.dy, W, H);
+      g.save();
+      g.translate(off.dx, off.dy);
     } else {
       g.save();
       g.translate(off.dx, off.dy);
@@ -373,7 +366,7 @@ export function MaskEditor(props: MaskEditorProps) {
     }
     g.restore();
     renderMini();
-  }, [W, H, viewMode, ghost, showOthers, tint, z.s, effOp, off, renderMini]);
+  }, [W, H, viewMode, showOthers, tint, z.s, effOp, off, renderMini, props.selfAt]);
 
   const schedule = useCallback(() => {
     if (frame.current) return;
@@ -909,19 +902,13 @@ export function MaskEditor(props: MaskEditorProps) {
             Tô màu vùng
           </button>
         </div>
-        {viewMode === "result" ? (
-          <label className="flex items-center gap-1 text-xs">
-            <input type="checkbox" checked={ghost} onChange={(e) => setGhost(e.target.checked)} />
-            <Eye className="h-3.5 w-3.5" /> Ảnh mờ phía sau
-          </label>
-        ) : (
+        {viewMode !== "result" &&
           (props.others?.length ?? 0) > 0 && (
             <label className="flex items-center gap-1 text-xs">
               <input type="checkbox" checked={showOthers} onChange={(e) => setShowOthers(e.target.checked)} />
               Các lớp khác
             </label>
-          )
-        )}
+          )}
         <div className="flex items-center gap-0.5 text-xs">
           <button className="rounded p-1 hover:bg-accent" onClick={() => zoomBy(1 / 1.3)} title={`Thu nhỏ (${MOD}−)`}>
             <Minus className="h-3.5 w-3.5" />

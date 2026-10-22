@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Brush, Hand, Lasso, Loader2, Minus, Plus, Redo2, Save, Trash2, Undo2, X } from "lucide-react";
 import type { CtBehindStage, CtCharLayerSet, CtCharLayerSlot } from "../../types";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
+import { useNoBrowserZoom } from "./no-browser-zoom";
 
 type Tool = "lasso" | "brush" | "hand";
 type Op = "add" | "remove";
@@ -313,7 +314,14 @@ export function BehindEditor(props: {
       const s = Math.min(12, Math.max(0.1, cur.s * f));
       return { s, ox: px - ((px - cur.ox) * s) / cur.s, oy: py - ((py - cur.oy) * s) / cur.s };
     });
+  };  const fit = () => {
+    const el = wrap.current;
+    if (!stage || !el) return;
+    const s = Math.min(el.clientWidth / stage.width, el.clientHeight / stage.height) * 0.96;
+    setZ({ s, ox: (el.clientWidth - stage.width * s) / 2, oy: (el.clientHeight - stage.height * s) / 2 });
   };
+  useNoBrowserZoom((k) => (k ? zoomBy(k) : fit()));
+
 
   useEffect(() => {
     const kd = (e: KeyboardEvent) => {

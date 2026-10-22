@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNoBrowserZoom } from "./no-browser-zoom";
 import { Eraser, History, Loader2, Minus, Plus, Trash2, X } from "lucide-react";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
 
@@ -157,7 +158,8 @@ export function MatteFix(props: MatteFixProps) {
   const zoomBy = (k: number) => {
     const el = wrap.current;
     if (el) zoomAt(el.clientWidth / 2, el.clientHeight / 2, k);
-  };
+  };  useNoBrowserZoom((k) => (k ? zoomBy(k) : fitView()));
+
 
   // ---- actions ----
   const fix = async () => {

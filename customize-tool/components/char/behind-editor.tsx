@@ -78,6 +78,9 @@ export function BehindEditor(props: {
     layer: HTMLImageElement;
     plates: Array<{ img: HTMLImageElement | null; box?: Box; flip?: boolean }>;
     mask: HTMLCanvasElement;
+    /** The mask grown ~3 px with a hard edge: the back part reaches under the front part's soft edge (like the
+     * server's — two soft halves left a dotted see-through seam, 2026-10-23). */
+    grown: HTMLCanvasElement;
     tmp: HTMLCanvasElement;
     undo: ImageData[];
     redo: ImageData[];
@@ -102,7 +105,7 @@ export function BehindEditor(props: {
         if (!live) return;
         const mask = canvas(MW, MH);
         if (old) ctx2d(mask).drawImage(old, 0, 0, MW, MH);
-        store.current = { layer, plates, mask, tmp: canvas(MW, MH), undo: [], redo: [] };
+        store.current = { layer, plates, mask, grown: canvas(MW, MH), tmp: canvas(MW, MH), undo: [], redo: [] };
         setStage(st);
       } catch (e) {
         if (live) setError(e instanceof Error ? e.message : "Không dựng được artwork");
@@ -122,17 +125,26 @@ export function BehindEditor(props: {
     const g = ctx2d(c);
     const t = ctx2d(st.tmp);
     g.clearRect(0, 0, c.width, c.height);
-    const masked = (mode: GlobalCompositeOperation) => {
+    // The grown mask: drawn shifted around a ring and stacked until any coverage is full.
+    const gr = ctx2d(st.grown);
+    gr.clearRect(0, 0, MW, MH);
+    const R = Math.max(2, Math.round(3 * q));
+    for (let pass = 0; pass < 3; pass++)
+      for (let a = 0; a < 16; a++) {
+        const ang = (a / 16) * Math.PI * 2;
+        gr.drawImage(st.mask, Math.cos(ang) * R, Math.sin(ang) * R);
+      }
+    const masked = (mode: GlobalCompositeOperation, grown = false) => {
       t.globalCompositeOperation = "source-over";
       t.clearRect(0, 0, MW, MH);
       t.drawImage(st.layer, 0, 0, MW, MH);
       t.globalCompositeOperation = mode;
-      t.drawImage(st.mask, 0, 0);
+      t.drawImage(grown ? st.grown : st.mask, 0, 0);
       t.globalCompositeOperation = "source-over";
     };
     const copies = st.plates.filter((p) => p.box);
-    // 1) the part that goes behind: under everything.
-    masked("destination-in");
+    // 1) the part that goes behind: under everything (grown under the front part's edge).
+    masked("destination-in", true);
     for (const p of copies) place(g, st.tmp, p.box!, p.flip);
     // 2) the product's layers back → front, each copy without its back part.
     masked("destination-out");
@@ -149,7 +161,7 @@ export function BehindEditor(props: {
       t.globalCompositeOperation = "source-over";
       for (const p of copies) place(g, st.tmp, p.box!, p.flip);
     }
-  }, [MW, MH, tint]);
+  }, [MW, MH, tint, q]);
 
   useEffect(() => {
     if (stage) requestAnimationFrame(render);

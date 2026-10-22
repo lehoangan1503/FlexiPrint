@@ -73,11 +73,6 @@ export interface MaskEditorProps {
   selfAt?: number;
   /** The "Di chuyển" tool: the clipart (and its other half) can be dragged to a new place. */
   movable?: boolean;
-  /** A picture on the same canvas shown half-faded under everything (the "phần nằm sau" editor: the product's
-   * characters around this one, so the part that overlaps a neighbour is drawn around exactly). */
-  backdropUrl?: string | null;
-  /** Start on "Thêm vào lớp" (a mask drawn from nothing — the "phần nằm sau" of a layer). */
-  startAdd?: boolean;
   /** Below the tools (the set's cliparts): `leave(go)` runs `go` once what is unsaved here is saved (or there is none). */
   sidebar?: (leave: (go: () => void) => void) => ReactNode;
 }
@@ -156,7 +151,6 @@ export function MaskEditor(props: MaskEditorProps) {
     subject: HTMLImageElement | null;
     others: Array<{ img: HTMLImageElement; color: string }>;
     context: Array<{ img: HTMLImageElement; moves: boolean }>;
-    backdrop: HTMLImageElement | null;
     mask: HTMLCanvasElement;
     committed: HTMLCanvasElement;
     tmp: HTMLCanvasElement;
@@ -174,7 +168,7 @@ export function MaskEditor(props: MaskEditorProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>("brush");
   // Bớt first: an editor is opened mostly to take off what the AI left over (asked 2026-10-12).
-  const [op, setOp] = useState<Op>(props.startAdd ? "add" : "remove");
+  const [op, setOp] = useState<Op>("remove");
   const [alt, setAlt] = useState(false);
   const [space, setSpace] = useState(false);
   const [size, setSize] = useState(40);
@@ -209,20 +203,19 @@ export function MaskEditor(props: MaskEditorProps) {
     let live = true;
     (async () => {
       try {
-        const [colour, maskImg, subject, others, context, backdrop] = await Promise.all([
+        const [colour, maskImg, subject, others, context] = await Promise.all([
           loadImg(props.colourUrl),
           loadImg(props.maskUrl),
           props.subjectUrl ? loadImg(props.subjectUrl) : Promise.resolve(null),
           Promise.all((props.others ?? []).map(async (o) => ({ img: await loadImg(o.url), color: o.color }))),
           Promise.all((props.context ?? []).map(async (o) => ({ img: await loadImg(o.url), moves: o.moves }))),
-          props.backdropUrl ? loadImg(props.backdropUrl).catch(() => null) : Promise.resolve(null),
         ]);
         if (!live) return;
         const mask = canvas(W, H);
         ctx2d(mask).drawImage(maskImg, 0, 0, W, H);
         const committed = canvas(W, H);
         ctx2d(committed).drawImage(mask, 0, 0);
-        store.current = { colour, subject, others, context, backdrop, mask, committed, tmp: canvas(W, H), pixels: null, smooth: null };
+        store.current = { colour, subject, others, context, mask, committed, tmp: canvas(W, H), pixels: null, smooth: null };
         setReady(true);
       } catch (e) {
         if (live) setLoadError(e instanceof Error ? e.message : "Không tải được ảnh");
@@ -335,11 +328,6 @@ export function MaskEditor(props: MaskEditorProps) {
       g.drawImage(st.tmp, 0, 0);
       g.globalAlpha = 1;
     };
-    if (st.backdrop) {
-      g.globalAlpha = 0.5;
-      g.drawImage(st.backdrop, 0, 0, W, H);
-      g.globalAlpha = 1;
-    }
     if (viewMode === "result") {
       if (st.context.length) {
         // The outfit, dimmed and dark: only the clipart being edited keeps its brightness.

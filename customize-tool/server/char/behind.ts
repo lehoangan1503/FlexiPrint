@@ -7,9 +7,9 @@
  * mask mirrored.
  *
  *   POST char/projects/:id/layers/behind {slot, mask: PNG data URL | null}   — drawn in the editor (null = none)
- *   POST char/projects/:id/layers/behind/context {option}                    — the parent's biggest version around
- *        this pose, on the pose's canvas (asked 2026-10-23: drawn without seeing the neighbours, the part that goes
- *        behind was cut short and the rest of the hat lay over the next grandchild with a straight edge)
+ *   POST char/projects/:id/layers/behind/stage {slot, option}                — the parent's biggest version, whole,
+ *        split at this layer's copies (behindStage: the editor shows the finished artwork live — asked 2026-10-23:
+ *        drawn without seeing the neighbours, the part that goes behind was cut short)
  *   MCP char_set_behind {set_id, slot, polygons: [[[x, y], …]] shares of the canvas | []} — set by @flexiprint
  *
  * Only pose sets (brief.versionOf.pose): their parent's product is rebuilt in the background after a change.
@@ -18,19 +18,19 @@
 import sharp from "sharp";
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
-import type { CtCharLayerSet, CtCharProject } from "../../types";
+import { CT_MAIN_KEY, type CtCharLayerSet, type CtCharProject, type CtBehindPlate, type CtBehindStage, type CtRegion, type CtSelection } from "../../types";
 import type { CtSession } from "../supabase";
 import { saveCharRaw } from "./files";
 import { canEditProject, jobDb, jsonError, loadProject, NOT_YOURS, projectRow, type Db } from "./projects";
 import { pngBytes } from "./file-edit";
 import { remakeDrawnProduct } from "./versions";
 import { loadArtwork, renderArtwork } from "../print-render";
-import { selectionFromNames } from "../product-options";
-import { mainVersions, normalizeProductConfig } from "../../lib/design";
+import { defaultRegionSelection, linkedLeader, locateOption, mainVersions, regionGroups, resolveLinked } from "../../lib/design";
 import { onVersion } from "../../lib/layout";
 import { shapeBounds } from "../../lib/geometry";
-import { composedVersions, subjectName } from "../../lib/char-lineup";
-import { poseOf } from "../../lib/char-brief";
+import { composedVersions } from "../../lib/char-lineup";
+import { charClipart } from "./product";
+import { fetchImage } from "./files";
 
 /** The layer slot a mask may go on: a part's own layer (a hair's front half stands for the part). */
 function slotIn(set: CtCharLayerSet, key: string) {
@@ -91,77 +91,94 @@ export async function behindRoute(s: CtSession, id: string, body: unknown): Prom
 }
 
 /**
- * The parent's product as the customer sees its biggest version (`option`: the Theme / outfit shown — the file being
- * edited), cut to where this pose's character stands and scaled onto the pose's canvas: the editor shows it dimmed
- * behind the layer, so the part that goes behind is drawn around exactly what overlaps the neighbours. The character
- * used is one standing unmirrored in this pose, the one with the most people around it.
+ * The parent's product as the customer sees its biggest version, whole (asked 2026-10-23: "hiện full artwork, kết quả
+ * phải là artwork hoàn chỉnh với layer đã ra sau"), split at every copy of the layer being edited: the editor stacks
+ * [each copy × mask (under everything)] then the plates, a copy drawn as copy × (1 − mask) — the finished artwork, live.
+ * `option`: the option of the layer shown (the Theme it follows is set to match).
  */
-export async function behindContext(db: Db, userId: string, p: CtCharProject, option: string): Promise<string> {
+export async function behindStage(db: Db, userId: string, p: CtCharProject, slotKey: string, option: string): Promise<CtBehindStage> {
   const set = p.layers;
   const parentId = p.brief.versionOf?.pose ? p.brief.versionOf.id : null;
   if (!set || !parentId) throw new Error("Chỉ dùng cho dáng của một bộ ghép dáng");
+  const slot = slotIn(set, slotKey);
+  if (!slot) throw new Error(`Không có layer "${slotKey}"`);
+  const file = slot.files.find((f) => f.option === option) ?? slot.files[0];
   const parent = await loadProject(db, parentId);
   const productId = parent?.product_ids[0];
-  if (!parent || !productId) throw new Error("Bộ cha chưa có sản phẩm");
+  if (!parent || !productId || !file) throw new Error("Bộ cha chưa có sản phẩm");
   const b = await loadArtwork(db, productId);
   if (!b) throw new Error("Không đọc được sản phẩm của bộ cha");
-  const versions = composedVersions(parent.brief);
-  const v = versions[versions.length - 1];
   const mains = mainVersions(b.assets, b.product.main_asset_id);
-  const main = mains.find((m) => m.name === v?.name) ?? mains[mains.length - 1];
-  if (!v || !main) throw new Error("Sản phẩm chưa có phiên bản");
-  const mine = v.people.filter((x) => {
-    const at = poseOf(parent.brief, x.subject);
-    return !!at && at.pose.id === p.brief.versionOf?.pose && !(x.flip ?? at.mirrored);
-  });
-  const centre = v.people.reduce((n, x) => n + x.x, 0) / Math.max(1, v.people.length);
-  const person = [...mine].sort((a, c) => Math.abs(a.x - centre) - Math.abs(c.x - centre))[0];
-  if (!person) throw new Error("Không có nhân vật nào đứng thẳng (không lật) ở dáng này");
-  const name = subjectName(parent.brief, parent.brief.subjects.findIndex((x) => x.id === person.subject));
-  const body = b.regions.find((r) => onVersion(r, main.id) && r.name.startsWith(`Thân — ${name}`));
-  if (!body) throw new Error(`Không thấy layer thân của ${name}`);
-  const box = shapeBounds(body.shape);
-  const config = normalizeProductConfig(b.product.config);
-  let selection;
-  try {
-    selection = selectionFromNames(b, { [config.main.label || "Version"]: main.name, ...(option ? { Theme: option } : {}) });
-  } catch {
-    selection = selectionFromNames(b, { [config.main.label || "Version"]: main.name });
+  const versions = composedVersions(parent.brief);
+  const main = mains.find((m) => m.name === versions[versions.length - 1]?.name) ?? mains[mains.length - 1];
+  if (!main) throw new Error("Sản phẩm chưa có phiên bản");
+  const ids = new Set(slot.files.map((f) => f.imageId));
+  const byId = new Map(b.assets.map((a) => [a.id, a]));
+  const fxOf = (r: CtRegion) => {
+    const item = b.items.find((i) => i.region_id === r.id);
+    const a = item ? byId.get(item.asset_id) : undefined;
+    return a?.meta.charLayerId && ids.has(a.meta.charLayerId) ? (a.meta.charFx ?? {}) : null;
+  };
+  const regions = b.regions.filter((r) => onVersion(r, main.id)).sort((x, y) => x.sort_order - y.sort_order);
+  // This layer's copies (a hat-and-sweater outfit: its hat), and its old back parts (left out: the editor draws them).
+  const hatMode = regions.some((r) => fxOf(r)?.part === "hat");
+  const isCopy = (r: CtRegion) => {
+    const fx = fxOf(r);
+    return !!fx && fx.behind?.keep !== "in" && (hatMode ? fx.part === "hat" : !fx.part);
+  };
+  const isOldBack = (r: CtRegion) => fxOf(r)?.behind?.keep === "in";
+  const copies = regions.filter(isCopy);
+  if (!copies.length) throw new Error("Không thấy layer này trong sản phẩm của bộ cha");
+  // The option shown: its asset in the first copy, the copy's leader (the Theme) set to the same place.
+  const base: CtSelection = { [CT_MAIN_KEY]: { kind: "main", assetId: main.id, optionId: null } };
+  const groups = regionGroups(copies[0], b.items, b.assets);
+  const want = b.assets.find((a) => a.meta.charLayerId === file.imageId && groups.some((g) => g.options.some((o) => o.id === a.id)));
+  const at = locateOption(groups, want?.id ?? null);
+  const leader = linkedLeader(copies[0], b.regions);
+  if (leader) {
+    const lg = regionGroups(leader, b.items, b.assets);
+    const o = lg[at.group]?.options[Math.min(at.option, (lg[at.group]?.options.length ?? 1) - 1)];
+    if (o) base[leader.id] = { kind: "image", assetId: o.id };
   }
-  const W = b.spec?.width ?? b.assets.find((a) => a.id === b.product.main_asset_id)?.width ?? 1000;
-  const H = b.spec?.height ?? b.assets.find((a) => a.id === b.product.main_asset_id)?.height ?? 1000;
-  const print = await renderArtwork(b, selection, Math.max(W, H), "print");
-  // The pose's canvas = the body layer's box on the print: the part of the print inside it, scaled onto the canvas.
-  const k = set.width / box.w;
-  const meta = await sharp(print).metadata();
-  const pw = meta.width ?? W;
-  const ph = meta.height ?? H;
-  const r = pw / W;
-  const x0 = Math.max(0, Math.floor(box.x * r));
-  const y0 = Math.max(0, Math.floor(box.y * r));
-  const x1 = Math.min(pw, Math.ceil((box.x + box.w) * r));
-  const y1 = Math.min(ph, Math.ceil((box.y + box.h) * r));
-  if (x1 <= x0 || y1 <= y0) throw new Error("Nhân vật nằm ngoài khung in");
-  const cw = Math.max(1, Math.min(set.width, Math.round(((x1 - x0) / r) * k)));
-  const chh = Math.max(1, Math.min(set.height, Math.round(((y1 - y0) / r) * k)));
-  const piece = await sharp(print).extract({ left: x0, top: y0, width: x1 - x0, height: y1 - y0 }).resize(cw, chh, { fit: "fill" }).png().toBuffer();
-  const left = Math.max(0, Math.min(set.width - cw, Math.round((x0 / r - box.x) * k)));
-  const top = Math.max(0, Math.min(set.height - chh, Math.round((y0 / r - box.y) * k)));
-  const png = await sharp({ create: { width: set.width, height: set.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
-    .composite([{ input: piece, left, top }])
-    .png()
-    .toBuffer();
-  return (await saveCharRaw(userId, p.id, "behind-context", png, "image/png")).url;
+  for (const r of regions) if (!(r.id in base)) base[r.id] = defaultRegionSelection(r, b.items, b.assets);
+  const chosen = resolveLinked(b.regions, b.items, b.assets, base);
+  const W = b.spec?.width ?? byId.get(b.product.main_asset_id ?? "")?.width ?? 1000;
+  const H = b.spec?.height ?? byId.get(b.product.main_asset_id ?? "")?.height ?? 1000;
+  const maxSide = 1600;
+  const k = Math.min(1, maxSide / Math.max(W, H));
+  // Choosers draw nothing but decide what shows: in every plate.
+  const choosers = regions.filter((r) => r.name.startsWith("Chọn — "));
+  const plates: CtBehindPlate[] = [];
+  let run: CtRegion[] = [];
+  const flush = async () => {
+    if (!run.length) return;
+    const png = await renderArtwork({ ...b, regions: [...choosers, ...run] }, chosen, maxSide, "print");
+    plates.push({ url: (await saveCharRaw(userId, p.id, "behind-stage", png, "image/png")).url });
+    run = [];
+  };
+  for (const r of regions) {
+    if (choosers.includes(r) || isOldBack(r)) continue;
+    if (!isCopy(r)) {
+      run.push(r);
+      continue;
+    }
+    await flush();
+    const bb = shapeBounds(r.shape);
+    plates.push({ box: { x: bb.x * k, y: bb.y * k, w: bb.w * k, h: bb.h * k }, flip: fxOf(r)?.flip === true });
+  }
+  await flush();
+  const layer = await charClipart(await fetchImage(file.url), hatMode ? { part: "hat" } : null);
+  return { width: Math.round(W * k), height: Math.round(H * k), layerUrl: (await saveCharRaw(userId, p.id, "behind-stage", layer, "image/png")).url, plates };
 }
 
-/** POST char/projects/:id/layers/behind/context {option} → {url} */
-export async function behindContextRoute(s: CtSession, id: string, body: unknown): Promise<NextResponse> {
+/** POST char/projects/:id/layers/behind/stage {slot, option} → BehindStage */
+export async function behindStageRoute(s: CtSession, id: string, body: unknown): Promise<NextResponse> {
   const p = await loadProject(s.supabase, id);
   if (!p) return jsonError("Không tìm thấy bộ nhân vật", 404);
-  const option = body && typeof body === "object" && typeof (body as { option?: unknown }).option === "string" ? (body as { option: string }).option : "";
+  const b = (body && typeof body === "object" ? body : {}) as { slot?: unknown; option?: unknown };
   try {
-    return NextResponse.json({ url: await behindContext(jobDb(s), p.user_id ?? s.user.id, p, option) });
+    return NextResponse.json(await behindStage(jobDb(s), p.user_id ?? s.user.id, p, typeof b.slot === "string" ? b.slot : "", typeof b.option === "string" ? b.option : ""));
   } catch (e) {
-    return jsonError(e instanceof Error ? e.message : "Không dựng được ảnh ghép", 400);
+    return jsonError(e instanceof Error ? e.message : "Không dựng được artwork", 400);
   }
 }

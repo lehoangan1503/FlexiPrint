@@ -573,6 +573,24 @@ export interface CtCharLayerSlot {
   behindUrl?: string;
 }
 
+/** The "phần nằm sau" editor's artwork (server/char/behind.ts behindStage): the parent's biggest version, whole. */
+export interface CtBehindPlate {
+  /** A picture of every layer between two copies of the edited layer (render px). */
+  url?: string;
+  /** A copy of the edited layer: its canvas's box on the artwork (render px), mirrored or not. */
+  box?: { x: number; y: number; w: number; h: number };
+  flip?: boolean;
+}
+
+export interface CtBehindStage {
+  width: number;
+  height: number;
+  /** The layer itself for the option edited (a hat-and-sweater outfit: its hat), on the pose canvas. */
+  layerUrl: string;
+  /** Back → front: pictures and the copies of the layer, in the product's stacking order. */
+  plates: CtBehindPlate[];
+}
+
 export interface CtCharLayerCheck {
   name: string;
   ok: boolean;

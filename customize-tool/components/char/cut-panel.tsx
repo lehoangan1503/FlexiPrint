@@ -7,7 +7,7 @@
  *   File cuối  the files cut from both, checked automatically (stacked = master?), looked over, approved, ZIP
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, ExternalLink, Layers, Loader2, Pencil, Scissors, XCircle } from "lucide-react";
 import type { CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharPlan } from "../../types";
@@ -17,6 +17,7 @@ import { CHECKER_STYLE, CtButton, FLOAT_BTN, cx } from "../ui";
 import type { CharCtx } from "./char-project";
 import { MaskEditor } from "./mask-editor";
 import { MatteFix } from "./matte-fix";
+import { BehindEditor } from "./behind-editor";
 import { LayerFiles, Thumb, backFile, colourGroups } from "./layer-files";
 import { partChoosers, picksShowing, slotShown, type CtChooserPicks } from "../../lib/char-lineup";
 
@@ -447,7 +448,7 @@ export function CutEditor(ctx: CharCtx & { edit: CutEdit; onClose: () => void })
       />
     );
   if (edit.kind === "file") return <FileEditor {...ctx} imageId={edit.imageId} picks={edit.picks ?? {}} choose={edit.choose ?? {}} />;
-  if (edit.kind === "behind") return <BehindEditor {...ctx} slotKey={edit.slot} imageId={edit.imageId} />;
+  if (edit.kind === "behind") return <BehindLayer {...ctx} slotKey={edit.slot} imageId={edit.imageId} />;
   const pc = plan?.pieces.find((x) => x.key === edit.key);
   const pic = pc ? plan?.pictures.find((x) => x.id === pc.picture) : null;
   if (!plan || !pc || !pic) return null;
@@ -570,61 +571,21 @@ function FileEditor(ctx: CharCtx & { onClose: () => void; imageId: string; picks
   );
 }
 
-/** A transparent PNG of the set's size: the start of a mask drawn from nothing. */
-function blankMask(w: number, h: number): string {
-  const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
-  return c.toDataURL("image/png");
-}
-
-/**
- * "Đưa 1 phần ra sau" (server/char/behind.ts): the part of a pose's layer that goes under every other character — the
- * tail of a hat over the neighbour's face. Drawn on one of its files; it holds for every option of the layer.
- */
-function BehindEditor(ctx: CharCtx & { onClose: () => void; slotKey: string; imageId: string }) {
+/** "Đưa 1 phần ra sau" (server/char/behind.ts) on the whole artwork — components/char/behind-editor.tsx. */
+function BehindLayer(ctx: CharCtx & { onClose: () => void; slotKey: string; imageId: string }) {
   const { project } = ctx;
   const set = project.layers;
   const slot = set?.slots.find((sl) => sl.key === ctx.slotKey);
   const file = slot?.files.find((f) => f.imageId === ctx.imageId) ?? slot?.files[0];
-  const [blank] = useState(() => (set ? blankMask(set.width, set.height) : ""));
-  // The product's characters around this one (null: loading, "": none).
-  const [backdrop, setBackdrop] = useState<string | null>(null);
-  const option = file?.option ?? "";
-  useEffect(() => {
-    let live = true;
-    charApi
-      .behindContext(project.id, option)
-      .then((u) => live && setBackdrop(u))
-      .catch(() => live && setBackdrop(""));
-    return () => {
-      live = false;
-    };
-  }, [project.id, option]);
   if (!set || !slot || !file) return null;
-  if (backdrop === null)
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 text-sm">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Đang dựng ảnh ghép các nhân vật quanh dáng này…
-      </div>
-    );
   return (
-    <MaskEditor
-      key={`behind:${slot.key}`}
-      title={`Phần nằm sau: ${slot.label} — ${[file.option, file.color].filter(Boolean).join(" · ")}`}
-      hint="Mờ phía sau = sản phẩm thật (bản đông người nhất) quanh nhân vật này. Khoanh (Vùng) TRỌN phần của layer đè lên người bên cạnh — đường khoanh phải nằm ngoài người đó, không cắt ngang chỗ hai người chồng nhau. Vùng cam = phần đưa ra sau mọi nhân vật; áp cho mọi kiểu / theme của layer, nhân vật lật gương được lật theo. Lưu → sản phẩm bộ cha dựng lại (2–4 phút)."
-      width={set.width}
-      height={set.height}
-      colourUrl={file.url}
-      maskUrl={slot.behindUrl ?? blank}
-      subjectUrl={file.url}
-      tint="#f97316"
-      backdropUrl={backdrop || null}
-      startAdd
-      canRevert={!!slot.behindUrl}
+    <BehindEditor
+      title={`Đưa 1 phần ra sau: ${slot.label} — ${[file.option, file.color].filter(Boolean).join(" · ")}`}
+      set={set}
+      slot={slot}
+      load={() => charApi.behindStage(project.id, slot.key, file.option)}
       readOnly={!ctx.editable}
       onSave={async (png) => ctx.setProject(await charApi.setBehind(project.id, slot.key, png))}
-      onRevert={async () => ctx.setProject(await charApi.setBehind(project.id, slot.key, null))}
       onClose={ctx.onClose}
     />
   );

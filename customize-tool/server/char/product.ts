@@ -436,26 +436,39 @@ export async function seamlessTile(raw: Buffer, across = false): Promise<Buffer>
 /**
  * The sign pictures of every theme on ONE canvas (asked 2026-10-22: "độ dài, rộng của 3 khung phải bằng nhau chỉ khác
  * theme"): each whole drawing (never cut or pieced together — the stretched sign showed its seams) scaled to the same
- * width, centred on a canvas as tall as the tallest one (a bunny at the end rising higher) → the pictures, same order.
+ * width, their bottoms on one line, the canvas as tall as the tallest (a bunny at the end rising higher) → the pictures
+ * (same order) and where the plank's own top is (a share of the canvas height, measured in its plain middle:
+ * the characters rest on it, the lettering sits below it).
  */
-async function signCanvases(pngs: Buffer[]): Promise<Buffer[]> {
+async function signCanvases(pngs: Buffer[]): Promise<{ pngs: Buffer[]; top: number }> {
   const W = 2048;
   const scaled = await Promise.all(pngs.map((png) => sharp(png).resize({ width: W }).png().toBuffer({ resolveWithObject: true })));
   const H = Math.max(...scaled.map((x) => x.info.height));
-  return Promise.all(
-    scaled.map(({ data, info }) => {
-      const top = Math.floor((H - info.height) / 2);
-      return sharp(data).extend({ top, bottom: H - info.height - top, left: 0, right: 0, background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+  const out = await Promise.all(scaled.map(({ data, info }) => sharp(data).extend({ top: H - info.height, bottom: 0, left: 0, right: 0, background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer()));
+  // The plank's top in each: the first solid row of the middle fifth of the columns (median).
+  const tops = await Promise.all(
+    out.map(async (png) => {
+      const { data } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
+      const ys: number[] = [];
+      for (let x = Math.round(W * 0.4); x < W * 0.6; x += 4) {
+        let y = 0;
+        while (y < H && data[y * W + x] <= 128) y++;
+        ys.push(y);
+      }
+      ys.sort((p, q) => p - q);
+      return ys[ys.length >> 1] ?? 0;
     }),
   );
+  const top = [...tops].sort((p, q) => p - q)[tops.length >> 1] / H;
+  return { pngs: out, top };
 }
 
 /** The sign in front of the characters (element place "plaque"): as wide as the characters' area in every version, as
  * tall as its picture's proportions say (lib/char-brief plaqueAspect — one for all themes); its top a little over the
  * characters' cut-off bottom (`top` of their height: the forearms rest on it); the characters at most `w` of its width. */
 const PLAQUE = { top: 0.93, w: 0.97 };
-/** The lettering on the sign: the plain middle, between the decorated ends. */
-const PLAQUE_TEXT = { x: 0.2, y: 0.22, w: 0.6, h: 0.52 };
+/** The lettering on the sign: the plain middle between the decorated ends (x, w), and of the plank's own height (y, h). */
+const PLAQUE_TEXT = { x: 0.22, y: 0.18, w: 0.56, h: 0.64 };
 
 /** One set a product version is made of: the set itself, a version set of a drawn lineup (brief.lineup.drawn), or
  * one character of the parent drawn in its pose (brief.poses) — then `brief` is the parent's, `set` the pose set's files
@@ -818,11 +831,14 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
   const plaque = ready.find((e) => e.place === "plaque") ?? null;
   // Every theme's sign on one canvas: as wide as the characters' area, its height from that canvas.
   const signPics = plaque ? pics.filter((x) => x.element.id === plaque.id) : [];
-  const signs = plaque ? await signCanvases(await Promise.all(signPics.map(async (x) => trimmed(await fetchImage(done.get(x.role)!.url))))) : [];
+  const signSet = plaque ? await signCanvases(await Promise.all(signPics.map(async (x) => trimmed(await fetchImage(done.get(x.role)!.url))))) : null;
+  const signs = signSet?.pngs ?? [];
   const signMeta = signs[0] ? await sharp(signs[0]).metadata() : null;
   const signH = signMeta?.width && signMeta.height ? (charArea.w * signMeta.height) / signMeta.width : 0;
+  // The canvas above the plank (decorations rising): the characters overlap it — they rest on the plank itself.
+  const signAbove = signH * (signSet?.top ?? 0);
   // The characters over the sign: their height down to the sign's top, then the sign.
-  const fitOf = (c: CtLayoutBox) => (plaque ? Math.min((charArea.w * PLAQUE.w) / c.w, (charArea.h - signH) / (c.h * PLAQUE.top)) : Math.min(charArea.w / c.w, charArea.h / c.h));
+  const fitOf = (c: CtLayoutBox) => (plaque ? Math.min((charArea.w * PLAQUE.w) / c.w, (charArea.h - signH + signAbove) / (c.h * PLAQUE.top)) : Math.min(charArea.w / c.w, charArea.h / c.h));
   /**
    * A version's characters as one group: each part's crop on its own canvas, scaled to its person's height (a posed
    * character) or 1:1 (a set's own picture) — `crop` is the group in those units, each part's `at` where its crop lies.
@@ -852,7 +868,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     }
     const crop = g.crop;
     const k = brief.lineup?.mode === "count" ? (drawn ? Math.min(rowHeight / crop.h, fitOf(crop)) : rowScale) : fitOf(crop);
-    const blockH = plaque ? crop.h * k * PLAQUE.top + signH : crop.h * k;
+    const blockH = plaque ? crop.h * k * PLAQUE.top + signH - signAbove : crop.h * k;
     const chars = { x: charArea.x + (charArea.w - crop.w * k) / 2, y: charArea.y + charArea.h - blockH, w: crop.w * k, h: crop.h * k };
     return {
       parts: g.parts.map(({ pt, P, c, u, at }) => {
@@ -862,7 +878,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         const y = chars.y + (at.y - crop.y) * k;
         return { pt, P, box: { x: x - c.x * kp, y: y - c.y * kp, w: P.sset.width * kp, h: P.sset.height * kp }, k: kp };
       }),
-      plaque: plaque ? { x: charArea.x, y: chars.y + chars.h * PLAQUE.top, w: charArea.w, h: signH } : null,
+      plaque: plaque ? { x: charArea.x, y: chars.y + chars.h * PLAQUE.top - signAbove, w: charArea.w, h: signH } : null,
     };
   };
 
@@ -1127,7 +1143,9 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         const b = fromShares(area, t.box);
         at = { id: t.id, box: b, fontSize: Math.round(b.h * 0.78), curve: 0, align: "center" };
       } else if (t.place === "plaque") {
-        const b = plaqueBox ? fromShares(plaqueBox, t.box ?? PLAQUE_TEXT) : null;
+        // On the plank itself (below what rises above it).
+        const plank = plaqueBox ? { ...plaqueBox, y: plaqueBox.y + plaqueBox.h * (signSet?.top ?? 0), h: plaqueBox.h * (1 - (signSet?.top ?? 0)) } : null;
+        const b = plank ? fromShares(plank, t.box ?? PLAQUE_TEXT) : null;
         at = b ? { id: t.id, box: b, fontSize: Math.round(b.h * 0.78), curve: t.curve ?? 0, align: "center" } : undefined;
       } else if (t.place === "under" || t.place === "on") {
         // The part the character is in.

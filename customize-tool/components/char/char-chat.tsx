@@ -8,11 +8,13 @@
  * every char_* tool, like working with it in a terminal. Earlier requests and answers stay above the box.
  * While it works, the box "gửi chen" (asked 2026-10-22): the message goes into the task being worked on and the agent
  * reads it with its next tool call (server/agent/inbox.ts) — like the hand changes made in the editor meanwhile.
+ * The thread is every task of the bộ from the first one (asked 2026-10-22: a reload lost it), whole or folded down to the
+ * last turn (remembered per browser).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, Camera, ChevronDown, ChevronUp, ImagePlus, Loader2, MessageSquarePlus, Send, X } from "lucide-react";
-import type { CtAgentTask, CtCharChatAttachment, CtCharChatTab, CtCharImage, CtCharProject } from "../../types";
+import type { CtAgentTask, CtCharChatAttachment, CtCharChatTab, CtCharImage, CtCharProject, CtCharTaskStep } from "../../types";
 import { charApi, ctApi } from "../../lib/api-client";
 import { FLOAT_BTN, cx } from "../ui";
 import { AgentProgress } from "../library/agent-brain";
@@ -20,6 +22,9 @@ import type { useCharAgent } from "./char-agent";
 
 const TAB_LABEL: Record<CtCharChatTab, string> = { brief: "1. Mô tả bộ clipart", master: "2. Ảnh master", layers: "3. Cắt clipart", product: "4. Sản phẩm" };
 const SECTION_LABEL: Record<string, string> = { "3a": "3a. Master cỡ in", "3b": "3b. AI vẽ ảnh để cắt", "3c": "3c. Bộ custom" };
+/** A task that did not come from the box (a step button, the automatic run after the master). */
+const STEP_TEXT: Record<CtCharTaskStep, string> = { brainstorm: "Brainstorm 3 hướng brief", master: "Vẽ master", edits: "Vẽ ảnh để cắt clipart (3b)", chat: "", auto: "Tự làm bước 3 – 4 (sau khi duyệt master)" };
+const FOLD_KEY = "ct-char-chat-folded";
 /** A picture dragged from the page carries this (set on dragstart below). */
 const PAGE_PICTURE = "application/x-flexiprint-picture";
 
@@ -86,7 +91,23 @@ export function CharChat(props: {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<Pending[]>([]);
   const [history, setHistory] = useState<CtAgentTask[]>([]);
-  const [open, setOpen] = useState(false);
+  // Folded: only the last turn shows (the choice stays in this browser).
+  const [folded, setFolded] = useState(() => {
+    try {
+      return localStorage.getItem(FOLD_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const fold = (v: boolean) => {
+    setFolded(v);
+    try {
+      localStorage.setItem(FOLD_KEY, v ? "1" : "0");
+    } catch {
+      /* remembered only while the page is open */
+    }
+  };
+  const thread = useRef<HTMLDivElement | null>(null);
   const [over, setOver] = useState(false);
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState("");
@@ -100,7 +121,7 @@ export function CharChat(props: {
   const loadHistory = useCallback(async () => {
     try {
       const list = await ctApi.listAgentTasks("char", project.id);
-      setHistory(list.filter((t) => t.input.char?.step === "chat").reverse());
+      setHistory([...list].reverse());
     } catch {
       /* the thread is a convenience */
     }
@@ -191,7 +212,6 @@ export function CharChat(props: {
         files.forEach((f) => f.source !== "page" && URL.revokeObjectURL(f.preview));
         setText("");
         setFiles([]);
-        setOpen(true);
       }
     } finally {
       setSending(false);
@@ -199,7 +219,15 @@ export function CharChat(props: {
   };
 
   const where = `${project.brief.kind === "photo" && tab === "layers" ? "3. Phần tử" : TAB_LABEL[tab]}${section ? ` → ${SECTION_LABEL[section] ?? section}` : ""}`;
-  const live = task?.input.char?.step === "chat" ? task : null;
+  const live = task;
+  const turns = live && !history.some((t) => t.id === live.id) ? [...history, live] : history;
+  const shown = folded ? turns.slice(-1) : turns;
+  // The newest at the bottom, in view (as it grows too).
+  const lastLines = live?.progress?.length ?? 0;
+  useEffect(() => {
+    const el = thread.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [turns.length, lastLines, folded]);
   return (
     <div
       className={cx("sticky bottom-0 z-30 border-t bg-card/95 shadow-[0_-4px_16px_rgba(0,0,0,0.08)] backdrop-blur", over && "ring-2 ring-inset ring-violet-500")}
@@ -210,17 +238,23 @@ export function CharChat(props: {
       onDragLeave={() => setOver(false)}
       onDrop={onDrop}
     >
-      {open && (history.length > 0 || live) && (
-        <div className="max-h-[38vh] space-y-3 overflow-y-auto border-b px-4 py-3 text-sm">
-          {history.map((t) => (
+      {turns.length > 0 && (
+        <div ref={thread} className={cx("space-y-3 overflow-y-auto border-b px-4 py-3 text-sm", folded ? "max-h-[30vh]" : "max-h-[55vh]")}>
+          {!folded && <div className="text-center text-[11px] text-muted-foreground">Toàn bộ trao đổi với @flexiprint của bộ này ({turns.length})</div>}
+          {shown.map((t) => (
             <ChatTurn key={t.id} task={t} live={live?.id === t.id ? live : null} kit={kit} />
           ))}
-          {live && !history.some((t) => t.id === live.id) && <ChatTurn task={live} live={live} kit={kit} />}
         </div>
       )}
       <div className="flex items-end gap-2 px-4 py-2">
-        <button className="mb-1 rounded p-1 text-muted-foreground hover:bg-accent" onClick={() => setOpen((v) => !v)} title={open ? "Thu gọn" : `Xem ${history.length} yêu cầu trước`}>
-          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+        <button
+          className="mb-1 flex flex-col items-center rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-accent disabled:opacity-40"
+          disabled={turns.length < 2}
+          onClick={() => fold(!folded)}
+          title={folded ? `Mở rộng: xem cả ${turns.length} lượt từ đầu` : "Thu gọn: chỉ để lại lượt cuối"}
+        >
+          {folded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          {folded ? "Mở rộng" : "Thu gọn"}
         </button>
         <div className="min-w-0 flex-1 rounded-lg border bg-background">
           <div className="flex flex-wrap items-center gap-1.5 px-2 pt-1.5 text-[11px] text-muted-foreground">
@@ -314,13 +348,17 @@ function ChatTurn({ task, live, kit }: { task: CtAgentTask; live: CtAgentTask | 
   const c = task.input.char;
   const t = live ?? task;
   const summary = t.result && "summary" in t.result ? String(t.result.summary) : "";
+  const fromBox = c?.step === "chat";
+  // What was sent in while it ran ("Gửi chen"): kept in the task's log.
+  const injected = live ? [] : (t.progress ?? []).filter((l) => l.kind === "inject");
   return (
     <div className="space-y-1.5">
-      <div className="ml-auto max-w-[80%] rounded-lg bg-violet-500/10 px-3 py-2">
+      <div className={cx("ml-auto max-w-[80%] rounded-lg px-3 py-2", fromBox ? "bg-violet-500/10" : "border border-dashed bg-muted/40")}>
         <div className="mb-0.5 text-[10px] text-muted-foreground">
-          {c?.tab ? TAB_LABEL[c.tab] : ""}
-          {c?.section ? ` → ${SECTION_LABEL[c.section] ?? c.section}` : ""} · {new Date(task.created_at).toLocaleString("vi-VN")}
+          {fromBox ? (c?.tab ? TAB_LABEL[c.tab] : "") : "Nút trên trang"}
+          {fromBox && c?.section ? ` → ${SECTION_LABEL[c.section] ?? c.section}` : ""} · {new Date(task.created_at).toLocaleString("vi-VN")}
         </div>
+        {!fromBox && c && <p className="font-medium">{STEP_TEXT[c.step]}</p>}
         {c?.request && <p className="whitespace-pre-wrap">{c.request}</p>}
         {!!c?.attachments?.length && (
           <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -333,6 +371,20 @@ function ChatTurn({ task, live, kit }: { task: CtAgentTask; live: CtAgentTask | 
           </div>
         )}
       </div>
+      {injected.map((l) => (
+        <div key={l.at} className="ml-auto max-w-[80%] rounded-lg bg-amber-500/10 px-3 py-2">
+          <div className="mb-0.5 text-[10px] text-muted-foreground">Gửi chen · {new Date(l.at).toLocaleString("vi-VN")}</div>
+          <p className="whitespace-pre-wrap">{l.text.replace(/^Bạn gửi chen: /, "")}</p>
+          {!!l.images?.length && (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {l.images.map((u) => (
+                // eslint-disable-next-line @next/next/no-img-element -- our R2 picture
+                <img key={u} src={u} alt="" className="h-12 w-12 rounded border object-contain" />
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
       <div className="max-w-[85%] rounded-lg border bg-background px-3 py-2">
         {live ? (
           <AgentProgress task={live} onCancel={() => void kit.cancel()} onAnswer={kit.answer} />

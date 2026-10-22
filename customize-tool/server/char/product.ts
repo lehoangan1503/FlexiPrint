@@ -24,7 +24,7 @@ import { defaultProductConfig, defaultRegionConfig } from "../../lib/design";
 import { applyMaterialPreset, isMaterialId } from "../../lib/materials";
 import { charLayout, type CtCharLayoutText, type CtLayoutBox } from "../../lib/char-layout";
 import { charElementBoxes, charVersions, composedVersions, fromShares, picksShowing, slotShown, subjectName, underText, unionBox } from "../../lib/char-lineup";
-import { plaqueAspect, poseOf } from "../../lib/char-brief";
+import { poseOf } from "../../lib/char-brief";
 import { elementPictures, latestElementImages } from "./elements";
 import { latestBackdrops } from "./backdrops";
 import { latestEditsOf } from "../../lib/char-images";
@@ -433,17 +433,21 @@ export async function seamlessTile(raw: Buffer, across = false): Promise<Buffer>
     .toBuffer();
 }
 
-/** A sign picture on the set's one sign canvas (`aspect` = width / height, the same for every theme): the whole drawing,
- * never cut or pieced together, centred — asked 2026-10-22 (the stretched sign showed its seams). */
-async function signCanvas(png: Buffer, aspect: number): Promise<Buffer> {
-  const m = await sharp(png).metadata();
-  const w0 = m.width ?? 1;
-  const h0 = m.height ?? 1;
-  const W = Math.round(Math.max(w0, h0 * aspect));
-  const H = Math.round(W / aspect);
-  const left = Math.floor((W - w0) / 2);
-  const top = Math.floor((H - h0) / 2);
-  return sharp(png).extend({ left, right: W - w0 - left, top, bottom: Math.max(0, H - h0 - top), background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+/**
+ * The sign pictures of every theme on ONE canvas (asked 2026-10-22: "độ dài, rộng của 3 khung phải bằng nhau chỉ khác
+ * theme"): each whole drawing (never cut or pieced together — the stretched sign showed its seams) scaled to the same
+ * width, centred on a canvas as tall as the tallest one (a bunny at the end rising higher) → the pictures, same order.
+ */
+async function signCanvases(pngs: Buffer[]): Promise<Buffer[]> {
+  const W = 2048;
+  const scaled = await Promise.all(pngs.map((png) => sharp(png).resize({ width: W }).png().toBuffer({ resolveWithObject: true })));
+  const H = Math.max(...scaled.map((x) => x.info.height));
+  return Promise.all(
+    scaled.map(({ data, info }) => {
+      const top = Math.floor((H - info.height) / 2);
+      return sharp(data).extend({ top, bottom: H - info.height - top, left: 0, right: 0, background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+    }),
+  );
 }
 
 /** The sign in front of the characters (element place "plaque"): as wide as the characters' area in every version, as
@@ -812,8 +816,11 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
   const pics = elementPictures(p);
   const ready = brief.elements.filter((e) => pics.filter((x) => x.element.id === e.id).every((x) => done.has(x.role)));
   const plaque = ready.find((e) => e.place === "plaque") ?? null;
-  const signAspect = plaqueAspect(area.w / area.h);
-  const signH = plaque ? charArea.w / signAspect : 0;
+  // Every theme's sign on one canvas: as wide as the characters' area, its height from that canvas.
+  const signPics = plaque ? pics.filter((x) => x.element.id === plaque.id) : [];
+  const signs = plaque ? await signCanvases(await Promise.all(signPics.map(async (x) => trimmed(await fetchImage(done.get(x.role)!.url))))) : [];
+  const signMeta = signs[0] ? await sharp(signs[0]).metadata() : null;
+  const signH = signMeta?.width && signMeta.height ? (charArea.w * signMeta.height) / signMeta.width : 0;
   // The characters over the sign: their height down to the sign's top, then the sign.
   const fitOf = (c: CtLayoutBox) => (plaque ? Math.min((charArea.w * PLAQUE.w) / c.w, (charArea.h - signH) / (c.h * PLAQUE.top)) : Math.min(charArea.w / c.w, charArea.h / c.h));
   /**
@@ -878,10 +885,9 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       let first: CtAsset | null = null;
       // perBackdrop: each picture its own group (no gốc / đa sắc chain).
       for (const x of list) {
-        let png = await trimmed(await fetchImage(done.get(x.role)!.url));
+        let png = e.place === "plaque" ? signs[signPics.findIndex((y) => y.role === x.role)] : await trimmed(await fetchImage(done.get(x.role)!.url));
         // The ground under the characters: mirrored beside itself, repeated along the band (a 3:1 rug from a 3:2 picture).
         if (e.place === "bottom" && !e.box) png = await seamlessTile(png, true);
-        if (e.place === "plaque") png = await signCanvas(png, signAspect);
         const hex = e.options.find((o) => o.name === x.name)?.value;
         const a = await clipart(png, `${e.name} · ${x.name}`, e.perBackdrop ? null : (first?.id ?? null), e.mode === "color" && hex && /^#[0-9a-f]{6}$/i.test(hex) ? { swatch: hex } : {});
         first ??= a;

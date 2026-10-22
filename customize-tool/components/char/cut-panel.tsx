@@ -521,7 +521,7 @@ function FileEditor(ctx: CharCtx & { onClose: () => void; imageId: string; picks
     <MaskEditor
       key={main.imageId}
       title={`Sửa clipart: ${slot.label.replace(/\s+—\s+lớp sau$/i, " — lớp trước")} — ${[file.option, file.color].filter(Boolean).join(" · ")}`}
-      hint="Kết quả = nhân vật hoàn chỉnh đúng thứ tự lớp như bản in (Tô màu vùng = xem riêng clipart đang sửa); khung bên phải = nhân vật như ở 3c, đổi ngay khi sửa. Bớt = xoá phần thừa, Thêm = tô lại chỗ thiếu, Làm mịn = mép bớt sắc — áp cho mọi màu của kiểu này (mỗi màu tô bằng màu của nó), Di chuyển = kéo cả bộ clipart (trước + sau, mọi màu). Lưu là file, thumbnail và mọi sản phẩm đổi ngay."
+      hint="Clipart đang sửa sáng, cả bộ đồ tối phía sau; khung bên phải = nhân vật như ở 3c, đổi ngay khi sửa. Bớt = xoá phần thừa, Thêm = tô lại chỗ thiếu, Làm mịn = mép bớt sắc — áp cho mọi màu của kiểu này (mỗi màu tô bằng màu của nó), Di chuyển = kéo cả bộ clipart (trước + sau, mọi màu). Lưu là file, thumbnail và mọi sản phẩm đổi ngay."
       width={set.width}
       height={set.height}
       colourUrl={main.plateUrl ?? main.url}

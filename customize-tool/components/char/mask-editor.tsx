@@ -328,8 +328,15 @@ export function MaskEditor(props: MaskEditorProps) {
       g.globalAlpha = 1;
     };
     if (viewMode === "result") {
-      // The finished look (asked 2026-10-23: no dimmed outfit, no faded picture behind): every layer at full
-      // brightness in the product's order, the clipart being edited in its place with what is unsaved.
+      // The outfit dimmed and dark, the clipart being edited bright over it (the faded original picture behind it is
+      // gone — asked 2026-10-23: "ảnh mờ phía sau … bỏ đi").
+      if (st.context.length) {
+        for (const o of st.context) g.drawImage(o.img, o.moves ? off.dx : 0, o.moves ? off.dy : 0, W, H);
+        g.globalCompositeOperation = "source-atop";
+        g.fillStyle = "rgba(0,0,0,0.78)";
+        g.fillRect(0, 0, W, H);
+        g.globalCompositeOperation = "source-over";
+      }
       t.globalCompositeOperation = "source-over";
       t.clearRect(0, 0, W, H);
       t.drawImage(st.colour, 0, 0, W, H);
@@ -337,12 +344,7 @@ export function MaskEditor(props: MaskEditorProps) {
       t.drawImage(st.mask, 0, 0);
       if (st.subject) t.drawImage(st.subject, 0, 0, W, H);
       t.globalCompositeOperation = "source-over";
-      const at = Math.min(props.selfAt ?? st.context.length, st.context.length);
-      st.context.forEach((o, i) => {
-        if (i === at) g.drawImage(st.tmp, off.dx, off.dy, W, H);
-        g.drawImage(o.img, o.moves ? off.dx : 0, o.moves ? off.dy : 0, W, H);
-      });
-      if (at >= st.context.length) g.drawImage(st.tmp, off.dx, off.dy, W, H);
+      g.drawImage(st.tmp, off.dx, off.dy, W, H);
       g.save();
       g.translate(off.dx, off.dy);
     } else {
@@ -366,7 +368,7 @@ export function MaskEditor(props: MaskEditorProps) {
     }
     g.restore();
     renderMini();
-  }, [W, H, viewMode, showOthers, tint, z.s, effOp, off, renderMini, props.selfAt]);
+  }, [W, H, viewMode, showOthers, tint, z.s, effOp, off, renderMini]);
 
   const schedule = useCallback(() => {
     if (frame.current) return;

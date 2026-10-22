@@ -243,7 +243,9 @@ async function drawRegion(
   const bounds = shapeBounds(region.shape);
 
   ctx.save();
-  if (region.config.clip || region.config.fill) clipToShape(ctx, region);
+  // Text is never clipped to its zone, like the print file (server/print-render): a name bent along a hat's brim
+  // (arcTilt) reaches past its box, and the clip cut the first / last letters off (2026-10-22).
+  if (region.kind !== "text" && (region.config.clip || region.config.fill)) clipToShape(ctx, region);
 
   if (region.kind === "image" && region.config.fill && sel.kind === "image" && sel.assetId) {
     const asset = byId.get(sel.assetId);

@@ -8,8 +8,8 @@
  * every char_* tool, like working with it in a terminal. Earlier requests and answers stay above the box.
  * While it works, the box "gửi chen" (asked 2026-10-22): the message goes into the task being worked on and the agent
  * reads it with its next tool call (server/agent/inbox.ts) — like the hand changes made in the editor meanwhile.
- * The thread is every task of the bộ from the first one (asked 2026-10-22: a reload lost it), whole or folded down to the
- * last turn (remembered per browser).
+ * The thread is every task of the bộ from the first one (asked 2026-10-22: a reload lost it); folded, only the box
+ * stays (remembered per browser).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -91,7 +91,7 @@ export function CharChat(props: {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<Pending[]>([]);
   const [history, setHistory] = useState<CtAgentTask[]>([]);
-  // Folded: only the last turn shows (the choice stays in this browser).
+  // Folded: only the box shows (the choice stays in this browser).
   const [folded, setFolded] = useState(() => {
     try {
       return localStorage.getItem(FOLD_KEY) === "1";
@@ -221,7 +221,6 @@ export function CharChat(props: {
   const where = `${project.brief.kind === "photo" && tab === "layers" ? "3. Phần tử" : TAB_LABEL[tab]}${section ? ` → ${SECTION_LABEL[section] ?? section}` : ""}`;
   const live = task;
   const turns = live && !history.some((t) => t.id === live.id) ? [...history, live] : history;
-  const shown = folded ? turns.slice(-1) : turns;
   // The newest at the bottom, in view (as it grows too).
   const lastLines = live?.progress?.length ?? 0;
   useEffect(() => {
@@ -238,10 +237,10 @@ export function CharChat(props: {
       onDragLeave={() => setOver(false)}
       onDrop={onDrop}
     >
-      {turns.length > 0 && (
-        <div ref={thread} className={cx("space-y-3 overflow-y-auto border-b px-4 py-3 text-sm", folded ? "max-h-[30vh]" : "max-h-[55vh]")}>
-          {!folded && <div className="text-center text-[11px] text-muted-foreground">Toàn bộ trao đổi với @flexiprint của bộ này ({turns.length})</div>}
-          {shown.map((t) => (
+      {!folded && turns.length > 0 && (
+        <div ref={thread} className="max-h-[55vh] space-y-3 overflow-y-auto border-b px-4 py-3 text-sm">
+          <div className="text-center text-[11px] text-muted-foreground">Toàn bộ trao đổi với @flexiprint của bộ này ({turns.length})</div>
+          {turns.map((t) => (
             <ChatTurn key={t.id} task={t} live={live?.id === t.id ? live : null} kit={kit} />
           ))}
         </div>
@@ -249,9 +248,9 @@ export function CharChat(props: {
       <div className="flex items-end gap-2 px-4 py-2">
         <button
           className="mb-1 flex flex-col items-center rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-accent disabled:opacity-40"
-          disabled={turns.length < 2}
+          disabled={!turns.length}
           onClick={() => fold(!folded)}
-          title={folded ? `Mở rộng: xem cả ${turns.length} lượt từ đầu` : "Thu gọn: chỉ để lại lượt cuối"}
+          title={folded ? `Mở rộng: xem cả ${turns.length} lượt từ đầu` : "Thu gọn: chỉ để lại ô chat"}
         >
           {folded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           {folded ? "Mở rộng" : "Thu gọn"}

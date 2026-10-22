@@ -588,12 +588,28 @@ export function photoMasterPrompt(brief: CtCharBrief): string {
   return lines.join("\n");
 }
 
-/** A sign in front of the characters (place "plaque"): long and low, its ends decorated, its middle plain for the
- * lettering — the product stretches the middle to each version's width, so nothing may cross it. */
-const PLAQUE_SHAPE =
-  "A long low horizontal sign seen straight from the front, about 3.5 times as wide as it is tall, filling the picture's width: " +
-  "the decorations ONLY at its two ends (each end's decoration within the outer quarter of the sign); the whole middle half is plain " +
-  "surface for lettering — no decoration, no text, no knots or marks crossing it, an even grain running straight along the sign.";
+/**
+ * The sign in front of the characters (place "plaque") — asked 2026-10-22: never pieced together (the product stretched
+ * it by repeating its middle and the seams showed): ONE whole picture, as wide as the artwork frame, and every theme's
+ * sign of the same proportions (only the theme changes). Its height: this share of the frame's height.
+ */
+export const PLAQUE_FRAME_H = 0.24;
+
+/** The sign's width / height on a piece whose artwork frame (safe area) is `areaRatio` wide for 1 tall. */
+export function plaqueAspect(areaRatio: number): number {
+  return Math.round(Math.max(3, Math.min(8, areaRatio / PLAQUE_FRAME_H)) * 10) / 10;
+}
+
+/** How a sign is drawn: whole, edge to edge, at exactly the shared proportions; plain middle for the lettering. */
+export function plaqueShape(aspect: number): string {
+  return (
+    `ONE long low horizontal sign seen straight from the front, EXACTLY ${aspect} times as wide as it is tall, spanning the picture's ` +
+    "whole width from edge to edge, vertically centred — one continuous piece (never two planks joined, no seam, no repeated pattern). " +
+    "The decorations ONLY at its two ends (each within the outer fifth of the sign) and within the sign's own height (nothing rising far above or hanging below it); " +
+    "the whole middle is plain surface for lettering — no decoration, no text, no knots or marks crossing it, an even grain running straight along the sign. " +
+    "Every theme of this sign is drawn at these same proportions."
+  );
+}
 
 /** The aspect an element's picture is drawn at; a placed one (box) by its box's shape on the piece (`areaRatio` = the
  * safe area's width / height): a ribbon banner wide, a tree tall. */
@@ -609,15 +625,15 @@ export function elementAspect(e: CtCharElement, areaRatio = 1): string {
  * The prompt of one element picture: the decoration ALONE, whole, on transparency, in the master's look
  * (reference picture 1 = the approved master; a per-background band also gets that background as picture 2).
  */
-export function elementPrompt(brief: CtCharBrief, e: CtCharElement, look: string, backdrop?: CtCharBackdrop): string {
-  if (brief.kind !== "photo") return charElementPrompt(brief, e, look, backdrop);
+export function elementPrompt(brief: CtCharBrief, e: CtCharElement, look: string, backdrop?: CtCharBackdrop, areaRatio = 1): string {
+  if (brief.kind !== "photo") return charElementPrompt(brief, e, look, backdrop, areaRatio);
   const who = photoSubject(brief);
   const shape: Record<CtCharElementPlace, string> = {
     behind: `Draw it as it is seen behind ${who}: symmetric, spread wide to the left and right, with the empty middle where ${who} sits (the middle part may be simple — it is hidden). Both sides complete.`,
     above: "Seen slightly from the front, flat and wide, floating.",
     bottom: `A wide horizontal band filling the whole width of the picture edge to edge: its top edge soft and organic, its bottom straight along the picture's bottom edge, about half of the picture tall — it is laid over the bottom of the body of ${who} and over the piece's bottom edge, the lettering is printed on it, so it is solid and calm (no holes, no gaps) with nothing busy in it.`,
     free: "",
-    plaque: PLAQUE_SHAPE,
+    plaque: plaqueShape(plaqueAspect(areaRatio)),
   };
   return [
     `Reference picture 1 is the finished design: match its drawing style, colours, line work and lighting exactly.`,
@@ -635,13 +651,13 @@ export function elementPrompt(brief: CtCharBrief, e: CtCharElement, look: string
  * A decoration of a bộ nhân vật (asked 2026-10-18): drawn ALONE on transparency in the look of the approved master
  * (reference picture 1 — the characters, cut out), never cut; the product places it in its box around the characters.
  */
-function charElementPrompt(brief: CtCharBrief, e: CtCharElement, look: string, backdrop?: CtCharBackdrop): string {
+function charElementPrompt(brief: CtCharBrief, e: CtCharElement, look: string, backdrop: CtCharBackdrop | undefined, areaRatio: number): string {
   const shape: Record<CtCharElementPlace, string> = {
     behind: "It stands behind the characters: symmetric, spread wide to the left and right, the middle simple (it is hidden). Both sides complete.",
     above: "Seen slightly from the front, flat and wide, floating.",
     bottom: "A wide horizontal band filling the whole width of the picture edge to edge: its top edge soft and organic, its bottom straight along the picture's bottom edge — the characters stand / sit on it, so it is calm, with nothing tall in it.",
     free: "",
-    plaque: PLAQUE_SHAPE,
+    plaque: plaqueShape(plaqueAspect(areaRatio)),
   };
   return [
     "Reference picture 1 shows the characters of this design: match their drawing style, colours, line work, rendering and lighting exactly.",

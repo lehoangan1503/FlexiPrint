@@ -76,8 +76,10 @@ Every brief is built like this, so every proposal must respect it:
   others join from the ones beside it outwards). The subjects are side by side in the master — shoulders may touch,
   nobody in front of another — each with its own body layer; every version is laid out again, centred.
 - framing: "full" (default, head to toe) | "bust" (chest up, one straight cut line at the elbows — a sign element with
-  place "plaque" in front of it, about a quarter of the piece's height, the arms resting on its top edge: "This Grandma
-  Belongs To", kids leaning on the sign with chins on hands).
+  place "plaque" in front of it, the arms resting on its top edge: "This Grandma Belongs To", kids leaning on the sign
+  with chins on hands). The sign is ONE whole picture as wide as the artwork frame (never pieced or stretched), every
+  theme's sign of the same proportions — the server draws them at that ratio; an option's value says only the theme's
+  look (wood, colours, end decorations).
 - slot "optional": true = the customer may also pick "NO" (glasses / no glasses, hat / no hat).
 - elements (a bộ nhân vật's decorations, drawn ALONE after the master, never cut): {name, place behind | above |
   bottom (the ground under the characters) | free (box = shares 0–1 of the safe area), mode shape | color, options,

@@ -24,7 +24,7 @@ import { defaultProductConfig, defaultRegionConfig } from "../../lib/design";
 import { applyMaterialPreset, isMaterialId } from "../../lib/materials";
 import { charLayout, type CtCharLayoutText, type CtLayoutBox } from "../../lib/char-layout";
 import { charElementBoxes, charVersions, composedVersions, fromShares, picksShowing, slotShown, subjectName, underText, unionBox } from "../../lib/char-lineup";
-import { poseOf } from "../../lib/char-brief";
+import { plaqueAspect, poseOf } from "../../lib/char-brief";
 import { elementPictures, latestElementImages } from "./elements";
 import { latestBackdrops } from "./backdrops";
 import { latestEditsOf } from "../../lib/char-images";
@@ -433,59 +433,23 @@ export async function seamlessTile(raw: Buffer, across = false): Promise<Buffer>
     .toBuffer();
 }
 
-/**
- * A plank sign stretched to `aspect` (w / h) the way a real one is made longer: its decorated ends kept as drawn, the
- * plain middle (the columns where nothing rises above the plank's top edge) mirrored and repeated — one sign picture
- * serves the short version of one grandchild and the long one of four (asked 2026-10-19).
- */
-async function stretchPlank(png: Buffer, aspect: number): Promise<Buffer> {
-  const { data, info } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
-  const W0 = info.width;
-  const H0 = info.height;
-  const Wt = Math.max(8, Math.round(H0 * aspect));
-  if (Math.abs(Wt - W0) <= 2) return png;
-  const top = Array.from({ length: W0 }, (_, x) => {
-    for (let y = 0; y < H0; y++) if (data[y * W0 + x] > 128) return y;
-    return H0;
-  });
-  const mid = top.slice(Math.round(W0 * 0.4), Math.round(W0 * 0.6)).sort((p, q) => p - q);
-  const plankTop = mid[mid.length >> 1] ?? 0;
-  const plain = (x: number) => top[x] >= plankTop - H0 * 0.03;
-  let m0 = Math.round(W0 / 2);
-  let m1 = m0;
-  while (m0 > 0 && plain(m0 - 1)) m0--;
-  while (m1 < W0 - 1 && plain(m1 + 1)) m1++;
-  // A little inside the plain run (the decorations' soft edges).
-  // Each end at least a fifth of the sign: a decoration lying on the plank (holly that does not rise above its top
-  // edge) is no dip in the outline (2026-10-19: the right end lost its holly).
-  const pad = Math.round((m1 - m0) * 0.04);
-  m0 = Math.max(m0 + pad, Math.round(W0 * 0.22));
-  m1 = Math.min(m1 - pad, W0 - 1 - Math.round(W0 * 0.22));
-  const left = m0;
-  const right = W0 - 1 - m1;
-  const run = m1 - m0 + 1;
-  const need = Wt - left - right;
-  if (run < 8 || need < 8) return sharp(png).resize({ width: Wt, height: H0, fit: "fill" }).png().toBuffer();
-  const crop = (x: number, width: number) => sharp(png).extract({ left: x, top: 0, width, height: H0 }).png().toBuffer();
-  const parts: Array<{ input: Buffer; left: number; top: number }> = [{ input: await crop(0, left), left: 0, top: 0 }];
-  if (need <= run) parts.push({ input: await crop(m0 + Math.floor((run - need) / 2), need), left, top: 0 });
-  else {
-    const a = await crop(m0, run);
-    const b = await sharp(a).flop().png().toBuffer();
-    for (let x = 0, k = 0; x < need; x += run, k++) {
-      const w = Math.min(run, need - x);
-      const tile = w === run ? (k % 2 ? b : a) : await sharp(k % 2 ? b : a).extract({ left: 0, top: 0, width: w, height: H0 }).png().toBuffer();
-      parts.push({ input: tile, left: left + x, top: 0 });
-    }
-  }
-  parts.push({ input: await crop(m1 + 1, right), left: left + need, top: 0 });
-  return sharp({ create: { width: left + need + right, height: H0, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(parts).png().toBuffer();
+/** A sign picture on the set's one sign canvas (`aspect` = width / height, the same for every theme): the whole drawing,
+ * never cut or pieced together, centred — asked 2026-10-22 (the stretched sign showed its seams). */
+async function signCanvas(png: Buffer, aspect: number): Promise<Buffer> {
+  const m = await sharp(png).metadata();
+  const w0 = m.width ?? 1;
+  const h0 = m.height ?? 1;
+  const W = Math.round(Math.max(w0, h0 * aspect));
+  const H = Math.round(W / aspect);
+  const left = Math.floor((W - w0) / 2);
+  const top = Math.floor((H - h0) / 2);
+  return sharp(png).extend({ left, right: W - w0 - left, top, bottom: Math.max(0, H - h0 - top), background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
 }
 
-/** The sign in front of the characters (element place "plaque"), shares of the characters' crop: its top a little
- * over their cut-off bottom (the forearms rest on it), a little over a quarter of the piece's height, a little wider
- * than them (asked 2026-10-22: "gỗ cao hơn 1 tí và chiều rộng ngắn lại"). */
-const PLAQUE = { top: 0.93, h: 0.36, w: 1.03 };
+/** The sign in front of the characters (element place "plaque"): as wide as the characters' area in every version, as
+ * tall as its picture's proportions say (lib/char-brief plaqueAspect — one for all themes); its top a little over the
+ * characters' cut-off bottom (`top` of their height: the forearms rest on it); the characters at most `w` of its width. */
+const PLAQUE = { top: 0.93, w: 0.97 };
 /** The lettering on the sign: the plain middle, between the decorated ends. */
 const PLAQUE_TEXT = { x: 0.2, y: 0.22, w: 0.6, h: 0.52 };
 
@@ -848,8 +812,10 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
   const pics = elementPictures(p);
   const ready = brief.elements.filter((e) => pics.filter((x) => x.element.id === e.id).every((x) => done.has(x.role)));
   const plaque = ready.find((e) => e.place === "plaque") ?? null;
-  const blockOf = (c: CtLayoutBox) => (plaque ? { w: c.w * PLAQUE.w, h: c.h * (PLAQUE.top + PLAQUE.h) } : { w: c.w, h: c.h });
-  const fitOf = (c: CtLayoutBox) => Math.min(charArea.w / blockOf(c).w, charArea.h / blockOf(c).h);
+  const signAspect = plaqueAspect(area.w / area.h);
+  const signH = plaque ? charArea.w / signAspect : 0;
+  // The characters over the sign: their height down to the sign's top, then the sign.
+  const fitOf = (c: CtLayoutBox) => (plaque ? Math.min((charArea.w * PLAQUE.w) / c.w, (charArea.h - signH) / (c.h * PLAQUE.top)) : Math.min(charArea.w / c.w, charArea.h / c.h));
   /**
    * A version's characters as one group: each part's crop on its own canvas, scaled to its person's height (a posed
    * character) or 1:1 (a set's own picture) — `crop` is the group in those units, each part's `at` where its crop lies.
@@ -879,10 +845,8 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     }
     const crop = g.crop;
     const k = brief.lineup?.mode === "count" ? (drawn ? Math.min(rowHeight / crop.h, fitOf(crop)) : rowScale) : fitOf(crop);
-    const b = blockOf(crop);
-    const bx = charArea.x + (charArea.w - b.w * k) / 2;
-    const by = charArea.y + charArea.h - b.h * k;
-    const chars = { x: bx + ((b.w - crop.w) * k) / 2, y: by, w: crop.w * k, h: crop.h * k };
+    const blockH = plaque ? crop.h * k * PLAQUE.top + signH : crop.h * k;
+    const chars = { x: charArea.x + (charArea.w - crop.w * k) / 2, y: charArea.y + charArea.h - blockH, w: crop.w * k, h: crop.h * k };
     return {
       parts: g.parts.map(({ pt, P, c, u, at }) => {
         // This part's crop on the print, then its whole canvas around it.
@@ -891,7 +855,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         const y = chars.y + (at.y - crop.y) * k;
         return { pt, P, box: { x: x - c.x * kp, y: y - c.y * kp, w: P.sset.width * kp, h: P.sset.height * kp }, k: kp };
       }),
-      plaque: plaque ? { x: bx, y: chars.y + chars.h * PLAQUE.top, w: crop.w * k * PLAQUE.w, h: chars.h * PLAQUE.h } : null,
+      plaque: plaque ? { x: charArea.x, y: chars.y + chars.h * PLAQUE.top, w: charArea.w, h: signH } : null,
     };
   };
 
@@ -903,9 +867,9 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
   // Decorations (asked 2026-10-18): drawn alone (server/char/elements.ts), trimmed, placed in their box.
   const elementBoxes = charElementBoxes(brief.elements, charArea, area, piece);
   const elementCliparts = new Map<string, Promise<Array<{ name: string; sub: CtAsset }>>>();
-  /** An element's cliparts; the sign (place "plaque") stretched to each version's width (`aspect`). */
-  const cliparsOf = (e: CtCharElement, aspect = 0): Promise<Array<{ name: string; sub: CtAsset }>> => {
-    const key = `${e.id}@${aspect ? aspect.toFixed(2) : ""}`;
+  /** An element's cliparts; the sign (place "plaque") each on the one sign canvas (every theme the same size). */
+  const cliparsOf = (e: CtCharElement): Promise<Array<{ name: string; sub: CtAsset }>> => {
+    const key = e.id;
     const hit = elementCliparts.get(key);
     if (hit) return hit;
     const made = (async () => {
@@ -917,9 +881,9 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         let png = await trimmed(await fetchImage(done.get(x.role)!.url));
         // The ground under the characters: mirrored beside itself, repeated along the band (a 3:1 rug from a 3:2 picture).
         if (e.place === "bottom" && !e.box) png = await seamlessTile(png, true);
-        if (e.place === "plaque" && aspect) png = await stretchPlank(png, aspect);
+        if (e.place === "plaque") png = await signCanvas(png, signAspect);
         const hex = e.options.find((o) => o.name === x.name)?.value;
-        const a = await clipart(png, `${e.name} · ${x.name}${aspect && lineup ? ` · ${aspect.toFixed(1)}` : ""}`, e.perBackdrop ? null : (first?.id ?? null), e.mode === "color" && hex && /^#[0-9a-f]{6}$/i.test(hex) ? { swatch: hex } : {});
+        const a = await clipart(png, `${e.name} · ${x.name}`, e.perBackdrop ? null : (first?.id ?? null), e.mode === "color" && hex && /^#[0-9a-f]{6}$/i.test(hex) ? { swatch: hex } : {});
         first ??= a;
         out.push({ name: x.name, sub: a });
       }
@@ -1015,7 +979,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     const elementRegions = new Map<string, CtRegion>();
     const placeElement = async (e: CtCharElement) => {
       const b = e.place === "plaque" && plaqueBox ? plaqueBox : elementBoxes[e.id];
-      const list = await cliparsOf(e, e.place === "plaque" && plaqueBox ? plaqueBox.w / plaqueBox.h : 0);
+      const list = await cliparsOf(e);
       const first = list[0]?.sub;
       // The ground: one row of the mirrored band along it, as tall as it.
       const ground = e.place === "bottom" && !e.box;

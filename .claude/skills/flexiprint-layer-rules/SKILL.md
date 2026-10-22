@@ -45,3 +45,15 @@ never add product-type rules to lib/char-plan.ts (it is only the plan of older s
 
 Background: research of macorner's dress-up products (2026-10-07). Every option file is the full master canvas;
 hair = full "back" layer + "front" layer with the face/neck erased, the back one following the front choice.
+
+## Theme decorations and backgrounds — whole pictures, one size (user 2026-10-22)
+
+- A decoration (the sign / plaque, a band, a frame) and a theme background are ONE whole AI picture. Never piece one
+  together: no mirroring or repeating its middle to make it longer, no stitching two pictures (the stretched sign
+  showed two seams).
+- They are as big as the artwork frame: a sign as wide as the characters' area / safe zone in EVERY version (fewer
+  people stand centred on the same full-width sign), a background covering the whole piece. A picture that comes out
+  too short is redrawn at the right proportions — never stretched.
+- Every theme of the same element has the SAME width × height (one ratio: `lib/char-brief.ts plaqueAspect`, drawn at
+  it by `plaqueShape`, put on one canvas by `server/char/product.ts signCanvas`). A theme changes only the look, never
+  the size. Check all themes side by side before building the product; a theme that differs is redrawn.

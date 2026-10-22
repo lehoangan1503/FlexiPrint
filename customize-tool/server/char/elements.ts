@@ -16,7 +16,7 @@ import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_TABLES } from "../../config";
 import type { CtCharBackdrop, CtCharElement, CtCharImage, CtCharProject } from "../../types";
-import { elementAspect, elementPrompt } from "../../lib/char-brief";
+import { elementAspect, elementPrompt, plaqueAspect, plaqueShape } from "../../lib/char-brief";
 import type { CtSession } from "../supabase";
 import { latestBackdrops } from "./backdrops";
 import { briefTemplate } from "./blank";
@@ -151,7 +151,9 @@ export async function startElements(db: Db, userId: string, p: CtCharProject, ar
   for (const pic of draws) {
     const bd = pic.backdrop ? backdrops.find((x) => x.backdrop.id === pic.backdrop!.id)?.image : undefined;
     if (pic.backdrop && !bd) throw new Error(`Vẽ nền "${pic.backdrop.name}" trước (bước 4) — "${pic.element.name}" được vẽ theo màu của nó`);
-    const prompt = (args.prompts?.[pic.role] ?? "").trim() || elementPrompt(p.brief, pic.element, pic.look, pic.backdrop);
+    const own = (args.prompts?.[pic.role] ?? "").trim();
+    // A sign is always drawn at the set's one sign ratio, whoever wrote the prompt.
+    const prompt = own ? (pic.element.place === "plaque" && !own.includes("times as wide") ? `${own} ${plaqueShape(plaqueAspect(areaRatio))}` : own) : elementPrompt(p.brief, pic.element, pic.look, pic.backdrop, areaRatio);
     const { data: row } = await db
       .from(CT_TABLES.charImages)
       .insert({ project_id: p.id, user_id: userId, kind: "edit", role: pic.role, status: "running", note: `${pic.element.name} — ${pic.name}`, prompt, meta: args.taskId ? { taskId: args.taskId } : {} })

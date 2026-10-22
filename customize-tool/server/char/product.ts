@@ -338,9 +338,12 @@ export async function charClipart(png: Buffer, fx: CtCharFileFx | null | undefin
 /** A layer's pixels inside ("in") or outside ("out") a mask (server/char/behind.ts: its back part / the rest). */
 async function keepMask(png: Buffer, mask: Buffer, keep: "in" | "out"): Promise<Buffer> {
   const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const m = await sharp(mask).ensureAlpha().resize(info.width, info.height, { fit: "fill" }).extractChannel(3).raw().toBuffer();
-  // The back part takes the mask's soft edge whole (any coverage → all of it): under the front part's soft edge it
-  // fills what the front lets through — two soft halves over each other left a see-through seam (2026-10-23).
+  let alpha = sharp(mask).ensureAlpha().resize(info.width, info.height, { fit: "fill" }).extractChannel(3);
+  // The back part reaches ~4 px under the front part: each half is resampled on its own when the print is drawn, and
+  // two soft edges over each other let the background through as a thin line (2026-10-23).
+  if (keep === "in") alpha = sharp(await alpha.blur(4).raw().toBuffer(), { raw: { width: info.width, height: info.height, channels: 1 } });
+  const m = await alpha.raw().toBuffer();
+  // The back part: any coverage → all of it (it lies under the front part's soft edge).
   for (let i = 0; i < info.width * info.height; i++) {
     const k = keep === "in" ? (m[i] > 0 ? 255 : 0) : 255 - m[i];
     data[i * 4 + 3] = Math.round((data[i * 4 + 3] * k) / 255);

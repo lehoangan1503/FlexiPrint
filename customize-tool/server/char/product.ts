@@ -189,7 +189,6 @@ export async function remakeCharProduct(s: CtSession, id: string): Promise<NextR
   if (!photo && !posed && (p.layers?.status !== "done" || !p.layers.approved)) return jsonError("Tạo bộ custom ở bước 3c trước", 409);
   try {
     const productId = await remakeSetProduct(jobDb(s), p.user_id ?? s.user.id, p, posed ? null : p.layers);
-    await jobDb(s).from(CT_TABLES.charProjects).update({ product_ids: [productId], status: "product" }).eq("id", id);
     return NextResponse.json({ productId }, { status: 201 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không dựng lại được sản phẩm", 500);
@@ -209,8 +208,23 @@ export async function serviceSession(db: CtSession["supabase"], userId: string):
   return { supabase: db, user: data.user };
 }
 
-export async function remakeSetProduct(db: CtSession["supabase"], userId: string, p: CtCharProject, set: CtCharLayerSet | null, opts: { resetZones?: boolean } = {}): Promise<string> {
+/** One product build at a time per set (2026-10-22: two builds that overlapped each left a product behind, and a late
+ * caller wrote an id the other build had already deleted). */
+const remaking = new Map<string, Promise<unknown>>();
+
+/** The set's product built again: the new one is made, saved as the set's product, then the old ones are deleted. */
+export function remakeSetProduct(db: CtSession["supabase"], userId: string, p: CtCharProject, set: CtCharLayerSet | null, opts: { resetZones?: boolean } = {}): Promise<string> {
+  const run = (remaking.get(p.id) ?? Promise.resolve()).catch(() => {}).then(() => remakeNow(db, userId, p, set, opts));
+  remaking.set(p.id, run);
+  void run.finally(() => remaking.get(p.id) === run && remaking.delete(p.id)).catch(() => {});
+  return run;
+}
+
+async function remakeNow(db: CtSession["supabase"], userId: string, p0: CtCharProject, set: CtCharLayerSet | null, opts: { resetZones?: boolean }): Promise<string> {
   const s = await serviceSession(db, userId);
+  // The set's product ids as they are now (the caller's copy may be from before an earlier build).
+  const { data: row } = await db.from(CT_TABLES.charProjects).select("product_ids").eq("id", p0.id).maybeSingle<{ product_ids: string[] | null }>();
+  const p: CtCharProject = { ...p0, product_ids: row?.product_ids ?? p0.product_ids };
   // Customer photo zones the editor reshaped in the product (asked 2026-10-15: the zone stays editable after
   // @flexiprint made it) are kept by name — unless asked to start from the set's own layout again.
   const kept = new Map<string, KeptZone>();
@@ -226,9 +240,9 @@ export async function remakeSetProduct(db: CtSession["supabase"], userId: string
       ? await buildPhotoProduct(s, p, p.name, kept)
       : // Characters drawn in their poses: no files of its own — a 3:2 frame the composed group is fitted in.
         await build(s, p, set ?? { status: "done", error: "", width: 3072, height: 2048, slots: [], zones: [], checks: [], builtAt: "" }, p.name, kept);
-  // The set's ids read again: another build may have replaced them meanwhile.
-  const { data: now } = await db.from(CT_TABLES.charProjects).select("product_ids").eq("id", p.id).maybeSingle<{ product_ids: string[] | null }>();
-  for (const pid of new Set([...p.product_ids, ...(now?.product_ids ?? [])])) {
+  const { error } = await db.from(CT_TABLES.charProjects).update({ product_ids: [productId], status: "product" }).eq("id", p.id);
+  if (error) throw new Error(error.message);
+  for (const pid of p.product_ids) {
     if (pid === productId) continue;
     const folder = await findProductFolder(db, pid);
     if (folder) {

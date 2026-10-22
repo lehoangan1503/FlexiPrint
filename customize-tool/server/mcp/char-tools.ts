@@ -1061,8 +1061,6 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       }
       const productId = await remakeSetProduct(db, project.user_id ?? task.user_id!, project, project.layers, { resetZones: args.reset_zones === true });
       if (!productId) throw new Error("Not every version set is cut yet (get_task set.versions: layers.status \"done\" for each) — wait for them, then call again");
-      const { error } = await db.from(CT_TABLES.charProjects).update({ product_ids: [productId], status: "product" }).eq("id", project.id);
-      if (error) throw new Error(error.message);
       await progress(db, task.id, "Đã dựng lại sản phẩm");
       return json({ product_id: productId, next: "list_product_options, render_artwork (mode print), make_product_mockups." });
     },

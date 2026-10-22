@@ -212,7 +212,6 @@ async function buildDrawnProduct(db: Db, userId: string, parentId: string): Prom
     const kids = await versionSetsOf(db, parentId);
     if (parent.brief.poses.some((po) => kids.find((k) => k.brief.versionOf?.pose === po.id)?.layers?.status !== "done")) return null;
     const productId = await remakeSetProduct(db, parent.user_id ?? userId, parent, null);
-    await db.from(CT_TABLES.charProjects).update({ product_ids: [productId], status: "product" }).eq("id", parentId);
     // The first build has everyone side by side: @flexiprint composes the versions like the sample (unless it is
     // already working on the set).
     if (!parent.brief.compose?.length) await askToCompose(db, parent.user_id ?? userId, parent).catch((e: Error) => console.warn("[ct] compose task", e.message));
@@ -223,7 +222,7 @@ async function buildDrawnProduct(db: Db, userId: string, parentId: string): Prom
   const need = charVersions(parent.brief).length - 1;
   if (children.length < need || children.some((c) => c.layers?.status !== "done")) return null;
   const productId = await remakeSetProduct(db, parent.user_id ?? userId, parent, { ...parent.layers, approved: true });
-  await db.from(CT_TABLES.charProjects).update({ layers: { ...parent.layers, approved: true }, product_ids: [productId], status: "product" }).eq("id", parentId);
+  await db.from(CT_TABLES.charProjects).update({ layers: { ...parent.layers, approved: true }, status: "product" }).eq("id", parentId);
   return productId;
 }
 

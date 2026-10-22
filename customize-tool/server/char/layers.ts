@@ -459,7 +459,7 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
       // "Tạo bộ custom": the cliparts + the finished product, made from this set (the old product goes with the old files).
       try {
         const productId = await remakeSetProduct(db, userId, now, { ...layers, approved: true });
-        await db.from(CT_TABLES.charProjects).update({ layers: { ...layers, approved: true }, product_ids: [productId], status: "product" }).eq("id", p.id);
+        await db.from(CT_TABLES.charProjects).update({ layers: { ...layers, approved: true }, status: "product" }).eq("id", p.id);
       } catch (e) {
         const msg = `Đã cắt file nhưng chưa tạo được sản phẩm: ${e instanceof Error ? e.message : String(e)}`.slice(0, 1000);
         await db.from(CT_TABLES.charProjects).update({ layers: { ...layers, error: msg }, status: "layers" }).eq("id", p.id);

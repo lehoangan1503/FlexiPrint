@@ -339,8 +339,10 @@ export async function charClipart(png: Buffer, fx: CtCharFileFx | null | undefin
 async function keepMask(png: Buffer, mask: Buffer, keep: "in" | "out"): Promise<Buffer> {
   const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const m = await sharp(mask).ensureAlpha().resize(info.width, info.height, { fit: "fill" }).extractChannel(3).raw().toBuffer();
+  // The back part takes the mask's soft edge whole (any coverage → all of it): under the front part's soft edge it
+  // fills what the front lets through — two soft halves over each other left a see-through seam (2026-10-23).
   for (let i = 0; i < info.width * info.height; i++) {
-    const k = keep === "in" ? m[i] : 255 - m[i];
+    const k = keep === "in" ? (m[i] > 0 ? 255 : 0) : 255 - m[i];
     data[i * 4 + 3] = Math.round((data[i * 4 + 3] * k) / 255);
   }
   return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();

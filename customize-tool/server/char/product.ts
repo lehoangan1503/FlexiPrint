@@ -338,13 +338,31 @@ export async function charClipart(png: Buffer, fx: CtCharFileFx | null | undefin
 /** A layer's pixels inside ("in") or outside ("out") a mask (server/char/behind.ts: its back part / the rest). */
 async function keepMask(png: Buffer, mask: Buffer, keep: "in" | "out"): Promise<Buffer> {
   const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  let alpha = sharp(mask).ensureAlpha().resize(info.width, info.height, { fit: "fill" }).extractChannel(3);
-  // The back part reaches ~4 px under the front part: each half is resampled on its own when the print is drawn, and
+  const W = info.width;
+  const H = info.height;
+  let m: Uint8Array = await sharp(mask).ensureAlpha().resize(W, H, { fit: "fill" }).extractChannel(3).raw().toBuffer();
+  // The back part reaches 4 px under the front part: each half is resampled on its own when the print is drawn, and
   // two soft edges over each other let the background through as a thin line (2026-10-23).
-  if (keep === "in") alpha = sharp(await alpha.blur(4).extractChannel(0).raw().toBuffer(), { raw: { width: info.width, height: info.height, channels: 1 } });
-  const m = await alpha.raw().toBuffer();
+  if (keep === "in") {
+    const R = 4;
+    const tmp = new Uint8Array(W * H);
+    const out = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        let v = 0;
+        for (let k = Math.max(0, x - R); k <= Math.min(W - 1, x + R) && !v; k++) v = m[y * W + k];
+        tmp[y * W + x] = v;
+      }
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        let v = 0;
+        for (let k = Math.max(0, y - R); k <= Math.min(H - 1, y + R) && !v; k++) v = tmp[k * W + x];
+        out[y * W + x] = v;
+      }
+    m = out;
+  }
   // The back part: any coverage → all of it (it lies under the front part's soft edge).
-  for (let i = 0; i < info.width * info.height; i++) {
+  for (let i = 0; i < W * H; i++) {
     const k = keep === "in" ? (m[i] > 0 ? 255 : 0) : 255 - m[i];
     data[i * 4 + 3] = Math.round((data[i * 4 + 3] * k) / 255);
   }

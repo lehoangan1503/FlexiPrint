@@ -475,6 +475,11 @@ export interface CtAsset {
   license: string;
 }
 
+export interface CtCharFileFx {
+  flip?: boolean;
+  part?: "hat" | "rest";
+}
+
 export interface CtAssetMeta {
   /** A product's canvas made from a khuôn in (server/print-products.ts): a transparent sheet. */
   printSheet?: boolean;
@@ -488,6 +493,9 @@ export interface CtAssetMeta {
   derivedFrom?: string;
   /** Copied from a bộ nhân vật layer file (ct_char_images id): replaced when that file is fixed. */
   charLayerId?: string;
+  /** How the product made it from that file (a pose set's file in its parent's product): flopped (the pose placed on
+   * the other side) and / or only the hat or the rest of a headwear outfit. Applied again when the file is fixed. */
+  charFx?: CtCharFileFx;
   note?: string;
   /** Renditions: the material preset it was rendered with. */
   material?: string;

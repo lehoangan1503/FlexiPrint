@@ -19,7 +19,7 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_FONTS, CT_TABLES } from "../../config";
-import type { CtAsset, CtCharBrief, CtCharComposePerson, CtCharElement, CtCharShownWhen, CtCharImage, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject, CtCharSubject, CtCharTextField, CtCharTextPlace, CtPhotoStyleRef, CtProduct, CtRegion, CtRegionItem, CtShape } from "../../types";
+import type { CtAsset, CtCharBrief, CtCharComposePerson, CtCharElement, CtCharFileFx, CtCharShownWhen, CtCharImage, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject, CtCharSubject, CtCharTextField, CtCharTextPlace, CtPhotoStyleRef, CtProduct, CtRegion, CtRegionItem, CtShape } from "../../types";
 import { defaultProductConfig, defaultRegionConfig } from "../../lib/design";
 import { applyMaterialPreset, isMaterialId } from "../../lib/materials";
 import { charLayout, type CtCharLayoutText, type CtLayoutBox } from "../../lib/char-layout";
@@ -303,6 +303,13 @@ const keyness = (r: number, g: number, b: number) => Math.min(r, b) - g;
  *   option  a key-coloured pixel near the file's edge is the doll mixed into its outline (the AI drew the hair over
  *           the magenta top): gone. A file that IS magenta / purple (a purple dress) is left alone.
  */
+/** A layer file made into a product clipart the way the product did it (meta.charFx): flopped, its hat or the rest. */
+export async function charClipart(png: Buffer, fx: CtCharFileFx | null | undefined): Promise<Buffer> {
+  let out = fx?.flip ? await sharp(png).flop().png().toBuffer() : png;
+  if (fx?.part) out = (await splitHeadwear(out))[fx.part];
+  return cleanKey(out, false);
+}
+
 export async function cleanKey(png: Buffer, body: boolean): Promise<Buffer> {
   const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const W = info.width;
@@ -702,6 +709,9 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       if (slotOf(sl)?.headwear) return (await splitHeadwear(png)).rest;
       return png;
     };
+    /** What pieceOf did to a pose set's file (kept on the clipart: a fix of the file is redone the same way). */
+    const fxOf = (sl: CtCharLayerSlot, url: string): CtCharFileFx | null =>
+      src.p.brief.versionOf?.pose ? { ...(url.startsWith(MIRROR) ? { flip: true } : {}), ...(hats.has(sl.key) ? { part: "hat" as const } : slotOf(sl)?.headwear ? { part: "rest" as const } : {}) } : null;
 
     // The thumbnail pictures (3b "thumb:<slot>:<option>") by role.
     const thumbs = new Map([...latestEditsOf(src.images)].filter(([role, im]) => role.startsWith("thumb:") && im.status === "done").map(([role, im]) => [role, im.url]));
@@ -792,7 +802,8 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
             const swatch = swatchOf(sb, slot.key, f.option, f.color);
             const whole = thumbOf(f);
             const thumb = thumbPictureOf(slot, f) ?? (await drawnThumbOf(slot, f)) ?? (whole ? whole.viewUrl || whole.url : undefined);
-            const a = await clipart(await cleanKey(await pieceOf(slot, f.url), false), [label, f.option, f.color].filter(Boolean).join(" · "), sub?.id ?? null, { charLayerId: f.imageId, ...(swatch ? { swatch } : {}), ...(thumb ? { thumb } : {}) });
+            const fx = fxOf(slot, f.url);
+            const a = await clipart(await cleanKey(await pieceOf(slot, f.url), false), [label, f.option, f.color].filter(Boolean).join(" · "), sub?.id ?? null, { charLayerId: f.imageId, ...(fx ? { charFx: fx } : {}), ...(swatch ? { swatch } : {}), ...(thumb ? { thumb } : {}) });
             sub ??= a;
           }
           return { name: grouped ? g.name : "", sub };

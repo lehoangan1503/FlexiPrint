@@ -16,8 +16,9 @@
  */
 
 import { NextResponse } from "next/server";
+import sharp from "sharp";
 import { CT_TABLES } from "../../config";
-import type { CtAsset, CtCharAlign, CtCharCutState, CtCharImage, CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject, CtCharSlot } from "../../types";
+import type { CtAsset, CtCharAlign, CtCharFileFx, CtCharCutState, CtCharImage, CtCharLayerCheck, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject, CtCharSlot } from "../../types";
 import { DOLL_COLOUR, isFace, isThumbRole, optionPictures, planEdits, slotLabel, type CtCharEditPlan } from "../../lib/char-plan";
 import { latestEditsOf } from "../../lib/char-images";
 import { checkPictures } from "../../lib/char-pictures";
@@ -26,7 +27,7 @@ import { ctLibraryPath, ctRemove, ctStoragePath, ctUpload } from "../storage";
 import { findProductFolder } from "../artworks";
 import { fetchImage, saveCharFile, saveCharRaw } from "./files";
 import { kitForget, kitJob, kitPost } from "./kit";
-import { remakeSetProduct } from "./product";
+import { charClipart, remakeSetProduct } from "./product";
 import { jobDb, jsonError, loadImages, loadProject, projectRow, runCharDraw, canEditProject, NOT_YOURS } from "./projects";
 import { editLayerFile, reapplyEdits, revertLayerFile } from "./file-edit";
 import { remakeDrawnProduct } from "./versions";
@@ -492,12 +493,17 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
 }
 
 /** After the set is cut again: every product asset copied from an old file gets the new file of the same slot,
- * option and colour (and the link to it). Old files with no counterpart leave their assets as they are. */
+ * option and colour (and the link to it). Old files with no counterpart leave their assets as they are.
+ * A pose set's files live in its PARENT's product (asked 2026-10-22: clipart fixed on the parent's page): those
+ * assets are the file made the product's way again (meta.charFx: flopped, hat / rest; older ones: the way that
+ * matches what the asset is). */
 export async function relinkProducts(db: Db, p: CtCharProject, oldFiles: CtCharImage[], newFiles: CtCharImage[]): Promise<number> {
-  if (!p.product_ids.length) return 0;
+  const parent = p.brief.versionOf?.pose ? await loadProject(db, p.brief.versionOf.id) : null;
+  const productIds = [...new Set([...p.product_ids, ...(parent?.product_ids ?? [])])];
+  if (!productIds.length) return 0;
   // A product's cliparts live in its folder of the library (product_id null), its own assets on the product.
-  const folders = (await Promise.all(p.product_ids.map((pid) => findProductFolder(db, pid)))).filter((f): f is NonNullable<typeof f> => !!f).map((f) => f.id);
-  const scope = [`product_id.in.(${p.product_ids.join(",")})`, ...(folders.length ? [`category_id.in.(${folders.join(",")})`] : [])].join(",");
+  const folders = (await Promise.all(productIds.map((pid) => findProductFolder(db, pid)))).filter((f): f is NonNullable<typeof f> => !!f).map((f) => f.id);
+  const scope = [`product_id.in.(${productIds.join(",")})`, ...(folders.length ? [`category_id.in.(${folders.join(",")})`] : [])].join(",");
   const byRole = new Map(newFiles.map((f) => [f.role, f]));
   let n = 0;
   for (const old of oldFiles) {
@@ -511,13 +517,40 @@ export async function relinkProducts(db: Db, p: CtCharProject, oldFiles: CtCharI
     const { data: assets } = await db.from(CT_TABLES.assets).select("*").or(scope).eq("meta->>charLayerId", old.id).returns<CtAsset[]>();
     if (!assets?.length) continue;
     const data = await fetchImage(next.url);
+    const made = new Map<string, Promise<Buffer>>();
+    const asMade = (fx: CtCharFileFx) => {
+      const key = JSON.stringify(fx);
+      return made.get(key) ?? made.set(key, charClipart(data, fx)).get(key)!;
+    };
     for (const a of assets) {
+      const fx = parent ? (a.meta.charFx ?? (await guessFx(old, a))) : null;
+      const png = fx ? await asMade(fx) : data;
       const path = a.product_id ? ctStoragePath(a.user_id, a.product_id, a.role, "image/png") : ctLibraryPath(a.user_id, a.category_id, a.role, "image/png");
-      const url = await ctUpload(path, data, "image/png");
-      await db.from(CT_TABLES.assets).update({ url, storage_path: path, width: next.width ?? a.width, height: next.height ?? a.height, meta: { ...a.meta, charLayerId: next.id } }).eq("id", a.id);
+      const url = await ctUpload(path, png, "image/png");
+      await db.from(CT_TABLES.assets).update({ url, storage_path: path, width: next.width ?? a.width, height: next.height ?? a.height, meta: { ...a.meta, charLayerId: next.id, ...(fx ? { charFx: fx } : {}) } }).eq("id", a.id);
       await ctRemove([a.storage_path]);
       n++;
     }
   }
   return n;
+}
+
+/** A pose file's clipart made before meta.charFx: the way (flopped or not, whole / hat / rest) whose alpha is closest
+ * to the asset's. */
+async function guessFx(old: CtCharImage, a: CtAsset): Promise<CtCharFileFx> {
+  const S = 128;
+  const alpha = async (png: Buffer) => sharp(png).ensureAlpha().extractChannel(3).resize(S, S, { fit: "fill" }).raw().toBuffer();
+  const have = await alpha(await fetchImage(a.url));
+  const src = await fetchImage(old.url);
+  let best: { fx: CtCharFileFx; d: number } = { fx: {}, d: Infinity };
+  for (const flip of [false, true])
+    for (const part of [undefined, "hat", "rest"] as const) {
+      const fx: CtCharFileFx = { ...(flip ? { flip } : {}), ...(part ? { part } : {}) };
+      const mine = await alpha(await charClipart(src, fx)).catch(() => null);
+      if (!mine) continue;
+      let d = 0;
+      for (let i = 0; i < have.length; i++) d += Math.abs(have[i] - mine[i]);
+      if (d < best.d) best = { fx, d };
+    }
+  return best.fx;
 }

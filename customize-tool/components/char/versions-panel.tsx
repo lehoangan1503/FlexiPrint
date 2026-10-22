@@ -5,14 +5,16 @@
  * version, each smaller one is its own set (server/char/versions.ts) — its own master, doll, 3b pictures and cut. Shown
  * on the parent's steps 2 and 3: each version's masters (the approved one ringed) and how far it is; a click opens it.
  * A set drawn pose by pose shows each pose WHOLE here (asked 2026-10-22: the parent is the one page of the set): every
- * master of the pose (zoom, approve) on step 2, every clipart file it was cut into on step 3.
+ * master of the pose (zoom, approve) on step 2, every clipart file it was cut into on step 3 — in the pose's own
+ * dress-up view, its cliparts fixed right here (asked 2026-10-22: "bộ cha phải có edit và custom hiện bên trái"; the
+ * parent's product follows the fix, server/char/layers.ts relinkProducts).
  */
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
-import type { CtCharVersionCard } from "../../types";
-import { LayerFiles } from "./layer-files";
+import type { CtCharProject, CtCharVersionCard } from "../../types";
+import { CutEditor, FinalSection, type CutEdit } from "./cut-panel";
 import { charVersions } from "../../lib/char-lineup";
 import { charApi } from "../../lib/api-client";
 import { CHECKER_STYLE, CtButton, CtModal, cx } from "../ui";
@@ -124,8 +126,22 @@ export function VersionsPanel({ show = "masters", ...ctx }: CharCtx & { show?: "
 
 /** One pose of the parent, whole: its masters (zoom, approve while none is) and its clipart files once cut. */
 function PoseSet({ ctx, card, who, show, onChange }: { ctx: CharCtx; card: CtCharVersionCard; who: string; show: "masters" | "files"; onChange: () => Promise<void> }) {
-  const p = card.project;
-  const st = stage(card);
+  // The pose as the last fix left it, until the list is loaded again.
+  const [own, setOwn] = useState<{ of: CtCharProject; p: CtCharProject } | null>(null);
+  const p = own?.of === card.project ? own.p : card.project;
+  const [edit, setEdit] = useState<CutEdit>(null);
+  const st = stage({ ...card, project: p });
+  // The cut panels work on the pose as on a set of its own.
+  const poseCtx: CharCtx = {
+    ...ctx,
+    project: p,
+    images: [],
+    setProject: (np) => {
+      setOwn({ of: card.project, p: np });
+      void onChange();
+    },
+    reload: onChange,
+  };
   const [zoom, setZoom] = useState<CtCharVersionCard["masters"][number] | null>(null);
   const approve = async (imageId: string) => {
     try {
@@ -186,11 +202,12 @@ function PoseSet({ ctx, card, who, show, onChange }: { ctx: CharCtx; card: CtCha
       {show === "files" &&
         (p.layers?.status === "done" && p.layers.slots.length > 0 ? (
           <div className="mt-3">
-            <LayerFiles set={p.layers} onFix={null} />
+            <FinalSection {...poseCtx} onEdit={setEdit} />
           </div>
         ) : (
           <p className="mt-2 text-xs text-muted-foreground">Chưa có file — {st.text.toLowerCase()}.</p>
         ))}
+      {edit && <CutEditor {...poseCtx} edit={edit} onClose={() => setEdit(null)} />}
       <CtModal open={!!zoom} onOpenChange={(o) => !o && setZoom(null)} title={zoom ? `${p.brief.versionOf?.name} — master #${number(zoom.id)}` : ""} wide>
         {zoom && (
           // eslint-disable-next-line @next/next/no-img-element -- the original

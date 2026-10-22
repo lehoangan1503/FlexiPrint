@@ -1470,8 +1470,23 @@ export interface CtAgentTaskProgress {
   text: string;
   /** Images to show with the line. */
   images?: string[];
-  /** note = the agent's own line (report_progress); run = an image made; question / answer = ask_user. */
-  kind?: "note" | "run" | "question" | "answer";
+  /** note = the agent's own line (report_progress); run = an image made; question / answer = ask_user; inject = the
+   * editor's "Gửi chen" while the agent works. */
+  kind?: "note" | "run" | "question" | "answer" | "inject";
+}
+
+/** Something for @flexiprint to read while it works on a bộ (ct_agent_inbox, migration 028): the editor's "Gửi chen"
+ * (message) or a change they made by hand in the editor (edit). */
+export interface CtAgentInboxRow {
+  id: string;
+  project_id: string;
+  task_id: string | null;
+  user_id: string | null;
+  kind: "message" | "edit";
+  text: string;
+  attachments: CtCharChatAttachment[];
+  created_at: string;
+  seen_at: string | null;
 }
 
 /** An option the agent offers in a question. */
@@ -1778,7 +1793,7 @@ export interface CtShopifyInfo {
   error?: string;
 }
 
-import type { CtCharTaskInput, CtCharTaskResult } from "./char";
+import type { CtCharChatAttachment, CtCharTaskInput, CtCharTaskResult } from "./char";
 import type { CtProductPrint } from "./print";
 export * from "./char";
 export * from "./print";

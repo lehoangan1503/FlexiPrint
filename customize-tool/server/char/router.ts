@@ -4,6 +4,9 @@
 
 import type { NextRequest, NextResponse } from "next/server";
 import type { CtSession } from "../supabase";
+import type { CtCharProject } from "../../types";
+import { parseCharBrief } from "../../lib/char-brief";
+import { recordEdit } from "../agent/inbox";
 import { approveCharLayers, buildCharLayers, layerFileRoute, startEdits } from "./layers";
 import { cutRoute, startMatte } from "./cut";
 import { createAgentTask } from "../agent/tasks";
@@ -25,8 +28,59 @@ async function json(req: NextRequest): Promise<unknown> {
   }
 }
 
-/** path = ["char", "projects", id?, action?, sub?, subAction?] */
+/** path = ["char", "projects", id?, action?, sub?, subAction?] — a change made here while @flexiprint works on the bộ is
+ * told to it (server/agent/inbox.ts recordEdit: the agent reads it with its next tool call). */
 export async function dispatchChar(req: NextRequest, s: CtSession, path: string[]): Promise<NextResponse> {
+  const [, , id, action] = path;
+  const watched = req.method !== "GET" && req.method !== "DELETE" && !!id && UUID.test(id) && action !== "chat-files" && action !== "versions";
+  if (!watched) return route(req, s, path);
+  const before = await loadProject(s.supabase, id).catch(() => null);
+  const body = (req.headers.get("content-type") ?? "").includes("application/json") ? await req.clone().json().catch(() => null) : null;
+  const res = await route(req, s, path);
+  if (res.ok && before) {
+    const text = editText(before, path, req.method, body);
+    if (text) await recordEdit(s.user.id, id, before.brief.versionOf?.id ?? null, text).catch((e: Error) => console.warn("[ct] inbox edit", e.message));
+  }
+  return res;
+}
+
+/** A hand change, in words for the agent. */
+function editText(p: CtCharProject, path: string[], method: string, raw: unknown): string {
+  const [, , , action, sub, subAction] = path;
+  const b = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const fileName = (imageId: unknown) => {
+    for (const sl of p.layers?.slots ?? [])
+      for (const f of sl.files) if (f.imageId === imageId) return `${sl.label}: ${[f.option, f.color].filter(Boolean).join(" · ")} (image ${f.imageId})`;
+    return `image ${String(imageId)}`;
+  };
+  if (method === "PATCH") {
+    if (b.brief === undefined) return typeof b.name === "string" ? `Đổi tên bộ thành "${b.name}"` : "";
+    const was = parseCharBrief(p.brief) as unknown as Record<string, unknown>;
+    const now = parseCharBrief(b.brief) as unknown as Record<string, unknown>;
+    const keys = Object.keys(now).filter((k) => k !== "pictures" && JSON.stringify(now[k]) !== JSON.stringify(was[k]));
+    return keys.length ? `Sửa brief (bước 1) — các mục đổi: ${keys.join(", ")}` : "";
+  }
+  if (action === "files") return "Tải ảnh lên bộ";
+  if (action === "masters" && !sub) return "Bấm vẽ thêm master (bước 2)";
+  if (action === "masters" && subAction === "refine") return `Sửa master ${sub} (refine)${typeof b.prompt === "string" ? `: ${b.prompt.slice(0, 300)}` : ""}`;
+  if (action === "masters" && subAction === "adopt") return `Dùng master ${sub}`;
+  if (action === "approve") return typeof b.imageId === "string" ? `Duyệt master ${b.imageId}` : "Bỏ duyệt master";
+  if (action === "edits") return `Chạy lại ảnh 3b${Array.isArray(b.roles) && b.roles.length ? `: ${b.roles.join(", ")}` : ""}`;
+  if (action === "layers" && !sub) return "Bấm cắt lại / tạo bộ custom (3c)";
+  if (action === "layers" && sub === "approve") return "Duyệt bộ file (3c)";
+  if (action === "layers" && sub === "file") {
+    if (subAction === "revert") return `Hoàn tác sửa tay clipart ${fileName(b.imageId)}`;
+    const move = b.move && typeof b.move === "object" ? (b.move as { dx?: unknown; dy?: unknown }) : null;
+    return `Sửa tay clipart ${fileName(b.imageId)}${b.mask ? " (vẽ lại vùng: cọ / tẩy)" : ""}${move && (Number(move.dx) || Number(move.dy)) ? ` (kéo ${Number(move.dx) || 0}, ${Number(move.dy) || 0} px)` : ""} — mọi màu của kiểu đó đổi theo`;
+  }
+  if (action === "plan") return `Vùng lớp 3c: ${sub ?? ""}${typeof b.key === "string" ? ` ${b.key}` : ""} (sửa tay)`;
+  if (action === "matte") return `Master cỡ in 3a: ${sub ?? ""} (sửa tay)`;
+  if (action === "products") return sub === "remake" ? "Bấm làm lại sản phẩm" : "Bấm tạo sản phẩm";
+  if (action === "backdrops" || action === "elements" || action === "khuon" || action === "blank") return `Bước 4: ${action}${typeof b.action === "string" ? ` ${b.action}` : ""} (bấm tay trên editor)`;
+  return "";
+}
+
+async function route(req: NextRequest, s: CtSession, path: string[]): Promise<NextResponse> {
   const [, coll, id, action, sub, subAction] = path;
   const method = req.method;
   if (coll !== "projects") return jsonError("Not found", 404);

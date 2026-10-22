@@ -13,6 +13,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ctServiceClient, ctSession } from "../supabase";
 import { CT_MCP_RESOURCES } from "./guide";
 import { CT_MCP_TOOLS, type CtMcpContext, type CtMcpOutput } from "./tools";
+import { takeInbox, unreadMessages } from "../agent/inbox";
 
 const PROTOCOL_VERSION = "2025-06-18";
 
@@ -50,7 +51,7 @@ export async function mcpContext(req: NextRequest): Promise<CtMcpContext | null>
   return session ? { db: session.supabase, service: null, caller: "user" } : null;
 }
 
-function toContent(out: CtMcpOutput): Record<string, unknown> {
+function toContent(out: CtMcpOutput): { content: unknown[] } {
   if ("images" in out) {
     return { content: out.images.flatMap((im) => [{ type: "text", text: im.url }, { type: "image", data: im.data, mimeType: im.mimeType }]) };
   }
@@ -79,10 +80,24 @@ async function handleRpc(ctx: CtMcpContext, msg: RpcRequest): Promise<RpcReply |
     case "tools/call": {
       const tool = tools.find((t) => t.name === msg.params?.name);
       if (!tool) return fail(-32602, `Unknown tool: ${msg.params?.name ?? ""}`);
+      const args = msg.params?.arguments ?? {};
+      // "Gửi chen": what the editor sent / changed while the agent works rides on its next call of that bộ's task.
+      const taskId = ctx.caller === "agent" && ctx.service && typeof args.task_id === "string" ? args.task_id : "";
+      const inbox = async (): Promise<Array<{ type: "text"; text: string }>> => {
+        if (!taskId || !ctx.service) return [];
+        const got = await takeInbox(ctx.service, taskId).catch(() => ({ text: "", messages: 0 }));
+        return got.text ? [{ type: "text", text: got.text }] : [];
+      };
+      // Ending the task with a message unread would lose it: read it first.
+      if (taskId && ctx.service && tool.name === "submit_result" && (await unreadMessages(ctx.service, taskId).catch(() => 0)) > 0) {
+        return ok({ content: [{ type: "text", text: "submit_result CHƯA được nhận: người dùng vừa gửi chen tin nhắn mới (bên dưới). Làm theo tin đó rồi mới submit_result." }, ...(await inbox())], isError: true });
+      }
       try {
-        return ok(toContent(await tool.run(ctx, msg.params?.arguments ?? {})));
+        const out = toContent(await tool.run(ctx, args));
+        const extra = await inbox();
+        return ok(extra.length ? { ...out, content: [...(out.content as unknown[]), ...extra] } : out);
       } catch (e) {
-        return ok({ content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true });
+        return ok({ content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }, ...(await inbox())], isError: true });
       }
     }
     case "resources/list":

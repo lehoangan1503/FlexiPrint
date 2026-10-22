@@ -116,7 +116,7 @@ const CHAR_STEPS: CtCharTaskStep[] = ["brainstorm", "master", "edits", "chat", "
 const CHAT_TABS: CtCharChatTab[] = ["brief", "master", "layers", "product"];
 
 /** The pictures of a chat request: our own uploads only (screenshots / page pictures on R2). */
-function chatAttachments(raw: unknown): CtCharChatAttachment[] {
+export function chatAttachments(raw: unknown): CtCharChatAttachment[] {
   return (Array.isArray(raw) ? raw : [])
     .map((v) => {
       const a = record(v);
@@ -172,6 +172,10 @@ function agentMcp(): string {
 
 const mcpLine = () => `Task này nằm trên MCP server "${agentMcp()}": chỉ dùng các tool mcp__${agentMcp()}__* (không dùng server FlexiPrint khác).`;
 
+/** "Gửi chen" (server/agent/inbox.ts): how the agent hears the editor while it works. */
+const injectLine = () =>
+  `Trong lúc bạn làm, người dùng có thể "gửi chen" tin nhắn hoặc sửa tay trên editor: nó tới ở cuối kết quả của tool ${agentMcp()} kế tiếp, mục "📩 GỬI CHEN". Gặp mục đó thì làm theo ngay (nó đổi / bổ sung yêu cầu), sửa tay của người dùng thì đọc lại dữ liệu và không ghi đè.`;
+
 /** The turn's message: short — the agent reads the task itself over the MCP. */
 function turnPrompt(task: CtAgentTask): string {
   const m = `mcp__${agentMcp()}__`;
@@ -193,6 +197,7 @@ function turnPrompt(task: CtAgentTask): string {
       `[FlexiPrint task ${task.id}] Bộ nhân vật v2 — yêu cầu từ ô chat, người dùng đang ở tab ${where}.`,
       `Người dùng viết:\n${c.request}`,
       mcpLine(),
+      injectLine(),
       ...(c.attachments?.length ? [`Ảnh gửi kèm (xem bằng view_image):`, ...c.attachments.map((a, i) => `${i + 1}. ${a.label || (a.source === "page" ? "Ảnh trên trang" : "Ảnh chụp màn hình")}${a.imageId ? ` (image ${a.imageId})` : ""}: ${a.url}`)] : []),
       `Gọi ${m}get_task với task_id "${task.id}" — có toàn bộ bộ nhân vật (brief, master, ảnh 3b, vùng 3c, file layer, sản phẩm, các yêu cầu trước) và "instructions". Làm đúng yêu cầu bằng các tool char_*, xem lại kết quả bằng view_image, rồi kết thúc bằng ${m}submit_result {summary} hoặc fail_task.`,
     ].join("\n");
@@ -203,6 +208,7 @@ function turnPrompt(task: CtAgentTask): string {
       `[FlexiPrint task ${task.id}] Bộ nhân vật v2 — ${c ? CHAR_STEP_TEXT[c.step] : ""}${c?.imageId ? ` (sửa master ${c.imageId})` : ""}.`,
       c?.request ? `Người dùng muốn: ${clip(c.request, 800)}` : "",
       mcpLine(),
+      injectLine(),
       `Làm theo skill flexiprint-char (nếu chưa có thì theo "instructions" trong get_task): gọi ${m}get_task với task_id "${task.id}" (có brief, ảnh, các bước trước và quy tắc layer), làm việc bằng các tool char_*, xem lại từng ảnh bằng view_image, rồi kết thúc bằng ${m}submit_result hoặc fail_task.`,
     ]
       .filter(Boolean)
@@ -396,6 +402,7 @@ function answerPrompt(task: CtAgentTask, q: CtAgentQuestion): string {
   return [
     `[FlexiPrint task ${task.id}] Người dùng trả lời câu hỏi "${clip(q.question, 300)}" — ${[picked, typed].filter(Boolean).join("; ")}.`,
     mcpLine(),
+    ...(task.kind === "char" ? [injectLine()] : []),
     `Làm tiếp task này theo câu trả lời (get_task nếu cần xem lại), rồi kết thúc bằng mcp__${agentMcp()}__submit_result hoặc fail_task — chỉ khi mọi việc đã xong.`,
   ].join("\n");
 }

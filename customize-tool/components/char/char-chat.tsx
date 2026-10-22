@@ -6,10 +6,12 @@
  * page dragged in (a master, a 3b picture, a clipart file) — and it goes to @flexiprint as a "chat" task with the tab
  * and section it was written on. The agent gets the whole set over the MCP (server/mcp/char-tools.ts chatView) and
  * every char_* tool, like working with it in a terminal. Earlier requests and answers stay above the box.
+ * While it works, the box "gửi chen" (asked 2026-10-22): the message goes into the task being worked on and the agent
+ * reads it with its next tool call (server/agent/inbox.ts) — like the hand changes made in the editor meanwhile.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, Camera, ChevronDown, ChevronUp, ImagePlus, Loader2, Send, X } from "lucide-react";
+import { Bot, Camera, ChevronDown, ChevronUp, ImagePlus, Loader2, MessageSquarePlus, Send, X } from "lucide-react";
 import type { CtAgentTask, CtCharChatAttachment, CtCharChatTab, CtCharImage, CtCharProject } from "../../types";
 import { charApi, ctApi } from "../../lib/api-client";
 import { FLOAT_BTN, cx } from "../ui";
@@ -174,14 +176,17 @@ export function CharChat(props: {
   };
 
   const ready = files.every((f) => !f.uploading && !f.error);
+  // The agent at work (not waiting on a question of its own): a message goes into that task.
+  const injecting = !!task && (task.status === "running" || task.status === "pending");
   const send = async () => {
     if (!text.trim() && !files.length) return;
+    if (kit.agent.busy && !injecting) return;
     setSending(true);
     setErr("");
     try {
       await props.flush();
       const attachments: CtCharChatAttachment[] = files.map(({ url, imageId, label, source }) => ({ url, imageId, label, source }));
-      const ok = await kit.agent.start("chat", text.trim(), { tab, section, attachments });
+      const ok = injecting ? await kit.inject(text.trim(), { tab, section, attachments }) : await kit.agent.start("chat", text.trim(), { tab, section, attachments });
       if (ok) {
         files.forEach((f) => f.source !== "page" && URL.revokeObjectURL(f.preview));
         setText("");
@@ -253,7 +258,7 @@ export function CharChat(props: {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                if (ready && !sending && !kit.agent.busy) void send();
+                if (ready && !sending && (!kit.agent.busy || injecting)) void send();
               }
             }}
             rows={Math.min(8, Math.max(2, text.split("\n").length))}
@@ -261,7 +266,9 @@ export function CharChat(props: {
             placeholder={
               !props.editable
                 ? "Chỉ xem — bộ của người khác"
-                : tab === "brief" && !project.master_id
+                : injecting
+                  ? "@flexiprint đang làm — gõ để GỬI CHEN: nó đọc ngay ở bước kế tiếp và đổi việc đang làm theo (sửa tay trên editor nó cũng được báo). Enter gửi chen."
+                  : tab === "brief" && !project.master_id
                   ? "Mô tả bộ clipart cho @flexiprint: sản phẩm gì, nhân vật nào, khách đổi được gì, chữ gì… — kéo ảnh mẫu / ảnh tham khảo vào đây (hoặc ⌘V). Enter gửi, Shift+Enter xuống dòng."
                   : `Yêu cầu cho @flexiprint ở ${where} — dán ảnh chụp màn hình (⌘V), kéo ảnh / clipart của trang vào đây. Enter gửi, Shift+Enter xuống dòng.`
             }
@@ -289,12 +296,12 @@ export function CharChat(props: {
           </button>
         </div>
         <button
-          className="mb-1 flex h-9 items-center gap-1.5 rounded-md bg-violet-600 px-3 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50"
-          disabled={!props.editable || sending || kit.agent.busy || !ready || (!text.trim() && !files.length)}
+          className={cx("mb-1 flex h-9 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium text-white disabled:opacity-50", injecting ? "bg-amber-600 hover:bg-amber-700" : "bg-violet-600 hover:bg-violet-700")}
+          disabled={!props.editable || sending || (kit.agent.busy && !injecting) || !ready || (!text.trim() && !files.length)}
           onClick={() => void send()}
-          title={kit.agent.busy ? "@flexiprint đang làm việc khác — đợi xong" : "Gửi (Enter)"}
+          title={injecting ? "Chen vào việc @flexiprint đang làm — nó đọc ở lần gọi tool kế tiếp (Enter)" : kit.agent.busy ? "@flexiprint đang chờ bạn trả lời câu hỏi ở trên" : "Gửi (Enter)"}
         >
-          {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Gửi
+          {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : injecting ? <MessageSquarePlus className="h-4 w-4" /> : <Send className="h-4 w-4" />} {injecting ? "Gửi chen" : "Gửi"}
         </button>
       </div>
       {err && <p className="px-4 pb-2 text-xs text-destructive">{err}</p>}

@@ -138,8 +138,21 @@ export function useCharAgent(projectId: string, onChange: () => Promise<void>, o
     setTask(await ctApi.answerAgentTask(task.id, { question_id: questionId, choices, text }));
   };
 
+  /** "Gửi chen": a message into the task being worked on (server/agent/inbox.ts) — the agent reads it on its next call. */
+  const inject = async (text: string, extra: Required<Pick<CharAgentExtra, "tab" | "section" | "attachments">>): Promise<boolean> => {
+    if (!task) return false;
+    onError(null);
+    try {
+      setTask(await ctApi.injectAgentTask(task.id, { text, ...extra }));
+      return true;
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Không gửi chen được");
+      return false;
+    }
+  };
+
   const agent: CharAgent = { task, last, busy: task !== null, start, refresh };
-  return { agent, cancel, answer, dismiss: () => setLast(null) };
+  return { agent, cancel, answer, inject, dismiss: () => setLast(null) };
 }
 
 const STEP_LABEL: Record<CtCharTaskStep, string> = { brainstorm: "Brainstorm", master: "Master", edits: "Ảnh để cắt clipart", chat: "Chat", auto: "Tự động bước 3 – 4" };

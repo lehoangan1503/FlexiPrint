@@ -103,6 +103,7 @@ const KIND_STYLE: Record<NonNullable<CtAgentTaskProgress["kind"]>, string> = {
   run: "text-sky-700 dark:text-sky-400",
   question: "font-medium text-amber-700 dark:text-amber-400",
   answer: "text-emerald-700 dark:text-emerald-400",
+  inject: "font-medium text-violet-700 dark:text-violet-400",
 };
 
 /** What the agent is doing, live — every line of the task, its test images, and its question when it asks one. */

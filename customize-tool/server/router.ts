@@ -50,6 +50,7 @@
  *   POST   ai/agent-tasks                {kind: content|char, input: CtAgentTaskInput} → CtAgentTask, sent to agent_ide (server/agent/tasks.ts)
  *   GET    ai/agent-tasks/:id            → CtAgentTask (progress, then result in the built-in LLM's shape)
  *   POST   ai/agent-tasks/:id/answer     {question_id, choices, text} — answer the agent's question (ask_user)
+ *   POST   ai/agent-tasks/:id/inject     {text, attachments, tab, section} — "Gửi chen" while the agent works (server/agent/inbox.ts)
  *   POST   ai/agent-tasks/:id/cancel
  *   POST   products/:id/photo            multipart: file, style, cutout=0|1 → processed image bytes
  *   POST   products/:id/print-pack       multipart: file (flat design), main?, material, dpi? → zip (services/material-render)
@@ -126,6 +127,7 @@ import * as prices from "./price-tables";
 import { mcpEndpoint } from "./mcp/server";
 import { asJob, pollJob } from "./jobs";
 import { agentStatus, answerAgentTask, cancelAgentTask, createAgentTask, getAgentTask, listAgentTasks } from "./agent/tasks";
+import { injectAgentTask } from "./agent/inbox";
 
 export interface CtRouteContext {
   params: Promise<{ path?: string[] }>;
@@ -197,6 +199,7 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     if (id === "agent-tasks" && sub && !path[3] && method === "GET") return getAgentTask(session, sub);
     if (id === "agent-tasks" && sub && path[3] === "cancel" && method === "POST") return cancelAgentTask(session, sub);
     if (id === "agent-tasks" && sub && path[3] === "answer" && method === "POST") return answerAgentTask(session, sub, await readJson<unknown>(req));
+    if (id === "agent-tasks" && sub && path[3] === "inject" && method === "POST") return injectAgentTask(session, sub, await readJson<unknown>(req));
     return h.jsonError("Not found", 404);
   }
   if (head === "library") return dispatchLibrary(req, session, path);

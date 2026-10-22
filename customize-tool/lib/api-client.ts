@@ -9,6 +9,8 @@ import type { CtCharVersionCard,
   CtPackImage,
   CtAgentStatus,
   CtAgentTask,
+  CtCharChatAttachment,
+  CtCharChatTab,
   CtAgentTaskInput,
   CtAgentTaskKind,
   CtAiProviderInfo,
@@ -263,6 +265,7 @@ export const ctApi = {
   cancelAgentTask: (id: string) => call<CtAgentTask>(`ai/agent-tasks/${id}/cancel`, { method: "POST" }),
   /** Answer the agent's question (ask_user): it continues the task with it. */
   answerAgentTask: (id: string, body: { question_id: string; choices: string[]; text: string }) => call<CtAgentTask>(`ai/agent-tasks/${id}/answer`, json("POST", body)),
+  injectAgentTask: (id: string, body: { text: string; attachments: CtCharChatAttachment[]; tab: CtCharChatTab; section: string }) => call<CtAgentTask>(`ai/agent-tasks/${id}/inject`, json("POST", body)),
 
 };
 

@@ -218,7 +218,18 @@ export async function remakeSetProduct(db: CtSession["supabase"], userId: string
     const { data: old } = await db.from(CT_TABLES.regions).select("*").in("product_id", p.product_ids).eq("kind", "photo").returns<CtRegion[]>();
     for (const r of old ?? []) kept.set(r.name, { shape: r.shape, frame: r.config.photo.frame });
   }
-  for (const pid of p.product_ids) {
+  if (!set && !p.brief.poses?.length && p.brief.kind !== "photo") throw new Error("Bộ chưa có file layer");
+  // The new product first, the old ones after (2026-10-22: a build that failed half-way — "Upload thất bại" — had
+  // already deleted the old product, and the set kept pointing at it: every product tool said "No such product").
+  const productId =
+    p.brief.kind === "photo"
+      ? await buildPhotoProduct(s, p, p.name, kept)
+      : // Characters drawn in their poses: no files of its own — a 3:2 frame the composed group is fitted in.
+        await build(s, p, set ?? { status: "done", error: "", width: 3072, height: 2048, slots: [], zones: [], checks: [], builtAt: "" }, p.name, kept);
+  // The set's ids read again: another build may have replaced them meanwhile.
+  const { data: now } = await db.from(CT_TABLES.charProjects).select("product_ids").eq("id", p.id).maybeSingle<{ product_ids: string[] | null }>();
+  for (const pid of new Set([...p.product_ids, ...(now?.product_ids ?? [])])) {
+    if (pid === productId) continue;
     const folder = await findProductFolder(db, pid);
     if (folder) {
       const { data: cliparts } = await db.from(CT_TABLES.assets).select("id, storage_path").eq("category_id", folder.id).returns<Array<Pick<CtAsset, "id" | "storage_path">>>();
@@ -228,11 +239,7 @@ export async function remakeSetProduct(db: CtSession["supabase"], userId: string
     }
     await h.deleteProduct(s, pid);
   }
-  if (p.brief.kind === "photo") return buildPhotoProduct(s, p, p.name, kept);
-  // Characters drawn in their poses: no files of its own — a 3:2 frame the composed group is fitted in.
-  if (!set && p.brief.poses?.length) return build(s, p, { status: "done", error: "", width: 3072, height: 2048, slots: [], zones: [], checks: [], builtAt: "" }, p.name, kept);
-  if (!set) throw new Error("Bộ chưa có file layer");
-  return build(s, p, set, p.name, kept);
+  return productId;
 }
 
 /**

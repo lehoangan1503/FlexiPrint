@@ -77,6 +77,10 @@ export interface MaskEditorProps {
   sidebar?: (leave: (go: () => void) => void) => ReactNode;
 }
 
+/** The brush's ring: a white ring with a wide white glow — seen on dark and light pixels alike (2026-10-23: the dark
+ * shadow made it vanish on the dark checker). */
+export const BRUSH_RING = "pointer-events-none absolute left-0 top-0 z-10 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.55),0_0_10px_3px_rgba(255,255,255,0.9),inset_0_0_6px_1px_rgba(255,255,255,0.6)]";
+
 function loadImg(src: string): Promise<HTMLImageElement> {
   return new Promise((res, rej) => {
     const im = new Image();
@@ -1062,7 +1066,7 @@ export function MaskEditor(props: MaskEditorProps) {
             <canvas ref={view} width={W} height={H} className="block h-full w-full" style={{ imageRendering: z.s > 2 ? "pixelated" : "auto" }} />
           </div>
           {/* The brush: a white ring with a dark shadow — seen on light and dark pixels alike (asked 2026-10-14). */}
-          {brushy && !props.readOnly && <div ref={ring} className="pointer-events-none absolute left-0 top-0 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.85),0_0_6px_1px_rgba(0,0,0,0.7),inset_0_0_0_1px_rgba(0,0,0,0.6)]" />}
+          {brushy && !props.readOnly && <div ref={ring} className={BRUSH_RING} />}
         </div>
         {(props.context?.length ?? 0) > 0 && (
           <div className="flex w-64 shrink-0 flex-col gap-1 overflow-y-auto border-l p-2">

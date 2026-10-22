@@ -763,13 +763,14 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       return { ...sl, key, label: `${sl.label} — nón` };
     });
     /**
-     * A pose set's "phần nằm sau" of this layer (server/char/behind.ts) — a headwear outfit's mask is its hat's (the
-     * sweater stays where it is). Mirrored characters: the mask url carries the MIRROR prefix like the files.
+     * A pose set's "phần nằm sau" of this layer (server/char/behind.ts) — a headwear outfit's mask holds for both its
+     * hat and the rest (asked 2026-10-23: the sweater can go behind too). Mirrored characters: the mask url carries the
+     * MIRROR prefix like the files.
      */
     const behindOf = (sl: CtCharLayerSlot): string | undefined => {
       if (!src.p.brief.versionOf?.pose) return undefined;
       if (hats.has(sl.key)) return sset.slots.find((x) => x.key === hats.get(sl.key))?.behindUrl;
-      return slotOf(sl)?.headwear ? undefined : sl.behindUrl;
+      return sl.behindUrl;
     };
     /** `keep`: "out" = the layer without its back part (the layer itself), "in" = its back part only. */
     const pieceOf = async (sl: CtCharLayerSlot, url: string, keep: "in" | "out" = "out"): Promise<Buffer> => {

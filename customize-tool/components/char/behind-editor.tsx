@@ -13,6 +13,7 @@ import { Brush, Hand, Lasso, Loader2, Minus, Plus, Redo2, Save, Trash2, Undo2, X
 import type { CtBehindStage, CtCharLayerSet, CtCharLayerSlot } from "../../types";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
 import { useNoBrowserZoom } from "./no-browser-zoom";
+import { BRUSH_RING } from "./mask-editor";
 
 type Tool = "lasso" | "brush" | "hand";
 type Op = "add" | "remove";
@@ -73,10 +74,10 @@ export function BehindEditor(props: {
   const [z, setZ] = useState({ s: 1, ox: 0, oy: 0 });
   const [lasso, setLasso] = useState<Array<[number, number]>>([]);
   const view = useRef<HTMLCanvasElement | null>(null);
+  const ring = useRef<HTMLDivElement | null>(null);
   const wrap = useRef<HTMLDivElement | null>(null);
   const store = useRef<{
-    layer: HTMLImageElement;
-    plates: Array<{ img: HTMLImageElement | null; box?: Box; flip?: boolean }>;
+    plates: Array<{ img: HTMLImageElement | null; box?: Box; flip?: boolean; layer?: HTMLImageElement }>;
     mask: HTMLCanvasElement;
     /** The mask grown ~3 px with a hard edge: the back part reaches under the front part's soft edge (like the
      * server's — two soft halves left a dotted see-through seam, 2026-10-23). */
@@ -97,15 +98,16 @@ export function BehindEditor(props: {
     (async () => {
       try {
         const st = await props.load();
-        const [layer, plates, old] = await Promise.all([
-          loadImg(st.layerUrl),
-          Promise.all(st.plates.map(async (p) => ({ img: p.url ? await loadImg(p.url) : null, box: p.box, flip: p.flip }))),
+        const pics = new Map<string, Promise<HTMLImageElement>>();
+        const pic = (u: string) => pics.get(u) ?? pics.set(u, loadImg(u)).get(u)!;
+        const [plates, old] = await Promise.all([
+          Promise.all(st.plates.map(async (p) => ({ img: p.url ? await pic(p.url) : null, box: p.box, flip: p.flip, layer: p.layerUrl ? await pic(p.layerUrl) : undefined }))),
           props.slot.behindUrl ? loadImg(props.slot.behindUrl).catch(() => null) : Promise.resolve(null),
         ]);
         if (!live) return;
         const mask = canvas(MW, MH);
         if (old) ctx2d(mask).drawImage(old, 0, 0, MW, MH);
-        store.current = { layer, plates, mask, grown: canvas(MW, MH), tmp: canvas(MW, MH), undo: [], redo: [] };
+        store.current = { plates, mask, grown: canvas(MW, MH), tmp: canvas(MW, MH), undo: [], redo: [] };
         setStage(st);
       } catch (e) {
         if (live) setError(e instanceof Error ? e.message : "Không dựng được artwork");
@@ -134,33 +136,38 @@ export function BehindEditor(props: {
         const ang = (a / 16) * Math.PI * 2;
         gr.drawImage(st.mask, Math.cos(ang) * R, Math.sin(ang) * R);
       }
-    const masked = (mode: GlobalCompositeOperation, grown = false) => {
+    const masked = (layer: HTMLImageElement | undefined, mode: GlobalCompositeOperation, grown = false) => {
       t.globalCompositeOperation = "source-over";
       t.clearRect(0, 0, MW, MH);
-      t.drawImage(st.layer, 0, 0, MW, MH);
+      if (layer) t.drawImage(layer, 0, 0, MW, MH);
       t.globalCompositeOperation = mode;
       t.drawImage(grown ? st.grown : st.mask, 0, 0);
       t.globalCompositeOperation = "source-over";
     };
     const copies = st.plates.filter((p) => p.box);
     // 1) the part that goes behind: under everything (grown under the front part's edge).
-    masked("destination-in", true);
-    for (const p of copies) place(g, st.tmp, p.box!, p.flip);
+    for (const p of copies) {
+      masked(p.layer, "destination-in", true);
+      place(g, st.tmp, p.box!, p.flip);
+    }
     // 2) the product's layers back → front, each copy without its back part.
-    masked("destination-out");
     for (const p of st.plates) {
       if (p.img) g.drawImage(p.img, 0, 0, c.width, c.height);
-      else if (p.box) place(g, st.tmp, p.box, p.flip);
+      else if (p.box) {
+        masked(p.layer, "destination-out");
+        place(g, st.tmp, p.box, p.flip);
+      }
     }
-    // 3) where the back part is: orange over the layer.
-    if (tint) {
-      masked("destination-in");
-      t.globalCompositeOperation = "source-in";
-      t.fillStyle = "rgba(249,115,22,0.55)";
-      t.fillRect(0, 0, MW, MH);
-      t.globalCompositeOperation = "source-over";
-      for (const p of copies) place(g, st.tmp, p.box!, p.flip);
-    }
+    // 3) where the back part is: orange over the layer (hat and sweater alike).
+    if (tint)
+      for (const p of copies) {
+        masked(p.layer, "destination-in");
+        t.globalCompositeOperation = "source-in";
+        t.fillStyle = "rgba(249,115,22,0.55)";
+        t.fillRect(0, 0, MW, MH);
+        t.globalCompositeOperation = "source-over";
+        place(g, st.tmp, p.box!, p.flip);
+      }
   }, [MW, MH, tint, q]);
 
   useEffect(() => {
@@ -236,7 +243,18 @@ export function BehindEditor(props: {
     }
   };
 
+  /** The brush's ring under the pointer, as big as the brush on screen. */
+  const moveRing = (e: React.PointerEvent) => {
+    const el = ring.current;
+    const box = wrap.current?.getBoundingClientRect();
+    if (!el || !box) return;
+    const d = size * z.s;
+    el.style.width = el.style.height = `${d}px`;
+    el.style.transform = `translate(${e.clientX - box.left - d / 2}px, ${e.clientY - box.top - d / 2}px)`;
+  };
+
   const move = (e: React.PointerEvent) => {
+    moveRing(e);
     const s = stroke.current;
     if (!s) return;
     if (s.pan) {
@@ -417,7 +435,7 @@ export function BehindEditor(props: {
         <div
           ref={wrap}
           className="relative min-w-0 flex-1 touch-none overflow-hidden"
-          style={{ ...CHECKER_STYLE, cursor: tool === "hand" ? "grab" : "crosshair" }}
+          style={{ ...CHECKER_STYLE, cursor: tool === "hand" ? "grab" : tool === "brush" ? "none" : "crosshair" }}
           onPointerDown={down}
           onPointerMove={move}
           onPointerUp={up}
@@ -431,6 +449,7 @@ export function BehindEditor(props: {
               <Loader2 className="h-4 w-4 animate-spin" /> Đang dựng artwork hoàn chỉnh của sản phẩm…
             </div>
           )}
+          {stage && tool === "brush" && !props.readOnly && <div ref={ring} className={BRUSH_RING} />}
           {stage && (
             <div className="absolute left-0 top-0 origin-top-left" style={{ width: stage.width, height: stage.height, transform: `translate(${z.ox}px, ${z.oy}px) scale(${z.s})` }}>
               <canvas ref={view} width={stage.width} height={stage.height} className="block h-full w-full" />

@@ -120,11 +120,11 @@ export async function behindStage(db: Db, userId: string, p: CtCharProject, slot
     return a?.meta.charLayerId && ids.has(a.meta.charLayerId) ? (a.meta.charFx ?? {}) : null;
   };
   const regions = b.regions.filter((r) => onVersion(r, main.id)).sort((x, y) => x.sort_order - y.sort_order);
-  // This layer's copies (a hat-and-sweater outfit: its hat), and its old back parts (left out: the editor draws them).
-  const hatMode = regions.some((r) => fxOf(r)?.part === "hat");
+  // Every copy of this layer (a hat-and-sweater outfit: its hat and its sweater, each where it lies), and its old
+  // back parts (left out: the editor draws them).
   const isCopy = (r: CtRegion) => {
     const fx = fxOf(r);
-    return !!fx && fx.behind?.keep !== "in" && (hatMode ? fx.part === "hat" : !fx.part);
+    return !!fx && fx.behind?.keep !== "in";
   };
   const isOldBack = (r: CtRegion) => fxOf(r)?.behind?.keep === "in";
   const copies = regions.filter(isCopy);
@@ -149,6 +149,13 @@ export async function behindStage(db: Db, userId: string, p: CtCharProject, slot
   // Choosers draw nothing but decide what shows: in every plate.
   const choosers = regions.filter((r) => r.name.startsWith("Chọn — "));
   const plates: CtBehindPlate[] = [];
+  // The layer's picture per part (whole / hat / sweater) for the option shown, unmirrored on the pose canvas.
+  const raw = fetchImage(file.url);
+  const layers = new Map<string, Promise<string>>();
+  const layerOf = (part: string) => {
+    if (!layers.has(part)) layers.set(part, raw.then((png) => charClipart(png, part === "hat" || part === "rest" ? { part } : null)).then(async (png) => (await saveCharRaw(userId, p.id, "behind-stage", png, "image/png")).url));
+    return layers.get(part)!;
+  };
   let run: CtRegion[] = [];
   const flush = async () => {
     if (!run.length) return;
@@ -164,11 +171,11 @@ export async function behindStage(db: Db, userId: string, p: CtCharProject, slot
     }
     await flush();
     const bb = shapeBounds(r.shape);
-    plates.push({ box: { x: bb.x * k, y: bb.y * k, w: bb.w * k, h: bb.h * k }, flip: fxOf(r)?.flip === true });
+    const part = fxOf(r)?.part ?? "";
+    plates.push({ box: { x: bb.x * k, y: bb.y * k, w: bb.w * k, h: bb.h * k }, flip: fxOf(r)?.flip === true, layerUrl: await layerOf(part) });
   }
   await flush();
-  const layer = await charClipart(await fetchImage(file.url), hatMode ? { part: "hat" } : null);
-  return { width: Math.round(W * k), height: Math.round(H * k), layerUrl: (await saveCharRaw(userId, p.id, "behind-stage", layer, "image/png")).url, plates };
+  return { width: Math.round(W * k), height: Math.round(H * k), plates };
 }
 
 /** POST char/projects/:id/layers/behind/stage {slot, option} → BehindStage */

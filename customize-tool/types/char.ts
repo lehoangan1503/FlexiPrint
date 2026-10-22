@@ -577,16 +577,16 @@ export interface CtCharLayerSlot {
 export interface CtBehindPlate {
   /** A picture of every layer between two copies of the edited layer (render px). */
   url?: string;
-  /** A copy of the edited layer: its canvas's box on the artwork (render px), mirrored or not. */
+  /** A copy of the edited layer: its canvas's box on the artwork (render px), mirrored or not, and its picture for the
+   * option shown on the pose canvas (a hat-and-sweater outfit: the hat or the sweater). */
   box?: { x: number; y: number; w: number; h: number };
   flip?: boolean;
+  layerUrl?: string;
 }
 
 export interface CtBehindStage {
   width: number;
   height: number;
-  /** The layer itself for the option edited (a hat-and-sweater outfit: its hat), on the pose canvas. */
-  layerUrl: string;
   /** Back → front: pictures and the copies of the layer, in the product's stacking order. */
   plates: CtBehindPlate[];
 }

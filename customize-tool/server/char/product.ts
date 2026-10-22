@@ -770,6 +770,8 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     const behindOf = (sl: CtCharLayerSlot): string | undefined => {
       if (!src.p.brief.versionOf?.pose) return undefined;
       if (hats.has(sl.key)) return sset.slots.find((x) => x.key === hats.get(sl.key))?.behindUrl;
+      // A back half (hair "lớp sau") goes with its front half's mask: every layer of the clipart.
+      if (sl.follows) return sset.slots.find((x) => x.key === sl.follows)?.behindUrl;
       return sl.behindUrl;
     };
     /** `keep`: "out" = the layer without its back part (the layer itself), "in" = its back part only. */
@@ -891,9 +893,20 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       slotGroups.set(cacheKey, made);
       return made;
     };
-    const bodyCliparts = bodies.map((png, i) =>
-      clipart(png, split ? `Body · ${subjectName(sb, i)}` : solo !== undefined ? `Body · ${subjectName(sb, solo)}` : drawn ? `Body · ${src.p.brief.versionOf?.name ?? named[named.length - 1].name}` : "Body", null, bodySlot?.files[0] ? { charLayerId: bodySlot.files[0].imageId } : {}),
+    const bodyName = split ? undefined : solo !== undefined ? `Body · ${subjectName(sb, solo)}` : drawn ? `Body · ${src.p.brief.versionOf?.name ?? named[named.length - 1].name}` : "Body";
+    // A pose's body with a "phần nằm sau" (server/char/behind.ts): the body without it, and the part on its own.
+    const bodyBehind = src.p.brief.versionOf?.pose && bodySlot ? bodySlot.behindUrl : undefined;
+    const bodyMeta = (keep: "in" | "out"): CtAsset["meta"] =>
+      bodySlot?.files[0]
+        ? {
+            charLayerId: bodySlot.files[0].imageId,
+            ...(src.p.brief.versionOf?.pose ? { charFx: { ...(bodySlot.files[0].url.startsWith(MIRROR) ? { flip: true } : {}), ...(bodyBehind ? { behind: { url: bodyBehind.replace(MIRROR, ""), keep } } : {}) } } : {}),
+          }
+        : {};
+    const bodyCliparts = bodies.map(async (png, i) =>
+      clipart(bodyBehind ? await keepMask(png, await bytes(bodyBehind), "out") : png, bodyName ?? `Body · ${subjectName(sb, i)}`, null, bodyMeta("out")),
     );
+    const bodyBacks = bodyBehind ? bodies.map(async (png, i) => clipart(await keepMask(png, await bytes(bodyBehind), "in"), `${bodyName ?? `Body · ${subjectName(sb, i)}`} · back`, null, bodyMeta("in"))) : [];
 
     // A name "on" a character sits on that character's hat brim (its first hat file), following its curve — a box the
     // brief gives is only used without a hat (a guessed box put the names off the brims, 2026-10-22).
@@ -908,7 +921,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       const file = sl?.files.find((f) => f.option === first && (f.color === "" || f.color === hatSlot?.colors[0]?.name)) ?? sl?.files[0];
       brims.set(i, file ? await brimArc(hatSlot?.headwear ? (await splitHeadwear(await bytes(file.url))).hat : await bytes(file.url)) : null);
     }
-    return { src, sb, sset, slotOf, slotSubject, subjectBox, cropOf, slots, hatSlots, groupsOf, behindOf, bodies, bodyCliparts, brims };
+    return { src, sb, sset, slotOf, slotSubject, subjectBox, cropOf, slots, hatSlots, groupsOf, behindOf, bodies, bodyCliparts, bodyBacks, brims };
   }
   for (const v of versions) for (const pt of v.parts) if (!prepared.has(pt.src.key)) prepared.set(pt.src.key, await prepare(pt.src));
 
@@ -1111,11 +1124,16 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     for (const { pt, P, box } of parts) {
       const own = new Set(pt.subjects);
       for (const sl of [...P.slots, ...P.hatSlots]) {
-        if (!own.has(P.slotSubject(sl)) || sl.follows || !P.behindOf(sl)) continue;
+        if (!own.has(P.slotSubject(sl)) || !P.behindOf(sl)) continue;
         const r = imageRegion(`${sl.label} — phần sau`, `${sl.label} — back`, {}, rect(box));
         if (!behindRegions.has(P)) behindRegions.set(P, new Map());
         behindRegions.get(P)!.set(sl.key, r);
         fills.push(P.groupsOf(sl, sl.label, "in").then((groups) => groups.forEach((g, gi) => g.sub && addItem(r, g.sub, gi, g.name))));
+      }
+      // The body's back part (a pose drawn alone: one body).
+      for (const back of P.bodyBacks.slice(0, 1)) {
+        const r = imageRegion(`Thân — ${P.src.as ? subjectName(P.sb, P.src.as.subject) : ""} — phần sau`, "Body — back", {}, rect(box));
+        fills.push(back.then((a) => addItem(r, a, 0)));
       }
     }
 

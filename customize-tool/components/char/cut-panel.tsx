@@ -336,6 +336,14 @@ function LayerView({ ctx, set, plan, onEdit: edit }: { ctx: CharCtx; set: CtChar
               }}
             />
           ))}
+        {onEdit && ctx.project.brief.versionOf?.pose && set.slots.find((x) => x.key === "body")?.files[0] && (
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-muted-foreground">Thân{set.slots.find((x) => x.key === "body")?.behindUrl ? " (đang có phần nằm sau)" : ""}</span>
+            <CtButton variant="outline" onClick={() => onEdit({ kind: "behind", slot: "body", imageId: set.slots.find((x) => x.key === "body")!.files[0].imageId })} title="Khoanh phần của thân phải nằm SAU mọi nhân vật khác">
+              <Layers className="h-4 w-4" /> Đưa 1 phần ra sau
+            </CtButton>
+          </div>
+        )}
         {focused && ff && onEdit && (
           <div className="rounded-lg border border-dashed p-3 text-xs">
             <div className="mb-2 font-medium">

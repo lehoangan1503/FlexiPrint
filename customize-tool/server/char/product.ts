@@ -363,7 +363,8 @@ async function keepMask(png: Buffer, mask: Buffer, keep: "in" | "out"): Promise<
   }
   // The back part: any coverage → all of it (it lies under the front part's soft edge).
   for (let i = 0; i < W * H; i++) {
-    const k = keep === "in" ? (m[i] > 0 ? 255 : 0) : 255 - m[i];
+    // Hard edges both ways: the front part keeps only pixels clearly outside (no half-see-through ring).
+    const k = keep === "in" ? (m[i] > 0 ? 255 : 0) : m[i] >= 128 ? 0 : 255;
     data[i * 4 + 3] = Math.round((data[i * 4 + 3] * k) / 255);
   }
   return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();

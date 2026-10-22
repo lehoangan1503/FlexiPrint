@@ -74,6 +74,7 @@ export function BehindEditor(props: {
   const [z, setZ] = useState({ s: 1, ox: 0, oy: 0 });
   const [lasso, setLasso] = useState<Array<[number, number]>>([]);
   const view = useRef<HTMLCanvasElement | null>(null);
+  const dollCanvases = useRef<HTMLCanvasElement[] | null>(null);
   const ring = useRef<HTMLDivElement | null>(null);
   const wrap = useRef<HTMLDivElement | null>(null);
   const store = useRef<{
@@ -136,38 +137,60 @@ export function BehindEditor(props: {
         const ang = (a / 16) * Math.PI * 2;
         gr.drawImage(st.mask, Math.cos(ang) * R, Math.sin(ang) * R);
       }
-    const masked = (layer: HTMLImageElement | undefined, mode: GlobalCompositeOperation, grown = false) => {
+    // Each character as ONE picture: its layers (consecutive copies in one box) stacked in its own order, then split by
+    // the mask — the back part (grown under the front part's edge) and the front part are the same picture, so a brush
+    // edge leaves no ring (two soft halves of separate layers let the layer under them / the background show through).
+    type Doll = { box: Box; flip?: boolean; at: number; layers: HTMLImageElement[] };
+    const dolls: Doll[] = [];
+    st.plates.forEach((p, i) => {
+      if (!p.box || !p.layer) return;
+      const last = dolls[dolls.length - 1];
+      const prev = st.plates[i - 1];
+      if (last && prev?.box && last.box.x === p.box.x && last.box.y === p.box.y && last.box.w === p.box.w && !!last.flip === !!p.flip) last.layers.push(p.layer);
+      else dolls.push({ box: p.box, flip: p.flip, at: i, layers: [p.layer] });
+    });
+    const pool = (dollCanvases.current ??= []);
+    const pictureOf = (d: Doll, k: number) => {
+      const cv = (pool[k] ??= canvas(MW, MH));
+      const x = ctx2d(cv);
+      x.globalCompositeOperation = "source-over";
+      x.clearRect(0, 0, MW, MH);
+      for (const l of d.layers) x.drawImage(l, 0, 0, MW, MH);
+      return cv;
+    };
+    const masked = (pic: HTMLCanvasElement, mode: GlobalCompositeOperation, m: HTMLCanvasElement) => {
       t.globalCompositeOperation = "source-over";
       t.clearRect(0, 0, MW, MH);
-      if (layer) t.drawImage(layer, 0, 0, MW, MH);
+      t.drawImage(pic, 0, 0);
       t.globalCompositeOperation = mode;
-      t.drawImage(grown ? st.grown : st.mask, 0, 0);
+      t.drawImage(m, 0, 0);
       t.globalCompositeOperation = "source-over";
     };
-    const copies = st.plates.filter((p) => p.box);
-    // 1) the part that goes behind: under everything (grown under the front part's edge).
-    for (const p of copies) {
-      masked(p.layer, "destination-in", true);
-      place(g, st.tmp, p.box!, p.flip);
-    }
-    // 2) the product's layers back → front, each copy without its back part.
-    for (const p of st.plates) {
+    const pics = dolls.map((d, k) => pictureOf(d, k));
+    // 1) the part that goes behind: under everything.
+    dolls.forEach((d, k) => {
+      masked(pics[k], "destination-in", st.grown);
+      place(g, st.tmp, d.box, d.flip);
+    });
+    // 2) the product's layers back → front, each character without its back part.
+    st.plates.forEach((p, i) => {
       if (p.img) g.drawImage(p.img, 0, 0, c.width, c.height);
-      else if (p.box) {
-        masked(p.layer, "destination-out");
-        place(g, st.tmp, p.box, p.flip);
+      const k = dolls.findIndex((d) => d.at === i);
+      if (k >= 0) {
+        masked(pics[k], "destination-out", st.mask);
+        place(g, st.tmp, dolls[k].box, dolls[k].flip);
       }
-    }
-    // 3) where the back part is: orange over the layer (hat and sweater alike).
+    });
+    // 3) where the back part is: orange.
     if (tint)
-      for (const p of copies) {
-        masked(p.layer, "destination-in");
+      dolls.forEach((d, k) => {
+        masked(pics[k], "destination-in", st.mask);
         t.globalCompositeOperation = "source-in";
         t.fillStyle = "rgba(249,115,22,0.55)";
         t.fillRect(0, 0, MW, MH);
         t.globalCompositeOperation = "source-over";
-        place(g, st.tmp, p.box!, p.flip);
-      }
+        place(g, st.tmp, d.box, d.flip);
+      });
   }, [MW, MH, tint, q]);
 
   useEffect(() => {

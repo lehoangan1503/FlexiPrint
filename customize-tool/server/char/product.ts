@@ -468,7 +468,7 @@ async function signCanvases(pngs: Buffer[]): Promise<{ pngs: Buffer[]; top: numb
  * characters' cut-off bottom (`top` of their height: the forearms rest on it); the characters at most `w` of its width. */
 const PLAQUE = { top: 0.93, w: 0.97 };
 /** The lettering on the sign: the plain middle between the decorated ends (x, w), and of the plank's own height (y, h). */
-const PLAQUE_TEXT = { x: 0.22, y: 0.18, w: 0.56, h: 0.64 };
+const PLAQUE_TEXT = { x: 0.22, y: 0.12, w: 0.56, h: 0.76 };
 
 /** One set a product version is made of: the set itself, a version set of a drawn lineup (brief.lineup.drawn), or
  * one character of the parent drawn in its pose (brief.poses) — then `brief` is the parent's, `set` the pose set's files

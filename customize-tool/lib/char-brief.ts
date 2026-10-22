@@ -593,7 +593,7 @@ export function photoMasterPrompt(brief: CtCharBrief): string {
  * it by repeating its middle and the seams showed): ONE whole picture, as wide as the artwork frame, and every theme's
  * sign of the same proportions (only the theme changes). Its height: this share of the frame's height.
  */
-export const PLAQUE_FRAME_H = 0.24;
+export const PLAQUE_FRAME_H = 0.3;
 
 /** The sign's width / height on a piece whose artwork frame (safe area) is `areaRatio` wide for 1 tall. */
 export function plaqueAspect(areaRatio: number): number {

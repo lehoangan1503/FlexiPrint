@@ -131,10 +131,24 @@ export async function behindContext(db: Db, userId: string, p: CtCharProject, op
   const W = b.spec?.width ?? b.assets.find((a) => a.id === b.product.main_asset_id)?.width ?? 1000;
   const H = b.spec?.height ?? b.assets.find((a) => a.id === b.product.main_asset_id)?.height ?? 1000;
   const print = await renderArtwork(b, selection, Math.max(W, H), "print");
-  // The pose's canvas = the body layer's box on the print: the print moved / scaled into it.
+  // The pose's canvas = the body layer's box on the print: the part of the print inside it, scaled onto the canvas.
   const k = set.width / box.w;
+  const meta = await sharp(print).metadata();
+  const pw = meta.width ?? W;
+  const ph = meta.height ?? H;
+  const r = pw / W;
+  const x0 = Math.max(0, Math.floor(box.x * r));
+  const y0 = Math.max(0, Math.floor(box.y * r));
+  const x1 = Math.min(pw, Math.ceil((box.x + box.w) * r));
+  const y1 = Math.min(ph, Math.ceil((box.y + box.h) * r));
+  if (x1 <= x0 || y1 <= y0) throw new Error("Nhân vật nằm ngoài khung in");
+  const cw = Math.max(1, Math.min(set.width, Math.round(((x1 - x0) / r) * k)));
+  const chh = Math.max(1, Math.min(set.height, Math.round(((y1 - y0) / r) * k)));
+  const piece = await sharp(print).extract({ left: x0, top: y0, width: x1 - x0, height: y1 - y0 }).resize(cw, chh, { fit: "fill" }).png().toBuffer();
+  const left = Math.max(0, Math.min(set.width - cw, Math.round((x0 / r - box.x) * k)));
+  const top = Math.max(0, Math.min(set.height - chh, Math.round((y0 / r - box.y) * k)));
   const png = await sharp({ create: { width: set.width, height: set.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
-    .composite([{ input: await sharp(print).resize(Math.max(1, Math.round(W * k)), Math.max(1, Math.round(H * k))).png().toBuffer(), left: Math.round(-box.x * k), top: Math.round(-box.y * k) }])
+    .composite([{ input: piece, left, top }])
     .png()
     .toBuffer();
   return (await saveCharRaw(userId, p.id, "behind-context", png, "image/png")).url;

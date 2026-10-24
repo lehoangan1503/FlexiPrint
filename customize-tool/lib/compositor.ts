@@ -6,7 +6,9 @@
  */
 
 import type { CtFillConfig, CtMainFrame, CtMainLayout, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtShape, CtTextConfig, CtTransform } from "../types";
-import { itemPlacement, orientedBox, photoFrameBox, resolvePhotoFrame, shapeBounds } from "./geometry";
+import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, textBand } from "./geometry";
+
+export { textBand };
 import { activeRegions, normalizeRegion, regionForSelection, resolveLinked, selectedMainId, selectedMainImageId, textMode, zoneText } from "./design";
 import { mainFrameFor, resolveLayout } from "./layout";
 import { frameRegionFor, renditionFrameBox, traceFrame } from "./material-frame";
@@ -133,23 +135,122 @@ export function printFrame(input: Pick<CompositeInput, "main" | "assets" | "sele
   return frameRegionFor(input.regions.map(normalizeRegion), mainId, input.main.id);
 }
 
-/** `offset`: where the main's box starts on the canvas, main pixels (renderComposite's bleed). */
-export async function drawComposite(ctx: CanvasRenderingContext2D, input: CompositeInput, offset = { x: 0, y: 0 }): Promise<void> {
-  const { main, assets, scale, background } = input;
+/** What drawComposite draws, bottom first: the selection with linked layers resolved, the version's layout, the shown layers. */
+function drawPlan(input: CompositeInput): { selection: CtSelection; mainId: string; items: CtRegionItem[]; regions: CtRegion[] } {
   // Linked layers (the back half of a hairstyle) show what their leader shows — resolved here, so every renderer agrees.
-  const selection = resolveLinked(input.regions, input.items, assets, input.selection);
+  const selection = resolveLinked(input.regions, input.items, input.assets, input.selection);
   // A main version (selection[CT_MAIN_KEY]) is drawn into the default main's
   // box, so every zone keeps its place whichever version is showing — unless
   // that version carries its own layout, which moves / hides zones.
-  const mainId = selectedMainId(selection, assets, main.id);
+  const mainId = selectedMainId(selection, input.assets, input.main.id);
   const resolved = resolveLayout(input.regions, input.items, input.layouts, mainId);
-  const items = resolved.items;
   // A zone's chosen sub-option (its shape / lettering) is drawn in place of its own look.
   // Child zones only while their parent shows the option they belong to.
   const regions = activeRegions(resolved.regions.map(normalizeRegion), selection)
     .map((r) => regionForSelection(normalizeRegion(r), selection[r.id]))
     .filter((r) => !(input.display && r.config.printOnly))
     .sort((a, b) => a.sort_order - b.sort_order);
+  return { selection, mainId, items: resolved.items, regions };
+}
+
+/** One layer's visible pixels (alpha, row by row) on a pick map; id null = the version's picture. */
+export interface CtPickLayer {
+  id: string | null;
+  alpha: Uint8ClampedArray;
+}
+
+/** Every shown layer's pixels at a small scale, bottom first — what a click on the canvas lands on (pickAt). */
+export interface CtPickMap {
+  scale: number;
+  w: number;
+  h: number;
+  layers: CtPickLayer[];
+}
+
+/**
+ * Draws each layer alone, like drawComposite, and keeps its alpha. Text and customer-photo zones count as their whole
+ * band / outline (letters are thin, an empty photo zone has no pixels), pictures as their own pixels — so a click
+ * picks the picture under the pointer, not the biggest frame around it.
+ */
+export async function renderPickMap(input: CompositeInput, maxSide = 640): Promise<CtPickMap> {
+  const { main } = input;
+  const scale = Math.min(1, maxSide / Math.max(main.width, main.height, 1));
+  const w = Math.max(1, Math.round(main.width * scale));
+  const h = Math.max(1, Math.round(main.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return { scale, w, h, layers: [] };
+  const { selection, mainId, items, regions } = drawPlan(input);
+  const byId = new Map(input.assets.map((a) => [a.id, a]));
+  const grab = async (id: string | null, paint: () => Promise<void> | void): Promise<CtPickLayer> => {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.save();
+    await paint();
+    ctx.restore();
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const alpha = new Uint8ClampedArray(w * h);
+    for (let i = 0; i < alpha.length; i++) alpha[i] = data[i * 4 + 3];
+    return { id, alpha };
+  };
+  const layer = (r: CtRegion) =>
+    grab(r.id, async () => {
+      if (r.kind === "text" || r.kind === "photo") {
+        ctx.fillStyle = "#000";
+        if (r.kind === "text") {
+          const b = textBand(r.shape);
+          ctx.translate(b.cx, b.cy);
+          ctx.rotate((b.rotation * Math.PI) / 180);
+          ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
+        } else {
+          clipShape(ctx, r.shape);
+          ctx.fillRect(0, 0, main.width, main.height);
+        }
+        return;
+      }
+      await drawRegion(ctx, r, items, byId, selection).catch(() => undefined);
+    });
+  const layers: CtPickLayer[] = [];
+  for (const r of regions.filter((x) => !x.config.aboveMain)) layers.push(await layer(r));
+  const imageId = selectedMainImageId(selection, input.assets, main.id);
+  const mainImg = await loadImage((byId.get(imageId) ?? byId.get(mainId) ?? main).url).catch(() => null);
+  if (mainImg) {
+    const { f } = mainPictureBox(input);
+    layers.push(
+      await grab(null, () => {
+        ctx.translate(f.x + f.w / 2, f.y + f.h / 2);
+        if (f.rotation) ctx.rotate((f.rotation * Math.PI) / 180);
+        ctx.drawImage(mainImg, -f.w / 2, -f.h / 2, f.w, f.h);
+      }),
+    );
+  }
+  for (const r of regions.filter((x) => x.config.aboveMain)) layers.push(await layer(r));
+  return { scale, w, h, layers };
+}
+
+/**
+ * The topmost layer with a visible pixel within `radius` (main px) of `pt`: a region id, null for the version's
+ * picture, undefined for nothing.
+ */
+export function pickAt(map: CtPickMap, pt: { x: number; y: number }, radius = 0): string | null | undefined {
+  const cx = Math.floor(pt.x * map.scale);
+  const cy = Math.floor(pt.y * map.scale);
+  const r = Math.max(0, Math.round(radius * map.scale));
+  for (let k = map.layers.length - 1; k >= 0; k--) {
+    const a = map.layers[k].alpha;
+    for (let y = Math.max(0, cy - r); y <= Math.min(map.h - 1, cy + r); y++)
+      for (let x = Math.max(0, cx - r); x <= Math.min(map.w - 1, cx + r); x++) if (a[y * map.w + x] > 40) return map.layers[k].id;
+  }
+  return undefined;
+}
+
+/** `offset`: where the main's box starts on the canvas, main pixels (renderComposite's bleed). */
+export async function drawComposite(ctx: CanvasRenderingContext2D, input: CompositeInput, offset = { x: 0, y: 0 }): Promise<void> {
+  const { main, assets, scale, background } = input;
+  const { selection, mainId, items, regions } = drawPlan(input);
   // A size of the khuôn in: fills take that size's zone, the rest is stretched with the sheet.
   const size = input.size ?? null;
   const kx = size ? size.width / main.width : 1;
@@ -284,22 +385,6 @@ async function drawRegion(
     }
   }
   ctx.restore();
-}
-
-/**
- * The line a text zone writes along: its outline's oriented box, turned so the text runs along the long side and
- * reads left → right (never upside down). Rect / ellipse zones: upright.
- */
-export function textBand(shape: CtShape): { cx: number; cy: number; w: number; h: number; rotation: number } {
-  const b = orientedBox(shape);
-  let { w, h, rotation } = b;
-  if (h > w) {
-    [w, h] = [h, w];
-    rotation -= 90;
-  }
-  if (rotation <= -90) rotation += 180;
-  if (rotation > 90) rotation -= 180;
-  return { cx: b.cx, cy: b.cy, w, h, rotation: Math.abs(rotation) < 1 ? 0 : rotation };
 }
 
 /**

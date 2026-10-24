@@ -26,8 +26,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CtAsset, CtBounds, CtMainFrame, CtProductScene, CtPhotoFrame, CtPoint, CtRegion, CtRegionItem, CtRegionKind, CtSelection, CtShape, CtTransform } from "../../types";
-import { clamp, fitShapeToBounds, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, SNAP_FRACTIONS, snapAxis, translateShape } from "../../lib/geometry";
-import { drawComposite } from "../../lib/compositor";
+import { bandShape, clamp, fitZoneToBounds, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, SNAP_FRACTIONS, snapAxis, textBand, translateShape } from "../../lib/geometry";
+import { drawComposite, pickAt, renderPickMap, type CtPickMap } from "../../lib/compositor";
 import { activeRegions, hasTestPhoto, makeRegion } from "../../lib/design";
 import { cx, CHECKER_STYLE } from "../ui";
 import type { DesignApi } from "./use-design";
@@ -67,6 +67,8 @@ type Gesture =
   | { kind: "move-region"; id: string; start: CtPoint; shape: CtShape }
   | { kind: "resize-region"; id: string; handle: Handle; bounds: CtBounds; shape: CtShape }
   | { kind: "vertex"; id: string; index: number; shape: CtShape }
+  // A text zone turned about its band's centre (lib/geometry bandShape).
+  | { kind: "rotate-region"; id: string; startAngle: number; band: ReturnType<typeof textBand> }
   | { kind: "move-item"; id: string; start: CtPoint; t: CtTransform; bounds: CtBounds; geom: ItemGeom | null }
   | { kind: "scale-item"; id: string; center: CtPoint; startDist: number; t: CtTransform }
   | { kind: "rotate-item"; id: string; center: CtPoint; startAngle: number; t: CtTransform }
@@ -121,7 +123,8 @@ export interface StageProps {
 
 const MIN_ZOOM = 0.02;
 
-const boundsArea = (b: { w: number; h: number }) => b.w * b.h;
+/** Every frame on the canvas (layers, photo frames, the version's picture, a picture being placed): one dark blue (2026-10-24). */
+const FRAME_COLOR = "#1d4ed8";
 const MAX_ZOOM = 32;
 
 export function Stage(props: StageProps) {
@@ -277,6 +280,24 @@ export function Stage(props: StageProps) {
     return () => cancelAnimationFrame(raf);
   }, [main, assets, regions, items, selection, renderScale, layouts]);
 
+  // Pick map: each shown layer's own pixels, so a click selects the picture under the pointer — not the biggest frame
+  // around it (2026-10-24). Rebuilt a moment after the design settles (not on every frame of a drag).
+  const pickMap = useRef<CtPickMap | null>(null);
+  useEffect(() => {
+    let live = true;
+    const t = window.setTimeout(() => {
+      void renderPickMap({ main, assets, regions, items, selection, scale: 1, layouts })
+        .then((m) => {
+          if (live) pickMap.current = m;
+        })
+        .catch(() => undefined);
+    }, 150);
+    return () => {
+      live = false;
+      window.clearTimeout(t);
+    };
+  }, [main, assets, regions, items, selection, layouts]);
+
   // ------------------------------------------------------------------ coords
   const toWorld = useCallback((clientX: number, clientY: number): CtPoint => {
     const rect = viewportRef.current?.getBoundingClientRect();
@@ -286,6 +307,12 @@ export function Stage(props: StageProps) {
   }, []);
 
   const px = 1 / zoom; // one screen pixel in world units
+  /** What a click at `w` lands on: a layer id, null = the version's picture, undefined = nothing (or no pick map yet). */
+  const pickLayer = (w: CtPoint): string | null | undefined => {
+    const m = pickMap.current;
+    // A few screen px of slack: thin strokes stay clickable when zoomed out.
+    return m ? pickAt(m, w, 3 / zoomRef.current) : undefined;
+  };
   const sceneRect = useMemo(() => {
     const sc = props.scene;
     if (!sc?.url || !sc.box.w) return null;
@@ -403,9 +430,15 @@ export function Stage(props: StageProps) {
       draftRedo.current = [];
       return;
     }
-    // select tool: on the version's picture → select its frame (and drag it); empty artboard → deselect
+    // select tool: on a layer's pixels → that layer; on the version's picture → its frame (and drag it); else deselect
+    const hit = pickLayer(w);
+    const hitRegion = hit ? regions.find((r) => r.id === hit) : undefined;
+    if (hitRegion) {
+      onRegionPointerDown(e, hitRegion);
+      return;
+    }
     props.onSelectRegion(null);
-    if (insideFrame(w, mainFrame)) {
+    if (hit === null || (hit === undefined && !pickMap.current && insideFrame(w, mainFrame))) {
       props.onSelectMain(true);
       setGesture({ kind: "move-main", start: w, f: mainFrame });
     } else props.onSelectMain(false);
@@ -415,7 +448,14 @@ export function Stage(props: StageProps) {
     const w = toWorld(e.clientX, e.clientY);
     if (effectiveTool === "polygon") setHover(w);
     const g = gestureRef.current;
-    if (!g) return;
+    if (!g) {
+      if (effectiveTool === "select") {
+        const hit = pickLayer(w);
+        const id = typeof hit === "string" ? hit : null;
+        setCanvasHover((h) => (h === id ? h : id));
+      }
+      return;
+    }
     if ((g.kind === "move-region" || g.kind === "move-frame") && performance.now() < moveHeldUntil.current) {
       // Held: the drag starts from wherever the pointer is when the hold ends — no jump.
       gestureRef.current = { ...g, start: w };
@@ -474,7 +514,7 @@ export function Stage(props: StageProps) {
           else y1 = y0 + nh;
         }
         const next = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-        design.live((s) => updateRegion(s, g.id, (r) => ({ ...r, shape: fitShapeToBounds(g.shape, next) })));
+        design.live((s) => updateRegion(s, g.id, (r) => ({ ...r, shape: fitZoneToBounds(g.shape, r.kind, next) })));
         break;
       }
       case "move-main": {
@@ -508,6 +548,14 @@ export function Stage(props: StageProps) {
           else y1 = y0 + nh;
         }
         setMainFrame({ ...b, x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+        break;
+      }
+      case "rotate-region": {
+        const a = (Math.atan2(w.y - g.band.cy, w.x - g.band.cx) * 180) / Math.PI;
+        let rotation = g.band.rotation + a - g.startAngle;
+        // Shift: 15° steps; otherwise level snaps within 2°.
+        rotation = e.shiftKey ? Math.round(rotation / 15) * 15 : Math.abs(rotation) < 2 ? 0 : Math.round(rotation * 10) / 10;
+        design.live((s) => updateRegion(s, g.id, (r) => ({ ...r, shape: bandShape({ ...g.band, rotation }) })));
         break;
       }
       case "vertex": {
@@ -676,9 +724,12 @@ export function Stage(props: StageProps) {
   }, [tool]);
 
   // ------------------------------------------------------------------ region handlers
-  const onRegionPointerDown = (e: React.PointerEvent, region: CtRegion) => {
+  const onRegionPointerDown = (e: React.PointerEvent, picked: CtRegion) => {
     if (effectiveTool !== "select") return;
     e.stopPropagation();
+    // Inside the selected layer's frame, another layer's pixels on top win (its frame often covers the whole artwork).
+    const hit = picked.id === selectedRegionId ? pickLayer(toWorld(e.clientX, e.clientY)) : undefined;
+    const region = (typeof hit === "string" && regions.find((r) => r.id === hit)) || picked;
     props.onSelectMain(false);
     viewportRef.current?.setPointerCapture(e.pointerId);
     if (region.id !== selectedRegionId) moveHeldUntil.current = performance.now() + SELECT_HOLD_MS;
@@ -789,7 +840,7 @@ export function Stage(props: StageProps) {
   };
 
   // ------------------------------------------------------------------ draw
-  const kindColor: Record<CtRegionKind, string> = { image: "#0ea5e9", text: "#f59e0b", photo: "#a855f7" };
+  const kindColor: Record<CtRegionKind, string> = { image: FRAME_COLOR, text: FRAME_COLOR, photo: FRAME_COLOR };
   const cursor =
     gesture?.kind === "pan" || effectiveTool === "hand"
       ? gesture?.kind === "pan"
@@ -824,7 +875,10 @@ export function Stage(props: StageProps) {
       onPointerDown={onViewportPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerLeave={() => setHover(null)}
+      onPointerLeave={() => {
+        setHover(null);
+        setCanvasHover(null);
+      }}
       onDoubleClick={() => tool === "polygon" && closePolygon(draft)}
       onDragOver={(e) => {
         if (!props.onDropClipart || !e.dataTransfer.types.includes(CLIPART_DRAG)) return;
@@ -910,41 +964,36 @@ export function Stage(props: StageProps) {
             </g>
           )}
           {props.showOverlay &&
-            // Only the selected layer's frame is drawn (big frames covering the whole artwork hid everything under
-            // them, 2026-10-24); the others are invisible hit areas — smallest on top, so a small layer inside a big
-            // frame is still clicked, and the selected one last so a press anywhere inside it drags IT (2026-10-12).
-            [
-              ...shownRegions
-                .filter((r) => r.id !== selectedRegionId)
-                .sort((a, b) => boundsArea(shapeBounds(b.shape)) - boundsArea(shapeBounds(a.shape))),
-              ...shownRegions.filter((r) => r.id === selectedRegionId),
-            ].map((r) => {
-              const isSel = r.id === selectedRegionId;
-              return (
-                <path
-                  key={r.id}
-                  d={shapeToSvgPath(r.shape)}
-                  // No tint: a coloured fill over the zone falsifies the colours of what's in it
-                  // (a 13% purple film made every photo style look pink). The outline marks it;
-                  // pointerEvents "all" still hit-tests the transparent interior.
-                  fill="transparent"
-                  stroke={isSel ? kindColor[r.kind] : "transparent"}
-                  strokeWidth={2}
-                  vectorEffect="non-scaling-stroke"
-                  style={{ pointerEvents: effectiveTool === "select" ? "all" : "none", cursor: "move" }}
-                  onPointerEnter={() => setCanvasHover(r.id)}
-                  onPointerLeave={() => setCanvasHover((h) => (h === r.id ? null : h))}
-                  onPointerDown={(e) => onRegionPointerDown(e, r)}
-                  onDoubleClick={(e) => onRegionDoubleClick(e, r)}
-                />
-              );
-            })}
+            // Only the selected layer's frame is drawn (big frames covering the whole artwork hid everything under them,
+            // 2026-10-24). A click elsewhere is picked by pixels (pickLayer); the selected frame stays a drag handle, and
+            // an empty custom layer (no picture, no pixels) keeps its frame as a click target.
+            shownRegions
+              .filter((r) => r.id === selectedRegionId || (r.kind === "image" && !r.config.materialFrame && !items.some((i) => i.region_id === r.id)))
+              .map((r) => {
+                const isSel = r.id === selectedRegionId;
+                return (
+                  <path
+                    key={r.id}
+                    d={shapeToSvgPath(r.shape)}
+                    // No tint: a coloured fill over the zone falsifies the colours of what's in it
+                    // (a 13% purple film made every photo style look pink). The outline marks it;
+                    // pointerEvents "all" still hit-tests the transparent interior.
+                    fill="transparent"
+                    stroke={isSel ? FRAME_COLOR : "transparent"}
+                    strokeWidth={2}
+                    vectorEffect="non-scaling-stroke"
+                    style={{ pointerEvents: effectiveTool === "select" ? "all" : "none", cursor: "move" }}
+                    onPointerDown={(e) => onRegionPointerDown(e, r)}
+                    onDoubleClick={(e) => onRegionDoubleClick(e, r)}
+                  />
+                );
+              })}
           {props.showOverlay && hovered && hovered.id !== selectedRegionId && (
             // The hovered layer (in Layers, else on the canvas): its frame, for show only.
             <path
               d={shapeToSvgPath(hovered.shape)}
               fill="none"
-              stroke={kindColor[hovered.kind]}
+              stroke={FRAME_COLOR}
               strokeWidth={1.5}
               strokeDasharray="6 4"
               vectorEffect="non-scaling-stroke"
@@ -980,7 +1029,7 @@ export function Stage(props: StageProps) {
                 width={frameGeom.w}
                 height={frameGeom.h}
                 fill="transparent"
-                stroke="#a855f7"
+                stroke={FRAME_COLOR}
                 strokeWidth={editTarget === "object" ? 2.5 : 1.5}
                 vectorEffect="non-scaling-stroke"
                 style={{ pointerEvents: "all", cursor: "move" }}
@@ -1016,7 +1065,7 @@ export function Stage(props: StageProps) {
                 width={mainFrame.w}
                 height={mainFrame.h}
                 fill="none"
-                stroke="#10b981"
+                stroke={FRAME_COLOR}
                 strokeWidth={1.5}
                 vectorEffect="non-scaling-stroke"
               />
@@ -1030,7 +1079,7 @@ export function Stage(props: StageProps) {
                     width={hs}
                     height={hs}
                     fill="#fff"
-                    stroke="#10b981"
+                    stroke={FRAME_COLOR}
                     strokeWidth={1.5}
                     vectorEffect="non-scaling-stroke"
                     style={{ pointerEvents: "all", cursor: HANDLE_CURSOR[h] }}
@@ -1053,7 +1102,7 @@ export function Stage(props: StageProps) {
                 width={selBounds.w}
                 height={selBounds.h}
                 fill="none"
-                stroke="#0ea5e9"
+                stroke={FRAME_COLOR}
                 strokeWidth={1}
                 strokeDasharray="3 3"
                 vectorEffect="non-scaling-stroke"
@@ -1068,7 +1117,7 @@ export function Stage(props: StageProps) {
                     width={hs}
                     height={hs}
                     fill="#fff"
-                    stroke="#0ea5e9"
+                    stroke={FRAME_COLOR}
                     strokeWidth={1.5}
                     vectorEffect="non-scaling-stroke"
                     style={{ pointerEvents: "all", cursor: HANDLE_CURSOR[h] }}
@@ -1076,14 +1125,47 @@ export function Stage(props: StageProps) {
                   />
                 );
               })}
+              {selected.kind === "text" &&
+                (() => {
+                  // Turn handle: above the band's top edge, along its own axis (the band turns with it).
+                  const band = textBand(selected.shape);
+                  const t = (band.rotation * Math.PI) / 180;
+                  const at = (d: number) => ({ x: band.cx + d * Math.sin(t), y: band.cy - d * Math.cos(t) });
+                  const top = at(band.h / 2);
+                  const knob = at(band.h / 2 + 28 * px);
+                  return (
+                    <g>
+                      <line x1={top.x} y1={top.y} x2={knob.x} y2={knob.y} stroke={FRAME_COLOR} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+                      <circle
+                        cx={knob.x}
+                        cy={knob.y}
+                        r={6 * px}
+                        fill="#fff"
+                        stroke={FRAME_COLOR}
+                        strokeWidth={1.5}
+                        vectorEffect="non-scaling-stroke"
+                        style={{ pointerEvents: "all", cursor: "grab" }}
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          viewportRef.current?.setPointerCapture(e.pointerId);
+                          const w = toWorld(e.clientX, e.clientY);
+                          setGesture({ kind: "rotate-region", id: selected.id, startAngle: (Math.atan2(w.y - band.cy, w.x - band.cx) * 180) / Math.PI, band });
+                        }}
+                      >
+                        <title>Xoay (Shift: từng 15°)</title>
+                      </circle>
+                    </g>
+                  );
+                })()}
               {selected.shape.type === "polygon" &&
+                selected.kind !== "text" &&
                 selected.shape.points.map((p, i) => (
                   <circle
                     key={i}
                     cx={p.x}
                     cy={p.y}
                     r={5 * px}
-                    fill="#0ea5e9"
+                    fill={FRAME_COLOR}
                     stroke="#fff"
                     strokeWidth={1.5}
                     vectorEffect="non-scaling-stroke"
@@ -1104,7 +1186,7 @@ export function Stage(props: StageProps) {
                   width={Math.max(0, frameGeom.w - 2 * frameGeom.margin)}
                   height={Math.max(0, frameGeom.h - 2 * frameGeom.margin)}
                   fill="none"
-                  stroke="#a855f7"
+                  stroke={FRAME_COLOR}
                   strokeOpacity={0.45}
                   strokeDasharray="3 3"
                   strokeWidth={1}
@@ -1117,7 +1199,7 @@ export function Stage(props: StageProps) {
                 y1={frameGeom.cy - frameGeom.h / 2}
                 x2={frameGeom.cx}
                 y2={frameGeom.cy - frameGeom.h / 2 - 28 * px}
-                stroke="#a855f7"
+                stroke={FRAME_COLOR}
                 strokeWidth={1.5}
                 vectorEffect="non-scaling-stroke"
               />
@@ -1126,7 +1208,7 @@ export function Stage(props: StageProps) {
                 cy={frameGeom.cy - frameGeom.h / 2 - 28 * px}
                 r={6 * px}
                 fill="#fff"
-                stroke="#a855f7"
+                stroke={FRAME_COLOR}
                 strokeWidth={1.5}
                 vectorEffect="non-scaling-stroke"
                 style={{ pointerEvents: "all", cursor: "grab" }}
@@ -1145,7 +1227,7 @@ export function Stage(props: StageProps) {
                   width={hs}
                   height={hs}
                   fill="#fff"
-                  stroke="#a855f7"
+                  stroke={FRAME_COLOR}
                   strokeWidth={1.5}
                   vectorEffect="non-scaling-stroke"
                   style={{ pointerEvents: "all", cursor: "nwse-resize" }}
@@ -1165,7 +1247,7 @@ export function Stage(props: StageProps) {
                   cx={frameGeom.cx + (sx * frameGeom.w) / 2}
                   cy={frameGeom.cy + (sy * frameGeom.h) / 2}
                   r={hs / 2}
-                  fill="#a855f7"
+                  fill={FRAME_COLOR}
                   stroke="#fff"
                   strokeWidth={1.5}
                   vectorEffect="non-scaling-stroke"
@@ -1183,8 +1265,8 @@ export function Stage(props: StageProps) {
                 y={itemGeom.cy - itemGeom.h / 2}
                 width={itemGeom.w}
                 height={itemGeom.h}
-                fill="#f43f5e11"
-                stroke="#f43f5e"
+                fill={`${FRAME_COLOR}11`}
+                stroke={FRAME_COLOR}
                 strokeWidth={1.5}
                 vectorEffect="non-scaling-stroke"
                 style={{ pointerEvents: "all", cursor: "move" }}
@@ -1195,7 +1277,7 @@ export function Stage(props: StageProps) {
                 y1={itemGeom.cy - itemGeom.h / 2}
                 x2={itemGeom.cx}
                 y2={itemGeom.cy - itemGeom.h / 2 - 28 * px}
-                stroke="#f43f5e"
+                stroke={FRAME_COLOR}
                 strokeWidth={1.5}
                 vectorEffect="non-scaling-stroke"
               />
@@ -1204,7 +1286,7 @@ export function Stage(props: StageProps) {
                 cy={itemGeom.cy - itemGeom.h / 2 - 28 * px}
                 r={6 * px}
                 fill="#fff"
-                stroke="#f43f5e"
+                stroke={FRAME_COLOR}
                 strokeWidth={1.5}
                 vectorEffect="non-scaling-stroke"
                 style={{ pointerEvents: "all", cursor: "grab" }}
@@ -1223,7 +1305,7 @@ export function Stage(props: StageProps) {
                   width={hs}
                   height={hs}
                   fill="#fff"
-                  stroke="#f43f5e"
+                  stroke={FRAME_COLOR}
                   strokeWidth={1.5}
                   vectorEffect="non-scaling-stroke"
                   style={{ pointerEvents: "all", cursor: "nwse-resize" }}

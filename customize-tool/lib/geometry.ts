@@ -77,6 +77,52 @@ export function orientedBox(shape: CtShape): CtOrientedBox {
   return { cx: best.cx, cy: best.cy, w: best.w, h: best.h, rotation: Math.round(best.rotation * 10) / 10 };
 }
 
+/**
+ * The line a text zone writes along: its outline's oriented box, turned so the text runs along the long side and
+ * reads left → right (never upside down). Rect / ellipse zones: upright.
+ */
+export function textBand(shape: CtShape): { cx: number; cy: number; w: number; h: number; rotation: number } {
+  const b = orientedBox(shape);
+  let { w, h, rotation } = b;
+  if (h > w) {
+    [w, h] = [h, w];
+    rotation -= 90;
+  }
+  if (rotation <= -90) rotation += 180;
+  if (rotation > 90) rotation -= 180;
+  return { cx: b.cx, cy: b.cy, w, h, rotation: Math.abs(rotation) < 1 ? 0 : rotation };
+}
+
+/**
+ * A text zone's outline for a band at `rotation` degrees (clockwise) about its centre: an upright rect, or the turned
+ * rectangle as a polygon (textBand reads the tilt back from it — the canvas, the print and the storefront agree).
+ */
+export function bandShape(b: { cx: number; cy: number; w: number; h: number; rotation: number }): CtShape {
+  const deg = ((b.rotation % 360) + 360) % 360;
+  if (Math.abs(deg) < 0.05 || Math.abs(deg - 360) < 0.05) return { type: "rect", x: b.cx - b.w / 2, y: b.cy - b.h / 2, w: b.w, h: b.h, radius: 0 };
+  const t = (b.rotation * Math.PI) / 180;
+  const cos = Math.cos(t);
+  const sin = Math.sin(t);
+  const corner = (u: number, v: number): CtPoint => ({ x: b.cx + u * cos - v * sin, y: b.cy + u * sin + v * cos });
+  return { type: "polygon", points: [corner(-b.w / 2, -b.h / 2), corner(b.w / 2, -b.h / 2), corner(b.w / 2, b.h / 2), corner(-b.w / 2, b.h / 2)] };
+}
+
+/**
+ * A shape resized to `next` (its new bounding box). A turned text band stays a turned rectangle — its width / height
+ * grow with the box along its own axes — where fitShapeToBounds would shear it.
+ */
+export function fitZoneToBounds(shape: CtShape, kind: string, next: CtBounds): CtShape {
+  const band = kind === "text" ? textBand(shape) : null;
+  if (!band?.rotation) return fitShapeToBounds(shape, next);
+  const b = shapeBounds(shape);
+  const kx = next.w / Math.max(1e-6, b.w);
+  const ky = next.h / Math.max(1e-6, b.h);
+  const t = (band.rotation * Math.PI) / 180;
+  const c = Math.abs(Math.cos(t));
+  const sn = Math.abs(Math.sin(t));
+  return bandShape({ cx: next.x + next.w / 2, cy: next.y + next.h / 2, w: Math.max(2, band.w * (kx * c + ky * sn)), h: Math.max(2, band.h * (kx * sn + ky * c)), rotation: band.rotation });
+}
+
 /** Points along a shape's outline (a rect's corners, an ellipse sampled), in main-asset px. */
 export function outlinePoints(shape: CtShape): CtPoint[] {
   switch (shape.type) {

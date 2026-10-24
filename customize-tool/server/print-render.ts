@@ -17,7 +17,7 @@ import type { CtPrintSpec } from "../types/print";
 import { activeRegions, defaultRegionSelection, normalizeProductConfig, normalizeRegion, resolveLinked, selectedMainId, textMode } from "../lib/design";
 import { onVersion } from "../lib/layout";
 import { loadFont, textSvg } from "./print-text";
-import { itemPlacement, shapeBounds, shapeToSvgPath, translateShape } from "../lib/geometry";
+import { itemPlacement, shapeBounds, shapeToSvgPath, textBand, translateShape } from "../lib/geometry";
 import { boundsInSafe, safeShapes } from "../lib/print-template";
 import type { PrintDb } from "./print-products";
 
@@ -131,7 +131,10 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
       const raw = sel.kind === "text" && sel.text ? sel.text : t.defaultText;
       const font = await loadFont(t.fontFamily, t.fontWeight);
       if (font) {
-        svgs.push(textSvg(font, raw, t, bounds));
+        // A zone drawn along a slanted band (or turned in the editor) writes along it, like lib/compositor.
+        const band = textBand(r.shape);
+        const box = { x: band.cx - band.w / 2, y: band.cy - band.h / 2, w: band.w, h: band.h };
+        svgs.push(band.rotation ? `<g transform="rotate(${band.rotation} ${band.cx} ${band.cy})">${textSvg(font, raw, t, box)}</g>` : textSvg(font, raw, t, bounds));
         if (guides && textMode(r) === "input") svgs.push(`<rect x="${bounds.x}" y="${bounds.y}" width="${bounds.w}" height="${bounds.h}" fill="none" stroke="#0ea5e9" stroke-width="2" stroke-dasharray="8 6"/>`);
         continue;
       }

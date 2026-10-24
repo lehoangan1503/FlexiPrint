@@ -47,7 +47,7 @@ import type {
   CtTextMode,
 } from "../../types";
 import { CT_BASE_OPTION } from "../../types";
-import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, orientedBox, resolvePhotoFrame, shapeBounds } from "../../lib/geometry";
+import { bandShape, fitZoneToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, orientedBox, resolvePhotoFrame, shapeBounds, textBand } from "../../lib/geometry";
 import { useImageSize } from "./use-image-size";
 import { defaultRegionSelection, formOrder, hasTestPhoto, isLinkedLayer, isValidDate, normalizeRegion, textMode, variantsOf, zoneSubtree } from "../../lib/design";
 import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
@@ -399,7 +399,17 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
   const { design, region } = props;
   const b = shapeBounds(region.shape);
   const set = (fn: (r: CtRegion) => CtRegion) => design.commit((s) => updateRegion(s, region.id, (r) => fn(normalizeRegion(r))));
-  const setBounds = (patch: Partial<typeof b>) => set((r) => ({ ...r, shape: fitShapeToBounds(r.shape, { ...b, ...patch }) }));
+  const setBounds = (patch: Partial<typeof b>) => set((r) => ({ ...r, shape: fitZoneToBounds(r.shape, r.kind, { ...b, ...patch }) }));
+  /** A text zone's band: its turn (the canvas handle) and its height (the letters are never taller than it). */
+  const band = region.kind === "text" ? textBand(region.shape) : null;
+  const setRotation = (rotation: number) => set((r) => ({ ...r, shape: bandShape({ ...textBand(r.shape), rotation }) }));
+  /** A bigger size than the band holds grows the band (around its centre), so the number always shows on the canvas. */
+  const setFontSize = (fontSize: number) =>
+    set((r) => {
+      const cur = textBand(r.shape);
+      const shape = fontSize > cur.h ? bandShape({ ...cur, h: Math.ceil(fontSize * 1.15) }) : r.shape;
+      return { ...r, shape, config: { ...r.config, text: { ...r.config.text, fontSize } } };
+    });
   const cfg = region.config;
   const setText = (patch: Partial<typeof cfg.text>) => {
     set((r) => ({ ...r, config: { ...r.config, text: { ...r.config.text, ...patch } } }));
@@ -424,6 +434,17 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
           </CtField>
         ))}
       </div>
+      {band && (
+        <div className="grid grid-cols-2 gap-1.5">
+          <CtField label="Cỡ chữ (px)">
+            <CtNumber value={cfg.text.fontSize} min={4} onChange={(v) => setFontSize(Math.max(4, v))} />
+          </CtField>
+          <CtField label="Xoay °">
+            <CtNumber value={Math.round(band.rotation * 10) / 10} step={1} onChange={(v) => setRotation(v)} />
+          </CtField>
+          <p className="col-span-2 text-[11px] text-muted-foreground">Chữ dài hơn khung tự thu nhỏ cho vừa — muốn chữ to hơn thì kéo khung rộng ra. Xoay: kéo nút tròn trên khung (Shift: từng 15°).</p>
+        </div>
+      )}
       {outsideSafe(props.print ?? null, region) && (
         <p className="flex items-start gap-1.5 rounded bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-400">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Ngoài vùng in an toàn — có thể bị cắt khi in.
@@ -518,10 +539,7 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
           <CtField label="Font">
             <CtSelect value={cfg.text.fontFamily} onChange={(fontFamily) => setText({ fontFamily })} options={CT_FONTS.map((f) => ({ value: f.family, label: f.label }))} />
           </CtField>
-          <div className="grid grid-cols-3 gap-2">
-            <CtField label="Cỡ (px)">
-              <CtNumber value={cfg.text.fontSize} min={4} onChange={(v) => setText({ fontSize: v })} />
-            </CtField>
+          <div className="grid grid-cols-2 gap-2">
             <CtField label="Độ đậm">
               <CtNumber value={cfg.text.fontWeight} step={100} min={100} max={900} onChange={(v) => setText({ fontWeight: v })} />
             </CtField>

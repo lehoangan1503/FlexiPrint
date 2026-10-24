@@ -129,6 +129,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [showOverlay, setShowOverlay] = useState(true);
+  /** The layer the mouse is over in Layers: its frame shows on the canvas (other frames stay hidden). */
+  const [hoverRegionId, setHoverRegionId] = useState<string | null>(null);
   const [materialOpen, setMaterialOpen] = useState(false);
   const [sceneOpen, setSceneOpen] = useState(false);
 
@@ -1078,6 +1080,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     }}
                     activeItemId={activeItemId}
                     showOverlay={showOverlay}
+                    hoverRegionId={hoverRegionId}
                     photoBusy={photoBusy}
                     onDropClipart={dropClipart}
                     versionId={shownMainId ?? main.id}
@@ -1236,6 +1239,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               }}
               showOverlay={showOverlay}
               onToggleOverlay={() => setShowOverlay((v) => !v)}
+              onHoverRegion={setHoverRegionId}
             />
             </div>
           </aside>

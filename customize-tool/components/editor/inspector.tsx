@@ -78,6 +78,8 @@ export interface InspectorProps {
   onRemoveFrame: (regionId: string) => void;
   showOverlay: boolean;
   onToggleOverlay: () => void;
+  /** The mouse is over a layer row (null = left it): the canvas shows that layer's frame. */
+  onHoverRegion: (id: string | null) => void;
   /** Show an option on the canvas. */
   onPreviewOption: (regionId: string, assetId: string) => void;
   /** The text a text zone shows on the canvas (and in the Mockups samples). */
@@ -205,6 +207,8 @@ export function Inspector(props: InspectorProps) {
                 endDrag();
               }}
               onDragEnd={endDrag}
+              onMouseEnter={() => props.onHoverRegion(r.id)}
+              onMouseLeave={() => props.onHoverRegion(null)}
               onClick={() => props.onSelectRegion(r.id)}
               className={cx(
                 "group relative flex cursor-pointer items-center gap-2 px-3 py-1.5",
@@ -1099,7 +1103,7 @@ function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionIte
                   style={CHECKER_STYLE}
                   onClick={() => (isHidden ? props.onPreviewOption(region.id, o.id) : makeDefault(o.id))}
                 >
-                  <OptionThumb url={o.meta.thumb ?? o.url} className="h-full w-full object-contain" />
+                  <OptionThumb url={o.meta.thumb ?? o.url} label={o.name} className="h-full w-full object-contain" />
                 </button>
               </CtTooltip>
               <button
@@ -1214,7 +1218,7 @@ function ArtworkOptions(props: InspectorProps) {
               {options.map((o) => (
                 <CtTooltip key={o.id} label={o.name || "(không tên)"}>
                   <button className={cx("block aspect-square w-full overflow-hidden rounded border", shown === o.id && "ring-2 ring-sky-500")} style={CHECKER_STYLE} onClick={() => props.onPreviewOption(r.id, o.id)}>
-                    <OptionThumb url={o.meta.thumb ?? o.url} className="h-full w-full object-contain" />
+                    <OptionThumb url={o.meta.thumb ?? o.url} label={o.name} className="h-full w-full object-contain" />
                   </button>
                 </CtTooltip>
               ))}

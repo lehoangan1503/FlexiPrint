@@ -94,6 +94,8 @@ export interface StageProps {
   onSelectRegion: (id: string | null) => void;
   activeItemId: string | null;
   showOverlay: boolean;
+  /** The layer hovered in Layers: its frame shows (the canvas only outlines the selected layer otherwise). */
+  hoverRegionId?: string | null;
   /** Photo zones whose test photo is being processed: regionId -> spinner label. */
   photoBusy?: Record<string, string>;
   /** A library clipart dropped on the canvas, at main-asset pixel coordinates. */
@@ -118,6 +120,8 @@ export interface StageProps {
 }
 
 const MIN_ZOOM = 0.02;
+
+const boundsArea = (b: { w: number; h: number }) => b.w * b.h;
 const MAX_ZOOM = 32;
 
 export function Stage(props: StageProps) {
@@ -129,6 +133,10 @@ export function Stage(props: StageProps) {
     return regions.filter((r) => active.has(r.id) || r.id === selectedRegionId);
   }, [regions, selection, selectedRegionId]);
   const layouts = design.state.config.layouts;
+  /** The layer under the mouse on the canvas; the Layers row hovered wins. */
+  const [canvasHover, setCanvasHover] = useState<string | null>(null);
+  const hoverId = props.hoverRegionId ?? canvasHover;
+  const hovered = hoverId ? regions.find((r) => r.id === hoverId) ?? null : null;
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -902,9 +910,15 @@ export function Stage(props: StageProps) {
             </g>
           )}
           {props.showOverlay &&
-            // The selected layer's outline is drawn last, so a press anywhere inside it drags IT — character layers all
-            // share one frame, and the topmost layer used to catch every drag even with another one active (2026-10-12).
-            [...shownRegions.filter((r) => r.id !== selectedRegionId), ...shownRegions.filter((r) => r.id === selectedRegionId)].map((r) => {
+            // Only the selected layer's frame is drawn (big frames covering the whole artwork hid everything under
+            // them, 2026-10-24); the others are invisible hit areas — smallest on top, so a small layer inside a big
+            // frame is still clicked, and the selected one last so a press anywhere inside it drags IT (2026-10-12).
+            [
+              ...shownRegions
+                .filter((r) => r.id !== selectedRegionId)
+                .sort((a, b) => boundsArea(shapeBounds(b.shape)) - boundsArea(shapeBounds(a.shape))),
+              ...shownRegions.filter((r) => r.id === selectedRegionId),
+            ].map((r) => {
               const isSel = r.id === selectedRegionId;
               return (
                 <path
@@ -914,16 +928,29 @@ export function Stage(props: StageProps) {
                   // (a 13% purple film made every photo style look pink). The outline marks it;
                   // pointerEvents "all" still hit-tests the transparent interior.
                   fill="transparent"
-                  stroke={kindColor[r.kind]}
-                  strokeWidth={isSel ? 2 : 1.25}
-                  strokeDasharray={isSel ? undefined : "6 4"}
+                  stroke={isSel ? kindColor[r.kind] : "transparent"}
+                  strokeWidth={2}
                   vectorEffect="non-scaling-stroke"
                   style={{ pointerEvents: effectiveTool === "select" ? "all" : "none", cursor: "move" }}
+                  onPointerEnter={() => setCanvasHover(r.id)}
+                  onPointerLeave={() => setCanvasHover((h) => (h === r.id ? null : h))}
                   onPointerDown={(e) => onRegionPointerDown(e, r)}
                   onDoubleClick={(e) => onRegionDoubleClick(e, r)}
                 />
               );
             })}
+          {props.showOverlay && hovered && hovered.id !== selectedRegionId && (
+            // The hovered layer (in Layers, else on the canvas): its frame, for show only.
+            <path
+              d={shapeToSvgPath(hovered.shape)}
+              fill="none"
+              stroke={kindColor[hovered.kind]}
+              strokeWidth={1.5}
+              strokeDasharray="6 4"
+              vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+          )}
 
           {/* An empty custom layer (not a khuôn): it waits for a picture — cliparts dropped on the canvas are layers of their own. */}
           {props.showOverlay &&

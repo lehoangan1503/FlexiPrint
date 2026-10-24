@@ -14,7 +14,13 @@ const MARGIN = 0.08;
 /** Below this alpha a pixel is not part of the picture (soft shadows, stray specks). */
 const ALPHA_MIN = 24;
 
-const cache = new Map<string, Promise<string>>();
+/** A tile picture: `empty` = the file has no visible pixels (an option with no clipart, e.g. "no hair"). */
+export interface OptionThumbInfo {
+  src: string;
+  empty: boolean;
+}
+
+const cache = new Map<string, Promise<OptionThumbInfo>>();
 
 function load(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -55,29 +61,35 @@ function alphaBox(img: HTMLImageElement): { x: number; y: number; w: number; h: 
   return { x: x0 / k, y: y0 / k, w: (x1 - x0 + 1) / k, h: (y1 - y0 + 1) / k };
 }
 
-async function crop(url: string): Promise<string> {
+async function crop(url: string): Promise<OptionThumbInfo> {
+  const same = { src: url, empty: false };
   try {
     const img = await load(url);
     const b = alphaBox(img);
-    if (!b) return url;
+    if (!b) return { src: url, empty: true };
     const side = Math.max(b.w, b.h) * (1 + 2 * MARGIN);
     const c = document.createElement("canvas");
     c.width = TILE;
     c.height = TILE;
     const ctx = c.getContext("2d");
-    if (!ctx) return url;
+    if (!ctx) return same;
     ctx.imageSmoothingQuality = "high";
     const k = TILE / side;
     ctx.drawImage(img, b.x, b.y, b.w, b.h, (TILE - b.w * k) / 2, (TILE - b.h * k) / 2, b.w * k, b.h * k);
-    return c.toDataURL("image/png");
+    return { src: c.toDataURL("image/png"), empty: false };
   } catch {
     // Unreadable (tainted canvas, failed load): the picture as it is.
-    return url;
+    return same;
   }
 }
 
 /** The centred, cropped tile picture of `url` (a data url), or `url` itself when it cannot be read. */
 export function optionThumb(url: string): Promise<string> {
+  return optionThumbInfo(url).then((t) => t.src);
+}
+
+/** The tile picture of `url` and whether the file is empty (nothing to show but a label). */
+export function optionThumbInfo(url: string): Promise<OptionThumbInfo> {
   let p = cache.get(url);
   if (!p) {
     p = crop(url);

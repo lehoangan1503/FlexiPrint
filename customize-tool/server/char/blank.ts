@@ -71,7 +71,7 @@ export async function startCharBlank(db: Db, userId: string, p: CtCharProject): 
   if (!row) return null;
   void (async () => {
     try {
-      const photo = await makeBlank(userId, label, template?.spec ?? null);
+      const photo = await makeBlank(userId, label, template?.spec ?? null, p.brief.product.material);
       const saved = await saveCharFile(userId, p.id, "blank", photo);
       await db.from(CT_TABLES.charImages).update({ ...saved, status: "done", error: "" }).eq("id", row.id);
       // Kept with the khuôn too: the next brief / product on the same piece reuses it.

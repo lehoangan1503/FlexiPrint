@@ -230,10 +230,29 @@ export interface CtCharPhotoZone {
   label: string;
   /** Absent = "photo" (zones made before 2026-10-15). */
   treat?: CtCharPhotoTreat;
-  /** treat "ai": the styles offered, first = default. */
+  /** treat "ai": the styles offered, first = default. A bộ ảnh khách's own styles (asked 2026-10-28: "4 kiểu: khăn
+   * choàng, bộ đồ siêu nhân áo choàng đỏ, dây đèn quấn quanh…") are ct_ai_styles rows made for the set
+   * (params.setId, server/char/photo-styles.ts) — each becomes one style option on the storefront. */
   styles?: string[];
+  /** Customer-like photos the editor tests every style on (step 3 "Style ảnh khách"; uploaded, ≤ 6). */
+  testPhotos?: string[];
   /** A bộ ảnh khách: where the photo sits on the piece (shares of the safe area); null = the middle, above the texts. */
   box?: CtCharBox | null;
+}
+
+/** A bộ ảnh khách's AI style (a ct_ai_styles row — server/char/photo-styles.ts) as the page and the agent see it. */
+export interface CtCharPhotoStyle {
+  id: string;
+  ref: string;
+  name: string;
+  prompt: string;
+  refUrls: string[];
+  demoUrl: string;
+  /** Offered by the zone (else made for the set and taken off). */
+  offered: boolean;
+  /** Made for this set (a library style the zone also offers is false: edited in the library). */
+  own: boolean;
+  updated_at: string;
 }
 
 /** A box on the piece as shares (0–1) of its safe area (the frame without a khuôn in). */

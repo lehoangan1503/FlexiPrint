@@ -15,7 +15,7 @@
 
 import { CT_TABLES } from "../../config";
 import { siteUrl } from "../site-url";
-import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharProject, CtCharRefUse, CtCharTaskResult } from "../../types";
+import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharPhotoStyle, CtCharProject, CtCharRefUse, CtCharTaskResult } from "../../types";
 import { REF_USES, REF_USE_INFO, masterPrompt, parseCharBrief, shownByDefault } from "../../lib/char-brief";
 import { saveCharFile } from "../char/files";
 import { KEEP, KEEP_CLEAR, optionPictures, planEdits, tailOf } from "../../lib/char-plan";
@@ -36,6 +36,8 @@ import { charVersions } from "../../lib/char-lineup";
 import { runEditRoles, startBuild } from "../char/layers";
 import { failLostPlan, startMatte, startPlan } from "../char/cut";
 import { SAMPLE_ROLE, elementPictures, latestElementImages, startElements } from "../char/elements";
+import { CT_MATERIALS } from "../../lib/materials";
+import { STYLE_TEST_ROLE, latestStyleTests, removePhotoStyle, savePhotoStyle, setPhotoStyles, setStyleDemo, startStyleTests, testPhotosOf } from "../char/photo-styles";
 import { TASK_ARG, json, liveStatus, loadTask, openTask, patchTask } from "./task-common";
 import type { CtMcpContext, CtMcpTool } from "./tools";
 
@@ -97,6 +99,13 @@ const EDITS_INSTRUCTIONS = [
   "4. submit_result(task_id, {summary: Vietnamese — what you ran, what you redid and why, what is still off; image_ids: the final edits}). The editor then cuts the layers (layer-kit) and sees the checks.",
 ].join("\n");
 
+/** The material ids a brief's product can name (asked 2026-10-28: a clear glass ornament with a diamond-cut edge). */
+const MATERIALS = `brief.product.material = what the piece is made of, one of: ${CT_MATERIALS.filter((m) => m.id !== "none").map((m) => `"${m.id}" (${m.label})`).join(", ")} — the phôi and the mockups are drawn in it (a glass ornament: "glass_clear" and a khuôn named after it, e.g. "Ornament kính tròn cạnh vát kim cương").`;
+
+/** A bộ ảnh khách's own AI styles — chat and auto. */
+const PHOTO_STYLES =
+  "STYLE ẢNH KHÁCH (a bộ ảnh khách with treat \"ai\", asked 2026-10-28): the styles are the set's OWN, written from the editor's request — \"4 kiểu: đeo khăn choàng, bộ đồ siêu nhân áo choàng đỏ, dây đèn quấn quanh…\" = 4 styles; the customer picks one on the store, their photo is redrawn in it. char_save_photo_style per idea: name (English, the customer sees it: \"Cozy Scarf\"), prompt (English, like a studio prompt: \"Image 1 is the customer's photo (a pet or a person). Image 2 is the style reference artwork. Redraw ONLY the subject of image 1 … keep its real face, markings and colours … dress it in … in EXACTLY the painting style of image 2 … DO NOT draw any background, text or frame. Output: the subject only on a fully transparent background.\"), ref_urls = style reference pictures sent as image 2, 3… (the approved master, an element picture, a picture the editor attached — never the customer's photo). Every style is ONE look applied to whatever the customer uploads (dog, cat, person): never name a breed or a colour of the sample. Then char_test_photo_styles (each style × the editor's test photos, like a real upload) → char_wait → view_image every test: the subject's real face kept? the style's costume / props there? transparent, nothing cut off? Fix the prompt / references and test again (≤ 3 rounds); char_style_demo the best test of each style (the customer's style tile). The editor drags a style card into the chat to ask for changes to it: the attachment label names the style id. Other options (frames, slogan, name text) stay brief.elements / brief.texts as before — an element is an option or fixed, by what the editor asked. char_remake_product puts the styles on the product; the prompt is read at each customer upload (a fixed prompt works at once), names / demos / new styles need the product rebuilt and redeployed.";
+
 const CHAT_INSTRUCTIONS = [
   ...COMMON,
   "STEP chat — the editor typed a request in the sticky chat of the set's page (like talking to you in a terminal). \"tab\" / \"section\" say where they were (1. Mô tả bộ clipart = brief · 2. Ảnh master · 3. Cắt clipart → 3a master cỡ in, 3b AI vẽ ảnh để cắt, 3c cắt clipart · 4. Sản phẩm) — the request is about THAT part unless it says otherwise. \"attachments\" are screenshots or pictures of the page they sent: view_image EVERY one first and find what they point at (a clipart file, a layer, a region, a master…). \"set\" is the whole bộ: brief, masters, the 3b pictures (edits, with prompts), the 3c regions (plan.pieces: key, picture, region url), the layer files (layers.slots[].files: option, colour, url, piece), the products, the earlier requests and what you answered.",
@@ -110,7 +119,9 @@ const CHAT_INSTRUCTIONS = [
   "- approve a master: ONLY when the editor's request hands you the whole set (\"làm hết\", \"tự duyệt\") — char_approve_master(task_id, image_id); it starts 3a. Otherwise recommend one and let them approve.",
   "- step 4 (product): the texts (brief.texts: names typed by the customer, a slogan picked from a list — place top / bottom / left / right) and the backgrounds (brief.backdrops) are changed with char_update_brief (allowed after the master is approved). char_draw_backdrops draws the backgrounds (char_wait, view_image each), char_remake_product builds the set's product again with them. Then list_product_options / render_artwork (mode \"print\", options) to check it, make_product_mockups (one entry per option set + scenes) → wait_product_mockups → view_image.",
   "- a question only the editor can answer → ask_user (Vietnamese, with options).",
-  "BỘ ẢNH KHÁCH (set.brief.kind \"photo\" — the customer's own photo is the hero: a pet memorial ornament, a portrait): there are no characters, no 3a/3b/3c and no cut. brief.photoZones[0] = the customer's photo (where = what it shows, e.g. \"the customer's pet, sitting\"; treat \"ai\" + styles = the AI style refs the customer picks from — list_ai_styles; \"face\" = head only; box = shares of the safe area, null = laid out). brief.elements = the decorations, each {name, place: behind (wings) | above (halo) | bottom (a band of clouds over the photo's cut body, the texts lie on it) | free (box), mode shape | color (#hex options, the first drawn, the others recoloured), options, perBackdrop (one picture per background in its colours, follows the background)}. Flow: char_update_brief → char_draw_masters (the whole flat design with a SAMPLE pet) → the editor approves (or char_approve_master when handed the whole set) → char_draw_backdrops → char_draw_elements (every element option + the zone's sample: the master's pet alone) → char_wait, view_image each (whole? transparent? same look as the master?) → char_remake_product (keeps a photo zone the editor reshaped; reset_zones true = the layout again) → list_product_options, render_artwork, make_product_mockups.",
+  "BỘ ẢNH KHÁCH (set.brief.kind \"photo\" — the customer's own photo is the hero: a pet memorial ornament, a portrait): there are no characters, no 3a/3b/3c and no cut. brief.photoZones[0] = the customer's photo (where = what it shows, e.g. \"the customer's pet, sitting\"; treat \"ai\" + styles = the styles the customer picks from — the set's OWN styles written from the request (PHOTO_STYLES; a library style from list_ai_styles only when the editor names one); \"face\" = head only; box = shares of the safe area, null = laid out). brief.elements = the decorations, each {name, place: behind (wings) | above (halo) | bottom (a band of clouds over the photo's cut body, the texts lie on it) | free (box), mode shape | color (#hex options, the first drawn, the others recoloured), options, perBackdrop (one picture per background in its colours, follows the background)}. Flow: char_update_brief → char_draw_masters (the whole flat design with a SAMPLE pet) → the editor approves (or char_approve_master when handed the whole set) → char_draw_backdrops → char_draw_elements (every element option + the zone's sample: the master's pet alone) → char_wait, view_image each (whole? transparent? same look as the master?) → char_remake_product (keeps a photo zone the editor reshaped; reset_zones true = the layout again) → list_product_options, render_artwork, make_product_mockups.",
+  PHOTO_STYLES,
+  MATERIALS,
   "A bộ nhân vật with a CHOICE OF WHO is in the picture (brief.lineup — a boy OR a girl; 1–5 people of a family): every subject drawn once in the master, standing apart (the server splits the body file per subject); the product gets one version per choice with only its subjects' layers — render_artwork / make_product_mockups pick it with {\"Version\": \"Girl\"} (or the lineup label). Decorations of a bộ nhân vật (brief.elements: a ribbon banner, a year in glitter numbers, trees beside the family, a ground band) are drawn after the master approval with char_draw_elements (each option alone, the master as the style reference) and placed by place / box; texts can be \"under\" a subject or \"free\" in a box; brief.charactersBox places the characters. Backdrops with tile true are seamless pattern squares repeated over the piece (a rug's plaid). A product with no fitting khuôn: create_print_template with the real size first. brief.choosers (boy / girl per child, grandma / grandpa, hats / no hats) + shownWhen on slots / texts / elements, slot follows (an element id: sweaters and hats follow the Theme), subject always (the grandma in every version), texts kind fixed / place on (a name on a hat brim): see briefRules in a brainstorm or the layer rules; render_artwork picks a chooser option by its label ({\"Grandchild 1\": \"Girl\", \"Hats\": \"No Hats\"}).",
   "A bộ nhân vật with a customer FACE (an elf / Santa body with the customers' faces, a die-cut acrylic): a normal character set with brief.photoZones [{where: \"the left elf's face\", treat: \"face\"}] and product.cut \"alpha\" — the master leaves the face empty, the body file gets a hole there and the face sits under it (hat brim, hair edge and collar over it).",
   POSED,
@@ -125,6 +136,9 @@ const AUTO_INSTRUCTIONS = [
   "2. 3b: PLAN the pictures yourself — char_plan_pictures (rules in \"picturePlan.rules\"): from the brief and the approved master decide the doll and the pictures that give every option a clean cut (one character per picture — a set with several characters is drawn pose by pose; hair under hats drawn on / cut against the outfit picture; no rule in the code decides this for you). Then get_task \"set.edits\" lists them — char_run_edits with roles (all missing ones) → char_wait → view_image EVERY picture (a grid of a few at a time): transparent; the doll unchanged; exactly ONE part added (no stole on the gown picture, no gown on the stole picture, pants never recolour the top); no magenta on a part; thin parts on small figures drawn bold. Redraw the wrong ones (≤ 3 tries each).",
   "3. 3c: char_cut what \"plan\" (finds the regions, cuts the files, makes the product) → char_status → every failed check: redraw its picture, char_cut \"plan\" again. Then view_image the product (render_artwork mode print — each version / a few option sets).",
   "4. Step 4: char_draw_backdrops and char_draw_elements (every missing picture) → char_wait → view_image each → redraw the wrong ones → char_remake_product → render_artwork (print, a few option sets: versions, themes, colours, names) → fix the layout in the brief (charactersBox, element / text boxes) with char_update_brief + char_remake_product when it does not read like the reference → make_product_mockups (2–3 option sets × the brief's scenes) → wait_product_mockups → view_image.",
+  "4b. Bộ ảnh khách with treat \"ai\": the styles (PHOTO_STYLES below) before char_remake_product — none yet → write them from the request; test, fix, pick the demos.",
+  PHOTO_STYLES,
+  MATERIALS,
   "5. submit_result {summary: Vietnamese — what was made (versions, options, mockups), what you fixed, what is still worth a look; image_ids: a few mockups}. Then the editor asks for changes in the chat.",
   POSED,
   DRAWN_LINEUP,
@@ -218,7 +232,21 @@ type EarlierTask = Pick<CtAgentTask, "id" | "created_at" | "status" | "input" | 
 
 /** get_task of a chat request: the whole set, nothing left out (asked 2026-10-12: the agent must see what the editor
  * sees — brief, masters, 3b pictures with their prompts, 3c regions, every layer file, the products). */
-function chatView(task: CtAgentTask, p: CtCharProject, images: CtCharImage[], numbers: Map<string, number>, before: EarlierTask[], versions: unknown[]): Record<string, unknown> {
+/** The set's styles as get_task shows them: prompt, style references, demo, the newest test per test photo. */
+function photoStylesView(p: CtCharProject, images: CtCharImage[], styles: CtCharPhotoStyle[]) {
+  const tests = latestStyleTests(images);
+  return {
+    testPhotos: testPhotosOf(p),
+    styles: styles.map((st) => ({
+      ...st,
+      tests: tests
+        .filter((im) => im.role.startsWith(`${STYLE_TEST_ROLE}${st.id}:`))
+        .map((im) => ({ id: im.id, status: im.status, url: im.url || null, photo: (im.meta as { sourceUrl?: string }).sourceUrl ?? null, ...(im.error ? { error: clip(im.error, 300) } : {}), stale: im.created_at < st.updated_at })),
+    })),
+  };
+}
+
+function chatView(task: CtAgentTask, p: CtCharProject, images: CtCharImage[], numbers: Map<string, number>, before: EarlierTask[], versions: unknown[], styles: CtCharPhotoStyle[]): Record<string, unknown> {
   const c = task.input.char!;
   const latest = latestEditsOf(images);
   const plan = p.cut?.plan ?? null;
@@ -308,6 +336,8 @@ function chatView(task: CtAgentTask, p: CtCharProject, images: CtCharImage[], nu
             running: images.filter((im) => im.status === "running").map((im) => ({ id: im.id, role: im.role })),
           }
         : {}),
+      // A bộ ảnh khách's AI styles (each = one style option for the customer) with their newest tests.
+      ...(p.brief.kind === "photo" ? { photoStyles: photoStylesView(p, images, styles) } : {}),
       productIds: p.product_ids,
       // A lineup drawn version by version: each smaller version's own set (its masters, 3b pictures, cut); a set drawn
       // pose by pose: each pose's set, and the versions char_compose places.
@@ -352,7 +382,7 @@ export async function charTaskView(db: CtServiceClient, task: CtAgentTask): Prom
     .limit(30)
     .returns<Array<Pick<CtAgentTask, "id" | "created_at" | "status" | "input" | "result" | "error">>>();
   const latest = latestEditsOf(images);
-  if (c.step === "chat" || c.step === "auto") return chatView(task, p, images, numbers, before ?? [], await versionsView(db, p));
+  if (c.step === "chat" || c.step === "auto") return chatView(task, p, images, numbers, before ?? [], await versionsView(db, p), p.brief.kind === "photo" ? await setPhotoStyles(db, p) : []);
   const out: Record<string, unknown> = {
     id: task.id,
     kind: task.kind,
@@ -1061,6 +1091,83 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const rows = await startElements(db, task.user_id!, project, { roles, prompts, taskId: task.id });
       await progress(db, task.id, `Đang vẽ ${rows.length} phần tử: ${rows.map((r) => r.note).slice(0, 8).join(", ")}`);
       return json({ image_ids: rows.map((r) => r.id), next: "char_wait, view_image each (colour options appear after their first is done); then char_remake_product." });
+    },
+  },
+  {
+    name: "char_save_photo_style",
+    description:
+      "Bộ ảnh khách (chat / auto): create one of the set's own AI styles (no style_id; it is offered by the photo zone, last) or change one (style_id). name = what the customer sees (English); prompt = English, image 1 is always the customer's photo, ref_urls are images 2, 3… (style references: the approved master, an element picture, an attached picture; [] = none; omit = unchanged). Rules: PHOTO_STYLES in the instructions. → the style + the set's styles.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        style_id: { type: "string", description: "A style of this set (get_task set.photoStyles) to change; empty = a new one." },
+        name: { type: "string", description: "Customer-facing style name (English)." },
+        prompt: { type: "string", description: "Full English prompt; image 1 = the customer's photo." },
+        ref_urls: { type: "array", items: { type: "string" }, description: "≤ 3 picture urls sent after the customer's photo." },
+        zone_id: { type: "string", description: "Photo zone (default: the first)." },
+      },
+      required: ["task_id", "name", "prompt"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id);
+      const { style, project: p } = await savePhotoStyle(db, task.user_id!, project, {
+        id: str(args.style_id) || undefined,
+        name: str(args.name),
+        prompt: str(args.prompt),
+        refUrls: Array.isArray(args.ref_urls) ? args.ref_urls.map(str).filter(Boolean) : undefined,
+        zoneId: str(args.zone_id) || undefined,
+      });
+      await progress(db, task.id, `${str(args.style_id) ? "Sửa" : "Thêm"} style ảnh khách "${style.name}"`);
+      return json({ style, styles: (await setPhotoStyles(db, p)).map((x) => ({ id: x.id, name: x.name, offered: x.offered })), next: "char_test_photo_styles with this style_id → char_wait → view_image each test." });
+    },
+  },
+  {
+    name: "char_remove_photo_style",
+    description: "Bộ ảnh khách: take a style off the photo zone (a style made for the set is deleted; a library style only stops being offered).",
+    inputSchema: { type: "object", properties: { ...TASK_ARG, style_id: { type: "string", description: "get_task set.photoStyles[].id" } }, required: ["task_id", "style_id"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id);
+      const p = await removePhotoStyle(db, project, str(args.style_id));
+      await progress(db, task.id, `Bỏ style ảnh khách ${str(args.style_id)}`);
+      return json({ styles: (await setPhotoStyles(db, p)).map((x) => ({ id: x.id, name: x.name, offered: x.offered })) });
+    },
+  },
+  {
+    name: "char_test_photo_styles",
+    description:
+      "Bộ ảnh khách: run styles on test photos exactly like a customer's upload (the style, cut out) — style_ids (none = every offered style) × photos (none = the editor's test photos, get_task set.photoStyles.testPhotos; else a stock sample pet). ~1 min each, 3 at a time, in the background → image ids for char_wait; then view_image each.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        style_ids: { type: "array", items: { type: "string" }, description: "Style ids (none = every offered style)." },
+        photos: { type: "array", items: { type: "string" }, description: "Picture urls of customer-like photos (optional)." },
+      },
+      required: ["task_id"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id);
+      const ids = (Array.isArray(args.style_ids) ? args.style_ids : []).map(str).filter(Boolean);
+      const photos = (Array.isArray(args.photos) ? args.photos : []).map(str).filter(Boolean);
+      const rows = await startStyleTests(db, task.user_id!, project, { styleIds: ids, photos, taskId: task.id });
+      await progress(db, task.id, `Đang thử ${rows.length} ảnh style: ${[...new Set(rows.map((r) => r.note.split(" — ")[0]))].join(", ")}`);
+      return json({ image_ids: rows.map((r) => r.id), next: "char_wait, view_image each; fix the prompt with char_save_photo_style and test again; char_style_demo the best of each style." });
+    },
+  },
+  {
+    name: "char_style_demo",
+    description: "Bộ ảnh khách: a finished test picture of a style becomes its demo (the picture the customer picks the style by on the store).",
+    inputSchema: { type: "object", properties: { ...TASK_ARG, style_id: { type: "string", description: "The style." }, image_id: { type: "string", description: "One of its done tests." } }, required: ["task_id", "style_id", "image_id"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id);
+      await setStyleDemo(db, project, str(args.style_id), str(args.image_id));
+      await progress(db, task.id, `Đặt ảnh demo cho style ${str(args.style_id)}`, [str(args.image_id)]);
+      return json({ ok: true });
     },
   },
   {

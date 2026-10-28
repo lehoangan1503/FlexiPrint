@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtBehindStage, CtCharVersionCard,
+import type { CtBehindStage, CtCharPhotoStyle, CtCharVersionCard,
   CtPackImage,
   CtAgentStatus,
   CtAgentTask,
@@ -312,6 +312,14 @@ export const charApi = {
   remakeProduct: (id: string) => call<{ productId: string }>(`char/projects/${id}/products/remake`, json("POST", {})),
   /** A bộ ảnh khách: (re)draw element pictures — every missing one, or `roles` (server/char/elements.ts). */
   elements: (id: string, roles: string[] = [], prompts: Record<string, string> = {}) => call<{ images: CtCharImage[] }>(`char/projects/${id}/elements`, json("POST", { roles, prompts })).then((r) => r.images),
+  /** A bộ ảnh khách's own AI styles (server/char/photo-styles.ts). */
+  photoStyles: (id: string) => call<{ styles: CtCharPhotoStyle[] }>(`char/projects/${id}/photo-styles`).then((r) => r.styles),
+  savePhotoStyle: (id: string, body: { id?: string; name: string; prompt: string; refUrls?: string[] }) => call<{ styles: CtCharPhotoStyle[]; project: CtCharProject }>(`char/projects/${id}/photo-styles`, json("POST", body)),
+  removePhotoStyle: (id: string, styleId: string) => call<{ styles: CtCharPhotoStyle[]; project: CtCharProject }>(`char/projects/${id}/photo-styles/${styleId}`, { method: "DELETE" }),
+  testPhotoStyles: (id: string, styleIds: string[] = []) => call<{ images: CtCharImage[] }>(`char/projects/${id}/photo-styles/test`, json("POST", { styleIds })).then((r) => r.images),
+  styleDemo: (id: string, styleId: string, imageId: string) => call<{ styles: CtCharPhotoStyle[] }>(`char/projects/${id}/photo-styles/demo`, json("POST", { styleId, imageId })).then((r) => r.styles),
+  styleTestPhotos: (id: string, photos: string[]) => call<{ project: CtCharProject }>(`char/projects/${id}/photo-styles/photos`, json("POST", { photos })).then((r) => r.project),
+  orderPhotoStyles: (id: string, styleIds: string[]) => call<{ project: CtCharProject }>(`char/projects/${id}/photo-styles/order`, json("POST", { styleIds })).then((r) => r.project),
   /** (Re)draw the brief's backgrounds — all, or `ids` (server/char/backdrops.ts). */
   backdrops: (id: string, ids: string[] = []) => call<{ images: CtCharImage[] }>(`char/projects/${id}/backdrops`, json("POST", { ids })).then((r) => r.images),
 

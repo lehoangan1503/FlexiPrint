@@ -4,7 +4,8 @@
  * Step 3 of a bộ ảnh khách (asked 2026-10-15) — the pieces around the customer's photo. The backgrounds first (a band
  * that follows each background is drawn in its colours), then every element option alone on transparency in the
  * master's look, and the photo zone's sample (the master's pet alone — shown until the customer uploads). A picture
- * that is off is drawn again, with its prompt changed if needed. "Tạo sản phẩm" puts it all on the product.
+ * that is off is drawn again, with its prompt changed if needed. "Tạo sản phẩm" puts it all on the product. A zone redrawn
+ * by AI gets its own styles first ("Style ảnh khách", photo-styles-panel.tsx — asked 2026-10-28).
  */
 
 import { Loader2 } from "lucide-react";
@@ -12,6 +13,7 @@ import type { CtCharImage } from "../../types";
 import { CHECKER_STYLE, cx } from "../ui";
 import type { CharCtx } from "./char-project";
 import { BackdropSection } from "./blank-section";
+import { PhotoStylesSection } from "./photo-styles-panel";
 
 interface Row {
   role: string;
@@ -34,9 +36,17 @@ function rowsOf(ctx: CharCtx): Row[] {
 }
 
 export function ElementsPanel(ctx: CharCtx) {
-  if (!ctx.project.master_id) return <p className="p-6 text-center text-sm text-muted-foreground">Duyệt master ở bước 2 trước — mọi phần tử được vẽ theo phong cách của nó.</p>;
+  // The customer-photo styles do not need the master (it is only one possible style reference).
+  if (!ctx.project.master_id)
+    return (
+      <div className="space-y-6 p-6">
+        <p className="text-center text-sm text-muted-foreground">Duyệt master ở bước 2 trước — mọi phần tử được vẽ theo phong cách của nó.</p>
+        <PhotoStylesSection {...ctx} />
+      </div>
+    );
   return (
     <div className="space-y-6 p-6">
+      <PhotoStylesSection {...ctx} />
       <BackdropSection {...ctx} />
       <ElementGallery {...ctx} />
     </div>

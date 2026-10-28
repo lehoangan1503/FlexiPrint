@@ -60,6 +60,7 @@
   data-ct-t-heading="{{ section.settings.heading | escape }}"
   data-ct-t-upload="{{ section.settings.upload_label | escape }}"
   data-ct-t-required="{{ section.settings.required_label | escape }}"
+  data-ct-t-magic="{% if section.settings.magic_label != blank %}{{ section.settings.magic_label | escape }}{% else %}{{ shop.name | append: ' magic' | escape }}{% endif %}"
   data-ct-money-format="{{ shop.money_format | escape }}"
   style="--ct-accent: {{ section.settings.accent }};"
 >
@@ -247,6 +248,7 @@
     { "type": "text", "id": "heading", "label": "Personalization heading", "default": "Personalized" },
     { "type": "text", "id": "upload_label", "label": "Upload button", "default": "Upload your photo" },
     { "type": "text", "id": "required_label", "label": "Missing-field message", "default": "Please complete" },
+    { "type": "text", "id": "magic_label", "label": "AI photo loading text", "info": "Shimmers over the twinkling stars while a photo is redrawn. Empty = \"<store name> magic\"." },
     { "type": "text", "id": "photos_label", "label": "Back-to-photos button", "default": "View product photos" },
     { "type": "text", "id": "design_label", "label": "Back-to-design button", "default": "Preview my design" },
     { "type": "text", "id": "preview_label", "label": "Preview canvas label", "default": "Live preview of your design" },

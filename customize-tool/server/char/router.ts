@@ -15,6 +15,7 @@ import { createCharProduct, remakeCharProduct } from "./product";
 import { makeCharBlank } from "./blank";
 import { backdropsRoute } from "./backdrops";
 import { elementsRoute } from "./elements";
+import { photoStylesRoute } from "./photo-styles";
 import { charKhuonRoute } from "./khuon";
 import { listVersionSets, runVersionChain, startVersionSets } from "./versions";
 import { adoptMaster, approveMaster, createCharProject, deleteCharProject, generateMasters, getCharProject, jobDb, jsonError, listCharProjects, loadProject, refineMaster, updateCharProject, uploadCharFile, uploadChatFile } from "./projects";
@@ -61,6 +62,15 @@ function editText(p: CtCharProject, path: string[], method: string, raw: unknown
     const keys = Object.keys(now).filter((k) => k !== "pictures" && JSON.stringify(now[k]) !== JSON.stringify(was[k]));
     return keys.length ? `Sửa brief (bước 1) — các mục đổi: ${keys.join(", ")}` : "";
   }
+  if (action === "photo-styles") {
+    if (method === "GET") return "";
+    if (method === "DELETE") return `Bỏ style ảnh khách ${sub ?? ""} (sửa tay)`;
+    if (sub === "test") return `Bấm thử style ảnh khách${Array.isArray(b.styleIds) && b.styleIds.length ? `: ${b.styleIds.join(", ")}` : " (mọi style)"}`;
+    if (sub === "demo") return `Chọn ảnh ${String(b.imageId)} làm demo của style ${String(b.styleId)}`;
+    if (sub === "photos") return "Đổi ảnh thử của style ảnh khách";
+    if (sub === "order") return "Đổi thứ tự style ảnh khách";
+    return `${typeof b.id === "string" ? "Sửa" : "Thêm"} style ảnh khách "${String(b.name ?? "")}" (sửa tay)${typeof b.prompt === "string" ? ` — prompt: ${b.prompt.slice(0, 400)}` : ""}`;
+  }
   if (action === "files") return "Tải ảnh lên bộ";
   if (action === "masters" && !sub) return "Bấm vẽ thêm master (bước 2)";
   if (action === "masters" && subAction === "refine") return `Sửa master ${sub} (refine)${typeof b.prompt === "string" ? `: ${b.prompt.slice(0, 300)}` : ""}`;
@@ -99,6 +109,8 @@ async function route(req: NextRequest, s: CtSession, path: string[]): Promise<Ne
     if (method === "PATCH") return updateCharProject(s, id, await json(req));
     if (method === "DELETE") return deleteCharProject(s, id);
   }
+  // A bộ ảnh khách's own AI styles (asked 2026-10-28).
+  if (action === "photo-styles" && !subAction) return photoStylesRoute(s, method, id, sub ?? "", method === "GET" || method === "DELETE" ? null : await json(req));
   if (method !== "POST") return jsonError("Not found", 404);
   if (action === "files" && !sub) return uploadCharFile(s, id, await req.formData());
   if (action === "chat-files" && !sub) return uploadChatFile(s, id, await req.formData());

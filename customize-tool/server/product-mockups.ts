@@ -229,7 +229,17 @@ async function outlineDrawing(spec: CtPrintSpec): Promise<Buffer> {
 }
 
 /** The prompt of a phôi trơn: the bare piece, straight on, on a plain grey backdrop (so its box can be found). */
-export function blankPrompt(label: string, spec: CtPrintSpec | null): string {
+/** A clear glass piece (lib/materials "glass_clear", asked 2026-10-28: a round glass ornament, not acrylic, its edge
+ * cut in facets like a diamond) — said in the phôi and mockup prompts, or the model draws frosted acrylic. */
+export const GLASS_LOOK =
+  "made of thick, perfectly clear crystal glass (not acrylic, not frosted): see-through where nothing is printed, its rim cut in many small bevelled facets like a diamond that sparkle and refract the light";
+
+export function isGlass(material: string | undefined, label = ""): boolean {
+  return material === "glass_clear" || /\b(glass|crystal)\b|kính|thuỷ tinh|thủy tinh|pha lê/i.test(label);
+}
+
+export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: string): string {
+  const glass = isGlass(material, label);
   const size = spec?.widthMm && spec.heightMm ? ` (${Math.round(spec.widthMm)} × ${Math.round(spec.heightMm)} mm)` : "";
   const hole = spec?.cuts.length ? " including the punched hole exactly where the drawing shows it (the small shape inside the outline)" : "";
   return [
@@ -238,6 +248,7 @@ export function blankPrompt(label: string, spec: CtPrintSpec | null): string {
     "Shot straight on from the front (no perspective, no tilt), centred, the piece filling about 70% of the picture's width.",
     "Plain flat medium-grey seamless backdrop (#9a9a9a), soft even studio light, a faint natural shadow.",
     "Nothing attached or around it: no ribbon, no string, no hook, no hanger, no props, no hands.",
+    glass ? `The piece is ${GLASS_LOOK}; the grey backdrop shows through it.` : "",
     "Photorealistic, the real material's surface and edge thickness.",
   ]
     .filter(Boolean)
@@ -370,7 +381,7 @@ export async function sceneForBlank(photo: Buffer, url: string, spec: Pick<CtPri
  * Make a phôi trơn with the team's image model: the khuôn's outline as a line drawing goes with the prompt (`spec`
  * null = a product without a khuôn in: its name alone). Throws a message for the editor.
  */
-export async function makeBlank(userId: string, label: string, spec: CtPrintSpec | null): Promise<Buffer> {
+export async function makeBlank(userId: string, label: string, spec: CtPrintSpec | null, material?: string): Promise<Buffer> {
   const refs: string[] = [];
   let guide: string | null = null;
   if (spec?.faces[0]?.imageUrl && !spec.outline) refs.push(spec.faces[0].imageUrl);
@@ -383,7 +394,7 @@ export async function makeBlank(userId: string, label: string, spec: CtPrintSpec
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const out = await drawImage(model, blankPrompt(label, spec), refs, "1:1", "crop");
+        const out = await drawImage(model, blankPrompt(label, spec, material), refs, "1:1", "crop");
         return out.data;
       } catch (e) {
         last = e instanceof Error ? e.message : String(e);
@@ -416,7 +427,7 @@ export async function makeProductBlank(s: CtSession, productId: string): Promise
   const sheet = spec ?? (board ? { width: board.width, height: board.height, outline: null } : null);
   if (!sheet) return jsonError("Sản phẩm chưa có khung thiết kế", 409);
   try {
-    const photo = await makeBlank(s.user.id, config.print?.name || product.name, spec);
+    const photo = await makeBlank(s.user.id, config.print?.name || product.name, spec, config.material.id);
     const form = new FormData();
     form.set("file", new Blob([new Uint8Array(photo)], { type: "image/png" }), "phoi-tron.png");
     form.set("role", "reference");
@@ -533,7 +544,8 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
     ? `${config.material.id === "acrylic_white" ? "white-backed" : "clear"} acrylic ornament, die-cut along the artwork's outline with a thin clear border, a small round clear tab with a hole at the top centre, hung by a gold cord through that hole`
     : piece;
   for (const sc of want) {
-    const prompt = `Square lifestyle product photo of this exact ${what} ${sc}. The product is shown as a real physical object in a fitting, beautiful setting (the finished product with any hanger, ribbon or stand it would really have). The WHOLE product is in the picture, centred and big — about 70 % of the picture's width — with clear empty space between it and all four edges of the picture: no part of it (its ends, its edges, its tab) is cut off or touches the frame.${dieCut ? " The acrylic is glossy and see-through where nothing is printed, its cut edge catching the light." : ""}${KEEP_PRINT}`;
+    const glass = !dieCut && isGlass(config.material.id, piece);
+    const prompt = `Square lifestyle product photo of this exact ${what}${glass ? `, ${GLASS_LOOK}` : ""} ${sc}. The product is shown as a real physical object in a fitting, beautiful setting (the finished product with any hanger, ribbon or stand it would really have). The WHOLE product is in the picture, centred and big — about 70 % of the picture's width — with clear empty space between it and all four edges of the picture: no part of it (its ends, its edges, its tab) is cut off or touches the frame.${dieCut ? " The acrylic is glossy and see-through where nothing is printed, its cut edge catching the light." : ""}${KEEP_PRINT}`;
     const { data: row } = await db
       .from(CT_TABLES.packImages)
       .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: sc, prompt, refs: [frontAsset.url], aspect: sceneAspect, model })

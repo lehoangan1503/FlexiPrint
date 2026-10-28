@@ -140,7 +140,9 @@ export function CharChat(props: {
       const url = tile?.dataset.chatUrl || (img ? img.currentSrc || img.src : "");
       if (!url) return;
       if (tile && !img) e.dataTransfer.setData("text/uri-list", url);
-      e.dataTransfer.setData(PAGE_PICTURE, JSON.stringify({ url, ...describe(url, ctx.current.project, ctx.current.images) }));
+      // A card that says what it is (a style ảnh khách card: its name and id) keeps that label.
+      const label = tile?.dataset.chatLabel;
+      e.dataTransfer.setData(PAGE_PICTURE, JSON.stringify({ url, ...describe(url, ctx.current.project, ctx.current.images), ...(label ? { label } : {}) }));
     };
     document.addEventListener("dragstart", onDragStart, true);
     return () => document.removeEventListener("dragstart", onDragStart, true);

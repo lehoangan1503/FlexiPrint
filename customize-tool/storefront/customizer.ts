@@ -85,6 +85,7 @@ import {
 import { IDENTITY_TRANSFORM, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds } from "../lib/geometry";
 import { filterBlob, processPhoto, shrinkImage } from "../lib/photo-process";
 import { styleEngine, styleFamily, styleFilter, styleLabel } from "../lib/photo-styles";
+import { createMagicLoader } from "./magic-loader";
 
 interface VariantInfo {
   price: string;
@@ -986,8 +987,9 @@ export class Customizer {
     dialog.style.setProperty("--ct-accent", getComputedStyle(this.root).getPropertyValue("--ct-accent"));
     const canvas = el("canvas", { class: "ct-dialog__canvas" });
     const empty = el("div", { class: "ct-dialog__empty", text: this.t("dropPhoto", "Choose a photo to start") });
-    const busyText = el("span");
-    const busy = el("div", { class: "ct-dialog__busy", hidden: true }, [el("span", { class: "ct-spinner" }), busyText]);
+    // The wait: a sky of RGB-twinkling constellations and the store's name shimmering (storefront/magic-loader.ts).
+    const magic = createMagicLoader(this.t("magic", "Cherivia magic"));
+    const busy = magic.root;
     const file = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp", hidden: true });
     const pick = el("button", { type: "button", class: "ct-btn ct-btn--ghost", text: this.t("choosePhoto", "Choose photo") });
     const hint = el("span", { class: "ct-dialog__hint", text: this.t("placeHint", "Drag to move · corner to resize · ↻ to rotate") });
@@ -1185,9 +1187,9 @@ export class Customizer {
       }
     };
 
-    const setBusy = (on: boolean, text = "") => {
-      busy.hidden = !on;
-      busyText.textContent = text;
+    const setBusy = (on: boolean, text = "", steps?: string[]) => {
+      if (on) magic.show(text, steps);
+      else magic.hide();
       apply.disabled = on;
       empty.hidden = on || Boolean(photoUrl);
     };
@@ -1231,7 +1233,20 @@ export class Customizer {
       if (!renders.has(next)) {
         const cutoutOnly = cfg.cutout && (next === "original" || (styleEngine(next) === "local" && !renders.has("original")));
         const faceFirst = styleFamily(next) === "face" && !renders.has("face");
-        setBusy(true, cutoutOnly || faceFirst ? this.t("removingBg", "Removing background…") : `${this.t("creating", "Creating")} ${styleLabel(next, this.tpl.aiStyles)}…`);
+        const ai = !cutoutOnly && !faceFirst && styleEngine(next) === "server";
+        const name = styleLabel(next, this.tpl.aiStyles);
+        // An AI redraw takes 30–60 s: the line keeps changing so it never looks stuck.
+        const steps = ai
+          ? [
+              `${this.t("creating", "Creating")} ${name}…`,
+              this.t("magicStep1", "Studying every little detail of your photo…"),
+              this.t("magicStep2", "Sketching the outline by hand…"),
+              this.t("magicStep3", "Painting colours and textures…"),
+              this.t("magicStep4", "Adding the finishing sparkle…"),
+              this.t("magicStep5", "Almost there — good things take a moment ✨"),
+            ]
+          : undefined;
+        setBusy(true, cutoutOnly || faceFirst ? this.t("removingBg", "Removing background…") : `${this.t("creating", "Creating")} ${name}…`, steps);
       }
       try {
         const url = await render(next);
@@ -1359,6 +1374,7 @@ export class Customizer {
       }
     };
     const close = () => {
+      magic.hide();
       dialog.close();
       dialog.remove();
     };
@@ -1390,6 +1406,7 @@ export class Customizer {
     dialog.addEventListener("cancel", (e) => {
       if (e.target !== dialog) return;
       free([]);
+      magic.hide();
       dialog.remove();
     });
     markStyle();

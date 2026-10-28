@@ -176,7 +176,8 @@ function parsePhotoZone(raw: unknown): CtCharPhotoZone | null {
   if (!where) return null;
   const treat = TREATS.includes(r.treat as CtCharPhotoTreat) ? (r.treat as CtCharPhotoTreat) : "photo";
   const styles = arr(r.styles).filter((x): x is string => typeof x === "string" && AI_REF.test(x)).slice(0, 12);
-  return { id: idOf(r.id), where, label: s(r.label, 80) || "Your photo", treat, styles: treat === "ai" ? styles : [], box: parseBox(r.box) };
+  const testPhotos = arr(r.testPhotos).filter((x): x is string => typeof x === "string" && /^https?:\/\//.test(x)).slice(0, 6);
+  return { id: idOf(r.id), where, label: s(r.label, 80) || "Your photo", treat, styles: treat === "ai" ? styles : [], ...(testPhotos.length ? { testPhotos } : {}), box: parseBox(r.box) };
 }
 
 function parseElement(raw: unknown): CtCharElement | null {

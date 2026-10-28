@@ -224,7 +224,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       return json({
         styles: (data ?? []).map((r) => {
           const p = normalizeAiStyleParams(r.params);
-          return { id: r.id, ref: aiStyleRef(r.id), name: r.name, demoUrl: p.demoUrl || null, prompt: r.prompt };
+          return { id: r.id, ref: aiStyleRef(r.id), name: r.name, demoUrl: p.demoUrl || null, prompt: r.prompt, ...(p.setId ? { madeForSet: p.setId } : {}), ...(p.refUrls.length ? { refUrls: p.refUrls } : {}) };
         }),
       });
     },

@@ -14,6 +14,8 @@ export const CT_AI_STYLE_DEFAULT_PARAMS: CtAiStyleParams = {
   removeBackground: true,
   demoUrl: "",
   demoSourceUrl: "",
+  refUrls: [],
+  setId: "",
 };
 
 /** Fill missing / invalid params (rows written by older code — fal-era resolution / quality / format are dropped). */
@@ -25,5 +27,7 @@ export function normalizeAiStyleParams(raw: Partial<CtAiStyleParams> | null | un
     removeBackground: p.removeBackground !== false,
     demoUrl: url(p.demoUrl),
     demoSourceUrl: url(p.demoSourceUrl),
+    refUrls: (Array.isArray(p.refUrls) ? p.refUrls : []).map(url).filter(Boolean).slice(0, 3),
+    setId: typeof p.setId === "string" && /^[0-9a-f-]{36}$/i.test(p.setId) ? p.setId : "",
   };
 }

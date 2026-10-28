@@ -95,7 +95,7 @@ export async function listAiStyles(s: CtSession): Promise<NextResponse> {
   }
   const styles: CtAiStyle[] = rows.map((r) => ({
     ...r,
-    owner: r.user_id ? (r.user_id === s.user.id ? "Bạn" : names.get(r.user_id) ?? "Người dùng khác") : "Built-in",
+    owner: `${r.user_id ? (r.user_id === s.user.id ? "Bạn" : names.get(r.user_id) ?? "Người dùng khác") : "Built-in"}${r.params.setId ? " · style riêng của 1 bộ ảnh khách" : ""}`,
     can_edit: admin || (r.user_id !== null && r.user_id === s.user.id),
   }));
   return NextResponse.json({ styles, admin });

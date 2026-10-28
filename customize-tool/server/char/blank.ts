@@ -59,9 +59,19 @@ export function projectBlank(p: CtCharProject, images: CtCharImage[]): CtCharIma
   return [...images].reverse().find((im) => im.kind === "blank" && im.role === AI_BLANK_ROLE && im.status === "done") ?? null;
 }
 
-/** Start drawing an AI phôi (a running row now, done / failed later). Never throws. */
-export async function startCharBlank(db: Db, userId: string, p: CtCharProject): Promise<CtCharImage | null> {
+/** The editor's pictures of the real piece: references used as "product" or "sample" (a finished ornament, a blank). */
+export async function blankLooks(db: Db, p: CtCharProject): Promise<string[]> {
+  const ids = p.brief.refs.filter((r) => r.use === "product" || r.use === "sample").map((r) => r.id);
+  if (!ids.length) return [];
+  const { data } = await db.from(CT_TABLES.charImages).select("id, url, status").in("id", ids).returns<Array<Pick<CtCharImage, "id" | "url" | "status">>>();
+  return ids.map((id) => data?.find((im) => im.id === id && im.status === "done")?.url).filter((u): u is string => !!u);
+}
+
+/** Start drawing an AI phôi (a running row now, done / failed later). Never throws. looks = photos of the real piece
+ * (default: the set's product / sample references). */
+export async function startCharBlank(db: Db, userId: string, p: CtCharProject, looks?: string[]): Promise<CtCharImage | null> {
   const template = await briefTemplate(db, p);
+  const refs = (looks ?? (await blankLooks(db, p))).slice(0, 4);
   const label = p.brief.product.label || template?.name || "product";
   const { data: row } = await db
     .from(CT_TABLES.charImages)
@@ -71,7 +81,7 @@ export async function startCharBlank(db: Db, userId: string, p: CtCharProject): 
   if (!row) return null;
   void (async () => {
     try {
-      const photo = await makeBlank(userId, label, template?.spec ?? null, p.brief.product.material);
+      const photo = await makeBlank(userId, label, template?.spec ?? null, p.brief.product.material, refs);
       const saved = await saveCharFile(userId, p.id, "blank", photo);
       await db.from(CT_TABLES.charImages).update({ ...saved, status: "done", error: "" }).eq("id", row.id);
       // Kept with the khuôn too: the next brief / product on the same piece reuses it.

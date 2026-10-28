@@ -1102,15 +1102,23 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   {
     name: "char_make_blank",
     description:
-      "Bộ nhân vật / bộ ảnh khách (chat / auto, step 4): draw the phôi trơn (the blank piece, no print) of brief.product with the team's image model — from the khuôn's outline / hole / size and brief.product.material (glass_clear…), ~1 min in the background. Use it when the khuôn has no phôi (get_task blankProduct null, the first mockup shows the print on white) or the phôi is of the wrong material. It is kept with the khuôn too (the next product on that khuôn reuses it). An uploaded phôi (brief.product.blankId) still wins over it. → image id for char_wait; view_image it; then char_remake_product and make_product_mockups again.",
-    inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
+      "Bộ nhân vật / bộ ảnh khách (chat / auto, step 4): draw the phôi trơn (the blank piece, no print) of brief.product with the team's image model — from the khuôn's outline / hole / size and brief.product.material (glass_clear…), copying the real piece from the editor's pictures (ref_urls, default the set's product / sample references: a photo of the blank or of a finished ornament — its print left out), ~1 min in the background. view_image the attachments first: a picture of the plain piece or a product photo goes in ref_urls. Use it when the khuôn has no phôi (get_task blankProduct null, the first mockup shows the print on white) or the phôi is of the wrong material. It is kept with the khuôn too (the next product on that khuôn reuses it). An uploaded phôi (brief.product.blankId) still wins over it. → image id for char_wait; view_image it; then char_remake_product and make_product_mockups again.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        ref_urls: { type: "array", items: { type: "string" }, description: "Photos of the real piece to copy its material / edge / finish from (≤ 4): the editor's attachments showing the blank or the finished product. Omit = the set's references used as \"product\" or \"sample\"; [] = none." },
+      },
+      required: ["task_id"],
+    },
     callers: ["agent"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_make_blank is for chat requests");
+      const looks = Array.isArray(args.ref_urls) ? args.ref_urls.map(str).filter((u) => /^https?:\/\//.test(u)) : undefined;
       if (!project.brief.product.templateId) throw new Error("brief.product has no khuôn (templateId) — list_print_templates / create_print_template, char_update_brief first");
       const template = await briefTemplate(db, project);
-      const row = await startCharBlank(db, task.user_id!, project);
+      const row = await startCharBlank(db, task.user_id!, project, looks);
       if (!row) throw new Error("Không tạo được phôi");
       await progress(db, task.id, `Đang vẽ phôi trơn: ${row.note.replace(/^Phôi trơn AI — /, "")}`);
       const warning = project.brief.product.blankId

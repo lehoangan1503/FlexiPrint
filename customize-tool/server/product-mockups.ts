@@ -238,8 +238,9 @@ export function isGlass(material: string | undefined, label = ""): boolean {
   return material === "glass_clear" || /\b(glass|crystal)\b|kính|thuỷ tinh|thủy tinh|pha lê/i.test(label);
 }
 
-export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: string): string {
+export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: string, looks = 0, first = 1): string {
   const glass = isGlass(material, label);
+  const nums = Array.from({ length: looks }, (_, i) => first + i).join(", ");
   const size = spec?.widthMm && spec.heightMm ? ` (${Math.round(spec.widthMm)} × ${Math.round(spec.heightMm)} mm)` : "";
   const hole = spec?.cuts.length ? " including the punched hole exactly where the drawing shows it (the small shape inside the outline)" : "";
   return [
@@ -249,6 +250,9 @@ export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: 
     "Plain flat medium-grey seamless backdrop (#9a9a9a), soft even studio light, a faint natural shadow.",
     "Nothing attached or around it: no ribbon, no string, no hook, no hanger, no props, no hands.",
     glass ? `The piece is ${GLASS_LOOK}; the grey backdrop shows through it.` : "",
+    looks
+      ? `Reference picture${looks > 1 ? "s" : ""} ${nums} show${looks > 1 ? "" : "s"} the REAL piece the editor sells (a photo of the blank, or of the finished product with a print on it): copy its material, colour, finish, edge, thickness and the hole's look exactly — but leave out every print, picture, text, ribbon and prop on it, and keep the outline${spec ? " of the drawing" : " they show"}. A reference that shows no physical piece is ignored.`
+      : "",
     "Photorealistic, the real material's surface and edge thickness.",
   ]
     .filter(Boolean)
@@ -381,7 +385,8 @@ export async function sceneForBlank(photo: Buffer, url: string, spec: Pick<CtPri
  * Make a phôi trơn with the team's image model: the khuôn's outline as a line drawing goes with the prompt (`spec`
  * null = a product without a khuôn in: its name alone). Throws a message for the editor.
  */
-export async function makeBlank(userId: string, label: string, spec: CtPrintSpec | null, material?: string): Promise<Buffer> {
+/** looks = photos of the real piece (the editor's sample / product pictures, asked 2026-10-29), sent after the outline. */
+export async function makeBlank(userId: string, label: string, spec: CtPrintSpec | null, material?: string, looks: string[] = []): Promise<Buffer> {
   const refs: string[] = [];
   let guide: string | null = null;
   if (spec?.faces[0]?.imageUrl && !spec.outline) refs.push(spec.faces[0].imageUrl);
@@ -394,7 +399,7 @@ export async function makeBlank(userId: string, label: string, spec: CtPrintSpec
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const out = await drawImage(model, blankPrompt(label, spec, material), refs, "1:1", "crop");
+        const out = await drawImage(model, blankPrompt(label, spec, material, looks.length, refs.length + 1), [...refs, ...looks], "1:1", "crop");
         return out.data;
       } catch (e) {
         last = e instanceof Error ? e.message : String(e);

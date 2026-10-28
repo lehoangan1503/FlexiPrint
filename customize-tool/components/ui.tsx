@@ -286,11 +286,15 @@ export function CtField({ label, children, hint }: { label: string; children: Re
   );
 }
 
-/** Number input that commits on every valid keystroke. */
+/**
+ * Number input typed freely (asked 2026-10-29): a plain text box, no spinner — what is typed stays as typed and is
+ * committed on blur / Enter (Escape = back to the value). Committing every keystroke broke typing: callers clamp
+ * (Math.max(5, v)), so the "1" of "120" came back as 5 and replaced the draft. "," counts as a decimal point.
+ * min / max clamp the committed number; step is kept for callers (no spinner any more).
+ */
 export function CtNumber({
   value,
   onChange,
-  step = 1,
   min,
   max,
   className,
@@ -303,28 +307,57 @@ export function CtNumber({
   className?: string;
 }) {
   const [draft, setDraft] = React.useState(String(round(value)));
+  const [editing, setEditing] = React.useState(false);
+  const cancelled = React.useRef(false);
   // Follow outside changes during render, not in an effect: dragging a zone changes these values every
   // frame, and a setState-in-effect per field per frame tripped React's "Maximum update depth exceeded".
-  const [shown, setShown] = React.useState(value);
-  if (shown !== value) {
-    setShown(value);
-    if (Number(draft) !== value) setDraft(String(round(value)));
-  }
+  // Never while the box is being typed in.
+  if (!editing && draft !== String(round(value))) setDraft(String(round(value)));
+  const commit = () => {
+    setEditing(false);
+    if (cancelled.current) {
+      cancelled.current = false;
+      return setDraft(String(round(value)));
+    }
+    const n = parseNumber(draft);
+    if (n === null) return setDraft(String(round(value)));
+    const v = Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n));
+    if (v !== value) onChange(v);
+    setDraft(String(round(v)));
+  };
   return (
     <CtInput
-      type="number"
+      type="text"
+      inputMode="decimal"
+      autoComplete="off"
       className={className}
       value={draft}
-      step={step}
-      min={min}
-      max={max}
+      onFocus={(e) => {
+        setEditing(true);
+        e.currentTarget.select();
+      }}
       onChange={(e) => {
+        setEditing(true);
         setDraft(e.target.value);
-        const n = Number(e.target.value);
-        if (e.target.value !== "" && Number.isFinite(n)) onChange(n);
+      }}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") {
+          cancelled.current = true;
+          e.currentTarget.blur();
+        }
       }}
     />
   );
+}
+
+/** A typed number ("12", "-3.5", "53,1", " 7 "), null when it is not one. */
+function parseNumber(text: string): number | null {
+  const t = text.trim().replace(",", ".");
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
 }
 
 function round(v: number): number {

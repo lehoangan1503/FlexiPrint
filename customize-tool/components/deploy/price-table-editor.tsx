@@ -102,12 +102,15 @@ export function PriceTableEditor({
                 <CtNumber className="h-8" value={s.price} step={0.01} min={0} onChange={(v) => setSize(s.id, { price: Math.max(0, v) })} />
                 <CtInput
                   className="h-8"
-                  type="number"
-                  step={0.01}
-                  min={0}
+                  inputMode="decimal"
                   placeholder="—"
-                  value={s.compareAt ?? ""}
-                  onChange={(e) => setSize(s.id, { compareAt: e.target.value === "" ? null : Math.max(0, Number(e.target.value)) })}
+                  defaultValue={s.compareAt ?? ""}
+                  key={`${s.id}:${s.compareAt ?? ""}`}
+                  onBlur={(e) => {
+                    const t = e.target.value.trim().replace(",", ".");
+                    const n = Number(t);
+                    setSize(s.id, { compareAt: t === "" || !Number.isFinite(n) ? null : Math.max(0, n) });
+                  }}
                 />
                 <CtButton size="icon" variant="ghost" aria-label="Xoá size" disabled={cfg.sizes.length <= 1} onClick={() => patch({ sizes: cfg.sizes.filter((x) => x.id !== s.id) })}>
                   <Trash2 className="h-3.5 w-3.5" />

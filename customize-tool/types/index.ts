@@ -1538,6 +1538,9 @@ export interface CtAgentTaskInput {
   content?: CtContentTaskInput;
   /** char: the bộ nhân vật and the step the agent does for it. */
   char?: CtCharTaskInput;
+  /** Fingerprint of the agent's MCP tool list when the task was made: the agent_ide session fixes its tool list when it
+   * starts, so a task after a deploy that changed the tools opens a fresh session instead of continuing the old one. */
+  mcpTools?: string;
 }
 
 /**

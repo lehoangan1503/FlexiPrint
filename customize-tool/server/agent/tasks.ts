@@ -20,6 +20,7 @@
  * project). The agent reaches back with CT_AGENT_TOKEN (server/mcp/server.ts).
  */
 
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
 import { defaultCategoryRules } from "../../lib/library";
@@ -27,6 +28,7 @@ import type { CtAgentQuestion, CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtA
 import { isOwnUploadUrl } from "../library";
 import type { CtSession } from "../supabase";
 import { clip, jsonError, record, str } from "../ai/llm";
+import { CT_MCP_TOOLS } from "../mcp/tools";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Only a hung task is given up: agent_ide itself stops a turn after 2 h. */
@@ -217,6 +219,13 @@ function turnPrompt(task: CtAgentTask): string {
   return "";
 }
 
+/** The agent's tool names, hashed: a resumed agent_ide session keeps the tools it started with (asked 2026-10-28 — the
+ * agent of a bộ ảnh khách never saw char_save_photo_style after the deploy that added it). */
+function mcpToolsPrint(): string {
+  const names = CT_MCP_TOOLS.filter((t) => t.callers.includes("agent")).map((t) => t.name).sort();
+  return createHash("sha1").update(names.join(",")).digest("hex").slice(0, 12);
+}
+
 interface KernelTurn {
   jobId: string;
   sessionId: string;
@@ -230,6 +239,8 @@ export async function createAgentTask(s: CtSession, body: unknown): Promise<Next
   const kind: CtAgentTaskKind | null = b.kind === "content" || b.kind === "char" ? b.kind : null;
   const input = kind === "content" ? parseContentInput(b.input) : kind === "char" ? parseCharInput(b.input) : null;
   if (!kind || !input) return jsonError("Task không hợp lệ", 400);
+  const tools = mcpToolsPrint();
+  input.mcpTools = tools;
 
   const { data: task, error } = await s.supabase
     .from(CT_TABLES.agentTasks)
@@ -246,28 +257,30 @@ export async function createAgentTask(s: CtSession, body: unknown): Promise<Next
     // A bộ nhân vật is one conversation: brainstorm → master → edits continue the same session.
     const { data: last } = await s.supabase
       .from(CT_TABLES.agentTasks)
-      .select("agent_session_id")
+      .select("agent_session_id, input")
       .eq("kind", "char")
       .eq("input->char->>projectId", charOf)
       .neq("agent_session_id", "")
       .neq("id", task.id)
       .order("created_at", { ascending: false })
       .limit(1)
-      .maybeSingle<Pick<CtAgentTask, "agent_session_id">>();
-    sessionId = last?.agent_session_id ?? "";
+      .maybeSingle<Pick<CtAgentTask, "agent_session_id" | "input">>();
+    // Started before the tools changed: it would not see the new ones.
+    sessionId = last?.input?.mcpTools === tools ? last.agent_session_id : "";
   } else if (contentOf) {
     // A product's content requests are one conversation: its latest session goes on.
     const { data: last } = await s.supabase
       .from(CT_TABLES.agentTasks)
-      .select("agent_session_id")
+      .select("agent_session_id, input")
       .eq("kind", "content")
       .eq("input->content->>productId", contentOf)
       .neq("agent_session_id", "")
       .neq("id", task.id)
       .order("created_at", { ascending: false })
       .limit(1)
-      .maybeSingle<Pick<CtAgentTask, "agent_session_id">>();
-    sessionId = last?.agent_session_id ?? "";
+      .maybeSingle<Pick<CtAgentTask, "agent_session_id" | "input">>();
+    // Started before the tools changed: it would not see the new ones.
+    sessionId = last?.input?.mcpTools === tools ? last.agent_session_id : "";
   }
   const send = (sid: string) => kernel<KernelTurn>(cfg, "/turns", { method: "POST", body: { prompt: turnPrompt(task), ...(sid ? { sessionId: sid } : {}) } });
   let turn: KernelTurn;

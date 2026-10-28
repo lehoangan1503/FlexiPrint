@@ -7,6 +7,8 @@
  *   Phôi trơn   the blank piece the artwork goes on (Xem trước and mockups use it): uploaded / placed in "Phôi trơn"
  *               (the scene dialog), or made by AI from the khuôn in.
  *   Mockups     the front one (exact: the print on the phôi with its own shading) + one AI photo per scene line.
+ *   Phôi + thiết kế  (asked 2026-10-29) the artwork chosen in Thiết kế laid on the phôi at its box, live — which
+ *               product the mockups will be made of, before making them.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -35,6 +37,9 @@ export interface AiMockupsPanelProps {
   flash: (msg: string) => void;
 }
 
+/** Longest side of the artwork drawn on the phôi + thiết kế picture. */
+const ART_PREVIEW_SIDE = 700;
+
 /** Scenes that suit the product, as a start (the editor rewrites them). */
 function defaultScenes(name: string): string[] {
   const n = name.toLowerCase();
@@ -52,6 +57,31 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
   const [blankBusy, setBlankBusy] = useState(false);
   const mockups = useMemo(() => assets.filter((a) => a.role === "mockup" && a.product_id === product.id).sort((a, b) => b.created_at.localeCompare(a.created_at)), [assets, product.id]);
   const running = jobs.filter((j) => j.status === "running");
+  const [art, setArt] = useState<string | null>(null);
+
+  // The finished artwork (what "Tạo mockup" sends) at preview size, for the phôi + thiết kế picture.
+  useEffect(() => {
+    let live = true;
+    let url = "";
+    const t = setTimeout(async () => {
+      try {
+        const scale = Math.min(1, ART_PREVIEW_SIDE / Math.max(1, main.width, main.height));
+        const canvas = await renderComposite({ main, assets: displayAssets(assets, "flat"), regions, items, selection, scale, layouts: config.layouts, cutToFrame: true });
+        url = URL.createObjectURL(await canvasToBlob(canvas, "image/png"));
+        if (!live) return URL.revokeObjectURL(url);
+        setArt((old) => {
+          if (old) URL.revokeObjectURL(old);
+          return url;
+        });
+      } catch {
+        // Only a preview.
+      }
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [main, assets, regions, items, selection, config.layouts]);
 
   const loadJobs = useCallback(async () => {
     try {
@@ -125,7 +155,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-6xl space-y-5 p-6">
-        <section className="grid gap-4 rounded-xl border bg-card p-4 md:grid-cols-[220px_1fr]">
+        <section className="grid gap-4 rounded-xl border bg-card p-4 md:grid-cols-[220px_220px_1fr]">
           <div>
             <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Phôi trơn</div>
             <div className="flex aspect-square items-center justify-center overflow-hidden rounded-lg border" style={CHECKER_STYLE}>
@@ -144,6 +174,36 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                 <Wallpaper className="h-3.5 w-3.5" /> Upload / chỉnh
               </CtButton>
             </div>
+          </div>
+          <div>
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Phôi + thiết kế</div>
+            <div className="flex aspect-square items-center justify-center overflow-hidden rounded-lg border" style={CHECKER_STYLE}>
+              {!art ? (
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              ) : config.scene.url && config.scene.width > 0 && config.scene.height > 0 && config.scene.box.w > 0 ? (
+                // The phôi with the artwork in its box (photo px → % of the photo): the same place the front mockup uses.
+                <div className="relative max-h-full max-w-full overflow-hidden" style={{ aspectRatio: `${config.scene.width} / ${config.scene.height}`, width: config.scene.width >= config.scene.height ? "100%" : "auto", height: config.scene.width >= config.scene.height ? "auto" : "100%" }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- our R2 picture */}
+                  <img src={config.scene.url} alt="Phôi" className="absolute inset-0 h-full w-full" />
+                  {/* eslint-disable-next-line @next/next/no-img-element -- a local blob */}
+                  <img
+                    src={art}
+                    alt="Thiết kế trên phôi"
+                    className="absolute"
+                    style={{
+                      left: `${(config.scene.box.x / config.scene.width) * 100}%`,
+                      top: `${(config.scene.box.y / config.scene.height) * 100}%`,
+                      width: `${(config.scene.box.w / config.scene.width) * 100}%`,
+                      height: `${(config.scene.box.h / config.scene.height) * 100}%`,
+                    }}
+                  />
+                </div>
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element -- a local blob
+                <img src={art} alt="Thiết kế" className="h-full w-full object-contain" />
+              )}
+            </div>
+            <p className="mt-2 text-[11px] leading-snug text-muted-foreground">Nội dung đang chọn ở Thiết kế — mockup tạo từ đúng sản phẩm này. Đổi lựa chọn ở Thiết kế để xem bản khác.</p>
           </div>
           <div className="flex min-w-0 flex-col gap-2">
             <div>

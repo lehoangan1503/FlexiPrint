@@ -14,6 +14,7 @@ import type { CtServiceClient, CtSupabase } from "../supabase";
 import { clip, record, str } from "../ai/llm";
 import sharp from "sharp";
 import { CT_MCP_PRINT_TOOLS } from "./print-tools";
+import { CT_MCP_DEPLOY_TOOLS } from "./deploy-tools";
 import { CT_MCP_CHAR_TOOLS, charTaskView, submitCharResult } from "./char-tools";
 import { CT_MCP_RESOURCES } from "./guide";
 import { TASK_ARG, json, liveStatus, loadTask, openQuestion, openTask, patchTask } from "./task-common";
@@ -371,4 +372,4 @@ const taskTools: CtMcpTool[] = [
   },
 ];
 
-export const CT_MCP_TOOLS: CtMcpTool[] = [...categoryTools, ...taskTools, ...CT_MCP_CHAR_TOOLS, ...CT_MCP_PRINT_TOOLS];
+export const CT_MCP_TOOLS: CtMcpTool[] = [...categoryTools, ...taskTools, ...CT_MCP_CHAR_TOOLS, ...CT_MCP_PRINT_TOOLS, ...CT_MCP_DEPLOY_TOOLS];

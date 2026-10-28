@@ -55,7 +55,7 @@ export function jsonError(message: string, status: number): NextResponse {
   return NextResponse.json({ error: message }, { status });
 }
 
-async function ownedProduct(s: CtSession, productId: string): Promise<CtProduct | null> {
+export async function ownedProduct(s: CtSession, productId: string): Promise<CtProduct | null> {
   const { data } = await s.supabase.from(CT_TABLES.products).select("*").eq("id", productId).maybeSingle<CtProduct>();
   // Admins have full rights on every product (RLS ct_*_admin_all, migration 026).
   if (!data || (data.user_id !== s.user.id && !(await isAdmin(s)))) return null;
@@ -195,12 +195,11 @@ export async function publish(s: CtSession, productId: string, origin: string): 
   return NextResponse.json(r);
 }
 
-/** Snapshot the saved design into the next ct_templates version (what the storefront loads). */
-async function publishTemplate(
+/** The storefront template of the saved design as the next version would carry it (publish, and the MCP check_deploy). */
+export async function productTemplate(
   s: CtSession,
   product: CtProduct,
-  origin: string,
-): Promise<{ product: CtProduct; publish: CtPublishResponse } | { error: string; status: number }> {
+): Promise<{ template: CtTemplate; version: number; publishedAt: string } | { error: string; status: number }> {
   const productId = product.id;
   const [regions, last] = await Promise.all([
     s.supabase.from(CT_TABLES.regions).select("*").eq("product_id", productId).returns<CtRegion[]>(),
@@ -239,6 +238,19 @@ async function publishTemplate(
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Không dựng được template", status: 400 };
   }
+  return { template, version, publishedAt };
+}
+
+/** Snapshot the saved design into the next ct_templates version (what the storefront loads). */
+async function publishTemplate(
+  s: CtSession,
+  product: CtProduct,
+  origin: string,
+): Promise<{ product: CtProduct; publish: CtPublishResponse } | { error: string; status: number }> {
+  const productId = product.id;
+  const built = await productTemplate(s, product);
+  if ("error" in built) return built;
+  const { template, version, publishedAt } = built;
 
   const { error } = await s.supabase
     .from(CT_TABLES.templates)
@@ -265,7 +277,7 @@ async function publishTemplate(
 
 const SHOPIFY_STATUSES: CtShopifyStatus[] = ["ACTIVE", "DRAFT", "ARCHIVED"];
 
-function readDeployBody(raw: unknown): CtDeployBody | null {
+export function readDeployBody(raw: unknown): CtDeployBody | null {
   if (!raw || typeof raw !== "object") return null;
   const b = raw as Partial<CtDeployBody>;
   const title = typeof b.title === "string" ? b.title.trim().slice(0, 255) : "";
@@ -298,11 +310,18 @@ export async function deploy(s: CtSession, productId: string, raw: unknown, orig
   if (!product) return jsonError("Không có quyền deploy sản phẩm này", 403);
   const body = readDeployBody(raw);
   if (!body) return jsonError("Thiếu tên sản phẩm hoặc bảng giá", 400);
-  if (!shopifyConfigured()) return jsonError("Chưa cấu hình Shopify (SHOPIFY_STORE_DOMAIN / SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET)", 501);
+  const r = await runDeploy(s, product, body, origin);
+  return "error" in r ? jsonError(r.error, r.status) : NextResponse.json(r);
+}
+
+/** Deploy a product the caller may edit: the template, then the Shopify product (the page's route and the MCP deploy_product). */
+export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeployBody, origin: string): Promise<CtDeployResponse | { error: string; status: number }> {
+  const productId = product.id;
+  if (!shopifyConfigured()) return { error: "Chưa cấu hình Shopify (SHOPIFY_STORE_DOMAIN / SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET)", status: 501 };
   const table = await loadPriceTable(s, body.priceTableId);
-  if (!table) return jsonError("Không tìm thấy bảng giá", 404);
+  if (!table) return { error: "Không tìm thấy bảng giá", status: 404 };
   const problems = priceTableProblems(table.config);
-  if (problems.length) return jsonError(`Bảng giá “${table.name}”: ${problems.join(" ")}`, 400);
+  if (problems.length) return { error: `Bảng giá “${table.name}”: ${problems.join(" ")}`, status: 400 };
 
   let media: Array<{ asset: CtAsset; url: string }> = [];
   if (body.mediaAssetIds.length) {
@@ -313,7 +332,7 @@ export async function deploy(s: CtSession, productId: string, raw: unknown, orig
 
   // 1. The storefront template (what the customizer draws).
   const pub = await publishTemplate(s, product, origin);
-  if ("error" in pub) return jsonError(pub.error, pub.status);
+  if ("error" in pub) return pub;
 
   // 2. The Shopify product: options + priced variants + metafields + images.
   let result: Awaited<ReturnType<typeof deployToShopify>>;
@@ -337,13 +356,12 @@ export async function deploy(s: CtSession, productId: string, raw: unknown, orig
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Deploy Shopify thất bại";
-    return jsonError(`Đã publish template v${pub.publish.version}, nhưng Shopify lỗi: ${msg}`, 502);
+    return { error: `Đã publish template v${pub.publish.version}, nhưng Shopify lỗi: ${msg}`, status: 502 };
   }
 
   const { data: updated, error } = await s.supabase.from(CT_TABLES.products).update({ shopify: result.link }).eq("id", productId).select("*").single<CtProduct>();
-  if (error) return jsonError(missingShopifyColumn(error.message), 500);
-  const response: CtDeployResponse = { product: updated, publish: pub.publish, shopify: result.link, previewUrl: result.previewUrl, warnings: result.warnings };
-  return NextResponse.json(response);
+  if (error) return { error: missingShopifyColumn(error.message), status: 500 };
+  return { product: updated, publish: pub.publish, shopify: result.link, previewUrl: result.previewUrl, warnings: result.warnings };
 }
 
 function missingShopifyColumn(message: string): string {

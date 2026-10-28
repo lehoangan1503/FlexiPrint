@@ -59,17 +59,24 @@ class KernelError extends Error {
 }
 
 async function kernel<T>(cfg: KernelConfig, path: string, init?: { method?: string; body?: unknown; timeoutMs?: number }): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(`${cfg.url}/kernel/v1${path}`, {
-      method: init?.method ?? "GET",
-      headers: { Authorization: `Bearer ${cfg.token}`, ...(init?.body ? { "Content-Type": "application/json" } : {}) },
-      body: init?.body ? JSON.stringify(init.body) : undefined,
-      cache: "no-store",
-      signal: AbortSignal.timeout(init?.timeoutMs ?? 15_000),
-    });
-  } catch (e) {
-    throw new KernelError(`Không kết nối được agent_ide: ${e instanceof Error ? e.message : String(e)}`, 502);
+  let res: Response | null = null;
+  // The route to agent_ide drops connections now and then (2026-10-28: an auto task failed on "fetch failed" while
+  // the next call worked): a connection that never got through is tried again. A timeout is not — the request may
+  // have arrived (a turn sent twice).
+  for (let attempt = 1; !res; attempt++) {
+    try {
+      res = await fetch(`${cfg.url}/kernel/v1${path}`, {
+        method: init?.method ?? "GET",
+        headers: { Authorization: `Bearer ${cfg.token}`, ...(init?.body ? { "Content-Type": "application/json" } : {}) },
+        body: init?.body ? JSON.stringify(init.body) : undefined,
+        cache: "no-store",
+        signal: AbortSignal.timeout(init?.timeoutMs ?? 15_000),
+      });
+    } catch (e) {
+      const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+      if (timedOut || attempt >= 3) throw new KernelError(`Không kết nối được agent_ide: ${e instanceof Error ? e.message : String(e)}`, 502);
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
+    }
   }
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) throw new KernelError(str(body.error) || str(body.message) || `agent_ide HTTP ${res.status}`, res.status);

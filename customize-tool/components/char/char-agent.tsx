@@ -87,8 +87,11 @@ export function useCharAgent(projectId: string, onChange: () => Promise<void>, o
 
   const refresh = useCallback(async () => {
     try {
-      const open = (await ctApi.listAgentTasks("char", projectId)).find(isOpen);
+      const list = await ctApi.listAgentTasks("char", projectId);
+      const open = list.find(isOpen);
       if (open && following.current !== open.id) void follow(open);
+      // It ended at once (the auto task when agent_ide could not be reached): show why, with "Chạy tiếp tự động".
+      else if (!open && list[0]) setLast(list[0]);
     } catch {
       // Shown on the next reload.
     }

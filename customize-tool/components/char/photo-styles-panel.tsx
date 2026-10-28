@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * "Style ảnh khách" of a bộ ảnh khách (step 3, asked 2026-10-28): the set's own AI styles — each card is one style the
+ * "Style ảnh khách" of a bộ ảnh khách (step 1 under the brief, asked 2026-10-28): the set's own AI styles — each card is one style the
  * customer picks on the store (its name + demo picture); the prompt and the style references stay on the server.
  * @flexiprint writes them from the brief ("4 kiểu: khăn choàng, siêu nhân áo choàng đỏ, dây đèn quấn quanh…") and tests
  * them; the editor tests them on their own photos here, fixes a prompt by hand, or drags a card into the chat to ask

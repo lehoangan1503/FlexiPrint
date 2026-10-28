@@ -15,6 +15,7 @@ import { CHAR_ELEMENT_PLACE_LABEL, ELEMENT_PLACE_LABEL, REF_USE_INFO, briefCombo
 import { charVersions } from "../../lib/char-lineup";
 import { CtButton, CtModal, cx } from "../ui";
 import type { CharCtx } from "./char-project";
+import { PhotoStylesSection } from "./photo-styles-panel";
 import { StepGuide } from "./step-guide";
 
 const MODE_LABEL: Record<CtCharSlot["mode"], string> = { color: "đổi màu", texture: "đổi chất liệu", shape: "đổi kiểu" };
@@ -101,7 +102,19 @@ export function BriefPanel(ctx: CharCtx) {
                 ))}
               </Card>
             )}
+            {brief.kind === "photo" && (
+              <Card icon={<Users className="h-4 w-4" />} title="Ảnh khách & phần trang trí">
+                {brief.photoZones.map((z) => (
+                  <Row key={z.id} k={z.label || "Ảnh khách"} v={`${z.where} · ${z.treat === "ai" ? "AI vẽ lại theo style (thẻ bên dưới)" : z.treat === "face" ? "chỉ lấy mặt" : "giữ nguyên ảnh"}`} />
+                ))}
+                {brief.elements.map((e) => (
+                  <Row key={e.id} k={`${e.name} (${ELEMENT_PLACE_LABEL[e.place]})`} v={`${e.options.length > 1 ? "khách chọn: " : ""}${e.options.map((o) => o.name).join(" · ")}`} />
+                ))}
+              </Card>
+            )}
           </div>
+          {/* A bộ ảnh khách's styles right under its brief (asked 2026-10-28: "brief xong rồi mà chưa thấy card style"). */}
+          {brief.kind === "photo" && <PhotoStylesSection {...ctx} />}
           {brief.kind !== "photo" && (
             <Card icon={<Shirt className="h-4 w-4" />} title={`Nhân vật (${brief.subjects.length}) — khách đổi được`}>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">

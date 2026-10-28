@@ -77,3 +77,11 @@ Cùng một phiên từ đầu tới cuối; người dùng theo dõi trên tran
 
 ## Lỗi của hệ thống
 Tool trả lỗi lạ, sản phẩm sai do code (không phải do ảnh) → skill `flexiprint-dev`: sửa code, deploy, làm tiếp.
+
+**Thiếu tool** (hỏi 2026-10-29): việc editor làm được bằng một nút trên app (vd. tạo phôi AI, xoá khuôn) mà MCP không có
+tool → KHÔNG đẩy việc lại cho người dùng. Dùng skill `flexiprint-dev`: tìm route / hàm server mà nút đó gọi
+(`customize-tool/server/router.ts`, `server/char/router.ts`), viết tool MCP gọi đúng hàm đó (`server/mcp/char-tools.ts` /
+`print-tools.ts`, thêm vào hướng dẫn bước liên quan), typecheck, commit, push, deploy flexi2. Phiên agent_ide hiện tại
+KHÔNG thấy tool mới (danh sách tool chốt lúc mở phiên) → báo tiến độ "đã thêm tool X, đã deploy", rồi `submit_result`
+nói rõ: gửi lại yêu cầu ở ô chat để làm tiếp bằng tool mới (task mới mở phiên mới, thấy tool). Không làm được bước
+push / deploy (thiếu quyền) → nói rõ thiếu quyền gì, để lại commit / patch.

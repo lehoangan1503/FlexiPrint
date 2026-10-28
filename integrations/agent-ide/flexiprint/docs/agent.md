@@ -63,7 +63,8 @@ Từ 2026-10-19 **chỉ có flexi2**: server `flexiprint` (VPS, flexiprint.next.
    mục "Làm trọn một bộ trên agent_ide": tạo bộ bằng `char_create_set`, **in link bộ** mà tool trả về (`https://flexi2.next.lc/v2/<id>`)
    để mọi người mở theo dõi, rồi làm từng bước; dừng hỏi đúng ở những chỗ cần người quyết (chốt hướng brief, duyệt master,
    ưng sản phẩm chưa) — cùng một phiên, người dùng trả lời là làm tiếp.
-3. **Lỗi / thiếu tính năng của FlexiPrint** (tool trả lỗi, sản phẩm sai do code, người dùng nhờ sửa) → skill
+3. **Lỗi / thiếu tính năng của FlexiPrint** (tool trả lỗi, sản phẩm sai do code, người dùng nhờ sửa, **thiếu tool MCP cho
+   việc editor làm được bằng nút** — tự viết tool, không đẩy việc cho người) → skill
    `flexiprint-dev`: sửa code trong repo, typecheck + lint, commit, push, deploy lên flexi2 (an-vm), kiểm tra lại trên https://flexi2.next.lc.
 
 ## Luật

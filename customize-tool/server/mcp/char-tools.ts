@@ -27,7 +27,7 @@ import { clip, record, str } from "../ai/llm";
 import { CHAR_BRIEF_RULES, ideaRoundFrom } from "../char/brainstorm";
 import { KEEP_REFINE, drawIdeaPreviews, drawMasters, loadImages, loadProject, projectRow, refineMasterImage, setApprovedMaster } from "../char/projects";
 import { startBackdrops } from "../char/backdrops";
-import { withTemplateProduct } from "../char/blank";
+import { briefTemplate, projectBlank, startCharBlank, withTemplateProduct } from "../char/blank";
 import { remakeSetProduct, versionSetsOf } from "../char/product";
 import { followParentPlan, remakeDrawnProduct, runVersionChain, startVersionSets } from "../char/versions";
 import { startPoseSets } from "../char/poses";
@@ -100,7 +100,7 @@ const EDITS_INSTRUCTIONS = [
 ].join("\n");
 
 /** The material ids a brief's product can name (asked 2026-10-28: a clear glass ornament with a diamond-cut edge). */
-const MATERIALS = `brief.product.material = what the piece is made of, one of: ${CT_MATERIALS.filter((m) => m.id !== "none").map((m) => `"${m.id}" (${m.label})`).join(", ")} — the phôi and the mockups are drawn in it (a glass ornament: "glass_clear" and a khuôn named after it, e.g. "Ornament kính tròn cạnh vát kim cương").`;
+const MATERIALS = `brief.product.material = what the piece is made of, one of: ${CT_MATERIALS.filter((m) => m.id !== "none").map((m) => `"${m.id}" (${m.label})`).join(", ")} — the phôi and the mockups are drawn in it (a glass ornament: "glass_clear" and a khuôn named after it, e.g. "Ornament kính tròn cạnh vát kim cương"). A khuôn with no phôi (get_task blankProduct null) or one of another material → char_make_blank, char_wait, view_image, then char_remake_product before make_product_mockups — never leave it for the editor.`;
 
 /** A bộ ảnh khách's own AI styles — chat and auto. */
 const PHOTO_STYLES =
@@ -109,7 +109,7 @@ const PHOTO_STYLES =
 /** Editors write short, loose requests (asked 2026-10-28: "làm sao 1 editor ghi đầy đủ chi tiết như vậy được") —
  * the agent fills in the rest from the reference pictures and these defaults, then writes its plan back for review. */
 const SHORT_REQUESTS =
-  "SHORT REQUESTS (asked 2026-10-28): editors write a few loose lines (\"4 style: siêu nhân, khăn len…; 4 khung giáng sinh; tên trên trái; slogan trắng dưới; khuôn tròn; phôi kính\") and attach a sample. Never ask them for the details — fill them in from the sample picture and these defaults: decorations follow the khuôn's outline (a round khuôn → a wreath / garland curving with the circle, a U hugging the bottom and sides of the subject — never straight bars or a square frame on a round piece), every option of an element the same size, place and curve; the photo zone in the middle, the frame over its cut-off bottom; a customer name in a script font where they said; a fixed slogan curved along the edge when the sample does so; everything clear of the hanging hole and inside the safe area; a khuôn of that shape already in list_print_templates is reused, never a duplicate; a material they name (glass_clear…) is the khuôn's blank for the mockups; the texts' colour readable on that material. Then, in your first summary, write back in short Vietnamese what you decided (each style, each element and its options, the texts, khuôn, phôi, which attached picture went where) so the editor reviews it there and corrects only what is off.";
+  "SHORT REQUESTS (asked 2026-10-28): editors write a few loose lines (\"4 style: siêu nhân, khăn len…; 4 khung giáng sinh; tên trên trái; slogan trắng dưới; khuôn tròn; phôi kính\") and attach a sample. Never ask them for the details — fill them in from the sample picture and these defaults: decorations follow the khuôn's outline (a round khuôn → a wreath / garland curving with the circle, a U hugging the bottom and sides of the subject — never straight bars or a square frame on a round piece), every option of an element the same size, place and curve; the photo zone in the middle, the frame over its cut-off bottom; a customer name in a script font where they said; a fixed slogan curved along the edge when the sample does so; everything clear of the hanging hole and inside the safe area; a khuôn of that shape already in list_print_templates is reused, never a duplicate; a material they name (glass_clear…) is the khuôn's blank for the mockups (a khuôn with no phôi of that material yet → char_make_blank before the mockups); the texts' colour readable on that material. Then, in your first summary, write back in short Vietnamese what you decided (each style, each element and its options, the texts, khuôn, phôi, which attached picture went where) so the editor reviews it there and corrects only what is off.";
 
 const CHAT_INSTRUCTIONS = [
   ...COMMON,
@@ -141,7 +141,7 @@ const AUTO_INSTRUCTIONS = [
   "1. Bộ nhân vật: char_status waits for 3a (the master at print size, started on approval). Bộ ảnh khách (brief.kind \"photo\"): skip to 4.",
   "2. 3b: PLAN the pictures yourself — char_plan_pictures (rules in \"picturePlan.rules\"): from the brief and the approved master decide the doll and the pictures that give every option a clean cut (one character per picture — a set with several characters is drawn pose by pose; hair under hats drawn on / cut against the outfit picture; no rule in the code decides this for you). Then get_task \"set.edits\" lists them — char_run_edits with roles (all missing ones) → char_wait → view_image EVERY picture (a grid of a few at a time): transparent; the doll unchanged; exactly ONE part added (no stole on the gown picture, no gown on the stole picture, pants never recolour the top); no magenta on a part; thin parts on small figures drawn bold. Redraw the wrong ones (≤ 3 tries each).",
   "3. 3c: char_cut what \"plan\" (finds the regions, cuts the files, makes the product) → char_status → every failed check: redraw its picture, char_cut \"plan\" again. Then view_image the product (render_artwork mode print — each version / a few option sets).",
-  "4. Step 4: char_draw_backdrops and char_draw_elements (every missing picture) → char_wait → view_image each → redraw the wrong ones → char_remake_product → render_artwork (print, a few option sets: versions, themes, colours, names) → fix the layout in the brief (charactersBox, element / text boxes) with char_update_brief + char_remake_product when it does not read like the reference → make_product_mockups (2–3 option sets × the brief's scenes) → wait_product_mockups → view_image.",
+  "4. Step 4: char_draw_backdrops and char_draw_elements (every missing picture) and char_make_blank when the khuôn has no phôi of brief.product.material → char_wait → view_image each → redraw the wrong ones → char_remake_product → render_artwork (print, a few option sets: versions, themes, colours, names) → fix the layout in the brief (charactersBox, element / text boxes) with char_update_brief + char_remake_product when it does not read like the reference → make_product_mockups (2–3 option sets × the brief's scenes) → wait_product_mockups → view_image.",
   "4b. Bộ ảnh khách with treat \"ai\": the styles (PHOTO_STYLES below) before char_remake_product — none yet → write them from the request; test, fix, pick the demos.",
   PHOTO_STYLES,
   MATERIALS,
@@ -273,7 +273,7 @@ function chatView(task: CtAgentTask, p: CtCharProject, images: CtCharImage[], nu
       briefLocked: !!p.master_id,
       brief: p.brief,
       references: p.brief.refs.map((r) => ({ ...r, url: images.find((x) => x.id === r.id)?.url ?? null })),
-      blankProduct: images.find((im) => im.id === p.brief.product.blankId && im.status === "done")?.url ?? null,
+      blankProduct: projectBlank(p, images)?.url ?? null,
       masters: images.filter((im) => im.kind === "master").map((m) => ({ ...picture(m, numbers), approved: m.id === p.master_id })),
       assembledMasterPrompt: masterPrompt(p.brief),
       // Compact (a 5-character set has 130+ edits and the agent's tool output is capped): no starting prompt per role
@@ -412,7 +412,7 @@ export async function charTaskView(db: CtServiceClient, task: CtAgentTask): Prom
         return im ? { id: im.id, use: r.use, editorNote: r.note, sentToImageModel: !!REF_USE_INFO[r.use].take, url: im.url } : null;
       })
       .filter(Boolean),
-    blankProduct: images.find((im) => im.id === p.brief.product.blankId && im.status === "done")?.url ?? null,
+    blankProduct: projectBlank(p, images)?.url ?? null,
     // The edits step works on the approved master only (get_task must stay small: the agent's tool output is capped).
     masters:
       c.step === "edits"
@@ -1097,6 +1097,32 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const rows = await startElements(db, task.user_id!, project, { roles, prompts, taskId: task.id });
       await progress(db, task.id, `Đang vẽ ${rows.length} phần tử: ${rows.map((r) => r.note).slice(0, 8).join(", ")}`);
       return json({ image_ids: rows.map((r) => r.id), next: "char_wait, view_image each (colour options appear after their first is done); then char_remake_product." });
+    },
+  },
+  {
+    name: "char_make_blank",
+    description:
+      "Bộ nhân vật / bộ ảnh khách (chat / auto, step 4): draw the phôi trơn (the blank piece, no print) of brief.product with the team's image model — from the khuôn's outline / hole / size and brief.product.material (glass_clear…), ~1 min in the background. Use it when the khuôn has no phôi (get_task blankProduct null, the first mockup shows the print on white) or the phôi is of the wrong material. It is kept with the khuôn too (the next product on that khuôn reuses it). An uploaded phôi (brief.product.blankId) still wins over it. → image id for char_wait; view_image it; then char_remake_product and make_product_mockups again.",
+    inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id);
+      if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_make_blank is for chat requests");
+      if (!project.brief.product.templateId) throw new Error("brief.product has no khuôn (templateId) — list_print_templates / create_print_template, char_update_brief first");
+      const template = await briefTemplate(db, project);
+      const row = await startCharBlank(db, task.user_id!, project);
+      if (!row) throw new Error("Không tạo được phôi");
+      await progress(db, task.id, `Đang vẽ phôi trơn: ${row.note.replace(/^Phôi trơn AI — /, "")}`);
+      const warning = project.brief.product.blankId
+        ? "brief.product.blankId (an uploaded phôi) is set and wins — clear it with char_update_brief to use this one."
+        : template?.spec.blanks.length
+          ? `The khuôn already has ${template.spec.blanks.length} phôi and its first one wins over this one — tell the editor to remove it in Thư viện → Phôi, or make a new khuôn of this material (create_print_template).`
+          : undefined;
+      return json({
+        image_id: row.id,
+        ...(warning ? { warning } : {}),
+        next: "char_wait, view_image it (the right material and shape, hole in place, nothing printed on it); then char_remake_product, make_product_mockups.",
+      });
     },
   },
   {

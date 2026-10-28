@@ -69,6 +69,7 @@ type Gesture =
   | { kind: "vertex"; id: string; index: number; shape: CtShape }
   // A text zone turned about its band's centre (lib/geometry bandShape).
   | { kind: "rotate-region"; id: string; startAngle: number; band: ReturnType<typeof textBand> }
+  | { kind: "resize-band"; id: string; handle: Handle; band: ReturnType<typeof textBand> }
   | { kind: "move-item"; id: string; start: CtPoint; t: CtTransform; bounds: CtBounds; geom: ItemGeom | null }
   | { kind: "scale-item"; id: string; center: CtPoint; startDist: number; t: CtTransform }
   | { kind: "rotate-item"; id: string; center: CtPoint; startAngle: number; t: CtTransform }
@@ -550,6 +551,36 @@ export function Stage(props: StageProps) {
         setMainFrame({ ...b, x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
         break;
       }
+      case "resize-band": {
+        // A turned text band resized by its own handles (asked 2026-10-29): the pointer read along the band's axes,
+        // the opposite edge / corner stays put. Shift on a corner keeps the aspect ratio.
+        const b = g.band;
+        const t = (b.rotation * Math.PI) / 180;
+        const cos = Math.cos(t);
+        const sin = Math.sin(t);
+        const dx = w.x - b.cx;
+        const dy = w.y - b.cy;
+        const u = dx * cos + dy * sin;
+        const v = -dx * sin + dy * cos;
+        let x0 = -b.w / 2;
+        let x1 = b.w / 2;
+        let y0 = -b.h / 2;
+        let y1 = b.h / 2;
+        if (g.handle.includes("w")) x0 = Math.min(u, x1 - 2);
+        if (g.handle.includes("e")) x1 = Math.max(u, x0 + 2);
+        if (g.handle.includes("n")) y0 = Math.min(v, y1 - 2);
+        if (g.handle.includes("s")) y1 = Math.max(v, y0 + 2);
+        if (e.shiftKey && g.handle.length === 2 && b.w > 0 && b.h > 0) {
+          const nh = (x1 - x0) * (b.h / b.w);
+          if (g.handle.includes("n")) y0 = y1 - nh;
+          else y1 = y0 + nh;
+        }
+        const mu = (x0 + x1) / 2;
+        const mv = (y0 + y1) / 2;
+        const band = { cx: b.cx + mu * cos - mv * sin, cy: b.cy + mu * sin + mv * cos, w: x1 - x0, h: y1 - y0, rotation: b.rotation };
+        design.live((s) => updateRegion(s, g.id, (r) => ({ ...r, shape: bandShape(band) })));
+        break;
+      }
       case "rotate-region": {
         const a = (Math.atan2(w.y - g.band.cy, w.x - g.band.cx) * 180) / Math.PI;
         let rotation = g.band.rotation + a - g.startAngle;
@@ -865,6 +896,9 @@ export function Stage(props: StageProps) {
 
   const selected = activeRegion;
   const selBounds = selected ? shapeBounds(selected.shape) : null;
+  // A turned text band is resized by handles on the band itself, not on its upright bounding box.
+  const turnedBand = selected?.kind === "text" ? textBand(selected.shape) : null;
+  const turnedBandOk = turnedBand?.rotation ? turnedBand : null;
   const hs = 8 * px; // handle size
 
   return (
@@ -1096,6 +1130,33 @@ export function Stage(props: StageProps) {
 
           {props.showOverlay && selected && selBounds && effectiveTool === "select" && editTarget === "region" && (
             <g>
+              {turnedBandOk ? (
+                <g transform={`rotate(${turnedBandOk.rotation} ${turnedBandOk.cx} ${turnedBandOk.cy})`}>
+                  {HANDLES.map((h) => {
+                    const p = handlePos({ x: turnedBandOk.cx - turnedBandOk.w / 2, y: turnedBandOk.cy - turnedBandOk.h / 2, w: turnedBandOk.w, h: turnedBandOk.h }, h);
+                    return (
+                      <rect
+                        key={h}
+                        x={p.x - hs / 2}
+                        y={p.y - hs / 2}
+                        width={hs}
+                        height={hs}
+                        fill="#fff"
+                        stroke={FRAME_COLOR}
+                        strokeWidth={1.5}
+                        vectorEffect="non-scaling-stroke"
+                        style={{ pointerEvents: "all", cursor: turnedCursor(h, turnedBandOk.rotation) }}
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          viewportRef.current?.setPointerCapture(e.pointerId);
+                          setGesture({ kind: "resize-band", id: selected.id, handle: h, band: turnedBandOk });
+                        }}
+                      />
+                    );
+                  })}
+                </g>
+              ) : (
+              <>
               <rect
                 x={selBounds.x}
                 y={selBounds.y}
@@ -1125,6 +1186,8 @@ export function Stage(props: StageProps) {
                   />
                 );
               })}
+              </>
+              )}
               {selected.kind === "text" &&
                 (() => {
                   // Turn handle: above the band's top edge, along its own axis (the band turns with it).
@@ -1434,6 +1497,13 @@ const HANDLE_CURSOR: Record<Handle, string> = {
   e: "ew-resize",
   w: "ew-resize",
 };
+
+/** The resize cursor of a handle on a band turned by `rotation` degrees. */
+function turnedCursor(h: Handle, rotation: number): string {
+  const base: Record<Handle, number> = { e: 0, se: 45, s: 90, sw: 135, w: 180, nw: 225, n: 270, ne: 315 };
+  const a = (((base[h] + rotation) % 180) + 180) % 180;
+  return a < 22.5 || a >= 157.5 ? "ew-resize" : a < 67.5 ? "nwse-resize" : a < 112.5 ? "ns-resize" : "nesw-resize";
+}
 
 function handlePos(b: CtBounds, h: Handle): CtPoint {
   const x = h.includes("w") ? b.x : h.includes("e") ? b.x + b.w : b.x + b.w / 2;

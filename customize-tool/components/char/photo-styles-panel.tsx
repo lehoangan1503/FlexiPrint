@@ -28,7 +28,7 @@ interface Draft {
 function testsOf(images: CtCharImage[], styleId: string): CtCharImage[] {
   const out = new Map<string, CtCharImage>();
   for (const im of images) if (im.role.startsWith(`${TEST_ROLE}${styleId}:`) && (!out.has(im.role) || out.get(im.role)!.created_at <= im.created_at)) out.set(im.role, im);
-  return [...out.values()].sort((a, b) => a.role.localeCompare(b.role, undefined, { numeric: true }));
+  return [...out.values()].sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
 function Thumb({ url, className, alt = "" }: { url: string; className?: string; alt?: string }) {
@@ -122,7 +122,7 @@ export function PhotoStylesSection(ctx: CharCtx) {
         <div className="min-w-[260px] flex-1">
           <h3 className="text-sm font-semibold">Style ảnh khách</h3>
           <p className="text-xs text-muted-foreground">
-            Mỗi thẻ = 1 lựa chọn style trên store: khách upload ảnh, AI vẽ lại theo prompt của thẻ (ảnh 1 = ảnh khách, ảnh 2… = ảnh tham chiếu style). Kéo thẻ vào ô chat bên dưới để nhờ @flexiprint sửa prompt. Sửa prompt có hiệu lực ngay cho khách; tên / demo / thêm bớt style cần tạo lại sản phẩm rồi deploy lại.
+            Mỗi thẻ = 1 lựa chọn style trên store (chỉ 1 thẻ thì store không hiện ô chọn style). Xem ảnh thử → chưa ưng thì kéo thẻ vào ô chat bên dưới và tả cần sửa gì; style không dùng thì bỏ. Sửa prompt có hiệu lực ngay cho khách; tên / demo / thêm bớt style cần tạo lại sản phẩm rồi deploy lại.
           </p>
         </div>
         {editable && (
@@ -190,6 +190,12 @@ export function PhotoStylesSection(ctx: CharCtx) {
               busy={busy}
               onEdit={() => setDraft({ id: st.id, name: st.name, prompt: st.prompt, refUrls: st.refUrls })}
               onTest={() => void test([st.id])}
+              onTestOwn={(list) =>
+                void run(`test:${st.id}`, async () => {
+                  const urls = await upload(list);
+                  if (urls.length) ctx.addImages(await charApi.testPhotoStyles(project.id, [st.id], urls));
+                })
+              }
               onRemove={() => void remove(st)}
               onDemo={(im) => void demo(st, im)}
               onMove={(by) => move(st, by)}
@@ -221,12 +227,15 @@ function StyleCard(props: {
   busy: string;
   onEdit: () => void;
   onTest: () => void;
+  /** Try this style alone on pictures picked now (not kept as the set's test photos). */
+  onTestOwn: (files: FileList | null) => void;
   onRemove: () => void;
   onDemo: (im: CtCharImage) => void;
   onMove: (by: -1 | 1) => void;
 }) {
   const { st, tests, editable, busy } = props;
   const [open, setOpen] = useState(false);
+  const ownRef = useRef<HTMLInputElement>(null);
   const firstDone = tests.find((t) => t.status === "done");
   // What the card shows (and what a drag into the chat carries): the demo, else a test, else a style reference.
   const face = st.demoUrl || firstDone?.url || st.refUrls[0] || "";
@@ -306,6 +315,20 @@ function StyleCard(props: {
             {busy === `test:${st.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />}
             Thử
           </CtButton>
+          <CtButton size="sm" variant="ghost" disabled={!!busy} onClick={() => ownRef.current?.click()} title="Upload ảnh như khách rồi thử riêng style này">
+            <ImagePlus className="h-3.5 w-3.5" /> Thử ảnh khác
+          </CtButton>
+          <input
+            ref={ownRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              props.onTestOwn(e.target.files);
+              e.target.value = "";
+            }}
+          />
           {st.own && (
             <CtButton size="sm" variant="ghost" disabled={!!busy} onClick={props.onEdit}>
               <Pencil className="h-3.5 w-3.5" /> Sửa

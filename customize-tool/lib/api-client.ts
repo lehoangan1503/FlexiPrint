@@ -316,7 +316,7 @@ export const charApi = {
   photoStyles: (id: string) => call<{ styles: CtCharPhotoStyle[] }>(`char/projects/${id}/photo-styles`).then((r) => r.styles),
   savePhotoStyle: (id: string, body: { id?: string; name: string; prompt: string; refUrls?: string[] }) => call<{ styles: CtCharPhotoStyle[]; project: CtCharProject }>(`char/projects/${id}/photo-styles`, json("POST", body)),
   removePhotoStyle: (id: string, styleId: string) => call<{ styles: CtCharPhotoStyle[]; project: CtCharProject }>(`char/projects/${id}/photo-styles/${styleId}`, { method: "DELETE" }),
-  testPhotoStyles: (id: string, styleIds: string[] = []) => call<{ images: CtCharImage[] }>(`char/projects/${id}/photo-styles/test`, json("POST", { styleIds })).then((r) => r.images),
+  testPhotoStyles: (id: string, styleIds: string[] = [], photos: string[] = []) => call<{ images: CtCharImage[] }>(`char/projects/${id}/photo-styles/test`, json("POST", { styleIds, photos })).then((r) => r.images),
   styleDemo: (id: string, styleId: string, imageId: string) => call<{ styles: CtCharPhotoStyle[] }>(`char/projects/${id}/photo-styles/demo`, json("POST", { styleId, imageId })).then((r) => r.styles),
   styleTestPhotos: (id: string, photos: string[]) => call<{ project: CtCharProject }>(`char/projects/${id}/photo-styles/photos`, json("POST", { photos })).then((r) => r.project),
   orderPhotoStyles: (id: string, styleIds: string[]) => call<{ project: CtCharProject }>(`char/projects/${id}/photo-styles/order`, json("POST", { styleIds })).then((r) => r.project),

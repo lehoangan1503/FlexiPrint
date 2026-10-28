@@ -19,6 +19,7 @@
  *   POST   char/projects/:id/photo-styles/order {zoneId?, styleIds}  → { project } the zone's styles, in this order
  */
 
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_TABLES } from "../../config";
@@ -155,6 +156,11 @@ export function testPhotosOf(p: CtCharProject, asked?: string[]): string[] {
   return zone?.testPhotos?.length ? zone.testPhotos : [AI_STYLE_SAMPLE_URL];
 }
 
+/** A test's place on its card: one per (style, photo) — a photo tried on one card alone keeps the other tests. */
+function photoKey(url: string): string {
+  return createHash("sha1").update(url).digest("hex").slice(0, 10);
+}
+
 /** Run each style on each test photo in the background (like a customer's upload): running rows now. */
 export async function startStyleTests(db: Db, userId: string, p: CtCharProject, args: { styleIds?: string[]; photos?: string[]; taskId?: string }): Promise<CtCharImage[]> {
   const all = await setPhotoStyles(db, p);
@@ -169,7 +175,7 @@ export async function startStyleTests(db: Db, userId: string, p: CtCharProject, 
     for (const [i, photo] of photos.entries()) {
       const { data: row } = await db
         .from(CT_TABLES.charImages)
-        .insert({ project_id: p.id, user_id: userId, kind: "edit", role: `${STYLE_TEST_ROLE}${st.id}:${i}`, status: "running", note: `Style ${st.name} — ảnh thử ${i + 1}`, prompt: style.prompt, meta: { sourceUrl: photo, styleId: st.id, ...(args.taskId ? { taskId: args.taskId } : {}) } })
+        .insert({ project_id: p.id, user_id: userId, kind: "edit", role: `${STYLE_TEST_ROLE}${st.id}:${photoKey(photo)}`, status: "running", note: `Style ${st.name} — ảnh thử ${i + 1}`, prompt: style.prompt, meta: { sourceUrl: photo, styleId: st.id, ...(args.taskId ? { taskId: args.taskId } : {}) } })
         .select("*")
         .single<CtCharImage>();
       if (row) rows.push({ row, style: { ...style, model: CT_AI_STYLE_MODEL, params: normalizeAiStyleParams(style.params), owner: "", can_edit: false }, photo });

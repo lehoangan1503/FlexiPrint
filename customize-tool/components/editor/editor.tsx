@@ -58,10 +58,11 @@ import { StorefrontPreview } from "./storefront-preview";
 import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zoneOptionView } from "./use-design";
 import { PrintDialog } from "./print-dialog";
 import { PrintPanel } from "./print-panel";
-import { CLIPART_DRAG, type CtClipartDrag, type CtClipartSetEntry } from "./library-panel";
+import { CLIPART_DRAG, isCharSetDrag, type CtCharSetDrag, type CtClipartDrag, type CtLibraryDrag } from "./library-panel";
 import { ctConfirm } from "../dialogs";
-import { asLayerClipart, asMainOption, asVersion } from "../../lib/library";
-import { claimSharedLayers, fitMainFrame, mainFrameFor, versionLayers } from "../../lib/layout";
+import { asLayerClipart, asVersion } from "../../lib/library";
+import { claimSharedLayers, cloneLayers, fitMainFrame, mainFrameFor, versionLayers } from "../../lib/layout";
+import { charSetDrop } from "../../lib/char-set-layers";
 import { useArtworkSaver } from "./artwork-saver";
 import { frameRegionFor } from "../../lib/material-frame";
 
@@ -193,6 +194,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     () => (main ? frameRegionFor(design.state.regions.map(normalizeRegion), shownMainId, main.id) : null),
     [design.state.regions, shownMainId, main],
   );
+  /** Bộ nhân vật the product's layers come from (CtRegionConfig.charSet). */
+  const usedSets = useMemo(() => new Set(design.state.regions.flatMap((r) => (r.config?.charSet ? [r.config.charSet.projectId] : []))), [design.state.regions]);
   /** Main version id -> its layer count. */
   const layerCounts = useMemo(() => {
     const out: Record<string, number> = {};
@@ -678,13 +681,14 @@ export function CustomizeEditor({ productId }: { productId: string }) {
    * join it), its frame the picture's own outline centred where it was dropped. (A new version is dropped on the
    * Version column instead.)
    */
-  const dropClipart = (drag: CtClipartDrag, at: CtPoint | null) => {
-    if (!main) {
-      void addLibraryMain(drag);
+  const dropClipart = (drag: CtLibraryDrag, at: CtPoint | null) => {
+    if (isCharSetDrag(drag)) {
+      if (!main || !shownMainId) flash("Sản phẩm chưa có version — thêm version trước rồi kéo bộ vào");
+      else void dropCharSet(drag.charSet, shownMainId);
       return;
     }
-    if (drag.set && drag.set.length > 1) {
-      dropSet(drag.set, at);
+    if (!main) {
+      void addLibraryMain(drag);
       return;
     }
     const head = asLayerClipart(drag.asset);
@@ -720,88 +724,98 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     return { x, y, w, h };
   };
 
+  /** The buttons of a several-version set's chooser: empty pictures named after its versions (the first a gốc, the
+   * others its đa sắc — the options), as server/char/product.ts makes a brief's choosers. */
+  const uploadChooser = async (names: string[]): Promise<CtAsset[]> => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 8;
+    const blank = await new Promise<Blob>((ok, fail) => canvas.toBlob((b) => (b ? ok(b) : fail(new Error("Không tạo được ảnh trống"))), "image/png"));
+    const out: CtAsset[] = [];
+    for (const name of names) out.push(await ctApi.uploadClipart(blank, { categoryId: null, parentId: out[0]?.id ?? null, name, source: "ai" }));
+    return [asLayerClipart(out[0]), ...out.slice(1)];
+  };
+
   /**
-   * A set of pictures dragged together: ONE new custom layer (never merged into the layer under the cursor).
-   * Pictures are grouped by the gốc they hang off — each gốc is an option group (side by side), and its đa sắc /
-   * vật liệu picked with it are the options inside that group (a vật liệu picks the picture it was made from, drawn in
-   * its material; a đa sắc of a vật liệu version is offered through config.image.extraOptions). What wasn't picked
-   * stays hidden.
+   * A bộ nhân vật v2 dropped on the canvas (asked 2026-10-29): its product's layers become the layers of version
+   * `mainId`, tagged as one "bộ" layer (lib/char-set-layers.ts); a set of several versions (Boy / Girl) becomes options
+   * of this version. A version holds one bộ: dropping another replaces the one there (a version copied with "+" swaps
+   * its bộ this way) — ⌘Z brings it back.
    */
-  const dropSet = (set: CtClipartSetEntry[], at: CtPoint | null) => {
-    if (!main || !product) return;
-    interface Group {
-      head: CtAsset;
-      bring: CtAsset[];
-      members: string[];
-      picked: string[];
-      extras: CtAsset[];
-    }
-    const groups = new Map<string, Group>();
-    const flat: string[] = [];
-    for (const e of set) {
-      const root = e.root.asset;
-      let g = groups.get(root.id);
-      if (!g) {
-        const members = root.parent_id === null ? e.root.family.filter((a) => a.role === "variant" && a.parent_id === root.id).map((a) => a.id) : [];
-        const bring = e.root.family.filter((a) => a.id !== root.id && (a.role === "rendition" || members.includes(a.id)));
-        g = { head: asLayerClipart(root), bring, members, picked: [], extras: [] };
-        groups.set(root.id, g);
+  const dropCharSet = async (set: CtCharSetDrag["charSet"], mainId: string) => {
+    if (!product || !main) return;
+    setNotice(`Đang lấy layer của bộ “${set.name}”…`);
+    try {
+      const bundle = await ctApi.getBundle(set.productId);
+      const got = await charSetDrop(bundle, { productId: product.id, mainId, board: { w: main.width, h: main.height }, firstOrder: 0 }, { projectId: set.projectId, name: set.name }, uploadChooser);
+      if (!got.regions.length) {
+        flash(`Bộ “${set.name}” không có layer dùng được`);
+        return;
       }
-      const a = e.asset;
-      let id = a.id;
-      if (a.id === root.id || g.members.includes(a.id)) flat.push(a.id);
-      else if (a.role === "rendition" && !a.meta?.variant && a.parent_id) id = a.parent_id;
-      else g.extras.push(asMainOption(a, root.id));
-      if (!g.picked.includes(id)) g.picked.push(id);
+      setAssets((list) => {
+        const have = new Set(list.map((a) => a.id));
+        return [...list, ...got.assets.filter((a) => !have.has(a.id))];
+      });
+      // Read inside the commit: a version "+" just made is already in the state there.
+      let old = new Set<string>();
+      design.commit((s) => {
+        old = new Set(s.regions.filter((r) => r.config?.mainId === mainId && r.config?.charSet).map((r) => r.id));
+        const keep = s.regions.filter((r) => !old.has(r.id));
+        return {
+          ...s,
+          regions: [...keep, ...got.regions.map((r, i) => ({ ...r, sort_order: keep.length + i }))],
+          items: [...s.items.filter((i) => !old.has(i.region_id)), ...got.items],
+        };
+      });
+      if (selectedRegionId && old.has(selectedRegionId)) setSelectedRegionId(null);
+      setEditTarget("region");
+      setTool("select");
+      flash(
+        `${old.size ? "Đã thay bằng" : "Đã thêm"} bộ “${set.name}”: ${got.regions.length} layer${got.skipped ? ` (bỏ ${got.skipped} layer dùng ảnh riêng của sản phẩm bộ)` : ""} — nhớ Lưu thiết kế`,
+      );
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Không lấy được bộ");
     }
-    const list = [...groups.values()];
-    const added = [...list.flatMap((g) => [g.head, ...g.bring]), ...list.flatMap((g) => g.extras)];
-    setAssets((cur) => {
-      const have = new Set(cur.map((a) => a.id));
-      return [...cur, ...added.filter((a) => !have.has(a.id) && have.add(a.id))];
-    });
-    keepAsDragged(flat);
-    const first = list[0].head;
-    const box = dropBox(first, at);
-    const layer = { ...makeRegion(product.id, "image", { type: "rect", ...box, radius: 0 }, regions.length), name: list.length > 1 ? `Bộ ${list.length} nhóm` : first.name || "Bộ ảnh" };
-    const newItems = list.map((g, i) => makeItem(layer.id, g.head.id, i));
-    // Each group shows only what was picked.
-    const hide = list.flatMap((g) => [g.head.id, ...g.members].filter((id) => !g.picked.includes(id)));
-    const show = new Set(list.flatMap((g) => g.picked));
-    const extraOptions = Object.fromEntries(list.flatMap((g) => g.extras.map((x) => [x.id, g.head.id] as const)));
-    ed.commit((s) => {
-      const regionsNow = [...s.regions, layer];
-      return {
-        ...s,
-        regions: regionsNow.map((x) => {
-          if (x.id !== layer.id) return x;
-          const n = normalizeRegion(x);
-          const img = n.config.image;
-          return {
-            ...n,
-            config: {
-              ...n.config,
-              image: {
-                ...img,
-                label: "Choose option",
-                groupLabel: "Choose style",
-                hiddenAssetIds: [...new Set([...img.hiddenAssetIds, ...hide])].filter((id) => !show.has(id)),
-                extraOptions: { ...img.extraOptions, ...extraOptions },
-                defaultAssetId: list[0].picked[0] ?? null,
-              },
-            },
-          };
-        }),
-        items: [...s.items, ...newItems],
-      };
-    });
-    setSelectedRegionId(layer.id);
-    setActiveItemId(newItems[0]?.id ?? null);
-    setSelection((sel) => ({ ...sel, [layer.id]: { kind: "image", assetId: list[0].picked[0] ?? first.id } }));
-    setEditTarget("region");
-    setTool("select");
-    const options = list.reduce((n, g) => n + g.picked.length, 0);
-    flash(`Tạo custom layer: ${list.length} nhóm, ${options} option — khách chọn (không sửa). Nhớ Lưu thiết kế`);
+  };
+
+  /**
+   * "+" in the Version column: the shown version copied — its picture (uploaded again: a version is one asset) and
+   * its layers — as a new version, shown at once. With `set` the copy gets that bộ nhân vật instead of the one it had.
+   */
+  const cloneVersion = async (set?: CtCharSetDrag["charSet"]) => {
+    if (!product || !shownMainId) return;
+    const src = assets.find((a) => a.id === shownMainId);
+    if (!src) return;
+    setNotice("Đang nhân bản version…");
+    try {
+      const res = await fetch(src.url, { mode: "cors" });
+      if (!res.ok) throw new Error(`Không tải được ảnh version (HTTP ${res.status})`);
+      const copy = await ctApi.uploadAsset(product.id, await res.blob(), { role: "main", name: set ? set.name : `${src.name || "Version"} (bản sao)` });
+      setAssets((list) => [...list, copy]);
+      design.commit((s) => {
+        const own = versionLayers(s.regions, s.items, src.id);
+        const cloned = cloneLayers(own.regions, own.items, copy.id);
+        const frame = s.config.layouts[src.id]?.frame;
+        return {
+          ...s,
+          regions: [...s.regions, ...cloned.regions.map((r, i) => ({ ...r, sort_order: s.regions.length + i }))],
+          items: [...s.items, ...cloned.items],
+          config: {
+            ...s.config,
+            // More than one version: the customer picks.
+            main: { ...s.config.main, enabled: true },
+            layouts: frame ? { ...s.config.layouts, [copy.id]: { regions: {}, items: {}, frame } } : s.config.layouts,
+          },
+        };
+      });
+      setSelection((sel) => ({ ...sel, [CT_MAIN_KEY]: { kind: "main", assetId: copy.id } }));
+      setSelectedRegionId(null);
+      setActiveItemId(null);
+      setMainSelected(false);
+      if (set) await dropCharSet(set, copy.id);
+      else flash("Đã nhân bản version — kéo bộ nhân vật khác lên canvas để đổi bộ, nhớ Lưu thiết kế");
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Không nhân bản được");
+    }
   };
 
   /**
@@ -857,8 +871,14 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     }
   };
 
-  /** A clipart dropped onto the version list: a new version, shown at once. */
-  const addVersionFromDrop = async (drag: CtClipartDrag) => {
+  /** Dropped onto the version list: a bộ nhân vật = a copy of the shown version with that bộ; an artwork = a new
+   * version as it is. Shown at once. */
+  const addVersionFromDrop = async (drag: CtLibraryDrag) => {
+    if (isCharSetDrag(drag)) {
+      if (shownMainId) await cloneVersion(drag.charSet);
+      else flash("Sản phẩm chưa có version — thêm version trước");
+      return;
+    }
     if (await addLibraryMain(drag)) showVersion(drag.asset.id);
   };
 
@@ -1020,6 +1040,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             layerCounts={layerCounts}
             shownMainId={shownMainId}
             onDropVersion={(drag) => void addVersionFromDrop(drag)}
+            onCloneVersion={() => void cloneVersion()}
+            usedSets={usedSets}
             versionLabel={config.main.enabled && config.main.label ? config.main.label : undefined}
           />
         </aside>
@@ -1104,12 +1126,12 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                       const raw = e.dataTransfer.getData(CLIPART_DRAG);
                       if (!raw) return;
                       e.preventDefault();
-                      dropClipart(JSON.parse(raw) as CtClipartDrag, null);
+                      dropClipart(JSON.parse(raw) as CtLibraryDrag, null);
                     }}
                   >
                     <ImageIcon className="h-10 w-10 opacity-40" />
                     <p>Chưa có version nào.</p>
-                    <p className="text-xs">Mở tab Thư viện bên trái, kéo 1 clipart (gốc, đa sắc hay vật liệu) thả vào đây.</p>
+                    <p className="text-xs">Mở tab Thư viện bên trái, kéo 1 artwork thả vào đây làm version đầu.</p>
                   </div>
                 )}
               </div>

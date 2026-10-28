@@ -32,7 +32,7 @@ import { activeRegions, hasTestPhoto, makeRegion } from "../../lib/design";
 import { cx, CHECKER_STYLE } from "../ui";
 import type { DesignApi } from "./use-design";
 import { useImageSize } from "./use-image-size";
-import { CLIPART_DRAG, type CtClipartDrag } from "./library-panel";
+import { CLIPART_DRAG, type CtLibraryDrag } from "./library-panel";
 import { updateItem, updateRegion } from "./use-design";
 import { mainFrameFor } from "../../lib/layout";
 import { frameSvgPath } from "../../lib/material-frame";
@@ -102,7 +102,7 @@ export interface StageProps {
   /** Photo zones whose test photo is being processed: regionId -> spinner label. */
   photoBusy?: Record<string, string>;
   /** A library clipart dropped on the canvas, at main-asset pixel coordinates. */
-  onDropClipart?: (drag: CtClipartDrag, at: CtPoint) => void;
+  onDropClipart?: (drag: CtLibraryDrag, at: CtPoint) => void;
   /** Background photo drawn behind the design (Thiết kế → Nền). */
   scene?: CtProductScene;
   /** The version shown, whose picture frame can be selected / moved / resized. */
@@ -928,7 +928,7 @@ export function Stage(props: StageProps) {
         const raw = e.dataTransfer.getData(CLIPART_DRAG);
         if (!raw || !props.onDropClipart) return;
         e.preventDefault();
-        props.onDropClipart(JSON.parse(raw) as CtClipartDrag, toWorld(e.clientX, e.clientY));
+        props.onDropClipart(JSON.parse(raw) as CtLibraryDrag, toWorld(e.clientX, e.clientY));
       }}
     >
       {dropping && <div className="pointer-events-none absolute inset-2 z-20 rounded-lg border-2 border-dashed border-sky-500 bg-sky-500/5" />}

@@ -1,71 +1,46 @@
 "use client";
 
 /**
- * "Thư viện" tab of the asset sidebar: browse the global clipart library
- * (migration 006) and drag cliparts into this product. Cliparts are uploaded
- * here too ("Upload clipart": several files at once, into a category picked or
- * made first) — a clipart is any picture; fixing them happens on /library.
- * Each category has two shelves: Clipart and Artwork (finished designs saved
- * from products).
+ * "Thư viện" tab of the asset sidebar (rebuilt 2026-10-29: everything starts from a bộ nhân vật v2).
  *
- * Every picture is a clipart: a card shows a gốc, its two buttons open its
- * đa sắc and vật liệu versions. Whichever picture is dragged is used exactly
- * as it is: dropped on the Version column it is a version, on the canvas a
- * layer (on a custom layer: another option group of it).
+ *   Bộ nhân vật  every finished v2 set (one with a product). A set is dragged WHOLE: dropped on the canvas its layers
+ *                land on the shown version as one "bộ" layer (lib/char-set-layers.ts), pixel for pixel — a set's
+ *                clipart fit only that set, so they are never dragged one by one. Dropped on the Version column it
+ *                is a new version (a copy of the shown one) with that set.
+ *   Artwork      finished designs saved from products (one per version), dragged as one picture.
  *
- * Nothing is copied: the product references the library clipart, so a fix
- * made in the library shows up here too (after the next Publish on the
- * storefront).
+ * Sets and their clipart are made / fixed in /v2 and on /library — nothing is uploaded here.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CheckSquare, ExternalLink, GripVertical, ImagePlus, Layers, Library, Loader2, Palette, Square, X } from "lucide-react";
-import type { CtAsset, CtClipartCategory, CtLibraryShelf } from "../../types";
-import { ctApi } from "../../lib/api-client";
-import { categoryBody, clipartBadges, clipartFamily, flattenCategories, isArtworkClipart, isMaterialClipart, isMulticolorClipart, libraryOrigins, renditionsOf, setMembers } from "../../lib/library";
-import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, CtSelect, CtTooltip, cx } from "../ui";
+import { ExternalLink, GripVertical, Layers, Library, Loader2, Palette } from "lucide-react";
+import type { CtAsset, CtCharProject, CtClipartCategory, CtLibraryShelf } from "../../types";
+import { charApi, ctApi } from "../../lib/api-client";
+import { clipartBadges, clipartFamily, flattenCategories, isArtworkClipart, isMaterialClipart, isMulticolorClipart, libraryOrigins, renditionsOf, setMembers } from "../../lib/library";
+import { CHECKER_STYLE, CtSelect, CtTooltip, cx } from "../ui";
 
-/** dataTransfer type of a library clipart dragged onto the canvas / the Version column (payload: CtClipartDrag JSON). */
+/** dataTransfer type of a library drag onto the canvas / the Version column (payload: CtLibraryDrag JSON). */
 export const CLIPART_DRAG = "application/x-flexiprint-clipart";
 
 export interface CtClipartDrag {
   /** The picture dragged — the product uses exactly this one. */
   asset: CtAsset;
-  /**
-   * It + what comes along: its vật liệu versions (the "rendition" display draws them) and, for a gốc, its đa sắc
-   * (options of the layer's group, hidden until switched on in the inspector).
-   */
+  /** It + what comes along: its vật liệu versions (the "rendition" display draws them) and, for a gốc, its đa sắc. */
   family: CtAsset[];
-  /**
-   * Several pictures picked together (click / Shift+click / "Chọn hết") and dragged as one: they become ONE
-   * custom layer. Pictures of different gốc are its option groups (side by side); a gốc's đa sắc / vật liệu picked
-   * with it are options inside its group. Absent = just `asset`.
-   */
-  set?: CtClipartSetEntry[];
 }
 
-export interface CtClipartSetEntry {
-  asset: CtAsset;
-  family: CtAsset[];
-  /** The gốc this picture hangs off (itself for a gốc) and what it brings along — the group it lands in. */
-  root: { asset: CtAsset; family: CtAsset[] };
+/** A whole bộ nhân vật v2: its product's layers are what lands. */
+export interface CtCharSetDrag {
+  charSet: { projectId: string; productId: string; name: string };
 }
 
-/** The gốc a library picture hangs off (itself for a gốc). */
-function rootOf(list: CtAsset[], a: CtAsset): CtAsset {
-  const byId = new Map(list.map((x) => [x.id, x]));
-  let cur = a;
-  for (let i = 0; i < 4 && cur.parent_id; i++) {
-    const up = byId.get(cur.parent_id);
-    if (!up) break;
-    cur = up;
-  }
-  return cur;
-}
+export type CtLibraryDrag = CtClipartDrag | CtCharSetDrag;
+
+export const isCharSetDrag = (d: CtLibraryDrag): d is CtCharSetDrag => "charSet" in d;
 
 /** What a dragged picture brings along (see CtClipartDrag.family). */
-export function dragFamily(list: CtAsset[], a: CtAsset): CtAsset[] {
+function dragFamily(list: CtAsset[], a: CtAsset): CtAsset[] {
   const members = a.parent_id === null && a.role === "sub" ? setMembers(list, a.id).filter((m) => m.role === "variant") : [];
   return [a, ...renditionsOf(list, a.id), ...members, ...members.flatMap((m) => renditionsOf(list, m.id))];
 }
@@ -73,40 +48,144 @@ export function dragFamily(list: CtAsset[], a: CtAsset): CtAsset[] {
 export interface LibraryPanelProps {
   /** Ids of assets this product already renders (marks "đang dùng"). */
   usedIds: Set<string>;
+  /** Bộ nhân vật already on this product (CtRegionConfig.charSet). */
+  usedSets: Set<string>;
   /** Changing it reloads the list. */
   version?: number;
 }
 
-const ALL = "__all";
-const NONE = "none";
-
 export function LibraryPanel(props: LibraryPanelProps) {
-  const [categories, setCategories] = useState<CtClipartCategory[]>([]);
-  const [uncategorized, setUncategorized] = useState(0);
-  const [category, setCategory] = useState<string>(ALL);
-  const [cliparts, setCliparts] = useState<CtAsset[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  /** Pictures picked to drag as one set (ids, any order — the set follows the list order). */
-  const [selected, setSelected] = useState<string[]>([]);
-  const [anchor, setAnchor] = useState<string | null>(null);
   const [shelf, setShelf] = useState<CtLibraryShelf>("clipart");
-  const [uploadOpen, setUploadOpen] = useState(false);
-  const [reload, setReload] = useState(0);
+  return (
+    <div className="flex h-full flex-col text-sm">
+      <div className="flex items-center gap-1.5 border-b px-2 py-1.5">
+        <div className="flex flex-1 rounded-md border p-0.5 text-[11px]">
+          {(
+            [
+              ["clipart", "Bộ nhân vật"],
+              ["artwork", "Artwork"],
+            ] as Array<[CtLibraryShelf, string]>
+          ).map(([k, label]) => (
+            <button key={k} onClick={() => setShelf(k)} className={cx("flex-1 rounded px-2 py-0.5 font-medium", shelf === k ? "bg-foreground text-background" : "hover:bg-accent")}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <CtTooltip label="Xem, sửa clipart từng bộ — trang Thư viện">
+          <Link href="/library" target="_blank" className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] hover:bg-accent">
+            <Library className="h-3.5 w-3.5" /> Quản lý
+          </Link>
+        </CtTooltip>
+      </div>
+      {shelf === "clipart" ? <CharSetShelf {...props} /> : <ArtworkShelf {...props} />}
+    </div>
+  );
+}
 
-  const loadCategories = useCallback(() => {
-    ctApi
-      .listCategories()
+/** Finished bộ nhân vật v2 — the ones with a product (its layers are what a drop copies). */
+export function finishedSets(projects: CtCharProject[]): CtCharProject[] {
+  return projects.filter((p) => p.product_ids.length > 0).sort((a, b) => a.name.localeCompare(b.name, "vi"));
+}
+
+function CharSetShelf(props: LibraryPanelProps) {
+  const [sets, setSets] = useState<CtCharProject[] | null>(null);
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const load = useCallback(() => {
+    charApi
+      .list()
       .then((r) => {
-        setCategories(r.categories);
-        setUncategorized(r.uncategorized);
+        setSets(finishedSets(r.projects));
+        setThumbs(r.thumbs);
       })
       .catch((e: Error) => setError(e.message));
   }, []);
   useEffect(() => {
-    loadCategories();
-  }, [loadCategories]);
+    load();
+  }, [load, props.version]);
+  // Back from /v2 or /library: show what changed there.
+  useEffect(() => {
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
+  }, [load]);
+  const shown = (sets ?? []).filter((p) => !q.trim() || p.name.toLowerCase().includes(q.trim().toLowerCase()));
+  return (
+    <>
+      <div className="border-b p-2">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Tìm bộ…"
+          className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-sky-500/60"
+        />
+        <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
+          Kéo cả bộ lên canvas = layer bộ nhân vật của version đang mở (clipart giữ đúng pixel). Thả vào cột Version = thêm 1 version với bộ đó.
+        </p>
+      </div>
+      {error && <p className="border-b px-2 py-1.5 text-[11px] text-destructive">{error}</p>}
+      <div className="flex-1 space-y-2 overflow-y-auto p-2">
+        {sets === null ? (
+          <div className="flex justify-center py-6">
+            <Loader2 className="h-4 w-4 animate-spin" />
+          </div>
+        ) : shown.length === 0 ? (
+          <p className="px-1 py-6 text-center text-xs text-muted-foreground">Chưa có bộ nhân vật hoàn chỉnh — làm bộ ở trang v2 (bộ có sản phẩm mới hiện ở đây).</p>
+        ) : (
+          shown.map((p) => <CharSetCard key={p.id} project={p} thumb={thumbs[p.id] ?? ""} used={props.usedSets.has(p.id)} />)
+        )}
+      </div>
+    </>
+  );
+}
 
+function CharSetCard({ project, thumb, used }: { project: CtCharProject; thumb: string; used: boolean }) {
+  const slots = project.layers?.slots ?? [];
+  const files = slots.reduce((n, s) => n + s.files.length, 0);
+  const payload: CtCharSetDrag = { charSet: { projectId: project.id, productId: project.product_ids[0], name: project.name } };
+  return (
+    <div
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(CLIPART_DRAG, JSON.stringify(payload));
+        e.dataTransfer.effectAllowed = "copy";
+      }}
+      title={`${project.name} — kéo lên canvas hoặc vào cột Version`}
+      className={cx("flex cursor-grab select-none items-center gap-2 rounded-lg border p-2 hover:border-sky-500 active:cursor-grabbing", used && "border-emerald-500/60")}
+    >
+      <div className="relative aspect-square w-16 shrink-0 overflow-hidden rounded border" style={CHECKER_STYLE}>
+        {thumb && <img src={thumb} alt={project.name} className="pointer-events-none h-full w-full object-contain" loading="lazy" draggable={false} />}
+        <GripVertical className="pointer-events-none absolute right-0.5 top-0.5 h-3 w-3 text-white drop-shadow" />
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="line-clamp-2 text-xs font-medium">{project.name}</span>
+        <span className="text-[11px] text-muted-foreground">
+          {slots.length ? `${slots.filter((s) => !s.follows).length} hạng mục · ${files} clipart` : project.brief.kind === "photo" ? "bộ ảnh khách" : "bộ nhiều dáng"}
+          {used && <span className="ml-1 text-emerald-600">· đang dùng</span>}
+        </span>
+        <Link href={`/v2/${project.id}`} target="_blank" onClick={(e) => e.stopPropagation()} className="inline-flex w-fit items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:underline">
+          <ExternalLink className="h-2.5 w-2.5" /> Mở bộ
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+const ALL = "__all";
+
+function ArtworkShelf(props: LibraryPanelProps) {
+  const [categories, setCategories] = useState<CtClipartCategory[]>([]);
+  const [category, setCategory] = useState<string>(ALL);
+  const [cliparts, setCliparts] = useState<CtAsset[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    ctApi
+      .listCategories()
+      .then((r) => setCategories(r.categories))
+      .catch((e: Error) => setError(e.message));
+  }, []);
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
@@ -116,264 +195,39 @@ export function LibraryPanel(props: LibraryPanelProps) {
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, [category]);
-
   useEffect(() => {
     load();
-  }, [load, props.version, reload]);
-
-  // Back from the library tab: show what it just made.
-  useEffect(() => {
-    window.addEventListener("focus", load);
-    return () => window.removeEventListener("focus", load);
-  }, [load]);
+  }, [load, props.version]);
 
   const options = useMemo(
-    () => [
-      { value: ALL, label: "Tất cả danh mục" },
-      ...flattenCategories(categories).map(({ category: c, depth }) => ({ value: c.id, label: `${"— ".repeat(depth)}${c.name} (${c.count ?? 0})` })),
-      ...(uncategorized ? [{ value: NONE, label: `Chưa phân loại (${uncategorized})` }] : []),
-    ],
-    [categories, uncategorized],
+    () => [{ value: ALL, label: "Tất cả danh mục" }, ...flattenCategories(categories).map(({ category: c, depth }) => ({ value: c.id, label: `${"— ".repeat(depth)}${c.name}` }))],
+    [categories],
   );
-  const allOrigins = libraryOrigins(cliparts);
-  const artworkCount = allOrigins.filter(isArtworkClipart).length;
-  const origins = allOrigins.filter((o) => isArtworkClipart(o) === (shelf === "artwork"));
-  /** Every picture in list order: each gốc, then its đa sắc and vật liệu. */
-  const order = useMemo(() => {
-    const out: CtAsset[] = [];
-    for (const o of libraryOrigins(cliparts).filter((x) => isArtworkClipart(x) === (shelf === "artwork"))) out.push(o, ...clipartFamily(cliparts, o).filter((a) => a.id !== o.id && (isMulticolorClipart(a) || isMaterialClipart(a))));
-    return out;
-  }, [cliparts, shelf]);
-  // A new category / list: the picked set starts over.
-  useEffect(() => {
-    setSelected([]);
-    setAnchor(null);
-  }, [category, shelf]);
-
-  const sel: Selecting = {
-    selected,
-    /** Click = pick / unpick; Shift+click = everything between the last click and this one (origins in view). */
-    toggle: (a, shift) => {
-      if (shift && anchor) {
-        const ids = origins.map((o) => o.id);
-        const i = ids.indexOf(anchor);
-        const j = ids.indexOf(a.id);
-        if (i >= 0 && j >= 0) {
-          const range = ids.slice(Math.min(i, j), Math.max(i, j) + 1);
-          setSelected((cur) => [...new Set([...cur, ...range])]);
-          setAnchor(a.id);
-          return;
-        }
-      }
-      setSelected((cur) => (cur.includes(a.id) ? cur.filter((x) => x !== a.id) : [...cur, a.id]));
-      setAnchor(a.id);
-    },
-    /** The drag payload: the set when the dragged picture is part of a set of 2+, else just it. */
-    payload: (a) => {
-      const base: CtClipartDrag = { asset: a, family: dragFamily(cliparts, a) };
-      if (selected.length < 2 || !selected.includes(a.id)) return base;
-      const set = order
-        .filter((x) => selected.includes(x.id))
-        .map((x): CtClipartSetEntry => {
-          const root = rootOf(cliparts, x);
-          return { asset: x, family: dragFamily(cliparts, x), root: { asset: root, family: dragFamily(cliparts, root) } };
-        });
-      return { asset: set[0].asset, family: set[0].family, set };
-    },
-  };
-
+  const origins = libraryOrigins(cliparts).filter(isArtworkClipart);
   return (
-    <div className="flex h-full flex-col text-sm">
-      <div className="flex items-center gap-1.5 border-b p-2">
-        <div className="min-w-0 flex-1">
-          <CtSelect<string> value={category} onChange={setCategory} options={options} />
-        </div>
-        <CtTooltip label="Tạo, sửa clipart · danh mục · preset — trang Thư viện">
-          <Link href="/library" target="_blank" className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border px-2 text-xs hover:bg-accent">
-            <Library className="h-3.5 w-3.5" /> Quản lý
-          </Link>
-        </CtTooltip>
-      </div>
-      <div className="flex items-center gap-1.5 border-b px-2 py-1.5">
-        <div className="flex flex-1 rounded-md border p-0.5 text-[11px]">
-          {(
-            [
-              ["clipart", `Clipart (${allOrigins.length - artworkCount})`],
-              ["artwork", `Artwork (${artworkCount})`],
-            ] as Array<[CtLibraryShelf, string]>
-          ).map(([k, label]) => (
-            <button key={k} onClick={() => setShelf(k)} className={cx("flex-1 rounded px-2 py-0.5 font-medium", shelf === k ? "bg-foreground text-background" : "hover:bg-accent")}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <CtTooltip label="Upload clipart (chọn nhiều ảnh cùng lúc) vào 1 danh mục — chọn hoặc tạo danh mục trước">
-          <button className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-foreground px-2 text-[11px] font-medium text-background hover:opacity-90" onClick={() => setUploadOpen(true)}>
-            <ImagePlus className="h-3.5 w-3.5" /> Upload
-          </button>
-        </CtTooltip>
+    <>
+      <div className="border-b p-2">
+        <CtSelect<string> value={category} onChange={setCategory} options={options} />
       </div>
       {error && <p className="border-b px-2 py-1.5 text-[11px] text-destructive">{error}</p>}
-      <div className="flex items-center gap-1.5 border-b px-2 py-1 text-[11px]">
-        {selected.length ? (
-          <>
-            <span className="font-medium text-sky-600">Đã chọn {selected.length}</span>
-            <span className="min-w-0 flex-1 truncate text-muted-foreground" title="Clipart gốc khác nhau = các nhóm ngang cấp; đa sắc / vật liệu của 1 gốc = option con trong nhóm của gốc đó">
-              — kéo lên canvas = 1 custom layer: mỗi gốc 1 nhóm, đa sắc / vật liệu là option con
-            </span>
-            <button className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-accent" onClick={() => setSelected([])}>
-              <X className="h-3 w-3" /> Bỏ chọn
-            </button>
-          </>
-        ) : (
-          <span className="flex-1 text-muted-foreground">Click để chọn nhiều · Shift+click chọn dải</span>
-        )}
-        <button
-          className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-accent"
-          onClick={() => setSelected(origins.map((o) => o.id))}
-          disabled={!origins.length}
-          title="Chọn hết clipart gốc đang hiện"
-        >
-          <CheckSquare className="h-3 w-3" /> Chọn hết
-        </button>
-      </div>
-
       <div className="flex-1 space-y-2 overflow-y-auto p-2">
         {loading && origins.length === 0 ? (
           <div className="flex justify-center py-6">
             <Loader2 className="h-4 w-4 animate-spin" />
           </div>
         ) : origins.length === 0 ? (
-          <p className="px-1 py-6 text-center text-xs text-muted-foreground">
-            {shelf === "artwork" ? "Chưa có artwork — Lưu thiết kế để mỗi version thành 1 artwork (danh mục mang tên sản phẩm)." : "Chưa có clipart — bấm Upload (chọn / tạo danh mục, chọn nhiều ảnh)."}
-          </p>
+          <p className="px-1 py-6 text-center text-xs text-muted-foreground">Chưa có artwork — Lưu thiết kế để mỗi version thành 1 artwork (danh mục mang tên sản phẩm).</p>
         ) : (
-          origins.map((o) => <OriginCard key={o.id} origin={o} family={clipartFamily(cliparts, o)} usedIds={props.usedIds} sel={sel} />)
+          origins.map((o) => <OriginCard key={o.id} origin={o} family={clipartFamily(cliparts, o)} list={cliparts} usedIds={props.usedIds} />)
         )}
       </div>
-      {uploadOpen && (
-        <UploadDialog
-          categories={categories}
-          initial={category !== ALL && category !== NONE ? category : null}
-          onClose={() => setUploadOpen(false)}
-          onDone={(categoryId) => {
-            setUploadOpen(false);
-            loadCategories();
-            setShelf("clipart");
-            if (categoryId === category) setReload((n) => n + 1);
-            else setCategory(categoryId);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-/**
- * Upload cliparts: the category first (picked, or a new one by name), then any number of pictures — each one a
- * clipart gốc of that category, uploaded one after another.
- */
-function UploadDialog(props: { categories: CtClipartCategory[]; initial: string | null; onClose: () => void; onDone: (categoryId: string) => void }) {
-  const NEW = "__new";
-  const [target, setTarget] = useState<string>(props.initial ?? (props.categories[0]?.id ?? NEW));
-  const [newName, setNewName] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
-  const [progress, setProgress] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const input = useRef<HTMLInputElement | null>(null);
-  const ready = files.length > 0 && (target !== NEW || newName.trim() !== "");
-
-  const run = async () => {
-    setError(null);
-    try {
-      let categoryId = target;
-      if (target === NEW) {
-        setProgress("Đang tạo danh mục…");
-        categoryId = (await ctApi.createCategory(categoryBody(newName, null))).id;
-      }
-      const failed: string[] = [];
-      for (const [i, f] of files.entries()) {
-        setProgress(`Đang upload ${i + 1}/${files.length}…`);
-        try {
-          await ctApi.uploadClipart(f, { categoryId });
-        } catch (e) {
-          failed.push(`${f.name}: ${e instanceof Error ? e.message : "lỗi"}`);
-        }
-      }
-      setProgress(null);
-      if (failed.length) {
-        setError(`Không upload được: ${failed.join("; ")}`);
-        return;
-      }
-      props.onDone(categoryId);
-    } catch (e) {
-      setProgress(null);
-      setError(e instanceof Error ? e.message : "Lỗi");
-    }
-  };
-
-  return (
-    <CtModal open onOpenChange={(o) => !o && !progress && props.onClose()} title="Upload clipart">
-      <div className="space-y-3 text-sm">
-        <CtField label="Danh mục" hint="Clipart nào cũng được (nhân vật, nền, chữ, khung…) — cuối cùng chỉ là 1 tấm hình.">
-          <CtSelect<string>
-            value={target}
-            onChange={setTarget}
-            options={[...flattenCategories(props.categories).map(({ category: c, depth }) => ({ value: c.id, label: `${"— ".repeat(depth)}${c.name}` })), { value: NEW, label: "+ Danh mục mới…" }]}
-          />
-        </CtField>
-        {target === NEW && (
-          <CtField label="Tên danh mục mới">
-            <CtInput value={newName} autoFocus placeholder="vd. Nền Noel" onChange={(e) => setNewName(e.target.value)} />
-          </CtField>
-        )}
-        <div>
-          <CtButton onClick={() => input.current?.click()} disabled={progress !== null}>
-            <ImagePlus className="h-3.5 w-3.5" /> Chọn ảnh… (nhiều ảnh cùng lúc)
-          </CtButton>
-          <input
-            ref={input}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              const list = Array.from(e.target.files ?? []);
-              e.target.value = "";
-              if (list.length) setFiles(list);
-            }}
-          />
-          {files.length > 0 && <p className="mt-1.5 text-[11px] text-muted-foreground">{files.length} ảnh: {files.map((f) => f.name).join(", ").slice(0, 300)}</p>}
-        </div>
-        {progress && (
-          <p className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin" /> {progress}
-          </p>
-        )}
-        {error && <p className="text-xs text-destructive">{error}</p>}
-        <div className="flex justify-end gap-2 border-t pt-3">
-          <CtButton onClick={props.onClose} disabled={progress !== null}>
-            Huỷ
-          </CtButton>
-          <CtButton variant="primary" onClick={() => void run()} disabled={!ready || progress !== null}>
-            Upload {files.length || ""}
-          </CtButton>
-        </div>
-      </div>
-    </CtModal>
+    </>
   );
 }
 
 type Shelf = "multicolor" | "material";
 
-/** Picking several pictures to drag as one custom layer. */
-interface Selecting {
-  selected: string[];
-  toggle: (a: CtAsset, shift: boolean) => void;
-  payload: (a: CtAsset) => CtClipartDrag;
-}
-
-function OriginCard({ origin, family, usedIds, sel }: { origin: CtAsset; family: CtAsset[]; usedIds: Set<string>; sel: Selecting }) {
+function OriginCard({ origin, family, list, usedIds }: { origin: CtAsset; family: CtAsset[]; list: CtAsset[]; usedIds: Set<string> }) {
   const [open, setOpen] = useState<Shelf | null>(null);
   const multicolor = family.filter(isMulticolorClipart);
   const material = family.filter(isMaterialClipart);
@@ -382,7 +236,7 @@ function OriginCard({ origin, family, usedIds, sel }: { origin: CtAsset; family:
   return (
     <div className={cx("rounded-lg border transition-colors", used && "border-emerald-500/60")}>
       <div className="flex items-center gap-2 p-2">
-        <DragThumb asset={origin} sel={sel} used={usedIds.has(origin.id)} className="w-20" />
+        <DragThumb asset={origin} list={list} used={usedIds.has(origin.id)} className="w-20" />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-xs font-medium" title={origin.spec || origin.name}>
             {origin.name || "(không tên)"}
@@ -391,35 +245,36 @@ function OriginCard({ origin, family, usedIds, sel }: { origin: CtAsset; family:
             {origin.width}×{origin.height}
             {used && <span className="ml-1 text-emerald-600">· đang dùng</span>}
           </span>
-          <span className="text-[10px] leading-snug text-muted-foreground">Kéo ảnh nào thì dùng đúng ảnh đó: thả vào cột Version = version, thả lên canvas = layer.</span>
         </div>
       </div>
-      <div className="flex border-t text-[11px]">
-        {(
-          [
-            ["multicolor", "Đa sắc", multicolor.length, Palette],
-            ["material", "Vật liệu", material.length, Layers],
-          ] as const
-        ).map(([k, label, count, Icon], i) => (
-          <button
-            key={k}
-            type="button"
-            disabled={count === 0}
-            onClick={() => setOpen((cur) => (cur === k ? null : k))}
-            className={cx(
-              "flex flex-1 items-center justify-center gap-1 py-1.5 hover:bg-accent disabled:opacity-40 disabled:hover:bg-transparent",
-              i > 0 && "border-l",
-              open === k && "bg-accent font-medium",
-            )}
-          >
-            <Icon className="h-3 w-3" /> {label} ({count})
-          </button>
-        ))}
-      </div>
+      {multicolor.length + material.length > 0 && (
+        <div className="flex border-t text-[11px]">
+          {(
+            [
+              ["multicolor", "Đa sắc", multicolor.length, Palette],
+              ["material", "Vật liệu", material.length, Layers],
+            ] as const
+          ).map(([k, label, count, Icon], i) => (
+            <button
+              key={k}
+              type="button"
+              disabled={count === 0}
+              onClick={() => setOpen((cur) => (cur === k ? null : k))}
+              className={cx(
+                "flex flex-1 items-center justify-center gap-1 py-1.5 hover:bg-accent disabled:opacity-40 disabled:hover:bg-transparent",
+                i > 0 && "border-l",
+                open === k && "bg-accent font-medium",
+              )}
+            >
+              <Icon className="h-3 w-3" /> {label} ({count})
+            </button>
+          ))}
+        </div>
+      )}
       {shown.length > 0 && (
         <div className="grid grid-cols-3 gap-1.5 border-t p-2">
           {shown.map((a) => (
-            <DragThumb key={a.id} asset={a} sel={sel} used={usedIds.has(a.id)} withName />
+            <DragThumb key={a.id} asset={a} list={list} used={usedIds.has(a.id)} withName />
           ))}
         </div>
       )}
@@ -427,29 +282,22 @@ function OriginCard({ origin, family, usedIds, sel }: { origin: CtAsset; family:
   );
 }
 
-/** One picture of the library: click picks it (Shift = a range), drag takes it — or the whole picked set. */
-function DragThumb({ asset, sel, used, withName, className }: { asset: CtAsset; sel: Selecting; used: boolean; withName?: boolean; className?: string }) {
-  const picked = sel.selected.includes(asset.id);
+/** One artwork picture: dragged as it is (canvas = a layer, Version column = a version). */
+function DragThumb({ asset, list, used, withName, className }: { asset: CtAsset; list: CtAsset[]; used: boolean; withName?: boolean; className?: string }) {
   return (
     <div
       draggable
       onDragStart={(e) => {
-        const payload = sel.payload(asset);
+        const payload: CtClipartDrag = { asset, family: dragFamily(list, asset) };
         e.dataTransfer.setData(CLIPART_DRAG, JSON.stringify(payload));
         e.dataTransfer.effectAllowed = "copy";
       }}
-      onClick={(e) => sel.toggle(asset, e.shiftKey)}
-      title={`${asset.name || "(không tên)"} — click để chọn (Shift: chọn dải), kéo vào cột Version hoặc lên canvas`}
+      title={`${asset.name || "(không tên)"} — kéo vào cột Version hoặc lên canvas`}
       className={cx("shrink-0 cursor-grab select-none active:cursor-grabbing", className)}
     >
-      <div className={cx("relative aspect-square overflow-hidden rounded border hover:border-sky-500", used && "border-emerald-500", picked && "border-sky-500 ring-2 ring-sky-500")} style={CHECKER_STYLE}>
+      <div className={cx("relative aspect-square overflow-hidden rounded border hover:border-sky-500", used && "border-emerald-500")} style={CHECKER_STYLE}>
         <img src={asset.url} alt={asset.name} className="pointer-events-none h-full w-full object-contain" loading="lazy" draggable={false} />
         <ClipartBadges asset={asset} className="absolute inset-x-0.5 bottom-0.5" />
-        {picked ? (
-          <span className="pointer-events-none absolute left-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-sky-500 px-1 text-[9px] font-bold text-white">✓</span>
-        ) : (
-          <Square className="pointer-events-none absolute left-0.5 top-0.5 h-3 w-3 text-white/80 drop-shadow" />
-        )}
         <GripVertical className="pointer-events-none absolute right-0.5 top-0.5 h-3 w-3 text-white drop-shadow" />
       </div>
       {withName && <div className="mt-0.5 truncate text-[10px]">{asset.name}</div>}
@@ -466,15 +314,6 @@ export function ClipartBadges({ asset, className, origin = false }: { asset: Pic
       {origin && b.origin && <span className="rounded bg-slate-700/90 px-1 text-[9px] leading-4 text-white">gốc</span>}
       {b.multicolor && <span className="rounded bg-pink-600/90 px-1 text-[9px] leading-4 text-white">đa sắc</span>}
       {b.material && <span className="rounded bg-violet-600/90 px-1 text-[9px] leading-4 text-white">vật liệu</span>}
-    </span>
-  );
-}
-
-/** Small link-out used by the product asset cards. */
-export function LibraryBadge() {
-  return (
-    <span className="absolute right-0.5 top-0.5 flex items-center gap-0.5 rounded bg-emerald-600/90 px-1 text-[10px] text-white">
-      <ExternalLink className="h-2.5 w-2.5" /> thư viện
     </span>
   );
 }

@@ -9,6 +9,8 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronRight,
   CornerDownRight,
   Eye,
   EyeOff,
@@ -22,6 +24,7 @@ import {
   Type,
   Upload,
   UserSquare,
+  Users,
   X,
   HelpCircle,
 } from "lucide-react";
@@ -131,6 +134,32 @@ export function Inspector(props: InspectorProps) {
   // Drag-to-restack: the dragged layer and where it would land (index in `ordered`, 0..n).
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
+  /** Bộ nhân vật groups opened (by the first layer's id — a version's own copy of a set is its own group). */
+  const [openSets, setOpenSets] = useState<Set<string>>(new Set());
+  /** A bộ nhân vật's layers (CtRegionConfig.charSet) side by side in the list are ONE row "Bộ …" with them under it. */
+  const setGroups = new Map<string, CtRegion[]>();
+  {
+    let head: string | null = null;
+    ordered.forEach((r, i) => {
+      const set = r.config?.charSet?.projectId;
+      if (!set) {
+        head = null;
+        return;
+      }
+      if (!head || ordered[i - 1]?.config?.charSet?.projectId !== set) head = r.id;
+      setGroups.set(head, [...(setGroups.get(head) ?? []), r]);
+    });
+  }
+  const groupOf = (id: string): string | null => {
+    for (const [head, list] of setGroups) if (list.some((x) => x.id === id)) return head;
+    return null;
+  };
+  const selectedGroup = selectedRegionId ? groupOf(selectedRegionId) : null;
+  const removeMany = (ids: string[]) => {
+    const gone = new Set(ids.flatMap((id) => [...zoneSubtree(regions, id)]));
+    design.commit((s) => ({ ...s, regions: s.regions.filter((r) => !gone.has(r.id)), items: s.items.filter((i) => !gone.has(i.region_id)) }));
+    props.onSelectRegion(null);
+  };
 
   /** Move a layer to slot `at` of the topmost-first list; sort_order is its mirror. */
   const restack = (id: string, at: number) =>
@@ -184,8 +213,36 @@ export function Inspector(props: InspectorProps) {
           const Icon = KIND_ICON[r.kind];
           const hasFrame = r.kind === "photo" && r.config.photo?.frame?.enabled !== false && hasTestPhoto(props.selection[r.id]);
           const frameActive = hasFrame && r.id === selectedRegionId && props.frameSelected;
+          const group = r.config?.charSet ? groupOf(r.id) : null;
+          const groupList = group ? (setGroups.get(group) ?? []) : [];
+          const groupOpen = !!group && (openSets.has(group) || selectedGroup === group);
           return (
             <Fragment key={r.id}>
+            {group === r.id && (
+              <div
+                onClick={() =>
+                  setOpenSets((cur) => {
+                    const next = new Set(cur);
+                    if (next.has(group)) next.delete(group);
+                    else next.add(group);
+                    return next;
+                  })
+                }
+                className={cx("group flex cursor-pointer items-center gap-2 px-3 py-1.5", selectedGroup === group ? "bg-sky-500/10" : "hover:bg-accent")}
+                title="Bộ nhân vật v2 — các layer của bộ ở bên trong (bấm để mở / đóng)"
+              >
+                {groupOpen ? <ChevronDown className="-ml-2 h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="-ml-2 h-3.5 w-3.5 shrink-0" />}
+                <Users className="h-3.5 w-3.5 shrink-0 text-violet-500" />
+                <span className="flex-1 truncate font-medium">{r.config.charSet?.name || "Bộ nhân vật"}</span>
+                <span className="text-[10px] text-muted-foreground">{groupList.length} layer</span>
+                <span className="hidden gap-0.5 group-hover:flex">
+                  <LayerButton label="Xoá cả bộ khỏi version" danger onClick={() => removeMany(groupList.map((x) => x.id))}>
+                    <Trash2 className="h-3 w-3" />
+                  </LayerButton>
+                </span>
+              </div>
+            )}
+            {(!group || groupOpen) && (
             <div
               draggable={renaming !== r.id}
               onDragStart={(e) => {
@@ -211,7 +268,8 @@ export function Inspector(props: InspectorProps) {
               onMouseLeave={() => props.onHoverRegion(null)}
               onClick={() => props.onSelectRegion(r.id)}
               className={cx(
-                "group relative flex cursor-pointer items-center gap-2 px-3 py-1.5",
+                "group relative flex cursor-pointer items-center gap-2 py-1.5 pr-3",
+                group ? "pl-7" : "pl-3",
                 r.id === selectedRegionId && !frameActive ? "bg-sky-500/15" : "hover:bg-accent",
                 r.id === dragId && "opacity-40",
               )}
@@ -260,6 +318,7 @@ export function Inspector(props: InspectorProps) {
                 </span>
               )}
             </div>
+            )}
             {hasFrame && (
               // The child frame: its own row under the zone — select it to move / turn it, delete it without the zone.
               <div

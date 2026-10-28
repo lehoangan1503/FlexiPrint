@@ -6,18 +6,20 @@
  *
  *   Version    the product's VERSIONS (what the customer picks: a character, a
  *              number of people…), each with its own layers. Click one to
- *              edit it; the crown marks the default. A clipart dropped on the
- *              list becomes one more version.
- *   Thư viện   the global clipart library (library-panel.tsx): drag any
- *              picture onto the canvas.
+ *              edit it; the crown marks the default. "+" copies the shown
+ *              version (picture + layers) into a new one — then drag another
+ *              bộ nhân vật onto it. A bộ / artwork dropped on the list becomes
+ *              one more version.
+ *   Thư viện   bộ nhân vật v2 + artworks (library-panel.tsx): drag a whole set
+ *              onto the canvas.
  */
 
 import { useState } from "react";
-import { Crown, Trash2, Unlink } from "lucide-react";
+import { Copy, Crown, Trash2, Unlink } from "lucide-react";
 import type { CtAsset } from "../../types";
 import { mainVersions } from "../../lib/design";
 import { CHECKER_STYLE, CtInput, CtTooltip, cx } from "../ui";
-import { CLIPART_DRAG, LibraryPanel, type CtClipartDrag } from "./library-panel";
+import { CLIPART_DRAG, LibraryPanel, type CtLibraryDrag } from "./library-panel";
 
 export type AssetTab = "main" | "library";
 
@@ -35,8 +37,12 @@ export interface AssetPanelProps {
   layerCounts: Record<string, number>;
   /** Main version currently on the canvas. */
   shownMainId: string | null;
-  /** A library clipart dropped on the version list: one more version. */
-  onDropVersion: (drag: CtClipartDrag) => void;
+  /** A bộ nhân vật / artwork dropped on the version list: one more version. */
+  onDropVersion: (drag: CtLibraryDrag) => void;
+  /** "+": a copy of the shown version (its picture and layers) as a new version, shown at once. */
+  onCloneVersion: () => void;
+  /** Bộ nhân vật on the product's layers (CtRegionConfig.charSet). */
+  usedSets: Set<string>;
   /** What the customer is asked for a version ("Number of grandchildren"): each row says it, and its name is written
    * over its picture. */
   versionLabel?: string;
@@ -68,7 +74,7 @@ export function AssetPanel(props: AssetPanelProps) {
 
       {tab === "library" ? (
         <div className="min-h-0 flex-1">
-          <LibraryPanel usedIds={new Set(props.assets.map((a) => a.id))} version={props.libraryVersion} />
+          <LibraryPanel usedIds={new Set(props.assets.map((a) => a.id))} usedSets={props.usedSets} version={props.libraryVersion} />
         </div>
       ) : (
         <div
@@ -87,13 +93,23 @@ export function AssetPanel(props: AssetPanelProps) {
             const raw = e.dataTransfer.getData(CLIPART_DRAG);
             if (!raw) return;
             e.preventDefault();
-            props.onDropVersion(JSON.parse(raw) as CtClipartDrag);
+            props.onDropVersion(JSON.parse(raw) as CtLibraryDrag);
           }}
         >
           {mains.length === 0 ? (
             <p className="px-1 py-6 text-center text-xs text-muted-foreground">Chưa có version.</p>
           ) : (
             mains.map((a) => <VersionRow key={a.id} asset={a} {...props} />)
+          )}
+          {mains.length > 0 && props.shownMainId && (
+            <CtTooltip label="Nhân bản version đang mở (ảnh + layer) thành 1 version mới — mở nó rồi kéo bộ nhân vật khác vào">
+              <button
+                onClick={props.onCloneVersion}
+                className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed p-2 text-xs text-muted-foreground hover:border-sky-500 hover:bg-sky-500/5 hover:text-foreground"
+              >
+                <Copy className="h-3.5 w-3.5" /> + Version (nhân bản)
+              </button>
+            </CtTooltip>
           )}
         </div>
       )}

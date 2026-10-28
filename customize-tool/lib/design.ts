@@ -115,6 +115,7 @@ export function normalizeRegion(region: CtRegion): CtRegion {
         ? { fill: { mode: cfg.fill.mode, tile: Math.max(8, Number(cfg.fill.tile) || 256), ...(typeof cfg.fill.zone === "string" && cfg.fill.zone ? { zone: cfg.fill.zone } : {}) } }
         : {}),
       ...(cfg.printOnly === true ? { printOnly: true } : {}),
+      ...(cfg.charSet && typeof cfg.charSet.projectId === "string" ? { charSet: { projectId: cfg.charSet.projectId, name: String(cfg.charSet.name ?? "") } } : {}),
     },
   };
 }

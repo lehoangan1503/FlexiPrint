@@ -251,13 +251,14 @@ export function FinalSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void }) {
   );
 }
 
-/** Checks + a dress-up preview: pick an option per slot, the files stack on one canvas; the diff shows on top. */
-function LayerView({ ctx, set, plan, onEdit: edit }: { ctx: CharCtx; set: CtCharLayerSet; plan: CtCharPlan | null; onEdit: ((e: CutEdit) => void) | null }) {
+/** Checks + a dress-up preview: pick an option per slot, the files stack on one canvas; the diff shows on top.
+ * `checks: false` — the library's view of a finished set (/library): no automatic check list, no diff. */
+export function LayerView({ ctx, set, plan, onEdit: edit, checks = true }: { ctx: CharCtx; set: CtCharLayerSet; plan: CtCharPlan | null; onEdit: ((e: CutEdit) => void) | null; checks?: boolean }) {
   // The hand tools wait until @flexiprint is done (or stopped).
   const onEdit = autoRunning(ctx) ? null : edit;
   const [pick, setPick] = useState<Record<string, number>>({});
   const [focus, setFocus] = useState<string | null>(null);
-  const [diff, setDiff] = useState(true);
+  const [diff, setDiff] = useState(checks);
   // A grandchild a boy OR a girl: only that one's parts are stacked and listed (both hairs lay over each other).
   const brief = ctx.project.brief;
   const choosers = partChoosers(brief);
@@ -294,7 +295,7 @@ function LayerView({ ctx, set, plan, onEdit: edit }: { ctx: CharCtx; set: CtChar
             <img src={set.diffUrl} alt="diff" className="pointer-events-none absolute inset-0 h-full w-full" />
           )}
         </div>
-        {set.diffUrl && (
+        {checks && set.diffUrl && (
           <label className="mx-auto mt-2 flex max-w-[640px] items-center gap-2 text-xs text-muted-foreground">
             <input type="checkbox" checked={diff} onChange={(e) => setDiff(e.target.checked)} />
             Tô chỗ lệch so với master (đỏ = lỗ hổng, xanh = thừa, vàng = khác màu){!defaults && " — chỉ hiện khi chọn kiểu mặc định"}
@@ -320,7 +321,7 @@ function LayerView({ ctx, set, plan, onEdit: edit }: { ctx: CharCtx; set: CtChar
             ))}
           </div>
         )}
-        <Checks checks={set.checks} plan={plan} onEdit={onEdit} title={`Kiểm tra tự động — ${set.width}×${set.height}px`} />
+        {checks && <Checks checks={set.checks} plan={plan} onEdit={onEdit} title={`Kiểm tra tự động — ${set.width}×${set.height}px`} />}
         {set.slots
           .filter((s) => !s.follows && s.files.length > 1 && shownSlot(s))
           .map((s) => (

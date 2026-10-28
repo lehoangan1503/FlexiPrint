@@ -59,13 +59,13 @@ export async function CustomizeDeployPage({ params }: { params: Promise<{ id: st
 export async function CustomizePrintTemplatesPage() {
   const session = await ctSession();
   if (!session) redirect(CT_CONFIG.loginPath);
-  return <LibraryManager initialTab="khuon" />;
+  return <LibraryManager initialTab="khuon" currentUserId={session.user.id} admin={await isAdmin(session)} />;
 }
 
 export async function CustomizeLibraryPage() {
   const session = await ctSession();
   if (!session) redirect(CT_CONFIG.loginPath);
-  return <LibraryManager />;
+  return <LibraryManager currentUserId={session.user.id} admin={await isAdmin(session)} />;
 }
 
 export async function CharListPage() {

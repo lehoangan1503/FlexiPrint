@@ -1,11 +1,11 @@
 "use client";
 
 /**
- * /library — the global clipart library (migration 006): categories (a name only) and what is in them. Every picture
- * is a clipart, whatever it shows — in the end it is one picture. Two tabs per category:
+ * /library — what products are made from. Since 2026-10-29 everything starts from a bộ nhân vật v2, so nothing is
+ * uploaded or filed by hand here:
  *
- *   Clipart   uploaded by hand ("Upload clipart": several files at once, each a gốc; on a gốc "Upload đa sắc"),
- *             or a v2 bộ nhân vật's layer files (server/char/product.ts).
+ *   Clipart   the finished bộ nhân vật, one per row: a set's clipart are shown — and fixed by hand — as the set's own
+ *             step 3c view (components/char/set-files.tsx). They fit only their set, so they are never listed alone.
  *   Artwork   finished designs saved from a product: every version of a product is saved here when the design is
  *             saved (meta.artwork) — a clipart of many layers, flattened. A product's folder is the category named
  *             after it (rules.productId): renaming the product renames it.
@@ -13,13 +13,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, FolderPlus, ImagePlus, Loader2, Pencil, Trash2 } from "lucide-react";
-import type { CtAsset, CtClipartCategory, CtClipartUsage, CtLibraryShelf, CtPreset } from "../../types";
-import { ctApi } from "../../lib/api-client";
+import { ArrowLeft, Check, Loader2, Pencil, Trash2 } from "lucide-react";
+import type { CtAsset, CtCharProject, CtClipartCategory, CtClipartUsage, CtLibraryShelf, CtPreset } from "../../types";
+import { charApi, ctApi } from "../../lib/api-client";
 import { categoryBody, clipartFamily, flattenCategories, isArtworkClipart, isMaterialClipart, isMulticolorClipart, libraryOrigins } from "../../lib/library";
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtModal, CtSelect, CtTextarea, CtTooltipProvider, cx } from "../ui";
 import { ctConfirm } from "../dialogs";
-import { ClipartBadges } from "../editor/library-panel";
+import { ClipartBadges, finishedSets } from "../editor/library-panel";
+import { CharSetFiles } from "../char/set-files";
 import { KhuonTab } from "../print/khuon-tab";
 import { PhoiTab } from "../print/phoi-tab";
 
@@ -36,7 +37,7 @@ const TABS: Array<[CtLibraryTab, string]> = [
   ["khuon", "Khuôn in"],
 ];
 
-export function LibraryManager({ initialTab = "clipart" }: { initialTab?: CtLibraryTab }) {
+export function LibraryManager({ initialTab = "clipart", currentUserId, admin }: { initialTab?: CtLibraryTab; currentUserId: string; admin: boolean }) {
   const [tab, setTab] = useState<CtLibraryTab>(initialTab);
   // The tab is in the address (?tab=…), so a link / a reload opens it again.
   useEffect(() => {
@@ -65,26 +66,77 @@ export function LibraryManager({ initialTab = "clipart" }: { initialTab?: CtLibr
             ))}
           </div>
         </header>
-        {tab === "khuon" ? <KhuonTab /> : tab === "phoi" ? <PhoiTab /> : <ClipartsTab shelf={tab} />}
+        {tab === "khuon" ? <KhuonTab /> : tab === "phoi" ? <PhoiTab /> : tab === "clipart" ? <SetsTab currentUserId={currentUserId} admin={admin} /> : <ArtworkTab />}
       </div>
     </CtTooltipProvider>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Cliparts
+// Clipart = bộ nhân vật
 // ---------------------------------------------------------------------------
 
-function ClipartsTab({ shelf }: { shelf: CtLibraryShelf }) {
+function SetsTab({ currentUserId, admin }: { currentUserId: string; admin: boolean }) {
+  const [sets, setSets] = useState<CtCharProject[] | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    charApi
+      .list()
+      .then((r) => {
+        const list = finishedSets(r.projects);
+        setSets(list);
+        const asked = new URLSearchParams(window.location.search).get("set");
+        setSelected((cur) => cur ?? (asked && list.some((p) => p.id === asked) ? asked : (list[0]?.id ?? null)));
+      })
+      .catch((e: Error) => setError(e.message));
+  }, []);
+  const open = (id: string) => {
+    setSelected(id);
+    const url = new URL(window.location.href);
+    url.searchParams.set("set", id);
+    window.history.replaceState(null, "", url);
+  };
+  return (
+    <div className="flex min-h-0 flex-1">
+      <aside className="flex w-72 shrink-0 flex-col border-r">
+        <div className="flex-1 overflow-y-auto p-1">
+          {sets === null && !error && <Loader2 className="m-3 h-4 w-4 animate-spin" />}
+          {error && <p className="p-2 text-xs text-destructive">{error}</p>}
+          {sets?.length === 0 && <p className="p-3 text-xs text-muted-foreground">Chưa có bộ nhân vật hoàn chỉnh — làm bộ ở trang v2.</p>}
+          {sets?.map((p) => (
+            <div
+              key={p.id}
+              className={cx("flex cursor-pointer items-center gap-1 rounded px-2 py-1.5 text-sm", selected === p.id ? "bg-accent" : "hover:bg-accent/60")}
+              onClick={() => open(p.id)}
+              title={p.name}
+            >
+              <span className="flex-1 truncate">{p.name}</span>
+              <span className="w-8 text-right text-[11px] text-muted-foreground">{p.layers?.slots.reduce((n, sl) => n + sl.files.length, 0) || ""}</span>
+            </div>
+          ))}
+        </div>
+      </aside>
+      <main className="min-w-0 flex-1 overflow-y-auto p-4">
+        {selected ? <CharSetFiles key={selected} projectId={selected} currentUserId={currentUserId} admin={admin} /> : null}
+      </main>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Artwork
+// ---------------------------------------------------------------------------
+
+function ArtworkTab() {
   const [categories, setCategories] = useState<CtClipartCategory[]>([]);
-  const [uncategorized, setUncategorized] = useState(0);
   /** Material presets: they name the vật liệu versions (meta.material). */
   const [materials, setMaterials] = useState<CtPreset[]>([]);
   const [selected, setSelected] = useState<string>(NONE);
   const [cliparts, setCliparts] = useState<CtAsset[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editCategory, setEditCategory] = useState<CtClipartCategory | "new" | null>(null);
+  const [editCategory, setEditCategory] = useState<CtClipartCategory | null>(null);
   const [editClipart, setEditClipart] = useState<CtAsset | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -93,8 +145,7 @@ function ClipartsTab({ shelf }: { shelf: CtLibraryShelf }) {
       .listCategories()
       .then((r) => {
         setCategories(r.categories);
-        setUncategorized(r.uncategorized);
-        setSelected((cur) => (cur === NONE && r.categories.length && !r.uncategorized ? r.categories[0].id : cur));
+        setSelected((cur) => (cur === NONE && r.categories.length ? r.categories[0].id : cur));
       })
       .catch((e: Error) => setError(e.message));
   }, []);
@@ -108,6 +159,8 @@ function ClipartsTab({ shelf }: { shelf: CtLibraryShelf }) {
   }, [loadCategories]);
 
   useEffect(() => {
+    // Nothing picked yet (the first category comes with the list).
+    if (selected === NONE) return;
     setLoading(true);
     ctApi
       .listCliparts(selected)
@@ -118,17 +171,17 @@ function ClipartsTab({ shelf }: { shelf: CtLibraryShelf }) {
 
   const current = categories.find((c) => c.id === selected) ?? null;
   const allOrigins = libraryOrigins(cliparts);
-  const origins = allOrigins.filter((o) => isArtworkClipart(o) === (shelf === "artwork"));
+  const origins = allOrigins.filter(isArtworkClipart);
   /** Every picture in the order it is shown (gốc, its vật liệu, its đa sắc) — the range of a shift-click. */
   const shownOrder = useMemo(
     () =>
       libraryOrigins(cliparts)
-        .filter((o) => isArtworkClipart(o) === (shelf === "artwork"))
+        .filter(isArtworkClipart)
         .flatMap((o) => {
           const fam = clipartFamily(cliparts, o);
           return [o, ...fam.filter((a) => isMaterialClipart(a) && !isMulticolorClipart(a)), ...fam.filter(isMulticolorClipart)];
         }),
-    [cliparts, shelf],
+    [cliparts],
   );
 
   // Multi-select: click the box, shift-click (box or picture) for a range, or "Chọn tất cả".
@@ -242,33 +295,9 @@ function ClipartsTab({ shelf }: { shelf: CtLibraryShelf }) {
     loadCategories();
   };
 
-  /** Upload pictures one by one: with no parent each file is a new clipart gốc; with a gốc as parent each is a đa sắc of it. */
-  const upload = async (files: File[], parentId: string | null) => {
-    setError(null);
-    const created: CtAsset[] = [];
-    const failed: string[] = [];
-    for (const [i, f] of files.entries()) {
-      setBusy(`Đang upload ${i + 1}/${files.length} ảnh…`);
-      try {
-        created.push(await ctApi.uploadClipart(f, { categoryId: current?.id ?? null, parentId }));
-      } catch (e) {
-        failed.push(`${f.name}: ${e instanceof Error ? e.message : "lỗi"}`);
-      }
-    }
-    setBusy(null);
-    setCliparts((list) => [...list, ...created]);
-    if (failed.length) setError(`Không upload được: ${failed.join("; ")}`);
-    if (!parentId && created.length) loadCategories();
-  };
-
   return (
     <div className="flex min-h-0 flex-1">
       <aside className="flex w-72 shrink-0 flex-col border-r">
-        <div className="border-b p-2">
-          <CtButton size="sm" className="w-full" onClick={() => setEditCategory("new")}>
-            <FolderPlus className="h-3.5 w-3.5" /> Danh mục mới
-          </CtButton>
-        </div>
         <div className="flex-1 overflow-y-auto p-1">
           {flattenCategories(categories).map(({ category: c, depth }) => (
             <div
@@ -292,34 +321,20 @@ function ClipartsTab({ shelf }: { shelf: CtLibraryShelf }) {
               )}
             </div>
           ))}
-          <div
-            className={cx("flex cursor-pointer items-center rounded px-2 py-1.5 text-sm text-muted-foreground", selected === NONE ? "bg-accent" : "hover:bg-accent/60")}
-            onClick={() => setSelected(NONE)}
-          >
-            <span className="flex-1">Chưa phân loại</span>
-            <span className="text-[11px]">{uncategorized}</span>
-          </div>
         </div>
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto p-4">
         <div className="mb-4 flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold">{current ? current.name : "Chưa phân loại"}</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {shelf === "artwork"
-                ? "Artwork = thiết kế hoàn chỉnh lưu từ sản phẩm (mỗi version 1 artwork, tự cập nhật khi Lưu thiết kế) — dùng lại như clipart."
-                : "Clipart là ảnh bất kỳ (nhân vật, nền, chữ…). Chọn được nhiều ảnh cùng lúc, mỗi ảnh 1 clipart gốc; trên từng gốc “Upload đa sắc” cho màu / kiểu khác."}
-            </p>
+            <h2 className="text-base font-semibold">{current?.name ?? ""}</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">Artwork = thiết kế hoàn chỉnh lưu từ sản phẩm (mỗi version 1 artwork, tự cập nhật khi Lưu thiết kế).</p>
           </div>
           <div className="flex shrink-0 gap-2">
             {current?.can_edit && (
               <CtButton size="sm" onClick={() => setEditCategory(current)}>
                 <Pencil className="h-3.5 w-3.5" /> Đổi tên
               </CtButton>
-            )}
-            {shelf === "clipart" && (
-              <UploadButton label={current ? "Upload clipart" : "Tạo danh mục trước"} primary onFiles={(f) => void upload(f, null)} disabled={busy !== null || !current} />
             )}
           </div>
         </div>
@@ -332,13 +347,7 @@ function ClipartsTab({ shelf }: { shelf: CtLibraryShelf }) {
         {loading ? (
           <Loader2 className="h-5 w-5 animate-spin" />
         ) : origins.length === 0 ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">
-            {shelf === "artwork"
-              ? "Chưa có artwork — mở sản phẩm, chọn option rồi Lưu thiết kế: mỗi version thành 1 artwork ở danh mục mang tên sản phẩm."
-              : current
-                ? "Danh mục trống. Bấm “Upload clipart” (chọn được nhiều ảnh cùng lúc, mỗi ảnh 1 clipart)."
-                : "Tạo danh mục (cột trái) rồi upload clipart vào đó."}
-          </p>
+          <p className="py-10 text-center text-sm text-muted-foreground">Chưa có artwork — mở sản phẩm, chọn option rồi Lưu thiết kế: mỗi version thành 1 artwork ở danh mục mang tên sản phẩm.</p>
         ) : (
           <div className="space-y-3">
             <div className="sticky top-0 z-10 -mx-1 flex items-center gap-2 rounded-md border bg-background/95 px-2 py-1.5 text-xs backdrop-blur">
@@ -369,8 +378,6 @@ function ClipartsTab({ shelf }: { shelf: CtLibraryShelf }) {
                 family={clipartFamily(cliparts, o)}
                 materials={materials}
                 onOpen={setEditClipart}
-                busy={busy !== null}
-                onUploadVariants={shelf === "clipart" ? (files) => void upload(files, o.id) : null}
                 picked={picked}
                 onPick={togglePick}
               />
@@ -381,7 +388,7 @@ function ClipartsTab({ shelf }: { shelf: CtLibraryShelf }) {
 
       {editCategory && (
         <CategoryDialog
-          category={editCategory === "new" ? null : editCategory}
+          category={editCategory}
           onClose={() => setEditCategory(null)}
           onSaved={(c) => {
             loadCategories();
@@ -423,7 +430,7 @@ interface TileActions {
   onPick: (a: CtAsset, shift: boolean) => void;
 }
 
-function SetCard(props: TileActions & { origin: CtAsset; family: CtAsset[]; materials: CtPreset[]; busy: boolean; onUploadVariants: ((files: File[]) => void) | null }) {
+function SetCard(props: TileActions & { origin: CtAsset; family: CtAsset[]; materials: CtPreset[] }) {
   const { origin, family } = props;
   const material = family.filter((a) => isMaterialClipart(a) && !isMulticolorClipart(a));
   const multicolor = family.filter(isMulticolorClipart);
@@ -439,20 +446,12 @@ function SetCard(props: TileActions & { origin: CtAsset; family: CtAsset[]; mate
         <span className="text-[11px] text-muted-foreground">
           {origin.width}×{origin.height} · {origin.source} · {material.length} vật liệu · {multicolor.length} đa sắc
         </span>
-        {props.onUploadVariants && (
-          <span className="ml-auto flex shrink-0 gap-1">
-            <UploadButton label="Upload đa sắc" small onFiles={props.onUploadVariants} disabled={props.busy} />
-          </span>
-        )}
       </div>
       {origin.spec && <p className="mb-2 line-clamp-2 text-[11px] text-muted-foreground">{origin.spec}</p>}
       <div className="flex flex-wrap items-start gap-3">
         <Tile asset={origin} big caption="Gốc" {...props} />
         {material.length > 0 && <TileGroup label="Vật liệu" list={material} sub={materialName} {...props} />}
         {multicolor.length > 0 && <TileGroup label="Đa sắc" list={multicolor} sub={(a) => (isMaterialClipart(a) ? materialName(a) : null)} {...props} />}
-        {material.length + multicolor.length === 0 && props.onUploadVariants && (
-          <span className="self-center text-[11px] text-muted-foreground">Chưa có đa sắc — bấm “Upload đa sắc” ở trên nếu clipart có màu / kiểu khác.</span>
-        )}
       </div>
     </div>
   );
@@ -506,29 +505,6 @@ function Tile(props: TileActions & { asset: CtAsset; big?: boolean; caption: str
         {caption}
       </div>
     </div>
-  );
-}
-
-function UploadButton({ label, onFiles, disabled, small, primary }: { label: string; onFiles: (files: File[]) => void; disabled?: boolean; small?: boolean; primary?: boolean }) {
-  const ref = useRef<HTMLInputElement | null>(null);
-  return (
-    <>
-      <CtButton size="sm" variant={primary ? "primary" : small ? "ghost" : "outline"} onClick={() => ref.current?.click()} disabled={disabled}>
-        <ImagePlus className="h-3.5 w-3.5" /> {label}
-      </CtButton>
-      <input
-        ref={ref}
-        type="file"
-        accept="image/png,image/jpeg,image/webp"
-        multiple
-        className="hidden"
-        onChange={(e) => {
-          const files = Array.from(e.target.files ?? []);
-          e.target.value = "";
-          if (files.length) onFiles(files);
-        }}
-      />
-    </>
   );
 }
 

@@ -46,6 +46,7 @@ import { buildPhotoProduct, trimmed, type KeptZone } from "./photo-product";
 import { CT_FACE_STYLES } from "../../lib/photo-styles";
 import { isFace } from "../../lib/char-plan";
 import { brimArc, splitHeadwear, type CtBrimArc } from "./brim";
+import { refreshSetUsers } from "./set-users";
 
 /** A personalised text of the brief as a text layer in its box (lib/char-layout). Over a patterned background the
  * letters get a light halo so they read. */
@@ -242,6 +243,8 @@ async function remakeNow(db: CtSession["supabase"], userId: string, p0: CtCharPr
         await build(s, p, set ?? { status: "done", error: "", width: 3072, height: 2048, slots: [], zones: [], checks: [], builtAt: "" }, p.name, kept);
   const { error } = await db.from(CT_TABLES.charProjects).update({ product_ids: [productId], status: "product" }).eq("id", p.id);
   if (error) throw new Error(error.message);
+  // Products using the set (dropped from the editor's library) take the new layers before the old clipart go.
+  await refreshSetUsers(s, p, productId).catch((e: Error) => console.warn("[ct] set users refresh", e.message));
   for (const pid of p.product_ids) {
     if (pid === productId) continue;
     const folder = await findProductFolder(db, pid);

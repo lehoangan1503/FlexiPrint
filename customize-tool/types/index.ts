@@ -389,6 +389,17 @@ export interface CtRegionConfig {
    * each of its options shows its own mockup (CtProductConfig.mockupsByOption).
    */
   printOnly?: boolean;
+  /**
+   * A layer of a bộ nhân vật v2 dropped from the library (asked 2026-10-29): the set's layers land together, pixel
+   * for pixel as the set built them, and are listed as ONE "bộ" layer with its own layers under it.
+   */
+  charSet?: CtRegionCharSet;
+}
+
+export interface CtRegionCharSet {
+  /** The bộ nhân vật (char project). */
+  projectId: string;
+  name: string;
 }
 
 /** How a fill layer covers its outline. */

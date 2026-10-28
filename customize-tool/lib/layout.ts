@@ -36,6 +36,8 @@ export function versionLayers(regions: CtRegion[], items: CtRegionItem[], mainId
 /**
  * Copies of `regions` (+ their items) owned by `toMainId`, with fresh ids.
  * `idMap` maps every old region id to its copy (to carry preview choices over).
+ * Links between the copied layers (a back half's `follows`, a child zone's
+ * `parent`) point at the copies; a link to a layer not copied is dropped.
  */
 export function cloneLayers(
   regions: CtRegion[],
@@ -45,9 +47,9 @@ export function cloneLayers(
   const idMap = new Map<string, string>();
   const out: CtRegion[] = [];
   const outItems: CtRegionItem[] = [];
+  for (const r of regions) idMap.set(r.id, newId());
   for (const r of regions) {
-    const id = newId();
-    idMap.set(r.id, id);
+    const id = idMap.get(r.id) ?? newId();
     const itemIds = new Map<string, string>();
     for (const i of items.filter((x) => x.region_id === r.id)) {
       const iid = newId();
@@ -58,7 +60,15 @@ export function cloneLayers(
     const names = r.config?.image?.groupNames ?? {};
     const groupNames: Record<string, string> = {};
     for (const [from, to] of itemIds) if (names[from]) groupNames[to] = names[from];
-    out.push({ ...r, id, config: { ...r.config, mainId: toMainId, image: { ...r.config.image, groupNames } } });
+    const image = { ...r.config.image, groupNames };
+    delete image.follows;
+    const follows = r.config.image?.follows ? idMap.get(r.config.image.follows) : undefined;
+    if (follows) image.follows = follows;
+    const config = { ...r.config, mainId: toMainId, image };
+    delete config.parent;
+    const parentId = r.config.parent ? idMap.get(r.config.parent.regionId) : undefined;
+    if (parentId && r.config.parent) config.parent = { regionId: parentId, optionId: r.config.parent.optionId };
+    out.push({ ...r, id, config });
   }
   return { regions: out, items: outItems, idMap };
 }

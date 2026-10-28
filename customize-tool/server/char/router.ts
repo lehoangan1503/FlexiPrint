@@ -18,6 +18,7 @@ import { elementsRoute } from "./elements";
 import { photoStylesRoute } from "./photo-styles";
 import { charKhuonRoute } from "./khuon";
 import { listVersionSets, runVersionChain, startVersionSets } from "./versions";
+import { setProducts } from "./set-users";
 import { adoptMaster, approveMaster, createCharProject, deleteCharProject, generateMasters, getCharProject, jobDb, jsonError, listCharProjects, loadProject, refineMaster, updateCharProject, uploadCharFile, uploadChatFile } from "./projects";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -104,6 +105,7 @@ async function route(req: NextRequest, s: CtSession, path: string[]): Promise<Ne
   }
   if (!UUID.test(id)) return jsonError("id không hợp lệ", 400);
   if (action === "versions" && !sub && method === "GET") return listVersionSets(s, id);
+  if (action === "used-by" && !sub && method === "GET") return setProducts(s, id);
   if (!action) {
     if (method === "GET") return getCharProject(s, id);
     if (method === "PATCH") return updateCharProject(s, id, await json(req));

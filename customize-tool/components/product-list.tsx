@@ -123,7 +123,7 @@ export function CustomizeProductList({ tabs, currentUserId, admin = false }: { t
                     <div className="truncate text-sm font-medium">{p.name}</div>
                     <div className="mt-0.5 flex items-center gap-1.5">
                       <span className={cx("rounded px-1.5 py-0.5 text-[10px] font-medium", STATUS_CLASS[p.status])}>{STATUS_LABEL[p.status]}</span>
-                      <span className="text-[10px] text-muted-foreground">{new Date(p.updated_at).toLocaleDateString("vi-VN")}</span>
+                      <span className="text-[10px] text-muted-foreground">{new Date(p.created_at).toLocaleDateString("vi-VN")}</span>
                     </div>
                   </div>
                   {mine && (

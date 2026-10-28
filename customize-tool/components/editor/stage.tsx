@@ -33,6 +33,7 @@ import { cx, CHECKER_STYLE } from "../ui";
 import type { DesignApi } from "./use-design";
 import { useImageSize } from "./use-image-size";
 import { CLIPART_DRAG, type CtLibraryDrag } from "./library-panel";
+import { charSetBounds, placeCharSet } from "../../lib/char-set-layers";
 import { updateItem, updateRegion } from "./use-design";
 import { mainFrameFor } from "../../lib/layout";
 import { frameSvgPath } from "../../lib/material-frame";
@@ -80,6 +81,8 @@ type Gesture =
   | { kind: "rotate-frame"; id: string; center: CtPoint; startAngle: number; f: CtPhotoFrame }
   // The shown version's picture frame (CtMainLayout.frame).
   | { kind: "move-main"; start: CtPoint; f: CtMainFrame }
+  | { kind: "move-set"; start: CtPoint; regions: CtRegion[]; bounds: CtBounds }
+  | { kind: "resize-set"; handle: Handle; regions: CtRegion[]; bounds: CtBounds }
   | { kind: "resize-main"; handle: Handle; f: CtMainFrame };
 
 export interface StageProps {
@@ -120,6 +123,11 @@ export interface StageProps {
   drawInto?: { label: string; onShape: (shape: CtShape) => void } | null;
   /** The khuôn in the product is made on (types/print.ts): its guide sheet, safe zone and zones over the canvas. */
   printSpec?: CtPrintSpec | null;
+  /** A bộ nhân vật's layers (CtRegionConfig.charSet) — the canvas picks the whole set, never one of them. */
+  setOf?: (regionId: string) => string[] | null;
+  /** The set selected: one frame around it, dragged / scaled with every layer in it. */
+  selectedSet?: string[] | null;
+  onSelectSet?: (ids: string[]) => void;
 }
 
 const MIN_ZOOM = 0.02;
@@ -457,7 +465,7 @@ export function Stage(props: StageProps) {
       }
       return;
     }
-    if ((g.kind === "move-region" || g.kind === "move-frame") && performance.now() < moveHeldUntil.current) {
+    if ((g.kind === "move-region" || g.kind === "move-frame" || g.kind === "move-set") && performance.now() < moveHeldUntil.current) {
       // Held: the drag starts from wherever the pointer is when the hold ends — no jump.
       gestureRef.current = { ...g, start: w };
       setGesture(gestureRef.current);
@@ -516,6 +524,32 @@ export function Stage(props: StageProps) {
         }
         const next = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
         design.live((s) => updateRegion(s, g.id, (r) => ({ ...r, shape: fitZoneToBounds(g.shape, r.kind, next) })));
+        break;
+      }
+      case "move-set": {
+        let dx = w.x - g.start.x;
+        let dy = w.y - g.start.y;
+        if (e.shiftKey) {
+          if (Math.abs(dx) > Math.abs(dy)) dy = 0;
+          else dx = 0;
+        }
+        const b = g.bounds;
+        const snap = snapBox({ x: b.x + dx, y: b.y + dy, w: b.w, h: b.h }, e.altKey, false, false);
+        const moved = new Map(placeCharSet(g.regions, b, { ...b, x: b.x + dx + snap.dx, y: b.y + dy + snap.dy }).map((r) => [r.id, r]));
+        design.live((s) => ({ ...s, regions: s.regions.map((r) => moved.get(r.id) ?? r) }));
+        break;
+      }
+      case "resize-set": {
+        // Corners only, aspect kept (the clipart are registered on one canvas): the opposite corner stays put.
+        const b = g.bounds;
+        const ax = g.handle.includes("w") ? b.x + b.w : b.x;
+        const ay = g.handle.includes("n") ? b.y + b.h : b.y;
+        const k = Math.max(0.02, Math.abs(w.x - ax) / Math.max(1, b.w));
+        const nw = b.w * k;
+        const nh = b.h * k;
+        const to = { x: g.handle.includes("w") ? ax - nw : ax, y: g.handle.includes("n") ? ay - nh : ay, w: nw, h: nh };
+        const moved = new Map(placeCharSet(g.regions, b, to).map((r) => [r.id, r]));
+        design.live((s) => ({ ...s, regions: s.regions.map((r) => moved.get(r.id) ?? r) }));
         break;
       }
       case "move-main": {
@@ -763,6 +797,12 @@ export function Stage(props: StageProps) {
     const region = (typeof hit === "string" && regions.find((r) => r.id === hit)) || picked;
     props.onSelectMain(false);
     viewportRef.current?.setPointerCapture(e.pointerId);
+    // A layer of a bộ nhân vật: the whole set (one picked in Layers stays itself).
+    const members = region.id !== selectedRegionId ? props.setOf?.(region.id) : null;
+    if (members?.length) {
+      startSetMove(e, members);
+      return;
+    }
     if (region.id !== selectedRegionId) moveHeldUntil.current = performance.now() + SELECT_HOLD_MS;
     props.onSelectRegion(region.id);
     emptyPress.current = region.kind === "image" && !items.some((i) => i.region_id === region.id) ? { id: region.id, x: e.clientX, y: e.clientY } : null;
@@ -780,6 +820,17 @@ export function Stage(props: StageProps) {
       return;
     }
     setGesture({ kind: "move-region", id: region.id, start: toWorld(e.clientX, e.clientY), shape: region.shape });
+  };
+
+  /** The set selected and dragged as one (its frame or any of its pixels). */
+  const startSetMove = (e: React.PointerEvent, ids: string[]) => {
+    const list = regions.filter((r) => ids.includes(r.id));
+    const bounds = charSetBounds(list);
+    if (!bounds) return;
+    const sameSet = props.selectedSet?.length === ids.length && ids.every((id) => props.selectedSet?.includes(id));
+    if (!sameSet) moveHeldUntil.current = performance.now() + SELECT_HOLD_MS;
+    props.onSelectSet?.(ids);
+    setGesture({ kind: "move-set", start: toWorld(e.clientX, e.clientY), regions: list, bounds });
   };
 
   const onRegionDoubleClick = (e: React.MouseEvent, region: CtRegion) => {
@@ -896,6 +947,7 @@ export function Stage(props: StageProps) {
 
   const selected = activeRegion;
   const selBounds = selected ? shapeBounds(selected.shape) : null;
+  const setBox = useMemo(() => (props.selectedSet?.length ? charSetBounds(regions.filter((r) => props.selectedSet?.includes(r.id))) : null), [props.selectedSet, regions]);
   // A turned text band is resized by handles on the band itself, not on its upright bounding box.
   const turnedBand = selected?.kind === "text" ? textBand(selected.shape) : null;
   const turnedBandOk = turnedBand?.rotation ? turnedBand : null;
@@ -1089,6 +1141,52 @@ export function Stage(props: StageProps) {
                 setGesture({ kind: "move-region", id: selected.id, start: toWorld(e.clientX, e.clientY), shape: selected.shape });
               }}
             />
+          )}
+
+          {props.showOverlay && setBox && !selected && effectiveTool === "select" && (
+            // The selected bộ nhân vật: one frame around all its layers — its edge drags the set, a corner scales it.
+            <g>
+              <rect
+                x={setBox.x}
+                y={setBox.y}
+                width={setBox.w}
+                height={setBox.h}
+                fill="none"
+                stroke={FRAME_COLOR}
+                strokeWidth={14 * px}
+                strokeOpacity={0}
+                style={{ pointerEvents: "stroke", cursor: "move" }}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  viewportRef.current?.setPointerCapture(e.pointerId);
+                  if (props.selectedSet) startSetMove(e, props.selectedSet);
+                }}
+              />
+              <rect x={setBox.x} y={setBox.y} width={setBox.w} height={setBox.h} fill="none" stroke={FRAME_COLOR} strokeWidth={2} vectorEffect="non-scaling-stroke" pointerEvents="none" />
+              {(["nw", "ne", "se", "sw"] as Handle[]).map((h) => {
+                const p = handlePos(setBox, h);
+                return (
+                  <rect
+                    key={h}
+                    x={p.x - hs / 2}
+                    y={p.y - hs / 2}
+                    width={hs}
+                    height={hs}
+                    fill="#fff"
+                    stroke={FRAME_COLOR}
+                    strokeWidth={1.5}
+                    vectorEffect="non-scaling-stroke"
+                    style={{ pointerEvents: "all", cursor: HANDLE_CURSOR[h] }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      viewportRef.current?.setPointerCapture(e.pointerId);
+                      const list = regions.filter((r) => props.selectedSet?.includes(r.id));
+                      setGesture({ kind: "resize-set", handle: h, regions: list, bounds: setBox });
+                    }}
+                  />
+                );
+              })}
+            </g>
           )}
 
           {props.mainSelected && !selected && effectiveTool === "select" && (

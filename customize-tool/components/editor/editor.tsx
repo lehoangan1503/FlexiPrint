@@ -139,6 +139,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   /** The shown version's picture frame is selected (moved / resized on the canvas, numbers in the right column). */
   const [mainSelected, setMainSelected] = useState(false);
+  /** A bộ nhân vật picked as a whole (its layers' ids): one frame on the canvas moves / scales them all. */
+  const [setPick, setSetPick] = useState<string[] | null>(null);
 
   // ---------------------------------------------------------------- load
   useEffect(() => {
@@ -189,6 +191,19 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const versionApi = versionView(design, shownMainId);
   const ed = zoneOptionView(versionApi, activeZoneOptions(versionApi.state.regions, selection));
   const { regions, items } = ed.state;
+  /** The layers of the bộ nhân vật `id` belongs to on the shown version (null: not a set's). */
+  const setOf = (id: string): string[] | null => {
+    const set = regions.find((r) => r.id === id)?.config?.charSet?.projectId;
+    return set ? regions.filter((r) => r.config?.charSet?.projectId === set).map((r) => r.id) : null;
+  };
+  const selectedSet = setPick && regions.some((r) => setPick.includes(r.id)) ? setPick.filter((id) => regions.some((r) => r.id === id)) : null;
+  const selectSet = (ids: string[]) => {
+    setSelectedRegionId(null);
+    setActiveItemId(null);
+    setEditTarget("region");
+    setMainSelected(false);
+    setSetPick(ids);
+  };
   // The khuôn vật liệu the shown version is cut to: its own, else the default version's.
   const materialFrame = useMemo(
     () => (main ? frameRegionFor(design.state.regions.map(normalizeRegion), shownMainId, main.id) : null),
@@ -478,6 +493,18 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         if (editTarget === "object") setEditTarget("region");
         else setSelectedRegionId(null);
         setMainSelected(false);
+        setSetPick(null);
+      } else if ((e.key === "Delete" || e.key === "Backspace") && tool !== "polygon" && !selectedRegionId && selectedSet) {
+        e.preventDefault();
+        const gone = new Set(selectedSet.flatMap((id) => [...zoneSubtree(regions, id)]));
+        ed.commit((s) => ({ ...s, regions: s.regions.filter((r) => !gone.has(r.id)), items: s.items.filter((i) => !gone.has(i.region_id)) }));
+        setSetPick(null);
+      } else if (e.key.startsWith("Arrow") && !selectedRegionId && selectedSet) {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+        const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+        ed.commit((s) => ({ ...s, regions: s.regions.map((r) => (selectedSet.includes(r.id) ? { ...r, shape: translateShape(r.shape, dx, dy) } : r)) }));
       } else if (e.key === "Enter" && tool !== "polygon" && selectedRegionId) {
         const r = regions.find((x) => x.id === selectedRegionId);
         if (r?.kind === "image" || (r?.kind === "photo" && hasTestPhoto(selection[r.id]))) setEditTarget((t) => (t === "object" ? "region" : "object"));
@@ -600,6 +627,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     setSelectedRegionId(null);
     setActiveItemId(null);
     setEditTarget("region");
+    setSetPick(null);
   };
 
   const removeAsset = async (asset: CtAsset) => {
@@ -888,9 +916,12 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     design.commit((s) => ({ ...s, config: { ...s.config, layouts: { ...s.config.layouts, [shownMainId]: { ...(s.config.layouts[shownMainId] ?? { regions: {}, items: {} }), frame } } } }));
   };
 
-  // A layer selected → the main frame no longer is.
+  // A layer selected → the main frame / a set no longer is.
   useEffect(() => {
-    if (selectedRegionId) setMainSelected(false);
+    if (selectedRegionId) {
+      setMainSelected(false);
+      setSetPick(null);
+    }
   }, [selectedRegionId]);
 
   /** A version's sub-options ("Thêm option"), in order. */
@@ -1098,8 +1129,12 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     selectedRegionId={selectedRegionId}
                     onSelectRegion={(id) => {
                       setSelectedRegionId(id);
+                      setSetPick(null);
                       if (id !== selectedRegionId) setActiveItemId(items.find((i) => i.region_id === id)?.id ?? null);
                     }}
+                    setOf={setOf}
+                    selectedSet={selectedSet}
+                    onSelectSet={selectSet}
                     activeItemId={activeItemId}
                     showOverlay={showOverlay}
                     hoverRegionId={hoverRegionId}
@@ -1240,8 +1275,11 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                 })
               }
               selectedRegionId={selectedRegionId}
+              selectedSet={selectedSet}
+              onSelectSet={selectSet}
               onSelectRegion={(id) => {
                 setSelectedRegionId(id);
+                setSetPick(null);
                 setEditTarget("region");
                 // A child zone picked in Layers: show its parents on the option it belongs to.
                 if (id) revealZone(id);

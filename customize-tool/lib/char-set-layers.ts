@@ -132,3 +132,30 @@ export async function charSetDrop(
   }
   return out;
 }
+
+/** The box a set's layers fill on the canvas (its chooser — a 1 px layer that draws nothing — left out). */
+export function charSetBounds(regions: CtRegion[]): { x: number; y: number; w: number; h: number } | null {
+  const boxes = regions.map((r) => shapeBounds(r.shape)).filter((b) => b.w > 1 || b.h > 1);
+  if (!boxes.length) return null;
+  const x0 = Math.min(...boxes.map((b) => b.x));
+  const y0 = Math.min(...boxes.map((b) => b.y));
+  const x1 = Math.max(...boxes.map((b) => b.x + b.w));
+  const y1 = Math.max(...boxes.map((b) => b.y + b.h));
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** A set's layers moved / scaled together from box `from` to box `to` (same aspect: the clipart stay registered). */
+export function placeCharSet(regions: CtRegion[], from: { x: number; y: number; w: number; h: number }, to: { x: number; y: number; w: number; h: number }): CtRegion[] {
+  const k = to.w / Math.max(1e-6, from.w);
+  return regions.map((r) => {
+    const b = shapeBounds(r.shape);
+    if (b.w <= 1 && b.h <= 1) return r;
+    const next = { x: to.x + (b.x - from.x) * k, y: to.y + (b.y - from.y) * k, w: b.w * k, h: b.h * k };
+    const scaled = Math.abs(k - 1) > 1e-6;
+    return {
+      ...r,
+      shape: fitShapeToBounds(r.shape, next),
+      config: scaled && r.kind === "text" ? { ...r.config, text: { ...r.config.text, fontSize: r.config.text.fontSize * k, strokeWidth: r.config.text.strokeWidth * k } } : r.config,
+    };
+  });
+}

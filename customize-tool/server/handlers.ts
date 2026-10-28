@@ -70,7 +70,8 @@ export async function listProducts(s: CtSession, search: string): Promise<NextRe
   let q = s.supabase
     .from(CT_TABLES.products)
     .select("*, main_asset:ct_assets!ct_products_main_asset_fk(url,width,height)")
-    .order("updated_at", { ascending: false })
+    // Newest made first — not the last one edited (asked 2026-10-29: opening a product must not move it up).
+    .order("created_at", { ascending: false })
     .limit(200);
   if (search) q = q.ilike("name", `%${search}%`);
   const { data, error } = await q.returns<Omit<CtProductListRow, "mockup_url">[]>();

@@ -6,6 +6,7 @@
  * of this: they rewrite the file of the same library clipart (server/char/layers.ts).
  */
 
+import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_TABLES } from "../../config";
 import type { CtAsset, CtCharProject, CtProduct, CtProductBundle, CtRegion, CtRegionItem } from "../../types";
@@ -65,4 +66,19 @@ export async function refreshSetUsers(s: CtSession, p: CtCharProject, newProduct
     }
   }
   return n;
+}
+
+/** GET char/projects/:id/used-by — the products made from the set (its own) and every product its layers were dropped
+ * into, newest first. */
+export async function setProducts(s: CtSession, projectId: string): Promise<NextResponse> {
+  const db = s.supabase;
+  const { data: p } = await db.from(CT_TABLES.charProjects).select("product_ids").eq("id", projectId).maybeSingle<{ product_ids: string[] | null }>();
+  if (!p) return NextResponse.json({ error: "Không tìm thấy bộ nhân vật" }, { status: 404 });
+  const own = p.product_ids ?? [];
+  const { data: using } = await db.from(CT_TABLES.regions).select("product_id").eq("config->charSet->>projectId", projectId).returns<Array<{ product_id: string }>>();
+  const ids = [...new Set([...own, ...(using ?? []).map((r) => r.product_id)])];
+  const products = ids.length
+    ? ((await db.from(CT_TABLES.products).select("id, name, thumbnail_url, created_at").in("id", ids).order("created_at", { ascending: false }).returns<Array<Pick<CtProduct, "id" | "name" | "thumbnail_url" | "created_at">>>()).data ?? [])
+    : [];
+  return NextResponse.json({ products: products.map((x) => ({ ...x, own: own.includes(x.id) })) });
 }

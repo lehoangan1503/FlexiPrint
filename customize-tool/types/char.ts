@@ -791,3 +791,12 @@ export interface CtCharVersionCard {
   /** 3b pictures the cut needs: done / all. */
   edits: { done: number; total: number; running: number; failed: number };
 }
+
+/** A product a bộ nhân vật is used in (GET char/projects/:id/used-by): its own (built from it) or one it was dropped into. */
+export interface CtCharSetProduct {
+  id: string;
+  name: string;
+  thumbnail_url: string | null;
+  created_at: string;
+  own: boolean;
+}

@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ExternalLink, Loader2 } from "lucide-react";
-import type { CtCharImage, CtCharProject } from "../../types";
+import type { CtCharImage, CtCharProject, CtCharSetProduct } from "../../types";
 import { charApi } from "../../lib/api-client";
 import { CT_CONFIG } from "../../config";
 import type { CharCtx } from "./char-project";
@@ -23,6 +23,14 @@ export function CharSetFiles({ projectId, currentUserId, admin }: { projectId: s
   const [images, setImages] = useState<CtCharImage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [edit, setEdit] = useState<CutEdit>(null);
+  /** Products using the set: its own and every one it was dropped into (a set serves many products). */
+  const [products, setProducts] = useState<CtCharSetProduct[] | null>(null);
+  useEffect(() => {
+    charApi
+      .usedBy(projectId)
+      .then(setProducts)
+      .catch(() => setProducts([]));
+  }, [projectId]);
 
   const reload = useCallback(async () => {
     try {
@@ -83,12 +91,29 @@ export function CharSetFiles({ projectId, currentUserId, admin }: { projectId: s
           <Link href={`/v2/${project.id}`} target="_blank" className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent">
             <ExternalLink className="h-3.5 w-3.5" /> Mở bộ
           </Link>
-          {project.product_ids[0] && (
-            <Link href={`${CT_CONFIG.basePath}/${project.product_ids[0]}`} target="_blank" className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent">
-              <ExternalLink className="h-3.5 w-3.5" /> Sản phẩm của bộ
-            </Link>
-          )}
         </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="text-muted-foreground">Sản phẩm dùng bộ{products ? ` (${products.length})` : ""}:</span>
+        {products === null ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : products.length === 0 ? (
+          <span className="text-muted-foreground">chưa có</span>
+        ) : (
+          products.map((x) => (
+            <Link
+              key={x.id}
+              href={`${CT_CONFIG.basePath}/${x.id}`}
+              target="_blank"
+              title={x.own ? "Sản phẩm dựng từ bộ" : "Sản phẩm đã kéo bộ vào"}
+              className="inline-flex max-w-64 items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-accent"
+            >
+              <ExternalLink className="h-3 w-3 shrink-0" />
+              <span className="truncate">{x.name}</span>
+              {x.own && <span className="shrink-0 text-[10px] text-muted-foreground">· gốc</span>}
+            </Link>
+          ))
+        )}
       </div>
       {error && <p className="rounded bg-destructive/10 p-2 text-xs text-destructive">{error}</p>}
       {project.brief.poses?.length ? (

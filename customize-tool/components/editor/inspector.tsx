@@ -107,6 +107,9 @@ export interface InspectorProps {
   onZoneOption: (regionId: string, optionId: string | null) => void;
   /** The khuôn in the product is made on: placement / fill / print-only per layer, the safe zone check. */
   print?: CtProductPrint | null;
+  /** The bộ nhân vật picked as a whole (its layers' ids) — its row in Layers selects it. */
+  selectedSet: string[] | null;
+  onSelectSet: (ids: string[]) => void;
 }
 
 /** "Choose state: Texas" — the option a child zone belongs to. */
@@ -154,7 +157,14 @@ export function Inspector(props: InspectorProps) {
     for (const [head, list] of setGroups) if (list.some((x) => x.id === id)) return head;
     return null;
   };
-  const selectedGroup = selectedRegionId ? groupOf(selectedRegionId) : null;
+  const selectedGroup = selectedRegionId ? groupOf(selectedRegionId) : props.selectedSet?.[0] ? groupOf(props.selectedSet[0]) : null;
+  const toggleSet = (head: string) =>
+    setOpenSets((cur) => {
+      const next = new Set(cur);
+      if (next.has(head)) next.delete(head);
+      else next.add(head);
+      return next;
+    });
   const removeMany = (ids: string[]) => {
     const gone = new Set(ids.flatMap((id) => [...zoneSubtree(regions, id)]));
     design.commit((s) => ({ ...s, regions: s.regions.filter((r) => !gone.has(r.id)), items: s.items.filter((i) => !gone.has(i.region_id)) }));
@@ -215,23 +225,29 @@ export function Inspector(props: InspectorProps) {
           const frameActive = hasFrame && r.id === selectedRegionId && props.frameSelected;
           const group = r.config?.charSet ? groupOf(r.id) : null;
           const groupList = group ? (setGroups.get(group) ?? []) : [];
-          const groupOpen = !!group && (openSets.has(group) || selectedGroup === group);
+          const groupOpen = !!group && openSets.has(group);
           return (
             <Fragment key={r.id}>
             {group === r.id && (
               <div
-                onClick={() =>
-                  setOpenSets((cur) => {
-                    const next = new Set(cur);
-                    if (next.has(group)) next.delete(group);
-                    else next.add(group);
-                    return next;
-                  })
-                }
-                className={cx("group flex cursor-pointer items-center gap-2 px-3 py-1.5", selectedGroup === group ? "bg-sky-500/10" : "hover:bg-accent")}
-                title="Bộ nhân vật v2 — các layer của bộ ở bên trong (bấm để mở / đóng)"
+                onClick={() => props.onSelectSet(groupList.map((x) => x.id))}
+                onMouseEnter={() => props.onHoverRegion(null)}
+                className={cx(
+                  "group flex cursor-pointer items-center gap-2 px-3 py-1.5",
+                  props.selectedSet && !selectedRegionId && selectedGroup === group ? "bg-sky-500/15" : selectedGroup === group ? "bg-sky-500/5" : "hover:bg-accent",
+                )}
+                title="Bộ nhân vật v2 — bấm để chọn cả bộ (kéo / co giãn cả bộ trên canvas); mũi tên để mở / đóng các layer bên trong"
               >
-                {groupOpen ? <ChevronDown className="-ml-2 h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="-ml-2 h-3.5 w-3.5 shrink-0" />}
+                <button
+                  className="-ml-2 rounded p-0.5 hover:bg-background"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleSet(group);
+                  }}
+                  aria-label={groupOpen ? "Đóng bộ" : "Mở bộ"}
+                >
+                  {groupOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                </button>
                 <Users className="h-3.5 w-3.5 shrink-0 text-violet-500" />
                 <span className="flex-1 truncate font-medium">{r.config.charSet?.name || "Bộ nhân vật"}</span>
                 <span className="text-[10px] text-muted-foreground">{groupList.length} layer</span>

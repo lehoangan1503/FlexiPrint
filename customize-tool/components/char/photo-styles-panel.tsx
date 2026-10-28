@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, FlaskConical, GripVertical, ImagePlus, Loader2, Pencil, Plus, Star, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, FlaskConical, GripVertical, ImagePlus, Loader2, Pencil, Plus, Star, Trash2, X } from "lucide-react";
 import type { CtCharImage, CtCharPhotoStyle } from "../../types";
 import { charApi } from "../../lib/api-client";
 import { CHECKER_STYLE, CtButton, CtInput, CtTextarea, cx } from "../ui";
@@ -27,8 +27,31 @@ interface Draft {
 /** The newest test of each (style, photo). */
 function testsOf(images: CtCharImage[], styleId: string): CtCharImage[] {
   const out = new Map<string, CtCharImage>();
-  for (const im of images) if (im.role.startsWith(`${TEST_ROLE}${styleId}:`) && (!out.has(im.role) || out.get(im.role)!.created_at <= im.created_at)) out.set(im.role, im);
+  for (const im of images)
+    if (im.role.startsWith(`${TEST_ROLE}${styleId}:`) && (!out.has(im.role) || out.get(im.role)!.created_at <= im.created_at)) out.set(im.role, im);
   return [...out.values()].sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+/** The customer-like photo a test ran on. */
+function sourceOf(im: CtCharImage | undefined): string {
+  return (im?.meta as { sourceUrl?: string } | undefined)?.sourceUrl ?? "";
+}
+
+/** Before → after: the photo as uploaded, then what the style made of it (asked 2026-10-28). */
+function BeforeAfter({ source, children, size }: { source: string; children: React.ReactNode; size: string }) {
+  return (
+    <div className="flex items-center gap-1">
+      {source && (
+        <>
+          <div className={cx(size, "shrink-0 overflow-hidden rounded-md border bg-muted")} title="Ảnh gốc (như khách upload)">
+            <Thumb url={source} className="object-cover" />
+          </div>
+          <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        </>
+      )}
+      {children}
+    </div>
+  );
 }
 
 function Thumb({ url, className, alt = "" }: { url: string; className?: string; alt?: string }) {
@@ -111,7 +134,15 @@ export function PhotoStylesSection(ctx: CharCtx) {
       const urls = await upload(list);
       if (urls.length) ctx.setProject(await charApi.styleTestPhotos(project.id, [...photos, ...urls]));
     });
-  const dropPhoto = (url: string) => run("photos", async () => ctx.setProject(await charApi.styleTestPhotos(project.id, photos.filter((x) => x !== url))));
+  const dropPhoto = (url: string) =>
+    run("photos", async () =>
+      ctx.setProject(
+        await charApi.styleTestPhotos(
+          project.id,
+          photos.filter((x) => x !== url),
+        ),
+      ),
+    );
 
   if (!zone || zone.treat !== "ai") return null;
   const offered = styles.filter((x) => x.offered);
@@ -122,7 +153,8 @@ export function PhotoStylesSection(ctx: CharCtx) {
         <div className="min-w-[260px] flex-1">
           <h3 className="text-sm font-semibold">Style ảnh khách</h3>
           <p className="text-xs text-muted-foreground">
-            Mỗi thẻ = 1 lựa chọn style trên store (chỉ 1 thẻ thì store không hiện ô chọn style). Xem ảnh thử → chưa ưng thì kéo thẻ vào ô chat bên dưới và tả cần sửa gì; style không dùng thì bỏ. Sửa prompt có hiệu lực ngay cho khách; tên / demo / thêm bớt style cần tạo lại sản phẩm rồi deploy lại.
+            Mỗi thẻ = 1 lựa chọn style trên store (chỉ 1 thẻ thì store không hiện ô chọn style). Xem ảnh thử → chưa ưng thì kéo thẻ vào ô chat bên dưới và tả
+            cần sửa gì; style không dùng thì bỏ. Sửa prompt có hiệu lực ngay cho khách; tên / demo / thêm bớt style cần tạo lại sản phẩm rồi deploy lại.
           </p>
         </div>
         {editable && (
@@ -145,7 +177,11 @@ export function PhotoStylesSection(ctx: CharCtx) {
             <div key={u} className="group relative h-20 w-20 overflow-hidden rounded-md border bg-muted">
               <Thumb url={u} className="object-cover" />
               {editable && (
-                <button className="absolute right-0.5 top-0.5 hidden rounded-full bg-black/60 p-0.5 text-white group-hover:block" onClick={() => void dropPhoto(u)} title="Bỏ ảnh thử">
+                <button
+                  className="absolute right-0.5 top-0.5 hidden rounded-full bg-black/60 p-0.5 text-white group-hover:block"
+                  onClick={() => void dropPhoto(u)}
+                  title="Bỏ ảnh thử"
+                >
                   <X className="h-3 w-3" />
                 </button>
               )}
@@ -153,7 +189,11 @@ export function PhotoStylesSection(ctx: CharCtx) {
           ))}
           {!photos.length && <p className="self-center text-xs text-muted-foreground">Chưa có — thử trên ảnh thú cưng mẫu của hệ thống.</p>}
           {editable && photos.length < 6 && (
-            <button className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-md border border-dashed text-[11px] text-muted-foreground hover:bg-accent" disabled={!!busy} onClick={() => fileRef.current?.click()}>
+            <button
+              className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-md border border-dashed text-[11px] text-muted-foreground hover:bg-accent"
+              disabled={!!busy}
+              onClick={() => fileRef.current?.click()}
+            >
               {busy === "photos" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
               Thêm ảnh
             </button>
@@ -185,11 +225,18 @@ export function PhotoStylesSection(ctx: CharCtx) {
               n={i + 1}
               total={offered.length}
               tests={testsOf(images, st.id)}
+              demoSource={sourceOf(images.find((im) => im.url === st.demoUrl))}
               photos={photos}
               editable={editable}
               busy={busy}
-              onEdit={() => setDraft({ id: st.id, name: st.name, prompt: st.prompt, refUrls: st.refUrls })}
-              onTest={() => void test([st.id])}
+              onEdit={() =>
+                setDraft({
+                  id: st.id,
+                  name: st.name,
+                  prompt: st.prompt,
+                  refUrls: st.refUrls,
+                })
+              }
               onTestOwn={(list) =>
                 void run(`test:${st.id}`, async () => {
                   const urls = await upload(list);
@@ -205,14 +252,11 @@ export function PhotoStylesSection(ctx: CharCtx) {
       </div>
       {!offered.length && !draft && (
         <p className="text-sm text-muted-foreground">
-          Chưa có style nào. Viết ở chat, ví dụ: “4 style: đeo khăn choàng len, bộ đồ siêu nhân áo choàng đỏ, dây đèn trang trí quấn quanh, vẽ màu nước” — @flexiprint viết prompt, thử trên ảnh thử và chọn demo.
+          Chưa có style nào. Viết ở chat, ví dụ: “4 style: đeo khăn choàng len, bộ đồ siêu nhân áo choàng đỏ, dây đèn trang trí quấn quanh, vẽ màu nước” —
+          @flexiprint viết prompt, thử trên ảnh thử và chọn demo.
         </p>
       )}
-      {off.length > 0 && (
-        <div className="text-xs text-muted-foreground">
-          Đã bỏ khỏi vùng ảnh: {off.map((x) => x.name).join(", ")}
-        </div>
-      )}
+      {off.length > 0 && <div className="text-xs text-muted-foreground">Đã bỏ khỏi vùng ảnh: {off.map((x) => x.name).join(", ")}</div>}
     </section>
   );
 }
@@ -222,11 +266,12 @@ function StyleCard(props: {
   n: number;
   total: number;
   tests: CtCharImage[];
+  /** The photo the demo was made from. */
+  demoSource: string;
   photos: string[];
   editable: boolean;
   busy: string;
   onEdit: () => void;
-  onTest: () => void;
   /** Try this style alone on pictures picked now (not kept as the set's test photos). */
   onTestOwn: (files: FileList | null) => void;
   onRemove: () => void;
@@ -248,10 +293,16 @@ function StyleCard(props: {
       title="Kéo thẻ vào ô chat để nhờ @flexiprint sửa style này"
     >
       <div className="flex items-start gap-3">
-        <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-md border" style={CHECKER_STYLE}>
-          {face ? <Thumb url={face} /> : <span className="flex h-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground">chưa có demo</span>}
-          {st.demoUrl && <span className="absolute left-1 top-1 rounded bg-amber-500 px-1 text-[9px] font-semibold text-white">DEMO</span>}
-        </div>
+        <BeforeAfter source={st.demoUrl ? props.demoSource : sourceOf(firstDone)} size="h-24 w-24">
+          <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-md border" style={CHECKER_STYLE}>
+            {face ? (
+              <Thumb url={face} />
+            ) : (
+              <span className="flex h-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground">chưa có demo</span>
+            )}
+            {st.demoUrl && <span className="absolute left-1 top-1 rounded bg-amber-500 px-1 text-[9px] font-semibold text-white">DEMO</span>}
+          </div>
+        </BeforeAfter>
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex items-center gap-1">
             <GripVertical className="h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground" />
@@ -261,7 +312,11 @@ function StyleCard(props: {
             </span>
             {!st.own && <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">thư viện</span>}
           </div>
-          <button className={cx("w-full text-left text-[11px] leading-snug text-muted-foreground", !open && "line-clamp-3")} onClick={() => setOpen(!open)} title={open ? "Thu gọn" : "Xem cả prompt"}>
+          <button
+            className={cx("w-full text-left text-[11px] leading-snug text-muted-foreground", !open && "line-clamp-3")}
+            onClick={() => setOpen(!open)}
+            title={open ? "Thu gọn" : "Xem cả prompt"}
+          >
             {st.prompt}
           </button>
           {st.refUrls.length > 0 && (
@@ -277,29 +332,30 @@ function StyleCard(props: {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-x-4 gap-y-2">
         {tests.map((t) => (
-          <figure key={t.id} className="w-24">
-            <div className="flex aspect-square items-center justify-center overflow-hidden rounded-md border" style={CHECKER_STYLE}>
-              {t.status === "done" ? (
-                <Thumb url={t.thumb_url || t.url} />
-              ) : t.status === "running" ? (
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              ) : (
-                <span className="px-1 text-center text-[10px] text-destructive" title={t.error}>
-                  {t.error.slice(0, 80) || "lỗi"}
-                </span>
-              )}
-            </div>
+          <figure key={t.id}>
+            <BeforeAfter source={sourceOf(t)} size="h-20 w-20">
+              <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-md border" style={CHECKER_STYLE}>
+                {t.status === "done" ? (
+                  <Thumb url={t.thumb_url || t.url} />
+                ) : t.status === "running" ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                ) : (
+                  <span className="px-1 text-center text-[10px] text-destructive" title={t.error}>
+                    {t.error.slice(0, 80) || "lỗi"}
+                  </span>
+                )}
+              </div>
+            </BeforeAfter>
             <figcaption className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground">
-              {(t.meta as { sourceUrl?: string }).sourceUrl && (
-                <span className="h-4 w-4 overflow-hidden rounded-sm border">
-                  <Thumb url={(t.meta as { sourceUrl: string }).sourceUrl} className="object-cover" />
-                </span>
-              )}
               <span className="flex-1">{t.created_at < st.updated_at ? "prompt cũ" : ""}</span>
               {editable && st.own && t.status === "done" && (
-                <button className={cx("rounded p-0.5 hover:bg-accent", st.demoUrl === t.url && "text-amber-500")} onClick={() => props.onDemo(t)} title="Dùng làm ảnh demo (khách chọn style theo ảnh này)">
+                <button
+                  className={cx("rounded p-0.5 hover:bg-accent", st.demoUrl === t.url && "text-amber-500")}
+                  onClick={() => props.onDemo(t)}
+                  title="Dùng làm ảnh demo (khách chọn style theo ảnh này)"
+                >
                   <Star className="h-3 w-3" />
                 </button>
               )}
@@ -311,12 +367,8 @@ function StyleCard(props: {
 
       {editable && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <CtButton size="sm" disabled={!!busy} onClick={props.onTest}>
-            {busy === `test:${st.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />}
-            Thử
-          </CtButton>
-          <CtButton size="sm" variant="ghost" disabled={!!busy} onClick={() => ownRef.current?.click()} title="Upload ảnh như khách rồi thử riêng style này">
-            <ImagePlus className="h-3.5 w-3.5" /> Thử ảnh khác
+          <CtButton size="sm" disabled={!!busy} onClick={() => ownRef.current?.click()} title="Upload ảnh như khách rồi thử riêng style này">
+            {busy === `test:${st.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} Thử với ảnh của bạn
           </CtButton>
           <input
             ref={ownRef}
@@ -362,26 +414,45 @@ function StyleForm(props: {
   const refFile = useRef<HTMLInputElement | null>(null);
   return (
     <div className="space-y-2 rounded-lg border border-sky-500/50 bg-background p-3">
-      <CtInput placeholder="Tên style khách thấy (tiếng Anh), vd. Cozy Scarf" value={draft.name} maxLength={80} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+      <CtInput
+        placeholder="Tên style khách thấy (tiếng Anh), vd. Cozy Scarf"
+        value={draft.name}
+        maxLength={80}
+        onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+      />
       <CtTextarea
         rows={7}
         className="font-mono text-xs"
-        placeholder={"Image 1 is the customer's photo (a pet or a person). Image 2 is the style reference artwork.\nRedraw ONLY the subject of image 1 … keep its real face … wearing … in EXACTLY the style of image 2.\nDO NOT draw any background, text or frame. Output: the subject only on a fully transparent background."}
+        placeholder={
+          "Redraw the pet or person from the customer's photo as a watercolour portrait, keeping their real face and colours. Dress it in … Transparent background, no text, no frame."
+        }
         value={draft.prompt}
         onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
       />
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] text-muted-foreground">Ảnh tham chiếu style (ảnh 2, 3…; tối đa 3):</span>
+        <span className="text-[11px] text-muted-foreground">Ảnh mẫu cho style này (không bắt buộc, tối đa 3):</span>
         {draft.refUrls.map((u) => (
           <div key={u} className="group relative h-12 w-12 overflow-hidden rounded border" style={CHECKER_STYLE}>
             <Thumb url={u} />
-            <button className="absolute right-0 top-0 hidden rounded-full bg-black/60 p-0.5 text-white group-hover:block" onClick={() => setDraft({ ...draft, refUrls: draft.refUrls.filter((x) => x !== u) })}>
+            <button
+              className="absolute right-0 top-0 hidden rounded-full bg-black/60 p-0.5 text-white group-hover:block"
+              onClick={() =>
+                setDraft({
+                  ...draft,
+                  refUrls: draft.refUrls.filter((x) => x !== u),
+                })
+              }
+            >
               <X className="h-3 w-3" />
             </button>
           </div>
         ))}
         {draft.refUrls.length < 3 && (
-          <button className="flex h-12 w-12 items-center justify-center rounded border border-dashed text-muted-foreground hover:bg-accent" onClick={() => refFile.current?.click()} disabled={adding}>
+          <button
+            className="flex h-12 w-12 items-center justify-center rounded border border-dashed text-muted-foreground hover:bg-accent"
+            onClick={() => refFile.current?.click()}
+            disabled={adding}
+          >
             {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
           </button>
         )}
@@ -395,7 +466,12 @@ function StyleForm(props: {
             setAdding(true);
             void props
               .upload(list)
-              .then((urls) => setDraft({ ...draft, refUrls: [...draft.refUrls, ...urls].slice(0, 3) }))
+              .then((urls) =>
+                setDraft({
+                  ...draft,
+                  refUrls: [...draft.refUrls, ...urls].slice(0, 3),
+                }),
+              )
               .finally(() => setAdding(false));
             e.target.value = "";
           }}

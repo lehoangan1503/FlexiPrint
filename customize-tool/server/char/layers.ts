@@ -409,7 +409,9 @@ async function runBuild(db: Db, userId: string, p: CtCharProject, input: Record<
     // Each file's colour plate (what a hand edit paints added pixels from, server/char/file-edit.ts).
     const plates = new Map<string, { url: string; path: string }>();
     await pool(Object.entries(kit.plates ?? {}), 6, async ([key, b64]) => {
-      plates.set(key, await saveCharRaw(userId, p.id, "cut", Buffer.from(b64, "base64"), "image/jpeg"));
+      // PNG since 2026-10-30 (a lossless plate: the JPEG one looked blurred as the source of "Thêm vào lớp").
+      const bytes = Buffer.from(b64, "base64");
+      plates.set(key, await saveCharRaw(userId, p.id, "cut", bytes, bytes.subarray(0, 4).toString("hex") === "89504e47" ? "image/png" : "image/jpeg"));
     });
     const order = new Map(kit.files.map((f, i) => [f, i]));
     stored.sort((a, b) => (order.get(a.file) ?? 0) - (order.get(b.file) ?? 0));

@@ -134,6 +134,14 @@ def png_b64(rgba: np.ndarray) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def plate_b64(rgb: np.ndarray) -> str:
+    """A file's colour plate, lossless (2026-10-30: the JPEG plate looked blurred as the source of "Thêm vào lớp")."""
+    ok, buf = cv2.imencode(".png", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_PNG_COMPRESSION, 6])
+    if not ok:
+        raise HTTPException(500, "không mã hoá được PNG")
+    return base64.b64encode(buf.tobytes()).decode()
+
+
 def jpg_b64(rgb: np.ndarray) -> str:
     ok, buf = cv2.imencode(".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 92])
     if not ok:
@@ -561,6 +569,7 @@ def _cut(body: CutBody, out_dir: str) -> dict:
         slot = Slot(s.key, s.label, s.mode, wraps=s.wraps, colors=[(c.name, c.hex) for c in s.colors], hexes=[o.hex for o in s.options])
         if s.figure:
             slot.figure = pic(s.figure)[1]
+            slot.ref_piece = next((f"{h.key}#{i}" for h in body.slots for i, ho in enumerate(h.options) if ho.picture == s.figure), None)
         for o in s.options:
             opt = Option(o.name)
             if o.picture:
@@ -569,7 +578,7 @@ def _cut(body: CutBody, out_dir: str) -> dict:
             slot.options.append(opt)
         slots.append(slot)
     zones = [Zone(z.id, region(z.region)) for z in body.zones]
-    out = cut(unit(b_col), unit(b_a) * unit(region(body.body_region)), slots, zones, lambda rgba: (png_b64(rgba), bbox(rgba)), jpg_b64)
+    out = cut(unit(b_col), unit(b_a) * unit(region(body.body_region)), slots, zones, lambda rgba: (png_b64(rgba), bbox(rgba)), plate_b64)
     log.info("cut %d files in %.1fs", len(out["files"]), time.time() - t0)
     return {
         "width": out["width"],
@@ -581,7 +590,7 @@ def _cut(body: CutBody, out_dir: str) -> dict:
         "checks": out["checks"],
         "diff": png_b64(out["diff"]),
         "files": [{"slot": f.slot, "label": f.label, "option": f.option, "color": f.color, "piece": f.piece, "png": f.png, "bbox": f.bbox, "plate": f.plate} for f in out["files"]],
-        # Each file's colours over the whole canvas (JPEG): what a hand edit adds to the file is painted from these.
+        # Each file's colours over the whole canvas (PNG): what a hand edit adds to the file is painted from these.
         "plates": out["plates"],
         # A part made of a back + a front layer as it is seen (its whole back file): the option's thumbnail.
         "views": [{"slot": v.slot, "option": v.option, "color": v.color, "png": v.png, "plate": v.plate} for v in out["views"]],

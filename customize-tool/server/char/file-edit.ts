@@ -241,7 +241,7 @@ async function moveFiles(db: Db, userId: string, p: CtCharProject, set: CtCharLa
       patch.viewUrl = url;
       patch.viewThumbUrl = done.get(`thumb:${v}`) ?? f.viewThumbUrl;
     }
-    if (f.plateUrl) patch.plateUrl = await once(f.plateUrl, () => raw(f.plateUrl!, "image/jpeg"));
+    if (f.plateUrl) patch.plateUrl = await once(f.plateUrl, () => raw(f.plateUrl!, /\.png(\?|$)/i.test(f.plateUrl!) ? "image/png" : "image/jpeg"));
     // A hand edit is kept where the file now is (applied again after a new cut, once that is moved the same).
     if (f.editMaskUrl) patch.editMaskUrl = await once(f.editMaskUrl, () => raw(f.editMaskUrl!, "image/png"));
     if (f.editBaseUrl) patch.editBaseUrl = await once(f.editBaseUrl, () => raw(f.editBaseUrl!, "image/png"));

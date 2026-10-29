@@ -797,6 +797,10 @@ export async function deleteAsset(s: CtSession, assetId: string): Promise<NextRe
   const { data: children } = await s.supabase.from(CT_TABLES.assets).select("storage_path").eq("parent_id", assetId);
   const { error } = await s.supabase.from(CT_TABLES.assets).delete().eq("id", assetId);
   if (error) return jsonError(error.message, 500);
+  // A mockup is also listed as a job of the product (server/product-mockups.ts — a bộ nhân vật's step 4 shows those):
+  // it goes with the picture, or step 4 keeps showing a mockup deleted in the editor.
+  if (asset.role === "mockup" && asset.product_id)
+    await (ctServiceClient() ?? s.supabase).from(CT_TABLES.packImages).delete().eq("name", `mockup:${asset.product_id}`).eq("url", asset.url);
   await ctRemove([asset.storage_path, ...(children ?? []).map((c: { storage_path: string }) => c.storage_path)]);
   return new NextResponse(null, { status: 204 });
 }

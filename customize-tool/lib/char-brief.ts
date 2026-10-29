@@ -267,6 +267,7 @@ function parseSlot(raw: unknown): CtCharSlot | null {
     on: typeof o.on === "string" && /^[\w-]{1,40}$/.test(o.on) ? o.on : null,
     restyle: o.restyle === true,
     headwear: o.headwear === true,
+    sameAs: typeof o.sameAs === "string" && /^[\w-]{1,40}$/.test(o.sameAs) ? o.sameAs : null,
   };
 }
 
@@ -723,6 +724,13 @@ export function briefProblems(brief: CtCharBrief): string[] {
         out.push(`Nhân vật ${i + 1}: phần "${slot.part}" đổi màu — mỗi màu cần mã #rrggbb.`);
       if (slot.mode === "shape" && slot.colors.some((o) => !/^#[0-9a-f]{6}$/.test(o.value)))
         out.push(`Nhân vật ${i + 1}: màu của "${slot.part}" cần mã #rrggbb.`);
+      if (slot.sameAs) {
+        const lead = sub.slots.find((x) => x !== slot && x.id === slot.sameAs);
+        const names = (sl: CtCharSlot) => [sl.options.map((o) => o.name).join("|"), sl.colors.map((c) => c.name).join("|")].join("/");
+        if (!lead) out.push(`Nhân vật ${i + 1}: "${slot.part}" cùng lựa chọn với "${slot.sameAs}" nhưng nhân vật này không có phần đó.`);
+        else if (lead.sameAs) out.push(`Nhân vật ${i + 1}: "${slot.part}" phải cùng lựa chọn với phần gốc, không phải "${lead.part}" (đã cùng lựa chọn với phần khác).`);
+        else if (names(lead) !== names(slot)) out.push(`Nhân vật ${i + 1}: "${slot.part}" cùng lựa chọn với "${lead.part}" nhưng khác kiểu / màu hoặc thứ tự.`);
+      }
       if (slot.on && !sub.slots.some((x) => x !== slot && (x.id === slot.on || x.group === slot.on)))
         out.push(`Nhân vật ${i + 1}: "${slot.part}" vẽ trên "${slot.on}" nhưng nhân vật này không có phần nào có id / group đó.`);
     });

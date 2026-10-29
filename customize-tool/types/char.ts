@@ -67,16 +67,26 @@ export interface CtCharSlot {
    */
   group?: string | null;
   /**
-   * Drawn ON the first picture of this group and cut against it, not the doll (asked 2026-10-19: hair drawn on the
-   * bald doll stuck out from under the Santa hats): the hair is drawn UNDER the hats and only what shows is kept.
+   * Drawn ON a picture of this group (the outfit with the hat) and cut against it, not the doll (asked 2026-10-19: hair
+   * drawn on the bald doll stuck out from under the Santa hats): the hair is drawn UNDER the hats and only what shows is
+   * kept — so in the product it lies OVER that outfit, like in 3c (the outfit is never split around it).
    */
   on?: string | null;
   /** The options after the first are drawn from the first one's picture (the Halloween / Easter hats on the Santa
    * hats' band — the hair drawn under it fits them all); still cut against the doll. */
   restyle?: boolean;
-  /** A worn outfit whose top piece (above the face) is headwear: in the product the hat is its own layer over the
-   * hair, the rest (the sweater) under it. */
+  /** A worn outfit whose top piece (above the face) is headwear. Hair drawn under it (a hair slot with `on` = this slot
+   * or its group): the product keeps the cut's order, the hair over the whole outfit (2026-10-29: the hat over the hair
+   * showed the brim's shadow on the forehead as a skin line). Hair drawn on the bald doll (no `on`): the hat becomes its
+   * own layer over the hair, the rest (the sweater) under it. */
   headwear?: boolean;
+  /**
+   * The same customer choice as that slot of the same character (asked 2026-10-30: hair drawn under each kind of hat —
+   * a Santa hat, a witch hat with a wide brim, no hat — is one slot per kind, each with shownWhen its theme): one
+   * picker for all of them in the product (empty pictures with that slot's thumbnails, every one of them follows it),
+   * so the hair the customer picked stays when the theme changes. Same options, colours and order as that slot.
+   */
+  sameAs?: string | null;
 }
 
 /** A condition on a chooser (brief.choosers): the part / text / decoration exists only while it shows `option`. */

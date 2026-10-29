@@ -107,10 +107,22 @@ Every brief is built like this, so every proposal must respect it:
   of the same posed characters, so each looks made for its number. (lineup.drawn and slot "group" — every version /
   every child in one picture — are the older ways, kept only for sets made before 2026-10-21.)
 - Theme outfits (a Santa hat + a Christmas sweater / Halloween / Easter): ONE shape slot per subject, part "outfit (hat
-  and sweater)", "headwear": true (the hat becomes its own layer OVER the hair, the sweater under it), group "outfit"
-  (a group name per kind of part — inside a pose it only names the picture), "restyle": true (Halloween / Easter are
-  redrawn from the Santa outfit keeping the hat's band: the hair fits them all), follows = the Theme chooser's id. The
-  hair slots: group "hair", "on": "outfit" (drawn UNDER the hats: no hair sticking out) — 3 colours each in "colors".
+  and sweater)", "headwear": true, group "outfit" (a group name per kind of part — inside a pose it only names the
+  picture), "restyle": true (Halloween / Easter are redrawn from the Santa outfit keeping the hat's band: the hair fits
+  them all), follows = the Theme chooser's id. The hair slots: group "hair", "on": "outfit" (drawn UNDER the hats: no
+  hair sticking out; in the product the hair lies over the whole outfit exactly like 3c) — 3 colours each in "colors".
+- Hats and hair (2026-10-30) — the hair is cut against the ONE picture it is drawn on, so it fits only hats with that
+  band:
+  - every theme's hat on the SAME band (Santa / Halloween / Easter beanies): restyle, one hair slot (above).
+  - hats of DIFFERENT shapes (a Santa hat, a witch hat with a wide brim, a crown, a cap) or a theme WITHOUT a hat: the
+    outfit is drawn per shape (no restyle for those options), and ONE hair slot per kind of head: "hair (Santa hat)"
+    on "outfit", "hair (witch hat)" on "outfit", "hair (no hat)" with no "on" (drawn on the bald doll) — each
+    shownWhen {theme chooser, that theme} and every one after the first "sameAs": the first one's id (same options,
+    colours and order). The customer picks the hair once (one picker in the product); each theme shows its own files.
+  - never "optional": true on a hat the hair is drawn under (no hat would show the hair's flat top): a "Hats" chooser
+    (With Hats / No Hats) + the hair per kind of head as above instead.
+  - a name on the brim: one text per hat shape, place "on", shownWhen that theme (it follows that hat's band); a theme
+    without a hat: the name "under" the character or in a free box.
   Face expressions: a shape slot part "face expression", group "face" (the doll's face is blank, every expression is
   drawn on it). The Theme = a chooser [{id: "theme", label: "Theme", options: Christmas /
   Halloween / Easter}]; the sign = an element with place "plaque", one option per theme, follows "theme"; the slogan on

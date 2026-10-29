@@ -903,6 +903,35 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       slotGroups.set(cacheKey, made);
       return made;
     };
+    /**
+     * The customer's one choice for slots that are the same choice (slot.sameAs — the hair under each kind of hat, asked
+     * 2026-10-30): empty pictures in this lead slot's groups, its options' thumbnails and swatches; the lead and every
+     * slot sameAs it follow it (each shown by its own shownWhen), so the pick stays when the theme changes.
+     */
+    const pickers = new Map<string, Promise<Array<{ name: string; sub: CtAsset | null }>>>();
+    const pickerOf = (slot: CtCharLayerSlot, label: string) => {
+      const hit = pickers.get(slot.key);
+      if (hit) return hit;
+      const colours = [...new Set(slot.files.map((f) => f.color))];
+      const grouped = colours.length > 1 || colours[0] !== "";
+      const groups = grouped ? colours.map((c) => ({ name: c, files: slot.files.filter((f) => f.color === c) })) : [{ name: "", files: slot.files }];
+      const back = sset.slots.find((x) => x.follows === slot.key);
+      const made = Promise.all(
+        groups.map(async (g) => {
+          let sub: CtAsset | null = null;
+          for (const f of g.files) {
+            const swatch = swatchOf(sb, slot.key, f.option, f.color);
+            const whole = f.viewUrl ? f : back?.files.find((b) => b.option === f.option && b.color === f.color);
+            const thumb = thumbPictureOf(slot, f) ?? (await drawnThumbOf(slot, f)) ?? (whole ? whole.viewUrl || whole.url : undefined);
+            const a = await clipart(blankPng, [label, f.option, f.color, "chọn"].filter(Boolean).join(" · "), sub?.id ?? null, { ...(swatch ? { swatch } : {}), ...(thumb ? { thumb } : {}) });
+            sub ??= a;
+          }
+          return { name: grouped ? g.name : "", sub };
+        }),
+      );
+      pickers.set(slot.key, made);
+      return made;
+    };
     const bodyName = split ? undefined : solo !== undefined ? `Body · ${subjectName(sb, solo)}` : drawn ? `Body · ${src.p.brief.versionOf?.name ?? named[named.length - 1].name}` : "Body";
     // A pose's body with a "phần nằm sau" (server/char/behind.ts): the body without it, and the part on its own.
     const bodyBehind = src.p.brief.versionOf?.pose && bodySlot ? sset.behindUrl : undefined;
@@ -918,20 +947,29 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     );
     const bodyBacks = bodyBehind ? bodies.map(async (png, i) => clipart(await keepMask(png, await bytes(bodyBehind), "in"), `${bodyName ?? `Body · ${subjectName(sb, i)}`} · back`, null, bodyMeta("in"))) : [];
 
-    // A name "on" a character sits on that character's hat brim (its first hat file), following its curve — a box the
-    // brief gives is only used without a hat (a guessed box put the names off the brims, 2026-10-22).
-    const brims = new Map<number, CtBrimArc | null>();
-    for (const t of brief.texts.filter((x) => x.place === "on")) {
-      const i = sb.subjects.findIndex((x) => x.id === t.subject);
-      if (i < 0 || brims.has(i) || (solo !== undefined && i !== solo)) continue;
-      const hatSlot = sb.subjects[i].slots.find((sl) => sl.headwear) ?? sb.subjects[i].slots.find((sl) => HAT.test(sl.part));
-      const sl = hatSlot && sset.slots.find((x) => x.key === hatSlot.id || x.key === `${hatSlot.id}:front`);
-      // The default option's hat (the files come in any order: the witch hat's brim put the names over the Santa hats).
-      const first = hatSlot?.options[0]?.name;
-      const file = sl?.files.find((f) => f.option === first && (f.color === "" || f.color === hatSlot?.colors[0]?.name)) ?? sl?.files[0];
-      brims.set(i, file ? await brimArc(hatSlot?.headwear ? (await splitHeadwear(await bytes(file.url))).hat : await bytes(file.url)) : null);
-    }
-    return { src, sb, sset, slotOf, slotSubject, hatOver, subjectBox, cropOf, slots, hatSlots, groupsOf, behindOf, bodies, bodyCliparts, bodyBacks, brims };
+    // A name "on" a character sits on that character's hat brim, following its curve — a box the brief gives is only
+    // used without a hat (a guessed box put the names off the brims, 2026-10-22). Which hat: the default option's (the
+    // files come in any order: the witch hat's brim put the names over the Santa hats), or — a name shown for one option
+    // of the chooser the hats follow (a name per theme, asked 2026-10-30: a witch hat's band is not a Santa hat's) —
+    // that option's hat.
+    const brims = new Map<string, Promise<CtBrimArc | null>>();
+    const brimOf = (i: number, when: CtCharShownWhen | null | undefined): Promise<CtBrimArc | null> => {
+      const hatSlot = sb.subjects[i]?.slots.find((sl) => sl.headwear) ?? sb.subjects[i]?.slots.find((sl) => HAT.test(sl.part));
+      const chooser = when && hatSlot?.follows === when.chooser ? (brief.choosers ?? []).find((c) => c.id === when.chooser) : undefined;
+      const at = chooser ? Math.max(0, chooser.options.findIndex((o) => o.id === when!.option || o.name === when!.option)) : 0;
+      const key = `${i}|${at}`;
+      const hit = brims.get(key);
+      if (hit) return hit;
+      const made = (async () => {
+        const sl = hatSlot && sset.slots.find((x) => x.key === hatSlot.id || x.key === `${hatSlot.id}:front`);
+        const name = hatSlot?.options[at]?.name ?? hatSlot?.options[0]?.name;
+        const file = sl?.files.find((f) => f.option === name && (f.color === "" || f.color === hatSlot?.colors[0]?.name)) ?? sl?.files[0];
+        return file ? brimArc(hatSlot?.headwear ? (await splitHeadwear(await bytes(file.url))).hat : await bytes(file.url)) : null;
+      })();
+      brims.set(key, made);
+      return made;
+    };
+    return { src, sb, sset, slotOf, slotSubject, hatOver, subjectBox, cropOf, slots, hatSlots, groupsOf, pickerOf, behindOf, bodies, bodyCliparts, bodyBacks, brimOf };
   }
   for (const v of versions) for (const pt of v.parts) if (!prepared.has(pt.src.key)) prepared.set(pt.src.key, await prepare(pt.src));
 
@@ -1239,6 +1277,24 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         const parent = parentOf(P.slotOf(byKey.get(key)!)?.shownWhen);
         if (parent) r.config.parent = parent;
       }
+      // Slots that are one choice (slot.sameAs): a picker drawing nothing, the lead slot's groups and thumbnails, never
+      // under a chooser; the lead's layer and the layers of every slot sameAs it follow it (their back halves follow them).
+      const fronts1 = [...regionOf].filter(([key]) => !byKey.get(key)!.follows && !key.endsWith(":hat"));
+      for (const [key, r] of fronts1) {
+        const lead = P.slotOf(byKey.get(key)!);
+        if (!lead || lead.sameAs) continue;
+        const same = fronts1.filter(([k]) => P.slotOf(byKey.get(k)!)?.sameAs === lead.id);
+        if (!same.length) continue;
+        const pick = imageRegion(`Chọn — ${byKey.get(key)!.label}`, r.config.image.label, { display: r.config.image.display, allowNone: r.config.image.allowNone, defaultNone: r.config.image.defaultNone, groupLabel: r.config.image.groupLabel, groupDisplay: r.config.image.groupDisplay }, { type: "rect", x: 0, y: 0, w: 1, h: 1, radius: 0 });
+        for (const [, x] of [[key, r] as const, ...same]) x.config.image.follows = pick.id;
+        fills.push(
+          P.pickerOf(byKey.get(key)!, labelFor(byKey.get(key)!)).then((groups) =>
+            groups.forEach((g, gi) => {
+              if (g.sub) addItem(pick, g.sub, gi, g.name);
+            }),
+          ),
+        );
+      }
       for (const [key, r] of behindRegions.get(P) ?? []) {
         const lead = regionOf.get(key);
         if (!lead) continue;
@@ -1295,7 +1351,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         const hit = parts.map((x) => ({ ...x, i: x.P.sb.subjects.findIndex((y) => y.id === t.subject) })).find((x) => x.i >= 0 && x.pt.subjects.includes(x.i));
         const sbx = hit ? hit.P.subjectBox(hit.i) : null;
         const onSb = hit && sbx ? { x: hit.box.x + sbx.x * hit.k, y: hit.box.y + sbx.y * hit.k, w: sbx.w * hit.k, h: sbx.h * hit.k } : null;
-        const brim = hit && t.place === "on" && onSb ? hit.P.brims.get(hit.i) : null;
+        const brim = hit && t.place === "on" && onSb && (hit.P.src.as?.subject === undefined || hit.i === hit.P.src.as.subject) ? await hit.P.brimOf(hit.i, t.shownWhen) : null;
         if (hit && brim) {
           // Centred on the band, as tall as it, the letters on the band's own circle and tilt (a nearly flat band: a
           // circle too big to see).

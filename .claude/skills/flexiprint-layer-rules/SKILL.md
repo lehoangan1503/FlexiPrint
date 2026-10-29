@@ -53,6 +53,17 @@ recut or reorder whole layers: mark that part on the pose's layer (`CtCharLayerS
 editor "Đưa 1 phần ra sau" or MCP `char_set_behind`). The product splits it into its own linked layer under every
 character (same groups, follows the layer, mirrored with the character). One mask per layer = every option of it.
 
+## Hats and hair — product order = 3c (2026-10-29 / 30)
+
+- The product stacks the files in the cut's order; any reorder shows what the upper file hid. Bug 2026-10-29: the
+  Santa hat split out over the hair showed the brim's shadow on the forehead (in the outfit file) as a skin line.
+- Hair with `on` = the outfit (drawn under the hat, cut against it) → never split the hat out (product.ts `hatOver`).
+  Hair on the bald doll + `headwear` → the hat is its own layer over the hair (old sets).
+- Hair fits one hat band. Same band (restyle) → one hair slot. Different hat shapes / no-hat theme → a hair slot per
+  kind of head, `shownWhen` its theme, later ones `sameAs` the first → product makes ONE picker (blank pictures with
+  the lead's thumbs) that the lead and every sameAs slot follow. Never `optional` on a hat with hair drawn under it.
+- A name on a brim: `brimOf(subject, text.shownWhen)` measures the hat of that theme's option.
+
 ## Theme decorations and backgrounds — whole pictures, one size (user 2026-10-22)
 
 - A decoration (the sign / plaque, a band, a frame) and a theme background are ONE whole AI picture. Never piece one

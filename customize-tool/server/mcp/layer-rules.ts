@@ -111,6 +111,18 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
   underwear in the body file is a dark shadow; a key-coloured pixel within 4 px of an option file's edge (the doll
   mixed into its outline) is dropped — a magenta / purple part itself is left alone.
 
+## 9c. Hats and hair — the product stacks the files like 3c (2026-10-29 / 30)
+- A file is cut to lie on the picture it was drawn on. The product keeps the cut's order: back hair → body → parts in
+  the set's order → front hair. Changing that order shows exactly the pixels the upper file hid. (2026-10-29: the
+  Santa hat moved over the hair showed the brim's shadow on the forehead — part of the outfit file — as a skin line.)
+- Hair drawn UNDER a hat (slot on = the outfit): it lies over the whole outfit, the hat is never split out of it.
+  Hair drawn on the bald doll with a hat over it (no on): the hat becomes its own layer over the hair.
+- The hair fits only the hat band it was drawn under. Hats on one band (restyle): one hair slot. Hats of different
+  shapes, or a theme without a hat: one hair slot per kind of head, each shownWhen its theme, the later ones
+  sameAs the first — one picker for the customer, each theme its own files. Never an optional hat over hair drawn
+  under it.
+- A name on a brim follows the band of the hat shown with it (a text per hat shape, shownWhen its theme).
+
 ## 10. Checks before a set is used
 - Every file of a slot has the same pixel size.
 - Every option of a slot has the same box in the product (no per-item transform).

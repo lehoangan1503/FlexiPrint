@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Hand,
+  Users,
   ImageIcon,
   Loader2,
   MousePointer2,
@@ -31,8 +32,8 @@ import {
 } from "lucide-react";
 import { CT_CONFIG, ctGoogleFontsHref } from "../../config";
 import { CT_BASE_OPTION, CT_MAIN_KEY } from "../../types";
-import type { CtAsset, CtMainFrame, CtMainOptionConfig, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
-import { ctApi } from "../../lib/api-client";
+import type { CtAsset, CtProductCharSet, CtMainFrame, CtMainOptionConfig, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
+import { charApi, ctApi } from "../../lib/api-client";
 import {
   defaultProductConfig,
   defaultRegionSelection,
@@ -142,6 +143,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   /** A bộ nhân vật picked as a whole (its layers' ids): one frame on the canvas moves / scales them all. */
   const [setPick, setSetPick] = useState<string[] | null>(null);
 
+  /** The bộ nhân vật this product uses (built from it first) — the header's "Bộ nhân vật" button opens it. */
+  const [charSets, setCharSets] = useState<CtProductCharSet[]>([]);
+
   // ---------------------------------------------------------------- load
   useEffect(() => {
     ctApi
@@ -211,6 +215,14 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   );
   /** Bộ nhân vật the product's layers come from (CtRegionConfig.charSet). */
   const usedSets = useMemo(() => new Set(design.state.regions.flatMap((r) => (r.config?.charSet ? [r.config.charSet.projectId] : []))), [design.state.regions]);
+  // Looked up again when a set is dropped in or taken out (the server reads the saved layers).
+  const usedKey = [...usedSets].sort().join(",");
+  useEffect(() => {
+    charApi
+      .ofProduct(productId)
+      .then(setCharSets)
+      .catch(() => setCharSets([]));
+  }, [productId, usedKey]);
   /** Main version id -> its layer count. */
   const layerCounts = useMemo(() => {
     const out: Record<string, number> = {};
@@ -1028,6 +1040,18 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             </button>
           ))}
         </div>
+        {charSets.map((cs) => (
+          <CtTooltip key={cs.id} label={`${cs.own ? "Bộ nhân vật dựng sản phẩm này" : "Bộ nhân vật đã kéo vào"}: ${cs.name}`}>
+            <Link
+              href={`/v2/${cs.id}`}
+              target="_blank"
+              className="ml-2 inline-flex h-8 max-w-56 shrink-0 items-center gap-1.5 rounded-md bg-violet-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-violet-500"
+            >
+              <Users className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{charSets.length > 1 ? cs.name : "Bộ nhân vật"}</span>
+            </Link>
+          </CtTooltip>
+        ))}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {notice && <span className="max-w-60 truncate text-xs text-muted-foreground">{notice}</span>}
           <CtTooltip label="Hoàn tác" shortcut={["⌘", "Z"]}>

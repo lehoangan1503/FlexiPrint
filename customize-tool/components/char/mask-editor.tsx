@@ -5,7 +5,8 @@
  * its own point editor (matte-fix.tsx). The mask is a canvas the size of the picture (white, alpha = the mask)
  * and every tool adds to it or takes from it:
  *   Cọ       brush (size, hardness) — a click is a dot
- *   Vùng     lasso: draw round an area, it is filled
+ *   Vùng     polygon: a click = a point, a click on the first point / double click / Enter closes it and fills it
+ *            (Backspace takes the last point back, Esc drops it) — dragging round an area was hard to use (2026-10-29)
  *   Đũa thần magic wand on the picture's colours (tolerance, contiguous or everywhere) — like Photoshop
  *   Mảng     a whole island of the mask (remove a stray bit) / a whole hole inside it (fill)
  *   Làm mịn  softens the cut edge under the brush (a hard, stair-stepped edge looked sharp against the next clipart —
@@ -106,7 +107,7 @@ const ctx2d = (c: HTMLCanvasElement) => c.getContext("2d", { willReadFrequently:
 
 const TOOLS: Array<{ id: Tool; label: string; key: string; icon: typeof Brush; tip: string }> = [
   { id: "brush", label: "Cọ", key: "B", icon: Brush, tip: "Tô theo điểm / nét (bấm 1 lần = 1 chấm)" },
-  { id: "lasso", label: "Vùng", key: "L", icon: Lasso, tip: "Kéo vòng quanh 1 vùng — cả vùng được thêm / bớt" },
+  { id: "lasso", label: "Vùng", key: "L", icon: Lasso, tip: "Bấm từng điểm quanh 1 vùng; bấm lại điểm đầu (hoặc bấm đúp / Enter) để khép — cả vùng được thêm / bớt. Backspace: bỏ điểm cuối, Esc: bỏ vùng" },
   { id: "wand", label: "Đũa thần", key: "W", icon: Wand2, tip: "Bấm vào 1 màu — chọn cả mảng cùng màu (như Photoshop)" },
   { id: "island", label: "Mảng", key: "I", icon: Sparkles, tip: "Bớt: bấm vào 1 mảnh rời → xoá cả mảnh. Thêm: bấm vào 1 lỗ thủng → lấp cả lỗ" },
   { id: "smooth", label: "Làm mịn", key: "S", icon: Droplets, tip: "Tô lên mép cắt — mép bớt sắc, bớt răng cưa (chỉ làm mờ vào trong, không thêm màu)" },
@@ -168,7 +169,9 @@ export function MaskEditor(props: MaskEditorProps) {
   } | null>(null);
   const undo = useRef<Patch[]>([]);
   const redo = useRef<Patch[]>([]);
-  const stroke = useRef<{ last: { x: number; y: number } | null; box: Box | null; lasso: Array<[number, number]> } | null>(null);
+  const stroke = useRef<{ last: { x: number; y: number } | null; box: Box | null } | null>(null);
+  /** The Vùng tool's polygon being placed: its points and the pointer (the next segment's end). */
+  const poly = useRef<{ pts: Array<[number, number]>; hover: [number, number] | null; at: number } | null>(null);
   const pan = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
   const drag = useRef<{ sx: number; sy: number; dx: number; dy: number } | null>(null);
   const frame = useRef(0);
@@ -204,6 +207,10 @@ export function MaskEditor(props: MaskEditorProps) {
   const dirty = changes > 0 || moved;
   const effOp: Op = alt ? (op === "add" ? "remove" : "add") : op;
   const effTool: Tool = space ? "hand" : tool;
+  // Another tool picked: a Vùng polygon left open is dropped.
+  useEffect(() => {
+    if (tool !== "lasso") poly.current = null;
+  }, [tool]);
 
   // ---- load ----
   useEffect(() => {
@@ -362,16 +369,36 @@ export function MaskEditor(props: MaskEditorProps) {
       if (showOthers) for (const o of st.others) tinted(o.img, o.color, 0.28);
       tinted(st.mask, tint, 0.55);
     }
-    const s = stroke.current;
-    if (s && s.lasso.length > 1) {
+    const pg = poly.current;
+    if (pg && pg.pts.length) {
+      const colour = effOp === "add" ? "#22c55e" : "#ef4444";
+      const line = [...pg.pts, ...(pg.hover ? [pg.hover] : [])];
       g.save();
       g.lineWidth = Math.max(2, 2 / z.s);
-      g.setLineDash([8 / z.s, 6 / z.s]);
-      g.strokeStyle = effOp === "add" ? "#22c55e" : "#ef4444";
+      g.strokeStyle = colour;
       g.beginPath();
-      s.lasso.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
-      g.closePath();
+      line.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
       g.stroke();
+      // The closing side, dashed.
+      if (line.length > 2) {
+        g.setLineDash([8 / z.s, 6 / z.s]);
+        g.beginPath();
+        g.moveTo(line[line.length - 1][0], line[line.length - 1][1]);
+        g.lineTo(line[0][0], line[0][1]);
+        g.stroke();
+        g.setLineDash([]);
+      }
+      // The points; the first one bigger (a click on it closes the polygon).
+      pg.pts.forEach(([x, y], i) => {
+        const r = (i ? 4 : 7) / z.s;
+        g.beginPath();
+        g.arc(x, y, r, 0, Math.PI * 2);
+        g.fillStyle = i ? colour : "#fff";
+        g.fill();
+        g.lineWidth = Math.max(1.5, 1.5 / z.s);
+        g.strokeStyle = colour;
+        g.stroke();
+      });
       g.restore();
     }
     g.restore();
@@ -508,6 +535,15 @@ export function MaskEditor(props: MaskEditorProps) {
     const soft = smoothedAlpha(alphaOf(), W, H, soften);
     putAlpha({ x0: 0, y0: 0, x1: W, y1: H }, (i) => soft[i]);
     commit({ x0: 0, y0: 0, x1: W, y1: H });
+    schedule();
+  };
+
+  /** Close the Vùng polygon: its area is added / taken off. */
+  const closePoly = () => {
+    const pg = poly.current;
+    poly.current = null;
+    if (pg && pg.pts.length >= 3) commit(fillLasso(pg.pts));
+    else if (pg) setMsg("Cần ít nhất 3 điểm để khép vùng");
     schedule();
   };
 
@@ -659,7 +695,19 @@ export function MaskEditor(props: MaskEditorProps) {
     }
     if (effTool === "wand") return wand(Math.min(W - 1, Math.max(0, x)), Math.min(H - 1, Math.max(0, y))), schedule();
     if (effTool === "island") return island(Math.min(W - 1, Math.max(0, x)), Math.min(H - 1, Math.max(0, y))), schedule();
-    stroke.current = { last: p, box: null, lasso: effTool === "lasso" ? [[p.x, p.y]] : [] };
+    if (effTool === "lasso") {
+      const pg = (poly.current ??= { pts: [], hover: null, at: 0 });
+      const first = pg.pts[0];
+      const last = pg.pts[pg.pts.length - 1];
+      // A double click (a second click on the last point, fast; pointerdown has no click count) or a click on the first
+      // point closes it.
+      const twice = last && e.timeStamp - pg.at < 400 && Math.hypot(p.x - last[0], p.y - last[1]) <= 6 / z.s;
+      if (twice || (first && pg.pts.length >= 3 && Math.hypot(p.x - first[0], p.y - first[1]) <= 10 / z.s)) return closePoly();
+      pg.pts.push([p.x, p.y]);
+      pg.at = e.timeStamp;
+      return schedule();
+    }
+    stroke.current = { last: p, box: null };
     if (effTool === "brush") stamp(p.x, p.y);
     if (effTool === "smooth") {
       const a = alphaOf();
@@ -686,13 +734,18 @@ export function MaskEditor(props: MaskEditorProps) {
       setOff({ dx: Math.round(d.dx + (e.clientX - d.sx) / z.s), dy: Math.round(d.dy + (e.clientY - d.sy) / z.s) });
       return;
     }
+    if (poly.current) {
+      const p = at(e);
+      poly.current.hover = [p.x, p.y];
+      schedule();
+    }
     const s = stroke.current;
     if (!s) return;
     const p = at(e);
     if ((effTool === "brush" || effTool === "smooth") && s.last) {
       line(s.last, p);
       s.last = p;
-    } else if (effTool === "lasso") s.lasso.push([p.x, p.y]);
+    }
     schedule();
   };
 
@@ -704,7 +757,7 @@ export function MaskEditor(props: MaskEditorProps) {
     }
     const s = stroke.current;
     if (!s) return;
-    const box = effTool === "lasso" ? fillLasso(s.lasso) : s.box;
+    const box = s.box;
     stroke.current = null;
     if (store.current) store.current.smooth = null;
     commit(box);
@@ -812,6 +865,17 @@ export function MaskEditor(props: MaskEditorProps) {
         return;
       }
       if (e.metaKey || e.ctrlKey) return;
+      // A Vùng polygon being placed: Enter closes it, Backspace takes the last point back, Esc drops it.
+      if (poly.current && ["Enter", "Backspace", "Escape"].includes(e.key)) {
+        e.preventDefault();
+        if (e.key === "Enter") closePoly();
+        else {
+          if (e.key === "Backspace") poly.current.pts.pop();
+          if (e.key === "Escape" || !poly.current.pts.length) poly.current = null;
+          schedule();
+        }
+        return;
+      }
       if (props.movable && tool === "move" && e.key.startsWith("Arrow")) {
         e.preventDefault();
         const k = e.shiftKey ? 10 : 1;

@@ -792,6 +792,13 @@ export interface CtCharVersionCard {
   edits: { done: number; total: number; running: number; failed: number };
 }
 
+/** A bộ nhân vật a product uses (GET char/projects?product=:id): the one it was built from (own) or one dropped into it. */
+export interface CtProductCharSet {
+  id: string;
+  name: string;
+  own: boolean;
+}
+
 /** A product a bộ nhân vật is used in (GET char/projects/:id/used-by): its own (built from it) or one it was dropped into. */
 export interface CtCharSetProduct {
   id: string;

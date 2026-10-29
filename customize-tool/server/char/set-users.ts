@@ -122,3 +122,15 @@ export async function setProducts(s: CtSession, projectId: string): Promise<Next
     : [];
   return NextResponse.json({ products: products.map((x) => ({ ...x, own: own.includes(x.id) })) });
 }
+
+/** GET char/projects?product=:id — the bộ nhân vật a product uses: the set it was built from (product_ids) first, then
+ * every set whose layers were dropped into it (CtRegionConfig.charSet) — the editor's "Bộ nhân vật" button. */
+export async function productSets(s: CtSession, productId: string): Promise<NextResponse> {
+  const db = s.supabase;
+  const { data: own } = await db.from(CT_TABLES.charProjects).select("id, name").contains("product_ids", [productId]).returns<Array<{ id: string; name: string }>>();
+  const { data: dropped } = await db.from(CT_TABLES.regions).select("config").eq("product_id", productId).not("config->charSet", "is", null).returns<Array<Pick<CtRegion, "config">>>();
+  const ownIds = new Set((own ?? []).map((x) => x.id));
+  const others = [...new Set((dropped ?? []).flatMap((r) => (r.config?.charSet ? [r.config.charSet.projectId] : [])))].filter((id) => !ownIds.has(id));
+  const named = others.length ? ((await db.from(CT_TABLES.charProjects).select("id, name").in("id", others).returns<Array<{ id: string; name: string }>>()).data ?? []) : [];
+  return NextResponse.json({ sets: [...(own ?? []).map((x) => ({ ...x, own: true })), ...named.map((x) => ({ ...x, own: false }))] });
+}

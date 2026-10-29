@@ -18,7 +18,7 @@ import { elementsRoute } from "./elements";
 import { photoStylesRoute } from "./photo-styles";
 import { charKhuonRoute } from "./khuon";
 import { listVersionSets, runVersionChain, startVersionSets } from "./versions";
-import { setProducts } from "./set-users";
+import { productSets, setProducts } from "./set-users";
 import { adoptMaster, approveMaster, createCharProject, deleteCharProject, generateMasters, getCharProject, jobDb, jsonError, listCharProjects, loadProject, refineMaster, updateCharProject, uploadCharFile, uploadChatFile } from "./projects";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -99,6 +99,8 @@ async function route(req: NextRequest, s: CtSession, path: string[]): Promise<Ne
   const method = req.method;
   if (coll !== "projects") return jsonError("Not found", 404);
   if (!id) {
+    const product = new URL(req.url).searchParams.get("product");
+    if (method === "GET" && product) return UUID.test(product) ? productSets(s, product) : jsonError("id không hợp lệ", 400);
     if (method === "GET") return listCharProjects(s);
     if (method === "POST") return createCharProject(s, await json(req));
     return jsonError("Not found", 404);

@@ -354,6 +354,10 @@ export interface CtCharTextField {
   shownWhen?: CtCharShownWhen | null;
   /** Bowed along an arc (-100..100, positive ∩) — a name along a hat's brim. */
   curve?: number;
+  /** place "on" a hat whose band is not its widest low part (a witch hat: the band above the wide brim, 2026-10-30):
+   * `box` (shares of the character's box) marks where the band is; the server finds the band inside it. Without it
+   * the band is found on its own and `box` is used only on a character without a hat. */
+  band?: boolean;
 }
 
 /**

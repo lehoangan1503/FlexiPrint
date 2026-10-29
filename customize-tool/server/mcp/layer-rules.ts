@@ -121,7 +121,9 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
   shapes, or a theme without a hat: one hair slot per kind of head, each shownWhen its theme, the later ones
   sameAs the first — one picker for the customer, each theme its own files. Never an optional hat over hair drawn
   under it.
-- A name on a brim follows the band of the hat shown with it (a text per hat shape, shownWhen its theme).
+- A name on a brim follows the band of the hat shown with it (a text per hat shape, shownWhen its theme; one size per
+  theme). The band is found as the hat's widest low part — a hat whose band is elsewhere (a witch hat's band above
+  its brim): text band true + box where the band is, the band is found inside that box.
 
 ## 10. Checks before a set is used
 - Every file of a slot has the same pixel size.

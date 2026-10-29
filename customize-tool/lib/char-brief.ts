@@ -226,6 +226,7 @@ function parseTextField(raw: unknown): CtCharTextField | null {
     uppercase: o.uppercase === true,
     shownWhen: parseShownWhen(o.shownWhen),
     curve: typeof o.curve === "number" && Number.isFinite(o.curve) ? Math.max(-100, Math.min(100, Math.round(o.curve))) : 0,
+    ...(o.band === true ? { band: true } : {}),
   };
 }
 const MODES: CtCharSlotMode[] = ["color", "texture", "shape"];

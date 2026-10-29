@@ -953,18 +953,18 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     // of the chooser the hats follow (a name per theme, asked 2026-10-30: a witch hat's band is not a Santa hat's) —
     // that option's hat.
     const brims = new Map<string, Promise<CtBrimArc | null>>();
-    const brimOf = (i: number, when: CtCharShownWhen | null | undefined): Promise<CtBrimArc | null> => {
+    const brimOf = (i: number, when: CtCharShownWhen | null | undefined, within: CtLayoutBox | null = null): Promise<CtBrimArc | null> => {
       const hatSlot = sb.subjects[i]?.slots.find((sl) => sl.headwear) ?? sb.subjects[i]?.slots.find((sl) => HAT.test(sl.part));
       const chooser = when && hatSlot?.follows === when.chooser ? (brief.choosers ?? []).find((c) => c.id === when.chooser) : undefined;
       const at = chooser ? Math.max(0, chooser.options.findIndex((o) => o.id === when!.option || o.name === when!.option)) : 0;
-      const key = `${i}|${at}`;
+      const key = `${i}|${at}|${within ? [within.x, within.y, within.w, within.h].map(Math.round).join(",") : ""}`;
       const hit = brims.get(key);
       if (hit) return hit;
       const made = (async () => {
         const sl = hatSlot && sset.slots.find((x) => x.key === hatSlot.id || x.key === `${hatSlot.id}:front`);
         const name = hatSlot?.options[at]?.name ?? hatSlot?.options[0]?.name;
         const file = sl?.files.find((f) => f.option === name && (f.color === "" || f.color === hatSlot?.colors[0]?.name)) ?? sl?.files[0];
-        return file ? brimArc(hatSlot?.headwear ? (await splitHeadwear(await bytes(file.url))).hat : await bytes(file.url)) : null;
+        return file ? brimArc(hatSlot?.headwear ? (await splitHeadwear(await bytes(file.url))).hat : await bytes(file.url), within) : null;
       })();
       brims.set(key, made);
       return made;
@@ -1285,10 +1285,12 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         if (!lead || lead.sameAs) continue;
         const same = fronts1.filter(([k]) => P.slotOf(byKey.get(k)!)?.sameAs === lead.id);
         if (!same.length) continue;
-        const pick = imageRegion(`Chọn — ${byKey.get(key)!.label}`, r.config.image.label, { display: r.config.image.display, allowNone: r.config.image.allowNone, defaultNone: r.config.image.defaultNone, groupLabel: r.config.image.groupLabel, groupDisplay: r.config.image.groupDisplay }, { type: "rect", x: 0, y: 0, w: 1, h: 1, radius: 0 });
+        // The customer's label without what tells the slots apart ("Hair (Santa hat)" → "Hair").
+        const plain = r.config.image.label.replace(/\s*\([^)]*\)/g, "").trim() || r.config.image.label;
+        const pick = imageRegion(`Chọn — ${byKey.get(key)!.label}`, plain, { display: r.config.image.display, allowNone: r.config.image.allowNone, defaultNone: r.config.image.defaultNone, groupLabel: r.config.image.groupLabel, groupDisplay: r.config.image.groupDisplay }, { type: "rect", x: 0, y: 0, w: 1, h: 1, radius: 0 });
         for (const [, x] of [[key, r] as const, ...same]) x.config.image.follows = pick.id;
         fills.push(
-          P.pickerOf(byKey.get(key)!, labelFor(byKey.get(key)!)).then((groups) =>
+          P.pickerOf(byKey.get(key)!, plain).then((groups) =>
             groups.forEach((g, gi) => {
               if (g.sub) addItem(pick, g.sub, gi, g.name);
             }),
@@ -1335,7 +1337,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       }
     }
     // Texts above everything: around the characters, under each of them, on the sign, or in their own box.
-    const onBrims: CtRegion[] = [];
+    const onBrims: Array<{ region: CtRegion; when: string }> = [];
     for (const t of brief.texts) {
       let at = layout.texts.find((x) => x.id === t.id);
       if (t.place === "free" && t.box) {
@@ -1351,7 +1353,9 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         const hit = parts.map((x) => ({ ...x, i: x.P.sb.subjects.findIndex((y) => y.id === t.subject) })).find((x) => x.i >= 0 && x.pt.subjects.includes(x.i));
         const sbx = hit ? hit.P.subjectBox(hit.i) : null;
         const onSb = hit && sbx ? { x: hit.box.x + sbx.x * hit.k, y: hit.box.y + sbx.y * hit.k, w: sbx.w * hit.k, h: sbx.h * hit.k } : null;
-        const brim = hit && t.place === "on" && onSb && (hit.P.src.as?.subject === undefined || hit.i === hit.P.src.as.subject) ? await hit.P.brimOf(hit.i, t.shownWhen) : null;
+        // text.band: its box marks where the band is (a witch hat's band above the brim), in the set's canvas.
+        const within = t.band && t.box && sbx ? { x: sbx.x + t.box.x * sbx.w, y: sbx.y + t.box.y * sbx.h, w: t.box.w * sbx.w, h: t.box.h * sbx.h } : null;
+        const brim = hit && t.place === "on" && onSb && (hit.P.src.as?.subject === undefined || hit.i === hit.P.src.as.subject) ? await hit.P.brimOf(hit.i, t.shownWhen, within) : null;
         if (hit && brim) {
           // Centred on the band, as tall as it, the letters on the band's own circle and tilt (a nearly flat band: a
           // circle too big to see).
@@ -1371,14 +1375,18 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
         const r = textRegion(product.id, mainId, t, at, backdrops.length > 0 || t.place === "on" || t.place === "plaque", order++);
         const region = { ...r, ...(lineup ? { name: `Chữ — ${t.label} [${v.name}]` } : {}), ...(parent ? { config: { ...r.config, parent } } : {}) };
         regions.push(region);
-        if (at.arcRadius) onBrims.push(region);
+        if (at.arcRadius) onBrims.push({ region, when: t.shownWhen ? `${t.shownWhen.chooser}|${t.shownWhen.option}` : "" });
       }
     }
-    // Every name on a hat in one size (the smallest band's): the grandma's bigger hat does not make her name louder.
-    const brimFont = Math.min(...onBrims.map((r) => r.config.text.fontSize));
-    for (const r of onBrims) {
-      r.config.text.fontSize = brimFont;
-      r.config.text.strokeWidth = Math.max(2, Math.round(brimFont * 0.12));
+    // Every name on the same hats in one size (the smallest band's): the grandma's bigger hat does not make her name
+    // louder. Hats of another theme have their own size (a witch hat's band is not a Santa cuff, 2026-10-30).
+    for (const when of new Set(onBrims.map((x) => x.when))) {
+      const same = onBrims.filter((x) => x.when === when).map((x) => x.region);
+      const brimFont = Math.min(...same.map((r) => r.config.text.fontSize));
+      for (const r of same) {
+        r.config.text.fontSize = brimFont;
+        r.config.text.strokeWidth = Math.max(2, Math.round(brimFont * 0.12));
+      }
     }
   }
   await Promise.all(fills);

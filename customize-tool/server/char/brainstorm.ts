@@ -121,8 +121,10 @@ Every brief is built like this, so every proposal must respect it:
     colours and order). The customer picks the hair once (one picker in the product); each theme shows its own files.
   - never "optional": true on a hat the hair is drawn under (no hat would show the hair's flat top): a "Hats" chooser
     (With Hats / No Hats) + the hair per kind of head as above instead.
-  - a name on the brim: one text per hat shape, place "on", shownWhen that theme (it follows that hat's band); a theme
-    without a hat: the name "under" the character or in a free box.
+  - a name on the brim: one text per hat shape, place "on", shownWhen that theme (it follows that hat's band; names
+    of one theme share one size); a hat whose band is NOT its widest low part (a witch hat: the band above the wide
+    brim) → "band": true + box = where the band is (shares of the character's box, look at the hat picture): the band
+    is found inside it. A theme without a hat: the name "under" the character or in a free box.
   Face expressions: a shape slot part "face expression", group "face" (the doll's face is blank, every expression is
   drawn on it). The Theme = a chooser [{id: "theme", label: "Theme", options: Christmas /
   Halloween / Easter}]; the sign = an element with place "plaque", one option per theme, follows "theme"; the slogan on

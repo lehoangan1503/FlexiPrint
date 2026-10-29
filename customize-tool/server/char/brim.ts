@@ -21,7 +21,7 @@ export interface CtBrimArc {
 
 /** The band of rows in the hat's lower part whose solid run through the hat's middle is the longest — the cuff, a
  * band, a fold (the pom-pom at the side does not count: measured through the middle, 2026-10-19). */
-export async function brimBox(png: Buffer): Promise<CtLayoutBox | null> {
+export async function brimBox(png: Buffer, within?: CtLayoutBox | null): Promise<CtLayoutBox | null> {
   const { data, info } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
   const W = info.width;
   const solid = (x: number, y: number) => data[y * W + x] > 128;
@@ -39,7 +39,16 @@ export async function brimBox(png: Buffer): Promise<CtLayoutBox | null> {
       }
   if (top < 0) return null;
   const h = bottom - top + 1;
-  const mid = Math.round((left + right) / 2);
+  let mid = Math.round((left + right) / 2);
+  // Where the band is, given (text.band): the rows of that box, through its middle.
+  let from = top + Math.floor(h * 0.4);
+  let to = bottom;
+  if (within) {
+    from = Math.max(top, Math.floor(within.y));
+    to = Math.min(bottom, Math.ceil(within.y + within.h));
+    mid = Math.min(W - 1, Math.max(0, Math.round(within.x + within.w / 2)));
+    if (from > to) return null;
+  }
   // The solid run through the middle column of a row (none when the middle is clear).
   const run = (y: number): [number, number] | null => {
     if (!solid(mid, y)) return null;
@@ -54,13 +63,13 @@ export async function brimBox(png: Buffer): Promise<CtLayoutBox | null> {
     return r ? r[1] - r[0] + 1 : 0;
   };
   let best = -1;
-  for (let y = top + Math.floor(h * 0.4); y <= bottom; y++) if (best < 0 || len(y) > len(best)) best = y;
+  for (let y = from; y <= to; y++) if (best < 0 || len(y) > len(best)) best = y;
   if (best < 0 || len(best) === 0) return null;
   const wide = len(best) * 0.85;
   let y0 = best;
   let y1 = best;
-  while (y0 > top && len(y0 - 1) >= wide) y0--;
-  while (y1 < bottom && len(y1 + 1) >= wide) y1++;
+  while (y0 > from && len(y0 - 1) >= wide) y0--;
+  while (y1 < to && len(y1 + 1) >= wide) y1++;
   // A thin band still gets a readable line (≥ 14 % of the hat).
   const need = Math.round(h * 0.14) - (y1 - y0 + 1);
   if (need > 0) {
@@ -118,8 +127,8 @@ const median = (xs: number[]) => {
  * takes its colour there and walks out to both sides column by column, each column's run of that colour found near the
  * last one's middle (the band curves and tilts). Null when no band is found.
  */
-export async function brimArc(png: Buffer): Promise<CtBrimArc | null> {
-  const seed = await brimBox(png);
+export async function brimArc(png: Buffer, within?: CtLayoutBox | null): Promise<CtBrimArc | null> {
+  const seed = await brimBox(png, within);
   if (!seed) return null;
   const { data: alpha, info } = await sharp(png).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
   // The colours a little blurred: fur and knit read as one colour.

@@ -12,7 +12,6 @@ import { Loader2 } from "lucide-react";
 import type { CtCharImage } from "../../types";
 import { CHECKER_STYLE, cx } from "../ui";
 import type { CharCtx } from "./char-project";
-import { BackdropSection } from "./blank-section";
 
 interface Row {
   role: string;
@@ -39,7 +38,6 @@ export function ElementsPanel(ctx: CharCtx) {
   if (!ctx.project.master_id) return <p className="p-6 text-center text-sm text-muted-foreground">Duyệt master ở bước 2 trước — mọi phần tử được vẽ theo phong cách của nó.</p>;
   return (
     <div className="space-y-6 p-6">
-      <BackdropSection {...ctx} />
       <ElementGallery {...ctx} />
     </div>
   );

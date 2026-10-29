@@ -32,7 +32,7 @@ import { siteUrl } from "../site-url";
 import { frameRegion, makeTemplateProduct, productPrintOf, type PrintDb } from "../print-products";
 import { loadArtwork, renderArtwork, safeReport } from "../print-render";
 import { productOptions, selectionFromNames } from "../product-options";
-import { productMockups } from "../product-mockups";
+import { makeProductBlank, productMockups } from "../product-mockups";
 import { serviceSession } from "../char/product";
 import type { CtPackImage } from "../../types";
 import type { CtSession } from "../supabase";
@@ -208,6 +208,9 @@ async function sessionFor(ctx: CtMcpContext, ownerId: string | null): Promise<Ct
   if (!ctx.service || !ownerId) throw new Error("The product has no owner");
   return serviceSession(ctx.service, ownerId);
 }
+
+/** make_product_blank's background drawings, by product (this process only — a restart forgets them; the phôi itself is saved). */
+const BLANK_JOBS = new Map<string, { status: "running" | "done" | "failed"; error: string }>();
 
 const editorUrl = (id: string) => `${siteUrl()}${CT_CONFIG.basePath}/${id}`;
 
@@ -429,6 +432,34 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
         out.push({ label, front: r.front.url, jobs: r.jobs.filter((j) => j.status === "running").map((j) => ({ id: j.id, scene: j.description, status: j.status })) });
       }
       return json({ mockups: out, next: "wait_product_mockups with the job ids, then view_image each photo (the print must be unchanged on it)." });
+    },
+  },
+  {
+    name: "make_product_blank",
+    description:
+      "Draw a phôi trơn (the blank piece, nothing printed) for a product from its khuôn in and material (the team's image model, ~1 min in the background) — for a product whose khuôn has no phôi of its material (char_add_product → blank null, or a glass phôi on a ceramic product). It becomes the product's phôi (Xem trước, Mockups) and the khuôn keeps it for the next product. check: true → is it done, and the product's phôi url; view_image it before make_product_mockups.",
+    inputSchema: {
+      type: "object",
+      properties: { product_id: { type: "string", description: "The product." }, check: { type: "boolean", description: "true = only report the state." }, task_id: { type: "string", description: "Agent: the task it is for." } },
+      required: ["product_id"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const productId = str(args.product_id);
+      const { data: product } = await ctx.db.from(CT_TABLES.products).select("id, user_id, config").eq("id", productId).maybeSingle<{ id: string; user_id: string | null; config: { scene?: { url?: string } } }>();
+      if (!product) throw new Error("No such product");
+      const state = BLANK_JOBS.get(productId);
+      if (args.check === true || state?.status === "running")
+        return json({ status: state?.status ?? "idle", error: state?.error || undefined, blank: product.config?.scene?.url || null, ...(state?.status === "running" ? { message: "still drawing — call again with check: true in ~30 s." } : {}) });
+      const s = await sessionFor(ctx, product.user_id);
+      BLANK_JOBS.set(productId, { status: "running", error: "" });
+      void makeProductBlank(s, productId)
+        .then(async (res) => {
+          const body = (await res.json()) as { error?: string };
+          BLANK_JOBS.set(productId, res.ok ? { status: "done", error: "" } : { status: "failed", error: body.error ?? `HTTP ${res.status}` });
+        })
+        .catch((e: Error) => BLANK_JOBS.set(productId, { status: "failed", error: e.message }));
+      return json({ status: "running", next: "make_product_blank {product_id, check: true} in ~1 min, view_image the blank, then make_product_mockups." });
     },
   },
   {

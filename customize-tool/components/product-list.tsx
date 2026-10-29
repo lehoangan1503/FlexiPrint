@@ -2,18 +2,18 @@
 
 /**
  * Grid of customizable products. Rendered both as the /customize-tool index
- * and inside the host dashboard's "Customize" tab (`tabs` slot).
+ * and inside the host dashboard's "Customize" tab (`tabs` slot). No "new product" button (2026-10-29): a product is
+ * made from a bộ nhân vật, asked in its chat.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Layers, Loader2, Plus, Search, Trash2 } from "lucide-react";
+import { Layers, Loader2, Search, Trash2 } from "lucide-react";
 import { CT_CONFIG } from "../config";
 import type { CtProductListRow, CtProductStatus } from "../types";
 import { ctApi } from "../lib/api-client";
-import { CHECKER_STYLE, CtButton, CtInput, cx } from "./ui";
-import { ctConfirm, ctPrompt } from "./dialogs";
+import { CHECKER_STYLE, CtInput, cx } from "./ui";
+import { ctConfirm } from "./dialogs";
 
 const STATUS_LABEL: Record<CtProductStatus, string> = { draft: "Nháp", ready: "Sẵn sàng", archived: "Lưu trữ" };
 const STATUS_CLASS: Record<CtProductStatus, string> = {
@@ -23,12 +23,10 @@ const STATUS_CLASS: Record<CtProductStatus, string> = {
 };
 
 export function CustomizeProductList({ tabs, currentUserId, admin = false }: { tabs?: React.ReactNode; currentUserId?: string; admin?: boolean }) {
-  const router = useRouter();
   const [products, setProducts] = useState<CtProductListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [creating, setCreating] = useState(false);
 
   const load = useCallback(async (q: string) => {
     setLoading(true);
@@ -46,19 +44,6 @@ export function CustomizeProductList({ tabs, currentUserId, admin = false }: { t
     const t = setTimeout(() => void load(search.trim()), 250);
     return () => clearTimeout(t);
   }, [search, load]);
-
-  const create = async () => {
-    const name = await ctPrompt({ title: "Sản phẩm custom mới", label: "Tên sản phẩm", defaultValue: "New custom ornament", confirmLabel: "Tạo" });
-    if (!name?.trim()) return;
-    setCreating(true);
-    try {
-      const p = await ctApi.createProduct(name.trim());
-      router.push(`${CT_CONFIG.basePath}/${p.id}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Không tạo được");
-      setCreating(false);
-    }
-  };
 
   const remove = async (p: CtProductListRow) => {
     if (!(await ctConfirm({ title: `Xoá “${p.name}”?`, message: "Xoá cùng toàn bộ asset, vùng custom và mockup của sản phẩm. Không hoàn tác được.", tone: "danger", confirmLabel: "Xoá" }))) return;
@@ -80,9 +65,6 @@ export function CustomizeProductList({ tabs, currentUserId, admin = false }: { t
             <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <CtInput className="h-9 w-56 pl-8" placeholder="Tìm sản phẩm…" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          <CtButton variant="primary" onClick={create} disabled={creating}>
-            {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Tạo sản phẩm custom
-          </CtButton>
         </div>
       </div>
 
@@ -102,7 +84,7 @@ export function CustomizeProductList({ tabs, currentUserId, admin = false }: { t
       ) : products.length === 0 ? (
         <div className="rounded-xl border border-dashed py-20 text-center text-sm text-muted-foreground">
           <Layers className="mx-auto mb-3 h-10 w-10 opacity-40" />
-          Chưa có sản phẩm custom nào.
+          Chưa có sản phẩm custom nào — sản phẩm mới được tạo trong bộ nhân vật (gõ ở chat).
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">

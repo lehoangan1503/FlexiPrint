@@ -13,7 +13,10 @@
  * session (server/agent/tasks.ts), so "như lần trước" refers to the earlier steps.
  */
 
-import { CT_TABLES } from "../../config";
+import { CT_CONFIG, CT_TABLES } from "../../config";
+import type { CtPrintTemplate } from "../../types/print";
+import { templateRow } from "../print-templates";
+import { addSetProduct } from "../char/set-users";
 import { siteUrl } from "../site-url";
 import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharPhotoStyle, CtCharProject, CtCharRefUse, CtCharTaskResult } from "../../types";
 import { REF_USES, REF_USE_INFO, masterPrompt, parseCharBrief, shownByDefault } from "../../lib/char-brief";
@@ -124,7 +127,7 @@ const CHAT_INSTRUCTIONS = [
   "- 3b pictures: char_run_edits(task_id, prompts {role: prompt}, roles) — a redone picture redoes what is drawn from it; then char_cut so the files follow.",
   "- cut: char_cut(task_id, \"plan\") finds every region again from the 3b pictures and cuts the files; char_cut(task_id, \"build\") cuts the files (and remakes the product) from the current regions. char_status(task_id) waits for it and returns the checks and the new files — view_image the files you changed (and a combination of them) before you say it is fixed.",
   "- approve a master: ONLY when the editor's request hands you the whole set (\"làm hết\", \"tự duyệt\") — char_approve_master(task_id, image_id); it starts 3a. Otherwise recommend one and let them approve.",
-  "- step 4 (product): the texts (brief.texts: names typed by the customer, a slogan picked from a list — place top / bottom / left / right) and the backgrounds (brief.backdrops) are changed with char_update_brief (allowed after the master is approved). char_draw_backdrops draws the backgrounds (char_wait, view_image each), char_remake_product builds the set's product again with them. Then list_product_options / render_artwork (mode \"print\", options) to check it, make_product_mockups (one entry per option set + scenes) → wait_product_mockups → view_image.",
+  "- step 4 (product): the texts (brief.texts: names typed by the customer, a slogan picked from a list — place top / bottom / left / right) and the backgrounds (brief.backdrops) are changed with char_update_brief (allowed after the master is approved). char_draw_backdrops draws the backgrounds (char_wait, view_image each), char_remake_product builds the set's product again with them. Then list_product_options / render_artwork (mode \"print\", options) to check it, make_product_mockups (one entry per option set + scenes) → wait_product_mockups → view_image. ANOTHER product from the set (\"thêm sản phẩm tương tự … sứ / thảm / túi\") is char_add_product — never char_remake_product (that replaces the set's own product).",
   "- a question only the editor can answer → ask_user (Vietnamese, with options).",
   "BỘ ẢNH KHÁCH (set.brief.kind \"photo\" — the customer's own photo is the hero: a pet memorial ornament, a portrait): there are no characters, no 3a/3b/3c and no cut. brief.photoZones[0] = the customer's photo (where = what it shows, e.g. \"the customer's pet, sitting\"; treat \"ai\" + styles = the styles the customer picks from — the set's OWN styles written from the request (PHOTO_STYLES; a library style from list_ai_styles only when the editor names one); \"face\" = head only; box = shares of the safe area, null = laid out). brief.elements = the decorations, each {name, place: behind (wings) | above (halo) | bottom (a band of clouds over the photo's cut body, the texts lie on it) | free (box), mode shape | color (#hex options, the first drawn, the others recoloured), options, perBackdrop (one picture per background in its colours, follows the background)}. Flow: char_update_brief → char_draw_masters (the whole flat design with a SAMPLE pet) → the editor approves (or char_approve_master when handed the whole set) → char_draw_backdrops → char_draw_elements (every element option + the zone's sample: the master's pet alone) → char_wait, view_image each (whole? transparent? same look as the master?) → char_remake_product (keeps a photo zone the editor reshaped; reset_zones true = the layout again) → list_product_options, render_artwork, make_product_mockups.",
   PHOTO_STYLES,
@@ -1237,6 +1240,39 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       if (!productId) throw new Error("Not every version set is cut yet (get_task set.versions: layers.status \"done\" for each) — wait for them, then call again");
       await progress(db, task.id, "Đã dựng lại sản phẩm");
       return json({ product_id: productId, next: "list_product_options, render_artwork (mode print), make_product_mockups." });
+    },
+  },
+  {
+    name: "char_add_product",
+    description:
+      "Bộ nhân vật (chat, step 4): ANOTHER product from this set (\"thêm 1 sản phẩm tương tự ornament sứ\", a rug, a bag…) — a new product on khuôn in template_id (list_print_templates; create_print_template when no khuôn fits) with the whole set dropped on it, like dragging the set in the editor. The set's own product stays; the new one is listed in step 4 with it and follows the set when it is remade. material = what the new piece is made of (its phôi and mockups). → product id; then render_artwork (print) — the set fits its sheet as a whole; set_artwork_layers is NOT for it (fix the place in the editor) — and when the khuôn has no phôi of that material (blank null) make_product_blank before make_product_mockups.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        template_id: { type: "string", description: "The khuôn in of the new product." },
+        name: { type: "string", description: "Product name, e.g. \"Ornament sứ - chó mèo\"." },
+        material: { type: "string", description: `One of ${CT_MATERIALS.filter((m) => m.id !== "none").map((m) => `"${m.id}"`).join(", ")}.` },
+      },
+      required: ["task_id", "template_id", "name", "material"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id);
+      if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_add_product is for chat requests");
+      const material = str(args.material);
+      if (!CT_MATERIALS.some((m) => m.id === material && m.id !== "none")) throw new Error(`Unknown material "${material}"`);
+      const { data: t } = await db.from(CT_TABLES.printTemplates).select("*").eq("id", str(args.template_id)).maybeSingle<CtPrintTemplate>();
+      if (!t) throw new Error("No such khuôn in — list_print_templates");
+      const template = templateRow(t);
+      const productId = await addSetProduct(db, project.user_id ?? task.user_id!, project, template, str(args.name).slice(0, 120) || `${project.name} — ${template.name}`, material);
+      await progress(db, task.id, `Đã tạo sản phẩm mới từ bộ: ${str(args.name)}`);
+      return json({
+        product_id: productId,
+        editor: `${siteUrl()}${CT_CONFIG.basePath}/${productId}`,
+        blank: template.spec.blanks[0]?.url ?? null,
+        next: "render_artwork (mode print) to look at it; make_product_blank when blank is null or of another material; then make_product_mockups.",
+      });
     },
   },
 ];

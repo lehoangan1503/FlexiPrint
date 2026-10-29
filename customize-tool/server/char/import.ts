@@ -31,7 +31,7 @@ import * as h from "../handlers";
 import { readImageInfo } from "../image-size";
 import { insertClipart } from "../library";
 import { r2Get, r2PublicUrl } from "../r2";
-import { ctRemove, ctUpload } from "../storage";
+import { ctLibraryPath, ctRemove, ctUpload } from "../storage";
 import type { CtSession } from "../supabase";
 import { charFolder, saveCharFile, saveCharRaw } from "./files";
 import { refreshSetUsers } from "./set-users";
@@ -43,7 +43,7 @@ const MAX_IMPORT_FILE = 60 * 1024 * 1024;
 /** Text files read to find the format (json / md / txt / csv). */
 const MAX_TEXT = 2 * 1024 * 1024;
 /** Files fetched, checked and stored at once while building. */
-const POOL = 8;
+const POOL = 12;
 
 const MIME: Record<string, string> = {
   png: "image/png",
@@ -116,15 +116,18 @@ async function uploadFiles(s: CtSession, p: CtCharProject, form: FormData): Prom
   const paths = form.getAll("path").map(String);
   if (!files.length || files.length !== paths.length) return jsonError("Cần file[] và path[] cùng số", 400);
   const root = importRoot(p, s.user.id);
-  const out: CtCharImportFile[] = [];
+  const todo: Array<{ path: string; blob: Blob }> = [];
   for (const [i, f] of files.entries()) {
     if (!(f instanceof Blob)) continue;
     const path = cleanPath(paths[i]);
     if (!path) return jsonError(`Đường dẫn không hợp lệ: ${paths[i]}`, 400);
     if (f.size > MAX_IMPORT_FILE) return jsonError(`${path}: quá lớn (tối đa 60 MB)`, 413);
-    const url = await ctUpload(`${root}/${path}`, Buffer.from(await f.arrayBuffer()), MIME[extOf(path)] ?? "application/octet-stream");
-    out.push({ path, url, size: f.size });
+    todo.push({ path, blob: f });
   }
+  // Stored side by side (one after the other, a 30-file request took ~45 s: each R2 write waits ~0.3 s+).
+  const out = await Promise.all(
+    todo.map(async ({ path, blob }): Promise<CtCharImportFile> => ({ path, url: await ctUpload(`${root}/${path}`, Buffer.from(await blob.arrayBuffer()), MIME[extOf(path)] ?? "application/octet-stream"), size: blob.size })),
+  );
   return NextResponse.json({ files: out });
 }
 
@@ -214,7 +217,7 @@ async function startBuild(db: Db, userId: string, projectId: string, manifest: C
   const owner = p.user_id ?? userId;
   const manifestUrl = await ctUpload(`${importRoot(p, owner)}/_manifest.json`, Buffer.from(JSON.stringify(manifest)), "application/json");
   const total = manifestFiles(manifest).length;
-  await setImported(db, projectId, { status: "building", format, manifestUrl, summary, problems, done: 0, total, error: "" });
+  await setImported(db, projectId, { status: "building", format, manifestUrl, summary, problems, done: 0, total, error: "", beat: new Date().toISOString() });
   void buildImport(db, owner, projectId, manifest).catch(async (e: Error) => {
     console.warn("[ct] import build", projectId, e.message);
     await setImported(db, projectId, { status: "failed", error: e.message }).catch(() => undefined);
@@ -223,6 +226,7 @@ async function startBuild(db: Db, userId: string, projectId: string, manifest: C
 
 /** POST char/projects/:id/import/rebuild — the product again from the saved manifest. */
 async function rebuildImport(s: CtSession, p: CtCharProject): Promise<NextResponse> {
+  if (building.has(p.id)) return jsonError("Đang dựng — chờ xong", 409);
   const url = p.brief.imported?.manifestUrl;
   const key = url ? keyOf(importRoot(p, s.user.id), url) : null;
   const b = key ? await readKey(key) : null;
@@ -254,7 +258,11 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
   const H = m.canvas.height;
   const problems: string[] = [...(p.brief.imported?.problems ?? [])];
 
+  // A build cut off before (the app restarted): its half-made product and clipart go first.
+  const half = p.brief.imported?.productId;
+  if (half && !p.product_ids.includes(half)) await dropProduct(s, half).catch((e: Error) => console.warn("[ct] import half product", e.message));
   const product = (await body<{ product: CtProduct }>(await h.createProduct(s, { name: p.name }))).product;
+  await setImported(db, p.id, { productId: product.id });
   try {
     const folder = await productFolder(db, userId, { id: product.id, name: p.name });
     const upload = async (data: Buffer, role: string, name: string, mime = "image/png"): Promise<CtAsset> => {
@@ -292,6 +300,7 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
 
     // ---- cliparts: one per file of a group (its first the gốc), made as their files come ----
     type Made = { sub: CtAsset; byUrl: Map<string, CtAsset> };
+    let order = 0;
     const fileOf = async (url: string): Promise<Buffer> => {
       const key = keyOf(root, url);
       let png = key ? await readKey(key) : null;
@@ -308,24 +317,53 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     };
     const tick = async () => {
       done++;
-      if (done % 100 === 0) await setImported(db, p.id, { done });
+      if (done % 100 === 0) await setImported(db, p.id, { done, beat: new Date().toISOString() });
     };
-    /** A group's cliparts — every group its own (a linked hat repeated in each hair colour group too). */
+    /**
+     * A group's cliparts — every group its own (a linked hat repeated in each hair colour group too). Written in one go:
+     * ids made here, the files stored side by side, one insert for the group (a clipart at a time — insertClipart's
+     * lookups — took ~40 min for 6915 files, 2026-10-29).
+     */
     const groupOf = async (layer: CtCharImportLayer, gi: number, withThumbs: boolean): Promise<Made> => {
       const g = layer.groups[gi];
-        const byUrl = new Map<string, CtAsset>();
-        let sub: CtAsset | null = null;
-        for (const o of g.options) {
+      const gocId = crypto.randomUUID();
+      const rows = await Promise.all(
+        g.options.map(async (o, oi) => {
           const png = await fileOf(o.url);
           const thumb = withThumbs && png !== sheet ? await thumbOf(o.url, png) : "";
-          const name = [layer.label, g.name, o.name].filter(Boolean).join(" · ");
-          const meta = { ...(thumb ? { thumb } : {}), ...(!sub && g.swatch ? { swatch: g.swatch } : {}) };
-          const a = await insertClipart(db, userId, { categoryId: folder.id, parentId: sub?.id ?? null, rendition: false, name, spec: "", tags: [], source: "upload", meta, generationId: null, data: png });
-          sub ??= a;
-          byUrl.set(o.url, a);
+          const role = oi === 0 ? "sub" : "variant";
+          const path = ctLibraryPath(userId, folder.id, role, "image/png");
+          const url = await ctUpload(path, png, "image/png");
           await tick();
-        }
-      return { sub: sub!, byUrl };
+          return {
+            id: oi === 0 ? gocId : crypto.randomUUID(),
+            user_id: userId,
+            product_id: null,
+            category_id: folder.id,
+            role,
+            parent_id: oi === 0 ? null : gocId,
+            generation_id: null,
+            name: [layer.label, g.name, o.name].filter(Boolean).join(" · "),
+            spec: "",
+            tags: [],
+            source: "upload",
+            url,
+            storage_path: path,
+            width: W,
+            height: H,
+            mime: "image/png",
+            meta: { ...(thumb ? { thumb } : {}), ...(oi === 0 && g.swatch ? { swatch: g.swatch } : {}) },
+            sort_order: oi === 0 ? order++ : oi,
+          };
+        }),
+      );
+      const { data, error } = await db.from(CT_TABLES.assets).insert(rows).select("*").returns<CtAsset[]>();
+      if (error || !data) {
+        await ctRemove(rows.map((r) => r.storage_path));
+        throw new Error(error?.message ?? "Không lưu được clipart");
+      }
+      const byId = new Map(data.map((a) => [a.id, a]));
+      return { sub: byId.get(gocId)!, byUrl: new Map(g.options.map((o, oi) => [o.url, byId.get(rows[oi].id)!])) };
     };
     // A small pool: groups in parallel, each group's files in order (đa sắc hang on the first).
     const queue: Array<() => Promise<unknown>> = [];
@@ -453,21 +491,26 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     await setImported(db, p.id, { status: "done", done, problems: [...new Set(problems)].slice(0, 60), error: "" }, { product_ids: [product.id], status: "product", master_id: masterId });
     // Products the set was dragged into take the new layers, then the old product and its clipart go.
     await refreshSetUsers(s, { ...p, product_ids: old }, product.id).catch((e: Error) => console.warn("[ct] import set users", e.message));
-    for (const pid of old) {
-      const f = await findProductFolder(db, pid);
-      if (f) {
-        const { data: cliparts } = await db.from(CT_TABLES.assets).select("storage_path").eq("category_id", f.id).returns<Array<{ storage_path: string }>>();
-        await ctRemove((cliparts ?? []).map((c) => c.storage_path).filter(Boolean));
-        await db.from(CT_TABLES.assets).delete().eq("category_id", f.id);
-        await db.from(CT_TABLES.categories).delete().eq("id", f.id);
-      }
-      await h.deleteProduct(s, pid);
-    }
+    for (const pid of old) await dropProduct(s, pid);
     return product.id;
   } catch (e) {
-    await h.deleteProduct(s, product.id).catch(() => undefined);
+    await dropProduct(s, product.id).catch(() => undefined);
     throw e;
   }
+}
+
+/** A product of the set with its clipart folder (its files on R2 too). */
+async function dropProduct(s: CtSession, productId: string): Promise<void> {
+  const db = s.supabase;
+  const f = await findProductFolder(db, productId);
+  if (f) {
+    const { data: cliparts } = await db.from(CT_TABLES.assets).select("storage_path").eq("category_id", f.id).returns<Array<{ storage_path: string }>>();
+    const paths = (cliparts ?? []).map((c) => c.storage_path).filter(Boolean);
+    for (let i = 0; i < paths.length; i += 1000) await ctRemove(paths.slice(i, i + 1000));
+    await db.from(CT_TABLES.assets).delete().eq("category_id", f.id);
+    await db.from(CT_TABLES.categories).delete().eq("id", f.id);
+  }
+  await h.deleteProduct(s, productId);
 }
 
 /**

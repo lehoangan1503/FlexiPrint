@@ -446,6 +446,10 @@ export interface CtCharImported {
   summary: string[];
   /** Files that did not fit (another size than the canvas…): left out, named here. */
   problems: string[];
+  /** The product being built (a build cut off by a restart leaves it half made: the next build removes it). */
+  productId?: string;
+  /** Last sign of life of the build (ISO) — none for minutes = cut off (the app restarted). */
+  beat?: string;
 }
 
 /** One uploaded file of an import: its path in the folder, where it is. */

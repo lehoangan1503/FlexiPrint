@@ -17,7 +17,7 @@ import { ctConfirm } from "../dialogs";
 /** Files of an import request: about this many bytes, at most this many files. */
 const BATCH_BYTES = 8 * 1024 * 1024;
 const BATCH_FILES = 30;
-const PARALLEL = 4;
+const PARALLEL = 6;
 
 const JUNK = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|__MACOSX)(\/|$)|(^|\/)\._/i;
 const KEEP = /\.(png|jpe?g|webp|json|csv|md|txt|ttf|otf)$/i;

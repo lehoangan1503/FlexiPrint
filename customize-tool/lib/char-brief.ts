@@ -355,6 +355,8 @@ function parseImported(raw: unknown): CtCharImported | null {
     error: s(o.error, 2000),
     summary: arr(o.summary).map((x) => s(x, 400)).filter(Boolean).slice(0, 40),
     problems: arr(o.problems).map((x) => s(x, 400)).filter(Boolean).slice(0, 60),
+    ...(s(o.productId, 60) ? { productId: s(o.productId, 60) } : {}),
+    ...(s(o.beat, 40) ? { beat: s(o.beat, 40) } : {}),
   };
 }
 

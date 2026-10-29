@@ -19,6 +19,7 @@ import { CharAgentBar, useCharAgent, type CharAgent } from "./char-agent";
 import { CharChat } from "./char-chat";
 import { ElementsPanel } from "./elements-panel";
 import { ProductStep } from "./product-step";
+import { ImportPanel } from "./import-panel";
 
 type Step = "brief" | "master" | "layers" | "product";
 
@@ -36,6 +37,12 @@ const PHOTO_STEPS: Array<{ id: Step; label: string }> = [
   { id: "master", label: "2. Ảnh master" },
   { id: "layers", label: "3. Phần tử · tự động" },
   { id: "product", label: "4. Sản phẩm · tự động" },
+];
+
+/** An imported bộ (brief.imported): its files are read, not drawn — the import, then the product. */
+const IMPORT_STEPS: Array<{ id: Step; label: string }> = [
+  { id: "brief", label: "1. Import" },
+  { id: "product", label: "2. Sản phẩm" },
 ];
 
 export interface CharCtx {
@@ -77,7 +84,8 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
       setImages(r.images);
       if (first.current) {
         first.current = false;
-        setStep(r.project.status === "brief" ? (r.images.some((im) => im.kind === "master" && !im.role.startsWith("idea:")) ? "master" : "brief") : r.project.status === "master" ? "layers" : r.project.status === "layers" ? "layers" : "product");
+        if (r.project.brief.imported) setStep(r.project.product_ids.length ? "product" : "brief");
+        else setStep(r.project.status === "brief" ? (r.images.some((im) => im.kind === "master" && !im.role.startsWith("idea:")) ? "master" : "brief") : r.project.status === "master" ? "layers" : r.project.status === "layers" ? "layers" : "product");
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không tải được");
@@ -93,7 +101,8 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
     images.some((im) => im.status === "running") ||
     project?.layers?.status === "building" ||
     project?.cut?.matte?.status === "running" ||
-    project?.cut?.plan?.status === "running";
+    project?.cut?.plan?.status === "running" ||
+    ["analyzing", "building", "agent"].includes(project?.brief.imported?.status ?? "");
   useEffect(() => {
     if (!running) return;
     const t = setInterval(() => void reload(), 3000);
@@ -160,8 +169,9 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
     setSection,
   };
   const photoSet = project.brief.kind === "photo";
+  const imported = !!project.brief.imported;
   const done: Record<Step, boolean> = {
-    brief: photoSet ? project.brief.photoZones.length > 0 : project.brief.subjects.length > 0,
+    brief: imported ? project.brief.imported?.status === "done" : photoSet ? project.brief.photoZones.length > 0 : project.brief.subjects.length > 0,
     // A set drawn pose by pose has no master of its own: done once its poses are on (approved, cut).
     master: !!project.master_id || (!!project.brief.poses?.length && (project.status === "layers" || project.status === "product")),
     layers: project.status === "layers" || project.status === "product",
@@ -189,7 +199,7 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
           />
           <span className="shrink-0 whitespace-nowrap rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{CHAR_STATUS_LABEL[project.status]}</span>
           <nav className="ml-4 flex shrink-0 gap-1">
-            {(photoSet ? PHOTO_STEPS : STEPS).map((s) => (
+            {(imported ? IMPORT_STEPS : photoSet ? PHOTO_STEPS : STEPS).map((s) => (
               <button
                 key={s.id}
                 onClick={() => setStep(s.id)}
@@ -231,11 +241,20 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
       )}
       <CharAgentBar {...agentKit} />
       <main className="min-h-0 flex-1">
-        {step === "brief" && <BriefPanel {...ctx} />}
-        {step === "master" && <MasterPanel {...ctx} />}
-        {photoSet && step === "layers" && <ElementsPanel {...ctx} />}
-        {photoSet && step === "product" && <ProductStep {...ctx} />}
-        {!photoSet && (step === "layers" || step === "product") && <LayersPanel {...ctx} step={step} />}
+        {imported ? (
+          <>
+            {step === "brief" && <ImportPanel {...ctx} />}
+            {step === "product" && <ProductStep {...ctx} />}
+          </>
+        ) : (
+          <>
+            {step === "brief" && <BriefPanel {...ctx} />}
+            {step === "master" && <MasterPanel {...ctx} />}
+            {photoSet && step === "layers" && <ElementsPanel {...ctx} />}
+            {photoSet && step === "product" && <ProductStep {...ctx} />}
+            {!photoSet && (step === "layers" || step === "product") && <LayersPanel {...ctx} step={step} />}
+          </>
+        )}
       </main>
       <CharChat project={project} images={images} tab={step} section={step === "layers" ? section : ""} editable={editable} kit={agentKit} flush={ctx.flush} />
     </div>

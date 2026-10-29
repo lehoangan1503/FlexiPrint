@@ -79,6 +79,8 @@ export const CT_FONTS: Array<{ label: string; family: string; weights: number[] 
   { label: "Pacifico (brush)", family: "Pacifico", weights: [400] },
   { label: "Bebas Neue (plate)", family: "Bebas Neue", weights: [400] },
   { label: "Rajdhani", family: "Rajdhani", weights: [500, 700] },
+  // A Teeinblue bộ's names on the stockings (n00-POD-02, imported 2026-10-29).
+  { label: "Baloo 2 (rounded)", family: "Baloo 2", weights: [400, 500, 600, 700, 800] },
 ];
 
 /** Stylesheet URL for `families` (default: every font the tool offers). */

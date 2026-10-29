@@ -15,6 +15,7 @@ import { defaultCharBrief } from "../../lib/char-brief";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
 import { ctConfirm, ctPrompt } from "../dialogs";
 import { KindHelpButton } from "./kind-help";
+import { ImportButton } from "./import-button";
 
 export const CHAR_STATUS_LABEL: Record<CtCharStatus, string> = { brief: "Brief", master: "Master đã duyệt", layers: "Đã cắt layer", product: "Có sản phẩm" };
 const STATUS_CLASS: Record<CtCharStatus, string> = {
@@ -86,6 +87,7 @@ export function CharList({ currentUserId, admin = false }: { currentUserId: stri
           <h1 className="text-lg font-semibold">Bộ nhân vật v2</h1>
           <div className="ml-auto flex items-center gap-2">
             <KindHelpButton />
+            <ImportButton onError={setError} />
             <CtButton variant="primary" onClick={() => void create()} disabled={creating} title="Một bộ mới — chọn Bộ nhân vật hay Bộ ảnh khách ở bước 1">
               {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Bộ mới
             </CtButton>

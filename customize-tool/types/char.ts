@@ -402,6 +402,129 @@ export interface CtCharBrief {
   /** The 3b pictures, planned by @flexiprint for THIS set (lib/char-pictures.ts). Absent = the older built-in plan
    * (lib/char-plan.ts rules). */
   pictures?: CtCharPlanPicture[] | null;
+  /** A set imported from finished files (Teeinblue export…, asked 2026-10-29) — no master, no cut: its product is built
+   * from the uploaded layer files (server/char/import.ts). Absent = a set drawn by AI. */
+  imported?: CtCharImported | null;
+}
+
+/**
+ * A bộ imported from someone's own finished files (asked 2026-10-29: "bộ đủ, dùng với teeinblue ok rồi"). The folder is
+ * uploaded file by file to `<set folder>/import/<its path>`; a known format is read by the server (lib/char-import.ts),
+ * any other by @flexiprint (MCP char_import_files → char_import_build), both into a CtCharImportManifest the set's product
+ * is built from.
+ */
+export interface CtCharImported {
+  status: "uploading" | "analyzing" | "agent" | "building" | "done" | "failed";
+  /** "teeinblue" (read by the server) or "agent" (@flexiprint wrote the manifest). */
+  format: string;
+  /** Uploaded files and their total bytes. */
+  files: number;
+  bytes: number;
+  /** JSON list of the uploaded files (CtCharImportFile[]) on R2. */
+  indexUrl: string;
+  /** The manifest the product was built from (JSON on R2). */
+  manifestUrl: string;
+  /** Building: layer files done of total. */
+  done: number;
+  total: number;
+  error: string;
+  /** What the import found, shown on the set's page: "18 trường hợp · 6 phiên bản × 3 kiểu…". */
+  summary: string[];
+  /** Files that did not fit (another size than the canvas…): left out, named here. */
+  problems: string[];
+}
+
+/** One uploaded file of an import: its path in the folder, where it is. */
+export interface CtCharImportFile {
+  path: string;
+  url: string;
+  size: number;
+}
+
+/**
+ * What an imported set is made of — every source format comes to this. Every image file is a whole-canvas PNG of
+ * `canvas` size (layer rules: pixel-registered, never trimmed or scaled).
+ */
+export interface CtCharImportManifest {
+  name: string;
+  canvas: { width: number; height: number };
+  /** Print resolution (300) and the piece's width in mm, when the source says. */
+  dpi: number;
+  widthMm: number;
+  /** A CT_MATERIALS id ("acrylic_clear"…) or "". */
+  material: string;
+  /** Die-cut along the artwork (custom-cut acrylic) or printed on a fixed shape. */
+  cut: "alpha" | "rect";
+  title: string;
+  description: string;
+  /** The customer's first choice: one version each ("Number of grandkids": 1…6). */
+  versionLabel: string;
+  /** Inside a version, a second choice when its variants differ ("Layout"): a chooser layer, each variant's layers
+   * under its option. */
+  variantLabel: string;
+  versions: CtCharImportVersion[];
+  /** The finished look (a sample / master) and the sales photos. */
+  sampleUrl: string;
+  mockupUrls: string[];
+}
+
+export interface CtCharImportVersion {
+  name: string;
+  variants: CtCharImportVariant[];
+}
+
+export interface CtCharImportVariant {
+  name: string;
+  /** Bottom first. */
+  layers: CtCharImportLayer[];
+  texts: CtCharImportText[];
+}
+
+export interface CtCharImportLayer {
+  /** Its name in the source ("05-ba-than"). */
+  key: string;
+  /** Customer-facing ("Grandma — Outfit"). */
+  label: string;
+  /** static: always shown, one file · choice: the customer picks · linked: follows layer `follows` (same group / option
+   * position — its groups mirror the leader's). */
+  kind: "static" | "choice" | "linked";
+  follows: string;
+  /** Label of the group row ("Skin tone") when there are 2+ groups. */
+  groupLabel: string;
+  groups: CtCharImportGroup[];
+}
+
+export interface CtCharImportGroup {
+  name: string;
+  /** #hex: the group is picked by a colour dot. */
+  swatch: string;
+  options: CtCharImportOption[];
+}
+
+export interface CtCharImportOption {
+  name: string;
+  url: string;
+  /** The option the customer starts on. */
+  default: boolean;
+}
+
+export interface CtCharImportText {
+  key: string;
+  label: string;
+  sample: string;
+  maxChars: number;
+  /** Google font family + weight ("Baloo 2", 800). */
+  font: string;
+  weight: number;
+  /** Letter height px, the text's centre and max width on the canvas, turned `angle` degrees clockwise. */
+  size: number;
+  cx: number;
+  cy: number;
+  width: number;
+  angle: number;
+  color: string;
+  /** The text lies right above this layer (its key); "" = above everything. */
+  above: string;
 }
 
 /**

@@ -19,6 +19,7 @@ import { photoStylesRoute } from "./photo-styles";
 import { charKhuonRoute } from "./khuon";
 import { listVersionSets, runVersionChain, startVersionSets } from "./versions";
 import { productSets, setProducts } from "./set-users";
+import { createImport, importRoute } from "./import";
 import { adoptMaster, approveMaster, createCharProject, deleteCharProject, generateMasters, getCharProject, jobDb, jsonError, listCharProjects, loadProject, refineMaster, updateCharProject, uploadCharFile, uploadChatFile } from "./projects";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -35,7 +36,7 @@ async function json(req: NextRequest): Promise<unknown> {
  * told to it (server/agent/inbox.ts recordEdit: the agent reads it with its next tool call). */
 export async function dispatchChar(req: NextRequest, s: CtSession, path: string[]): Promise<NextResponse> {
   const [, , id, action] = path;
-  const watched = req.method !== "GET" && req.method !== "DELETE" && !!id && UUID.test(id) && action !== "chat-files" && action !== "versions";
+  const watched = req.method !== "GET" && req.method !== "DELETE" && !!id && UUID.test(id) && action !== "chat-files" && action !== "versions" && action !== "import";
   if (!watched) return route(req, s, path);
   const before = await loadProject(s.supabase, id).catch(() => null);
   const body = (req.headers.get("content-type") ?? "").includes("application/json") ? await req.clone().json().catch(() => null) : null;
@@ -105,7 +106,10 @@ async function route(req: NextRequest, s: CtSession, path: string[]): Promise<Ne
     if (method === "POST") return createCharProject(s, await json(req));
     return jsonError("Not found", 404);
   }
+  // A finished bộ imported from its files (server/char/import.ts).
+  if (id === "import" && !action && method === "POST") return createImport(s, await json(req));
   if (!UUID.test(id)) return jsonError("id không hợp lệ", 400);
+  if (action === "import" && sub && !subAction && method === "POST") return importRoute(req, s, id, sub);
   if (action === "versions" && !sub && method === "GET") return listVersionSets(s, id);
   if (action === "used-by" && !sub && method === "GET") return setProducts(s, id);
   if (!action) {

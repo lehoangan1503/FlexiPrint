@@ -48,8 +48,11 @@ export function ProductStep(ctx: CharCtx) {
 
   // The phôi / khuôn and the backgrounds do not need the cut: they are made here any time.
   // A set drawn pose by pose has no files of its own: its product is built from the poses' files.
-  const waiting =
-    project.brief.kind === "photo" || project.brief.poses?.length
+  const waiting = project.brief.imported
+    ? project.product_ids.length
+      ? null
+      : "Sản phẩm đang được dựng từ file import (bước 1) — sẽ hiện ở đây."
+    : project.brief.kind === "photo" || project.brief.poses?.length
       ? project.product_ids.length
         ? null
         : project.brief.poses?.length
@@ -62,8 +65,8 @@ export function ProductStep(ctx: CharCtx) {
     return (
       <div className="space-y-6 p-6">
         <AutoStepGuide what="@flexiprint dựng sản phẩm, nền và mockup" />
-        {/* No product yet: the set's khuôn / phôi being made. */}
-        <BlankSection {...ctx} />
+        {/* No product yet: the set's khuôn / phôi being made (an imported set has its own). */}
+        {!project.brief.imported && <BlankSection {...ctx} />}
         {project.brief.kind !== "photo" && project.brief.elements.length > 0 && project.master_id && <ElementGallery {...ctx} />}
         <p className="p-6 text-center text-sm text-muted-foreground">{waiting}</p>
       </div>

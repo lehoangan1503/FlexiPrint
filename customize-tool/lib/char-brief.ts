@@ -8,6 +8,7 @@ import type {
   CtCharBackdrop,
   CtCharBox,
   CtCharBrief,
+  CtCharImported,
   CtCharChooser,
   CtCharShownWhen,
   CtCharElement,
@@ -333,6 +334,28 @@ function parseCompose(raw: unknown): CtCharComposeVersion[] | null {
   return list.length ? list : null;
 }
 
+const IMPORT_STATUSES: CtCharImported["status"][] = ["uploading", "analyzing", "agent", "building", "done", "failed"];
+
+/** An imported set's state (types/char.ts CtCharImported); null = a set drawn by AI. */
+function parseImported(raw: unknown): CtCharImported | null {
+  const o = rec(raw);
+  if (!Object.keys(o).length) return null;
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0);
+  return {
+    status: IMPORT_STATUSES.includes(o.status as CtCharImported["status"]) ? (o.status as CtCharImported["status"]) : "failed",
+    format: s(o.format, 40),
+    files: n(o.files),
+    bytes: n(o.bytes),
+    indexUrl: s(o.indexUrl, 1000),
+    manifestUrl: s(o.manifestUrl, 1000),
+    done: n(o.done),
+    total: n(o.total),
+    error: s(o.error, 2000),
+    summary: arr(o.summary).map((x) => s(x, 400)).filter(Boolean).slice(0, 40),
+    problems: arr(o.problems).map((x) => s(x, 400)).filter(Boolean).slice(0, 60),
+  };
+}
+
 export function parseCharBrief(raw: unknown): CtCharBrief {
   const o = rec(raw);
   const d = defaultCharBrief();
@@ -370,6 +393,7 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
     lineup: parseLineup(o.lineup),
     versionOf: parseVersionOf(o.versionOf),
     poses: parsePoses(o.poses),
+    imported: parseImported(o.imported),
     compose: parseCompose(o.compose),
     framing: o.framing === "bust" ? "bust" : "full",
     choosers: arr(o.choosers).map(parseChooser).filter((x): x is CtCharChooser => x !== null).slice(0, 24),

@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtProductCharSet, CtCharVersionCard,
+import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtCharImportFile, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
   CtAgentStatus,
   CtAgentTask,
@@ -279,6 +279,18 @@ export const charApi = {
   /** The bộ nhân vật a product uses: the one it was built from first. */
   ofProduct: (productId: string) => call<{ sets: CtProductCharSet[] }>(`char/projects?product=${productId}`).then((r) => r.sets),
   usedBy: (id: string) => call<{ products: CtCharSetProduct[] }>(`char/projects/${id}/used-by`).then((r) => r.products),
+  /** Import a finished bộ (server/char/import.ts): the set, then its folder a few files a request, then start. */
+  createImport: (name: string) => call<{ project: CtCharProject }>("char/projects/import", json("POST", { name })).then((r) => r.project),
+  importFiles: (id: string, files: Array<{ file: File; path: string }>) => {
+    const form = new FormData();
+    for (const f of files) {
+      form.append("file", f.file, f.file.name);
+      form.append("path", f.path);
+    }
+    return call<{ files: CtCharImportFile[] }>(`char/projects/${id}/import/files`, { method: "POST", body: form }).then((r) => r.files);
+  },
+  importStart: (id: string, files: CtCharImportFile[]) => call<{ status: string }>(`char/projects/${id}/import/start`, json("POST", { files })),
+  importRebuild: (id: string) => call<{ status: string }>(`char/projects/${id}/import/rebuild`, json("POST", {})),
   /** An idea's preview picture becomes a master candidate (the editor took that direction). */
   adoptMaster: (id: string, imageId: string) => call<{ image: CtCharImage }>(`char/projects/${id}/masters/${imageId}/adopt`, json("POST", {})).then((r) => r.image),
   update: (id: string, body: { name?: string; brief?: CtCharBrief }) => call<{ project: CtCharProject }>(`char/projects/${id}`, json("PATCH", body)).then((r) => r.project),

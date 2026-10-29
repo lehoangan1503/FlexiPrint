@@ -17,6 +17,7 @@ import { CT_CONFIG, CT_TABLES } from "../../config";
 import type { CtPrintTemplate } from "../../types/print";
 import { templateRow } from "../print-templates";
 import { addSetProduct } from "../char/set-users";
+import { buildFromAgent, importFiles, importText } from "../char/import";
 import { siteUrl } from "../site-url";
 import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharPhotoStyle, CtCharProject, CtCharRefUse, CtCharTaskResult } from "../../types";
 import { REF_USES, REF_USE_INFO, masterPrompt, parseCharBrief, shownByDefault } from "../../lib/char-brief";
@@ -116,6 +117,9 @@ const PHOTO_STYLES =
 const SHORT_REQUESTS =
   "SHORT REQUESTS (asked 2026-10-28): editors write a few loose lines (\"4 style: siêu nhân, khăn len…; 4 khung giáng sinh; tên trên trái; slogan trắng dưới; khuôn tròn; phôi kính\") and attach a sample. Never ask them for the details — fill them in from the sample picture and these defaults: decorations follow the khuôn's outline (a round khuôn → a wreath / garland curving with the circle, a U hugging the bottom and sides of the subject — never straight bars or a square frame on a round piece), every option of an element the same size, place and curve; the photo zone in the middle, the frame over its cut-off bottom; a customer name in a script font where they said; a fixed slogan curved along the edge when the sample does so; everything clear of the hanging hole and inside the safe area; a khuôn of that shape already in list_print_templates is reused, never a duplicate; a material they name (glass_clear…) is the khuôn's blank for the mockups (a khuôn with no phôi of that material yet → char_make_blank before the mockups); the texts' colour readable on that material. Then, in your first summary, write back in short Vietnamese what you decided (each style, each element and its options, the texts, khuôn, phôi, which attached picture went where) so the editor reviews it there and corrects only what is off.";
 
+const IMPORTED =
+  "AN IMPORTED SET (set.brief.imported — someone's own finished files, a Teeinblue export…, asked 2026-10-29): no master, no 3a/3b/3c, nothing drawn by AI. A known layout is read by the server; any other folder is yours: char_import_files (the folder: paths, sizes, small text files) → char_import_read (a json / csv / md / txt) and view_image a few layer files (url) → understand it: the canvas size (every layer file is the WHOLE canvas, same size — layer rules), the versions the customer picks first (number of people…) and inside one the variants (layout), each layer bottom → top — static (always there), choice (the customer picks: groups = a first row like skin tone / hair colour, options = the files), linked (follows another layer's choice: a head with the body's skin + outfit, the hair under the hat — its groups and options mirror the leader's, same counts and order) — and the texts the customer types (centre, width, letter height px, angle, colour, Google font + weight). Then char_import_build {task_id, manifest} (files by their path in the folder); set.brief.imported shows the build (status building → done, problems). Afterwards the set works like any other: render_artwork its product, make_product_mockups, char_add_product. A layout change after the build = char_import_build again with the fixed manifest. Never draw, trim or scale a file.";
+
 const CHAT_INSTRUCTIONS = [
   ...COMMON,
   "STEP chat — the editor typed a request in the sticky chat of the set's page (like talking to you in a terminal). \"tab\" / \"section\" say where they were (1. Mô tả bộ clipart = brief · 2. Ảnh master · 3. Cắt clipart → 3a master cỡ in, 3b AI vẽ ảnh để cắt, 3c cắt clipart · 4. Sản phẩm) — the request is about THAT part unless it says otherwise. \"attachments\" are screenshots or pictures of the page they sent: view_image EVERY one first and find what they point at (a clipart file, a layer, a region, a master…). \"set\" is the whole bộ: brief, masters, the 3b pictures (edits, with prompts), the 3c regions (plan.pieces: key, picture, region url), the layer files (layers.slots[].files: option, colour, url, piece), the products, the earlier requests and what you answered.",
@@ -137,6 +141,7 @@ const CHAT_INSTRUCTIONS = [
   "A bộ nhân vật with a customer FACE (an elf / Santa body with the customers' faces, a die-cut acrylic): a normal character set with brief.photoZones [{where: \"the left elf's face\", treat: \"face\"}] and product.cut \"alpha\" — the master leaves the face empty, the body file gets a hole there and the face sits under it (hat brim, hair edge and collar over it).",
   POSED,
   DRAWN_LINEUP,
+  IMPORTED,
   "submit_result(task_id, {summary: Vietnamese — what you changed, where to see it on the page, what is still off; image_ids: pictures you made, if any}).",
 ].join("\n");
 
@@ -1240,6 +1245,67 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       if (!productId) throw new Error("Not every version set is cut yet (get_task set.versions: layers.status \"done\" for each) — wait for them, then call again");
       await progress(db, task.id, "Đã dựng lại sản phẩm");
       return json({ product_id: productId, next: "list_product_options, render_artwork (mode print), make_product_mockups." });
+    },
+  },
+  {
+    name: "char_import_files",
+    description:
+      "Bộ import (set.brief.imported): the uploaded folder — every file's path, size and url (images: view_image the url), folder by folder; small text files (json / md / txt / csv ≤ 6 KB) come with their contents. under = only that sub-folder. Large folders are paged (offset).",
+    inputSchema: {
+      type: "object",
+      properties: { ...TASK_ARG, under: { type: "string", description: "A sub-folder path (default: all)." }, offset: { type: "number", description: "Skip this many files (paging)." } },
+      required: ["task_id"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { project } = await openCharTask(ctx, args.task_id);
+      if (!project.brief.imported) throw new Error("This set is not an imported one");
+      const under = str(args.under).replace(/^\/+|\/+$/g, "");
+      const all = (await importFiles(project)).filter((f) => !under || f.path.startsWith(`${under}/`));
+      const offset = Math.max(0, Math.round(Number(args.offset) || 0));
+      const page = all.slice(offset, offset + 400);
+      // Folders first (how many files each), then the page of files.
+      const folders = new Map<string, number>();
+      for (const f of all) {
+        const d = f.path.split("/").slice(0, -1).join("/") || ".";
+        folders.set(d, (folders.get(d) ?? 0) + 1);
+      }
+      const texts: Record<string, string> = {};
+      for (const f of page.filter((x) => /\.(json|md|txt|csv)$/i.test(x.path) && x.size <= 6000).slice(0, 20)) texts[f.path] = (await importText(project, f.path, 6000)) ?? "";
+      return json({
+        total: all.length,
+        folders: Object.fromEntries([...folders].slice(0, 300)),
+        files: page.map((f) => ({ path: f.path, size: f.size, url: f.url })),
+        texts,
+        ...(offset + page.length < all.length ? { next_offset: offset + page.length } : {}),
+      });
+    },
+  },
+  {
+    name: "char_import_read",
+    description: "Bộ import: one text file of the uploaded folder (json / csv / md / txt), up to 60 000 characters.",
+    inputSchema: { type: "object", properties: { ...TASK_ARG, path: { type: "string", description: "Its path in the folder (char_import_files)." } }, required: ["task_id", "path"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { project } = await openCharTask(ctx, args.task_id);
+      if (!project.brief.imported) throw new Error("This set is not an imported one");
+      const text = await importText(project, str(args.path), 60_000);
+      if (text === null) throw new Error("No such file in the folder");
+      return json({ path: str(args.path), text });
+    },
+  },
+  {
+    name: "char_import_build",
+    description:
+      'Bộ import: build the set and its product from a manifest of the uploaded folder (background, minutes for thousands of files — set.brief.imported shows done / total, problems; get_task again to see it). manifest = {name, canvas: {width, height} px, dpi, widthMm, material (CT material id or ""), cut: "alpha" (die-cut along the artwork) | "rect", title, description, versionLabel ("Number of grandkids"), variantLabel ("Layout", "" when a version has one variant), versions: [{name, variants: [{name, layers: [{key, label (customer-facing English), kind: "static" | "choice" | "linked", follows (linked: the leader\'s key), groupLabel ("Skin tone"), groups: [{name, swatch (#hex or ""), options: [{name, file (path in the folder), default (bool)}]}]}] bottom first, texts: [{key, label, sample, maxChars, font (Google family), weight, size (letter height px), cx, cy, width, angle (deg clockwise), color, above (layer key it lies on, "" = top)}]}]}], sample (path of the finished look), mockups: [paths]}. Every layer file must be the whole canvas size.',
+    inputSchema: { type: "object", properties: { ...TASK_ARG, manifest: { type: "object", description: "See the description." } }, required: ["task_id", "manifest"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id);
+      if (!project.brief.imported) throw new Error("This set is not an imported one");
+      const r = await buildFromAgent(db, project, args.manifest);
+      await progress(db, task.id, "Đang dựng bộ import từ manifest");
+      return json({ building: true, ...r, next: "get_task (set.brief.imported) until status done, then render_artwork the product (list_product_options for its options) and fix the manifest if a layer is wrong." });
     },
   },
   {

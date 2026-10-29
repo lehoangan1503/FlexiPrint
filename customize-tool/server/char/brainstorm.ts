@@ -122,9 +122,10 @@ Every brief is built like this, so every proposal must respect it:
   - never "optional": true on a hat the hair is drawn under (no hat would show the hair's flat top): a "Hats" chooser
     (With Hats / No Hats) + the hair per kind of head as above instead.
   - a name on the brim: one text per hat shape, place "on", shownWhen that theme (it follows that hat's band; names
-    of one theme share one size); a hat whose band is NOT its widest low part (a witch hat: the band above the wide
-    brim) → "band": true + box = where the band is (shares of the character's box, look at the hat picture): the band
-    is found inside it. A theme without a hat: the name "under" the character or in a free box.
+    of one theme share one size), ALWAYS "band": true + box = where the band is (shares of the character's box, measured
+    on that hat's picture: the Santa fur cuff, the witch hat's band above its brim): the band is found inside it. (Found
+    on its own, without band, it picked the cuff's 16 px bottom edge of a Santa hat and the witch hat's brim, 2026-10-30.)
+    A light letter colour on a dark or same-coloured band (white on the orange band). A theme without a hat: the name "under" the character or in a free box.
   Face expressions: a shape slot part "face expression", group "face" (the doll's face is blank, every expression is
   drawn on it). The Theme = a chooser [{id: "theme", label: "Theme", options: Christmas /
   Halloween / Easter}]; the sign = an element with place "plaque", one option per theme, follows "theme"; the slogan on

@@ -369,15 +369,27 @@ export function readTeeinblue(name: string, files: CtCharImportFile[], texts: Ct
 
   // Versions (the first part of the case name, "c2") and their variants ("be").
   const versions: CtCharImportVersion[] = [];
+  const caseVariantName = new Map<Case, string>();
   for (const c of read) {
     const v = variantOf(c);
     const vName = twoLevels ? v.version : c.key;
     let ver = versions.find((x) => x.name === vName);
     if (!ver) versions.push((ver = { name: vName, variants: [] }));
-    ver.variants.push(caseVariant(c));
+    const x = caseVariant(c);
+    caseVariantName.set(c, x.name);
+    ver.variants.push(x);
   }
   versions.sort((a, b) => natural(a.name, b.name));
-  // Every version's variants in one order (the first version's).
+  // Every version's variants in one order: the notes' (their sections, "c1-trong, c1-be, c1-qua" — the sales text names
+  // the layouts in that order), else the first version's. Read in file order (be, qua, trong) the names were put on
+  // the wrong layouts (2026-10-29).
+  const noted = [...notes.caseNames.keys()].map((k) => k.slice(k.indexOf("-") + 1));
+  const rank = (name: string) => {
+    const c = read.find((x) => caseVariantName.get(x) === name);
+    const i = c ? noted.indexOf(variantOf(c).variant) : -1;
+    return i < 0 ? 1000 : i;
+  };
+  for (const v of versions) v.variants.sort((a, b) => rank(a.name) - rank(b.name));
   const vOrder = versions[0]?.variants.map((x) => x.name) ?? [];
   for (const v of versions) v.variants.sort((a, b) => vOrder.indexOf(a.name) - vOrder.indexOf(b.name));
 

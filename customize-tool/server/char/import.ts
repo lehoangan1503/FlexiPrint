@@ -227,13 +227,21 @@ async function startBuild(db: Db, userId: string, projectId: string, manifest: C
 /** POST char/projects/:id/import/rebuild — the product again from the saved manifest. */
 async function rebuildImport(s: CtSession, p: CtCharProject): Promise<NextResponse> {
   if (building.has(p.id)) return jsonError("Đang dựng — chờ xong", 409);
-  const url = p.brief.imported?.manifestUrl;
+  const imp = p.brief.imported!;
+  const db = jobDb(s);
+  // A known format is read again (a fixed reader applies); a manifest @flexiprint wrote is built as it is.
+  if (imp.format === "teeinblue") {
+    const files = await importFiles(p);
+    const read = files.length ? readTeeinblue(p.name, files, await readTexts(importRoot(p, s.user.id), files)) : null;
+    if (!read) return jsonError("Không đọc lại được folder đã tải", 409);
+    await startBuild(db, p.user_id ?? s.user.id, p.id, read.manifest, "teeinblue", read.summary, read.problems);
+    return NextResponse.json({ status: "building", summary: read.summary });
+  }
+  const url = imp.manifestUrl;
   const key = url ? keyOf(importRoot(p, s.user.id), url) : null;
   const b = key ? await readKey(key) : null;
   if (!b) return jsonError("Chưa có manifest — tải folder lên trước", 409);
-  const manifest = JSON.parse(b.toString("utf8")) as CtCharImportManifest;
-  const imp = p.brief.imported!;
-  await startBuild(jobDb(s), p.user_id ?? s.user.id, p.id, manifest, imp.format, imp.summary, []);
+  await startBuild(db, p.user_id ?? s.user.id, p.id, JSON.parse(b.toString("utf8")) as CtCharImportManifest, imp.format, imp.summary, []);
   return NextResponse.json({ status: "building" });
 }
 

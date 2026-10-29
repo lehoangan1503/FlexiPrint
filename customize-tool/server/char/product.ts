@@ -753,12 +753,21 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     const cropOf = (subs: number[]): CtLayoutBox =>
       (split ? unionBox(subs.map(subjectBox).filter((b): b is CtLayoutBox => b !== null)) : null) ?? (subs.length === sb.subjects.length || solo !== undefined ? unionBox([...(bodyBox ? [bodyBox] : []), ...subs.flatMap(boxesOf)]) : null) ?? bodyBox ?? { x: 0, y: 0, w: sset.width, h: sset.height };
 
-    // A headwear outfit (slot.headwear): the hat becomes its own layer over the hair, the rest stays where the slot is.
+    // A headwear outfit (slot.headwear): the hat becomes its own layer over the hair, the rest stays where the slot is —
+    // unless the hair is drawn ON the outfit picture (slot.on, under its hat): that hair is cut against the outfit and
+    // lies over it like in 3c. The hat over it showed the outfit file's own skin under the brim (the brim's shadow on
+    // the forehead the hair covers in 3b) as a line between the brim and the hair (found 2026-10-29, set 1c307fa0).
+    const hatOver = (sl: CtCharLayerSlot): boolean => {
+      const b = slotOf(sl);
+      if (!b?.headwear || sl.follows) return false;
+      const own = sb.subjects[slotSubject(sl)]?.slots ?? [];
+      return !own.some((x) => x.on && (x.on === b.id || x.on === b.group));
+    };
     const hats = new Map<string, string>();
     const slots: CtCharLayerSlot[] = [];
     for (const sl of sset.slots) {
       slots.push(sl);
-      if (slotOf(sl)?.headwear && !sl.follows) {
+      if (hatOver(sl)) {
         const key = `${sl.key}:hat`;
         hats.set(key, sl.key);
       }
@@ -779,7 +788,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
     const pieceOf = async (sl: CtCharLayerSlot, url: string, keep: "in" | "out" = "out"): Promise<Buffer> => {
       let png = await bytes(url);
       if (hats.has(sl.key)) png = (await splitHeadwear(png)).hat;
-      else if (slotOf(sl)?.headwear) png = (await splitHeadwear(png)).rest;
+      else if (hatOver(sl)) png = (await splitHeadwear(png)).rest;
       const behind = behindOf(sl);
       return behind ? keepMask(png, await bytes(behind), keep) : png;
     };
@@ -789,7 +798,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       const behind = behindOf(sl);
       return {
         ...(url.startsWith(MIRROR) ? { flip: true } : {}),
-        ...(hats.has(sl.key) ? { part: "hat" as const } : slotOf(sl)?.headwear ? { part: "rest" as const } : {}),
+        ...(hats.has(sl.key) ? { part: "hat" as const } : hatOver(sl) ? { part: "rest" as const } : {}),
         ...(behind ? { behind: { url: behind.startsWith(MIRROR) ? behind.slice(MIRROR.length) : behind, keep } } : {}),
       };
     };
@@ -835,7 +844,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
           Promise.all(
             list.flatMap((sl) => {
               const g = fileFor(sl);
-              const head = slotOf(sl)?.headwear === true && !sl.follows;
+              const head = hatOver(sl);
               if (!g || (hat && !head)) return [];
               return [head ? bytes(g.url).then(splitHeadwear).then((x) => (hat ? x.hat : x.rest)) : bytes(g.url)];
             }),
@@ -922,7 +931,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       const file = sl?.files.find((f) => f.option === first && (f.color === "" || f.color === hatSlot?.colors[0]?.name)) ?? sl?.files[0];
       brims.set(i, file ? await brimArc(hatSlot?.headwear ? (await splitHeadwear(await bytes(file.url))).hat : await bytes(file.url)) : null);
     }
-    return { src, sb, sset, slotOf, slotSubject, subjectBox, cropOf, slots, hatSlots, groupsOf, behindOf, bodies, bodyCliparts, bodyBacks, brims };
+    return { src, sb, sset, slotOf, slotSubject, hatOver, subjectBox, cropOf, slots, hatSlots, groupsOf, behindOf, bodies, bodyCliparts, bodyBacks, brims };
   }
   for (const v of versions) for (const pt of v.parts) if (!prepared.has(pt.src.key)) prepared.set(pt.src.key, await prepare(pt.src));
 
@@ -1151,7 +1160,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       // One character in the picture: the part alone ("Hair"); several: "Person 2 — Hair".
       const labelFor = (sl: CtCharLayerSlot) => {
         const w = who(sb, sl.key);
-        const part = P.slotOf(sl)?.headwear ? (sl.key.endsWith(":hat") ? "Hat" : "Top") : w.part;
+        const part = sl.key.endsWith(":hat") ? "Hat" : P.hatOver(sl) ? "Top" : w.part;
         if (part && !many) return cap(part);
         return w.name ? `${w.name} — ${part}` : sl.label;
       };

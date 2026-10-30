@@ -704,8 +704,16 @@ export class Customizer {
         tabs.append(tab);
       }
       wrap.append(tabs, el("div", { class: "ct-designs__title" }, [el("span", { text: this.itemLabel(this.active) })]));
-      // Keep the active tab in view on narrow screens.
-      requestAnimationFrame(() => tabs.querySelector(".is-active")?.scrollIntoView({ block: "nearest", inline: "nearest" }));
+      // Keep the active tab in view on narrow screens — the tab strip scrolls sideways, never the page (2026-10-30:
+      // scrollIntoView pulled the page back up to the tabs on every option click).
+      requestAnimationFrame(() => {
+        const active = tabs.querySelector<HTMLElement>(".is-active");
+        if (!active) return;
+        const strip = tabs.getBoundingClientRect();
+        const tab = active.getBoundingClientRect();
+        if (tab.left < strip.left) tabs.scrollLeft -= strip.left - tab.left;
+        else if (tab.right > strip.right) tabs.scrollLeft += tab.right - strip.right;
+      });
     }
 
     const mains = tpl.config.main.enabled ? mainVersions(tpl.assets, tpl.mainAssetId) : [];

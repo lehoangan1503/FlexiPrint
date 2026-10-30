@@ -411,6 +411,30 @@ function themePreview(url: string | null): string | null {
   return u.toString();
 }
 
+/** A deployed product as it is on Shopify now, with a fresh preview link (draft theme). */
+export interface ShopifyPreview {
+  id: string;
+  title: string;
+  status: CtShopifyStatus;
+  /** Staff preview in the draft theme — Shopify makes a new one each time and the earlier ones stop working. */
+  previewUrl: string | null;
+  /** The product's own page (a published product), in the draft theme. */
+  storeUrl: string | null;
+}
+
+/** Fresh preview links of these Shopify products (missing ones left out). */
+export async function previewLinks(productGids: string[]): Promise<ShopifyPreview[]> {
+  if (!productGids.length) return [];
+  const data = await gql<{ nodes: Array<{ id: string; title: string; status: CtShopifyStatus; onlineStoreUrl: string | null; onlineStorePreviewUrl: string | null } | null> }>(
+    `query($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id title status onlineStoreUrl onlineStorePreviewUrl } } }`,
+    { ids: productGids },
+  );
+  const theme = PREVIEW_THEME() ? `?preview_theme_id=${PREVIEW_THEME()}` : "";
+  return data.nodes
+    .filter((n): n is NonNullable<typeof n> => Boolean(n?.id))
+    .map((n) => ({ id: n.id, title: n.title, status: n.status, previewUrl: themePreview(n.onlineStorePreviewUrl), storeUrl: n.onlineStoreUrl ? `${n.onlineStoreUrl}${theme}` : null }));
+}
+
 /** Publish on the Online Store channel. true, or why not (missing scope…). */
 async function publishToOnlineStore(productId: string): Promise<true | string> {
   const pubs = await gql<{ publications: { nodes: Array<{ id: string; name: string; catalog: { title: string } | null }> } }>(

@@ -18,7 +18,7 @@ import { normalizePriceTableConfig, priceCells, priceTableFor, priceTableProblem
 import { str } from "../ai/llm";
 import { serviceSession } from "../char/product";
 import { ownedProduct, productTemplate, readDeployBody, runDeploy } from "../handlers";
-import { listCollections, shopifyConfigured, shopifyInfo } from "../shopify";
+import { listCollections, previewLinks, shopifyConfigured, shopifyInfo } from "../shopify";
 import { siteUrl } from "../site-url";
 import type { CtServiceClient, CtSession } from "../supabase";
 import { TASK_ARG, json, liveStatus, loadTask } from "./task-common";
@@ -139,6 +139,40 @@ function defaultMedia(st: DeployState, product: CtProduct): string[] {
 const strings = (v: unknown) => (Array.isArray(v) ? v.map(str).filter(Boolean) : []);
 
 export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
+  {
+    name: "shopify_preview_links",
+    description:
+      "Fresh links to look at deployed products on the store in the draft theme, without deploying again. A DRAFT product only has a temporary preview link (Shopify makes a new one on every call and the earlier ones stop working — \"link hết hạn\"); a published one has its own page (storeUrl, permanent). product_ids = FlexiPrint product ids; none = the most recently deployed products (limit, default 10). → [{product_id, name, shopify status, preview, store, admin}]. A draft cannot be added to the cart — say so when the editor wants to test the cart.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        product_ids: { type: "array", items: { type: "string" }, description: "FlexiPrint product ids (default: the latest deployed ones)." },
+        limit: { type: "number", description: "How many latest ones when product_ids is empty (1–30, default 10)." },
+        task_id: { type: "string", description: "Agent: the task it is for (optional)." },
+      },
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const ids = strings(args.product_ids).filter((id) => UUID.test(id));
+      const limit = Math.min(30, Math.max(1, Math.round(Number(args.limit) || 10)));
+      let q = ctx.db.from(CT_TABLES.products).select("id, name, shopify").not("shopify", "is", null);
+      q = ids.length ? q.in("id", ids) : q.order("updated_at", { ascending: false }).limit(limit);
+      const { data, error } = await q.returns<Array<Pick<CtProduct, "id" | "name" | "shopify">>>();
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []).filter((p) => p.shopify?.productId);
+      if (!rows.length) return json({ products: [], note: ids.length ? "Các sản phẩm này chưa deploy lên Shopify." : "Chưa có sản phẩm nào deploy lên Shopify." });
+      const live = new Map((await previewLinks(rows.map((p) => p.shopify!.productId))).map((x) => [x.id, x]));
+      return json({
+        products: rows.map((p) => {
+          const x = live.get(p.shopify!.productId);
+          return x
+            ? { product_id: p.id, name: p.name, title: x.title, status: x.status, preview: x.previewUrl, store: x.storeUrl, admin: p.shopify!.adminUrl }
+            : { product_id: p.id, name: p.name, error: "Sản phẩm Shopify không còn (đã xoá?) — deploy lại" };
+        }),
+        note: "preview = link xem thử theme nháp (sản phẩm DRAFT: tạm thời, mỗi lần lấy link mới thì link cũ hỏng; không thêm vào giỏ được). store = trang cố định khi sản phẩm ACTIVE + bật Online Store.",
+      });
+    },
+  },
   {
     name: "check_deploy",
     description:

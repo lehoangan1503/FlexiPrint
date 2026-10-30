@@ -8,7 +8,7 @@
 
 import { createServerClient } from "@supabase/ssr";
 import { createClient, type User } from "@supabase/supabase-js";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { CT_CONFIG } from "../config";
 
 export async function ctSupabase() {
@@ -37,7 +37,23 @@ export interface CtSession {
   user: User;
 }
 
+/**
+ * A signed-in editor: the login cookie (the web app), or "Authorization: Bearer <their Supabase access token>" — the
+ * import MCP on the editor's own machine (integrations/flexiprint-import) logs in with their account and sends it.
+ */
 export async function ctSession(): Promise<CtSession | null> {
+  const bearer = /^Bearer\s+(ey[\w-]+\.[\w-]+\.[\w-]+)$/.exec((await headers()).get("authorization") ?? "")?.[1];
+  if (bearer) {
+    const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+      db: { schema: CT_CONFIG.dbSchema },
+      global: { headers: { Authorization: `Bearer ${bearer}` } },
+      cookies: { getAll: () => [], setAll: () => {} },
+    });
+    const {
+      data: { user },
+    } = await supabase.auth.getUser(bearer);
+    return user ? { supabase, user } : null;
+  }
   const supabase = await ctSupabase();
   const {
     data: { user },

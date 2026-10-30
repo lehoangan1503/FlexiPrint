@@ -802,7 +802,15 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
                 ra = ha + ref_a * (1 - ha)
                 ref_c = (unit(host_cols[s.ref_piece][c]) * ha[..., None] + ref_c * (ref_a * (1 - ha))[..., None]) / np.maximum(ra[..., None], 1e-4)
                 ref_a = ra
-            ok, detail = stack_check(ref_c, ref_a, col0, pa, a, aa)
+            # A back layer lies under the body: where the 3b picture has its figure and no layer covers it (the doll's
+            # outline lies ~1 px off the picture's along the jaw and ear, cut out of every file: the background showed
+            # through as a line, 2026-10-30), it takes the picture's own pixels — hidden everywhere else.
+            back_a = a
+            if s.wraps:
+                near = cv2.dilate((a > 0.5).astype(np.uint8), kernel(max(4, round(16 * aa)))).astype(bool)
+                gap = near & (pa > 0.5) & (a + (1 - a) * ref_a < 0.5)
+                back_a = np.maximum(a, np.minimum(pa, soft(gap, grow=1, blur=0.6 * aa)))
+            ok, detail = stack_check(ref_c, ref_a, col0, pa, back_a, aa)
             if detail:
                 checks.append({"name": f"Ghép = 3b: {s.label}: {o.name}", "ok": ok, "detail": detail, "piece": piece})
             if s.mode == "color":
@@ -815,9 +823,8 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
                 col = col0 if k == 0 and not s.cut_colour else recolor(col0, a, hex_, key=s.cut_colour, under=ref_c if s.cut_colour else None)
                 plate = plate_of(col, pa)
                 if s.wraps:
-                    whole = px(col, a)
-                    files.append(Out(f"{s.key}:back", f"{s.label} — lớp sau", o.name, cname, *whole, piece, plate))
-                    views.append(Out(f"{s.key}:back", s.label, o.name, cname, *whole, piece, plate))
+                    files.append(Out(f"{s.key}:back", f"{s.label} — lớp sau", o.name, cname, *px(col, back_a), piece, plate))
+                    views.append(Out(f"{s.key}:back", s.label, o.name, cname, *px(col, a), piece, plate))
                     files.append(Out(f"{s.key}:front", f"{s.label} — lớp trước", o.name, cname, *px(col, a * (fig_of(s) if s.figure is not None else fig)), piece, plate))
                 else:
                     files.append(Out(s.key, s.label, o.name, cname, *px(col, a), piece, plate))

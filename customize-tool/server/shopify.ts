@@ -38,12 +38,35 @@ export function shopifyConfigured(): boolean {
 
 export class ShopifyError extends Error {}
 
+/** Errors of the connection itself: the request never reached Shopify, so sending it again is safe. */
+const CONNECT_ERRORS = new Set(["ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "ENETUNREACH", "EHOSTUNREACH", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT"]);
+
+function connectError(e: unknown): boolean {
+  const cause = (e as { cause?: { code?: string; errors?: Array<{ code?: string }> } }).cause;
+  return Boolean(cause && (CONNECT_ERRORS.has(cause.code ?? "") || cause.errors?.some((x) => CONNECT_ERRORS.has(x.code ?? ""))));
+}
+
+/**
+ * fetch with up to 4 tries when the connection fails (flexi2's route to Shopify drops connects now and then —
+ * "fetch failed" on a deploy, 2026-10-30). A request that reached Shopify is never sent twice.
+ */
+async function shopifyFetch(url: string, init: RequestInit): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fetch(url, { ...init, signal: AbortSignal.timeout(90_000) });
+    } catch (e) {
+      if (attempt >= 4 || !connectError(e)) throw new ShopifyError(`Không kết nối được Shopify (${e instanceof Error ? e.message : String(e)})`);
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
+    }
+  }
+}
+
 let token: { value: string; until: number } | null = null;
 
 async function accessToken(): Promise<string> {
   if (token && token.until > Date.now()) return token.value;
   if (!shopifyConfigured()) throw new ShopifyError("Chưa cấu hình Shopify (SHOPIFY_STORE_DOMAIN, SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET)");
-  const res = await fetch(`https://${DOMAIN()}/admin/oauth/access_token`, {
+  const res = await shopifyFetch(`https://${DOMAIN()}/admin/oauth/access_token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -71,7 +94,7 @@ interface UserError {
 }
 
 async function gql<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch(`https://${DOMAIN()}/admin/api/${API_VERSION()}/graphql.json`, {
+  const res = await shopifyFetch(`https://${DOMAIN()}/admin/api/${API_VERSION()}/graphql.json`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": await accessToken() },
     body: JSON.stringify({ query, variables }),

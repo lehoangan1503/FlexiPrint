@@ -142,7 +142,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "shopify_preview_links",
     description:
-      "Fresh links to look at deployed products on the store in the draft theme, without deploying again. A DRAFT product only has a temporary preview link (Shopify makes a new one on every call and the earlier ones stop working — \"link hết hạn\"); a published one has its own page (storeUrl, permanent). product_ids = FlexiPrint product ids; none = the most recently deployed products (limit, default 10). → [{product_id, name, shopify status, preview, store, admin}]. A draft cannot be added to the cart — say so when the editor wants to test the cart.",
+      "Fresh links to look at deployed products on the store in the draft theme, without deploying again. A DRAFT product only has a temporary preview link that expires after a while (\"link hết hạn\") — this returns the one valid now; a published one has its own page (store, permanent). product_ids = FlexiPrint product ids; none = the most recently deployed products (limit, default 10). → [{product_id, name, shopify status, preview, store, admin}]. A draft cannot be added to the cart — say so when the editor wants to test the cart.",
     inputSchema: {
       type: "object",
       properties: {

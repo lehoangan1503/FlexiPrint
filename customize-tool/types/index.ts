@@ -1771,8 +1771,20 @@ export interface CtShopifyCollection {
   id: string;
   title: string;
   handle: string;
-  /** Rule-based: products can't be added by hand. */
+  /** Rule-based: a product joins by having what the rules ask (a tag, a product type), not by hand. */
   smart: boolean;
+  /** A smart collection's rules ([] for a manual one). */
+  rules: CtShopifyCollectionRule[];
+  /** Any rule is enough (true) or all of them (false). */
+  disjunctive: boolean;
+}
+
+export interface CtShopifyCollectionRule {
+  /** TAG, TYPE, VENDOR, TITLE… (Shopify CollectionRuleColumn). */
+  column: string;
+  /** EQUALS, NOT_EQUALS, CONTAINS… */
+  relation: string;
+  condition: string;
 }
 
 export interface CtDeployResponse {

@@ -496,11 +496,13 @@ export async function makeProductMockups(s: CtSession, productId: string, form: 
 
 /**
  * The mockups of one print of a product (the editor's Mockups tab, a bộ nhân vật's step 4, @flexiprint over MCP —
- * one pipeline): the front one = the print laid exactly on the phôi with its own light (no AI, done now), + one AI
- * lifestyle photo per scene made from it (jobs running in the background). `label` names the front when several
- * prints (option sets) of one product are mocked up ("Christmas — Snowflakes").
+ * one pipeline): one AI lifestyle photo per scene (jobs running in the background), each drawn from the front picture
+ * = the print laid exactly on the phôi with its own light (no AI). The front is only that reference (2026-10-30: "không
+ * đưa mockup phôi trơn, cũng không cần tạo phôi trơn có artwork") — a file, not a mockup of the product: the
+ * product's pictures, and what Deploy sends to Shopify, are the scene photos. `label` names the option set when
+ * several prints of one product are mocked up ("Christmas — Snowflakes").
  */
-export async function productMockups(s: CtSession, product: CtProduct, print: Buffer, scenes: string[], label = ""): Promise<{ jobs: CtPackImage[]; front: CtAsset }> {
+export async function productMockups(s: CtSession, product: CtProduct, print: Buffer, scenes: string[], label = ""): Promise<{ jobs: CtPackImage[]; front: { url: string } }> {
   const productId = product.id;
   const config = normalizeProductConfig(product.config);
   const piece = config.print?.name || product.name;
@@ -530,14 +532,8 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
     front = await sharp(print).flatten({ background: "#ffffff" }).extend({ top: pad, bottom: pad, left: pad, right: pad, background: "#ffffff" }).jpeg({ quality: 92 }).toBuffer();
   }
   front = await squared(front);
-  const frontAsset = await toProduct(front, label ? `mockup_front_${label.replace(/[^\w]+/g, "_").slice(0, 40)}` : "mockup_front");
-  const meta = await sharp(front).metadata();
+  const frontAsset = { url: await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/${productId}/mockup-ref/${crypto.randomUUID()}.jpg`, front, "image/jpeg") };
   const db = ctServiceClient() ?? s.supabase;
-  const { data: frontRow } = await db
-    .from(CT_TABLES.packImages)
-    .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "done", listed: false, url: frontAsset.url, storage_path: null, mime: "image/jpeg", width: meta.width ?? null, height: meta.height ?? null, description: label ? `Chụp thẳng trên phôi — ${label}` : "Chụp thẳng trên phôi (chính xác)", prompt: "", refs: [], aspect: "", model: "" })
-    .select("*")
-    .single<CtPackImage>();
 
   // One square for every scene (a 4:5 one was drawn 2:3 and cropped — the ornament's ends were cut off, 2026-10-22).
   const sceneAspect = MOCKUP_ASPECT;
@@ -575,5 +571,5 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
       }
       await db.from(CT_TABLES.packImages).update({ status: "failed", error: last.slice(0, 1000) }).eq("id", row.id);
     })();
-  return { jobs: [...rows, ...(frontRow ? [frontRow] : [])], front: frontAsset };
+  return { jobs: rows, front: frontAsset };
 }

@@ -8,8 +8,10 @@
 
 import { CT_TABLES } from "../../config";
 import type { CtAsset, CtCharImportManifest, CtCharImportShopify, CtCharProject, CtMaterialId, CtPriceTable, CtProduct } from "../../types";
+import { suggestCollections } from "../../lib/collections";
+import { defaultDeployMedia } from "../../lib/deploy-media";
 import { runDeploy } from "../handlers";
-import { shopifyConfigured } from "../shopify";
+import { createCollection, listCollections, shopifyConfigured } from "../shopify";
 import { siteUrl } from "../site-url";
 import type { CtSession } from "../supabase";
 
@@ -109,9 +111,18 @@ export async function deployImported(s: CtSession, setId: string, productId: str
       );
     }
 
-    const { data: mockups } = await db.from(CT_TABLES.assets).select("id").eq("product_id", productId).eq("role", "mockup").order("created_at").limit(MAX_MEDIA).returns<Array<Pick<CtAsset, "id">>>();
+    const { data: mockups } = await db.from(CT_TABLES.assets).select("id, name").eq("product_id", productId).eq("role", "mockup").order("created_at").returns<Array<Pick<CtAsset, "id" | "name">>>();
     const title = (info.title || product.name).trim();
     const ornament = /ornament/i.test(title);
+    const collections = await listCollections();
+    // The product type a type rule of the store already names (CHERIVIA ships "Acrylic Ornament" / "Christmas
+    // Ornament" as ornaments — a "Glass Ornament" would fall in the other shipping group).
+    const types = new Set(collections.flatMap((c) => c.rules.filter((r) => r.column === "TYPE" && r.relation === "EQUALS").map((r) => r.condition)));
+    const productType = ornament ? ([word ? `${word.name} Ornament` : "", "Christmas Ornament", "Ornament"].find((t) => t && types.has(t)) ?? (word ? `${word.name} Ornament` : "Ornament")) : "";
+    const tags = ["personalized", ...(ornament ? ["ornament", "christmas"] : [])];
+    // The store's collections that fit; a new one only when none does (no twins — 2026-10-30).
+    let fit = suggestCollections(collections, { title, description: info.description, tags });
+    if (!fit.length && productType) fit = [await createCollection(`${productType}s`)];
     const r = await runDeploy(
       s,
       product,
@@ -121,11 +132,11 @@ export async function deployImported(s: CtSession, setId: string, productId: str
         descriptionHtml: info.description ? descriptionHtml(info.description) : "",
         status: product.shopify?.status ?? "DRAFT",
         vendor: "",
-        productType: ornament && word ? `${word.name} Ornament` : "",
-        tags: ["personalized", ...(ornament ? ["ornament", "christmas"] : [])],
-        mediaAssetIds: (mockups ?? []).map((a) => a.id),
-        collectionIds: [],
-        primaryCollectionId: null,
+        productType,
+        tags,
+        mediaAssetIds: defaultDeployMedia(mockups ?? []).slice(0, MAX_MEDIA),
+        collectionIds: fit.map((c) => c.id),
+        primaryCollectionId: fit[0]?.id ?? null,
         shopifyProductId: null,
       },
       siteUrl(),

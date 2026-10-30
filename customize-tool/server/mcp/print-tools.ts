@@ -400,7 +400,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
   {
     name: "make_product_mockups",
     description:
-      "Mockups of a product, one set per entry: the print with those options (rendered on the server exactly, text in its font) laid on the product's phôi (exact, done at once) + one AI lifestyle photo per scene made from it (~1 min, in the background). They are added to the product (editor → Mockups). → job ids; then wait_product_mockups and view_image every photo.",
+      "Mockups of a product, one set per entry: one AI lifestyle photo per scene (~1 min, in the background), drawn from the print with those options (rendered on the server exactly, text in its font) laid on the product's phôi — that front picture (front) is only the AI's reference, not a product picture. The photos are added to the product (editor → Mockups) and are what Deploy sends to Shopify. → job ids; then wait_product_mockups and view_image every photo.",
     inputSchema: {
       type: "object",
       properties: {

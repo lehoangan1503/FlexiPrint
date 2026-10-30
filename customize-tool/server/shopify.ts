@@ -15,12 +15,14 @@
 import type {
   CtAsset,
   CtShopifyCollection,
+  CtShopifyCollectionRule,
   CtPriceTableConfig,
   CtShopifyInfo,
   CtShopifyLink,
   CtShopifyProductSummary,
   CtShopifyStatus,
 } from "../types";
+import { sameCollection } from "../lib/collections";
 import { priceCells, shopifyPricing, usesPacks, usesSizes } from "../lib/pricing";
 
 const API_VERSION = () => process.env.SHOPIFY_API_VERSION || "2026-07";
@@ -295,13 +297,19 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
   const foreign = (existing?.media.nodes ?? []).filter((m) => !ours.has(m.id)).map((m) => ({ id: m.id }));
   const manageMedia = input.media.length > 0 || Object.keys(known).length > 0;
 
+  // Collections: a manual one takes the product; a smart one gets it through the tags / type its rules ask.
+  const all = input.collectionIds.length ? await listCollections() : [];
+  const picked = all.filter((c) => input.collectionIds.includes(c.id));
+  const needs = smartNeeds(picked, { tags: input.tags, productType: input.productType, vendor: input.vendor });
+  if (needs.unmet.length) warnings.push(`Chưa vào được collection tự động: ${needs.unmet.join(", ")} (luật của nó không gắn tự động được).`);
+
   const productInput = {
     title: input.title,
     descriptionHtml: input.descriptionHtml,
     status: input.status,
-    vendor: input.vendor,
-    productType: input.productType,
-    tags: input.tags,
+    vendor: needs.vendor,
+    productType: needs.productType,
+    tags: needs.tags,
     templateSuffix: CT_SHOPIFY_TEMPLATE_SUFFIX,
     productOptions,
     variants,
@@ -311,7 +319,7 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
       // The collection main-product.liquid shows in the breadcrumb (Home › Ornaments › product).
       ...(input.primaryCollectionId ? [{ namespace: CT_METAFIELD_NS, key: "breadcrumb_collection", type: "collection_reference", value: input.primaryCollectionId }] : []),
     ],
-    collections: input.collectionIds,
+    collections: picked.filter((c) => !c.smart).map((c) => c.id),
     ...(manageMedia ? { files: [...files, ...foreign] } : {}),
   };
 
@@ -422,30 +430,84 @@ async function publishToOnlineStore(productId: string): Promise<true | string> {
 // Collections
 // ---------------------------------------------------------------------------
 
-/** Every collection; smart (rule-based) ones can't be joined by hand. */
+interface CollectionNode {
+  id: string;
+  title: string;
+  handle: string;
+  ruleSet: { appliedDisjunctively: boolean; rules: CtShopifyCollectionRule[] } | null;
+}
+
+const COLLECTION_FIELDS = "id title handle ruleSet { appliedDisjunctively rules { column relation condition } }";
+
+const collectionOf = (c: CollectionNode): CtShopifyCollection => ({
+  id: c.id,
+  title: c.title,
+  handle: c.handle,
+  smart: c.ruleSet !== null,
+  rules: c.ruleSet?.rules ?? [],
+  disjunctive: c.ruleSet?.appliedDisjunctively ?? false,
+});
+
+/** Every collection, with a smart one's rules (it is joined by them, not by hand). */
 export async function listCollections(): Promise<CtShopifyCollection[]> {
   const out: CtShopifyCollection[] = [];
   let after: string | null = null;
   for (let page = 0; page < 10; page++) {
-    const data: { collections: { nodes: Array<CtShopifyCollection & { ruleSet: object | null }>; pageInfo: { hasNextPage: boolean; endCursor: string | null } } } = await gql(
-      `query($after: String) { collections(first: 250, after: $after, sortKey: TITLE) { nodes { id title handle ruleSet { appliedDisjunctively } } pageInfo { hasNextPage endCursor } } }`,
+    const data: { collections: { nodes: CollectionNode[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } } } = await gql(
+      `query($after: String) { collections(first: 250, after: $after, sortKey: TITLE) { nodes { ${COLLECTION_FIELDS} } pageInfo { hasNextPage endCursor } } }`,
       { after },
     );
-    for (const c of data.collections.nodes) out.push({ id: c.id, title: c.title, handle: c.handle, smart: c.ruleSet !== null });
+    out.push(...data.collections.nodes.map(collectionOf));
     if (!data.collections.pageInfo.hasNextPage) break;
     after = data.collections.pageInfo.endCursor;
   }
   return out;
 }
 
+/** A collection with that title — the one already there when there is one (no twins, 2026-10-30). */
 export async function createCollection(title: string): Promise<CtShopifyCollection> {
-  const data = await gql<{ collectionCreate: { collection: { id: string; title: string; handle: string } | null; userErrors: UserError[] } }>(
-    `mutation($input: CollectionInput!) { collectionCreate(input: $input) { collection { id title handle } userErrors { field message } } }`,
+  const same = sameCollection(await listCollections(), title);
+  if (same) return same;
+  const data = await gql<{ collectionCreate: { collection: CollectionNode | null; userErrors: UserError[] } }>(
+    `mutation($input: CollectionInput!) { collectionCreate(input: $input) { collection { ${COLLECTION_FIELDS} } userErrors { field message } } }`,
     { input: { title } },
   );
   userErrors(data.collectionCreate.userErrors);
   const c = data.collectionCreate.collection;
   if (!c) throw new ShopifyError("Shopify không tạo được collection");
   // A new collection is not on the Online Store until published; the breadcrumb link still works for staff.
-  return { ...c, smart: false };
+  return collectionOf(c);
+}
+
+/**
+ * What a product needs to be in these smart collections: the tags and product type their rules ask. Any-rule
+ * collections are met by one rule (a tag first), all-rule ones by every EQUALS rule; other rules are named.
+ */
+function smartNeeds(collections: CtShopifyCollection[], have: { tags: string[]; productType: string; vendor: string }): { tags: string[]; productType: string; vendor: string; unmet: string[] } {
+  const tags = [...have.tags];
+  let productType = have.productType;
+  let vendor = have.vendor;
+  const unmet: string[] = [];
+  const holds = (r: CtShopifyCollectionRule) =>
+    r.relation === "EQUALS" &&
+    ((r.column === "TAG" && tags.some((t) => t.toLowerCase() === r.condition.toLowerCase())) || (r.column === "TYPE" && productType === r.condition) || (r.column === "VENDOR" && vendor === r.condition));
+  const meet = (r: CtShopifyCollectionRule): boolean => {
+    if (r.relation !== "EQUALS") return false;
+    if (r.column === "TAG") tags.push(r.condition);
+    else if (r.column === "TYPE" && !productType) productType = r.condition;
+    else if (r.column === "VENDOR" && !vendor) vendor = r.condition;
+    else return false;
+    return true;
+  };
+  for (const c of collections) {
+    if (!c.smart) continue;
+    if (c.disjunctive) {
+      if (c.rules.some(holds)) continue;
+      const pick = c.rules.find((r) => r.column === "TAG" && r.relation === "EQUALS") ?? c.rules.find((r) => r.relation === "EQUALS");
+      if (!pick || !meet(pick)) unmet.push(c.title);
+    } else {
+      for (const r of c.rules) if (!holds(r) && !meet(r) && r.relation === "EQUALS") unmet.push(`${c.title} (${r.column} = ${r.condition})`);
+    }
+  }
+  return { tags: [...new Set(tags)], productType, vendor, unmet };
 }

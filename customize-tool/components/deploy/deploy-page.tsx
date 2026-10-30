@@ -21,6 +21,7 @@ import type {
   CtPriceTable,
   CtProductBundle,
   CtShopifyCollection,
+  CtShopifyCollectionRule,
   CtShopifyInfo,
   CtShopifyProductSummary,
   CtShopifyStatus,
@@ -28,6 +29,8 @@ import type {
 } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { buildTemplate } from "../../lib/template";
+import { suggestCollections } from "../../lib/collections";
+import { defaultDeployMedia, productMockups } from "../../lib/deploy-media";
 import { auditOptions, type CtAuditLevel } from "../../lib/option-audit";
 import { formatUsd, priceCell, priceCells, priceTableProblems, usesPacks, usesSizes } from "../../lib/pricing";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtSelect, CtTextarea, cx } from "../ui";
@@ -83,26 +86,33 @@ export function DeployPage({ productId }: { productId: string }) {
   }, []);
 
   useEffect(() => {
-    ctApi
-      .listCollections()
-      .then(setCollections)
-      .catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
-    Promise.all([ctApi.getBundle(productId), ctApi.listPriceTables().catch(() => [] as CtPriceTable[]), ctApi.shopifyInfo(productId).catch((e: Error) => ({ configured: true, shop: null, product: null, error: e.message }))])
-      .then(([b, list, shop]) => {
+    Promise.all([
+      ctApi.getBundle(productId),
+      ctApi.listPriceTables().catch(() => [] as CtPriceTable[]),
+      ctApi.shopifyInfo(productId).catch((e: Error) => ({ configured: true, shop: null, product: null, error: e.message })),
+      ctApi.listCollections().catch(() => [] as CtShopifyCollection[]),
+    ])
+      .then(([b, list, shop, cols]) => {
         if (cancelled) return;
         setBundle(b);
         setTables(list);
         setInfo(shop);
+        setCollections(cols);
         const link = b.product.shopify ?? null;
         setTableId(link?.priceTableId && list.some((t) => t.id === link.priceTableId) ? link.priceTableId : (list[0]?.id ?? ""));
         fill(shop.product, link?.title ?? b.product.name);
-        const pictures = b.assets.filter((a) => a.product_id === b.product.id && a.role === "mockup");
+        // Not on Shopify yet: it starts in the collections that fit it (no twin collections — 2026-10-30).
+        if (!shop.product) {
+          const fit = suggestCollections(cols, { title: link?.title ?? b.product.name });
+          if (fit.length) {
+            setPicked(fit.map((c) => c.id));
+            setPrimary(fit[0].id);
+          }
+        }
+        const pictures = productMockups(b.assets, b.product.id);
         const known = link ? Object.keys(link.media).filter((id) => pictures.some((a) => a.id === id)) : [];
-        setMedia(known.length ? known : pictures.slice(0, 8).map((a) => a.id));
+        setMedia(known.length ? known : defaultDeployMedia(pictures));
       })
       .catch((e: Error) => !cancelled && setLoadError(e.message));
     return () => {
@@ -125,7 +135,7 @@ export function DeployPage({ productId }: { productId: string }) {
 
   const table = tables.find((t) => t.id === tableId) ?? null;
   const problems = table ? priceTableProblems(table.config) : [];
-  const pictures = useMemo(() => (bundle ? bundle.assets.filter((a) => a.product_id === bundle.product.id && a.role === "mockup") : []), [bundle]);
+  const pictures = useMemo(() => (bundle ? productMockups(bundle.assets, bundle.product.id) : []), [bundle]);
 
   if (loadError) {
     return (
@@ -428,6 +438,14 @@ function priceFacts(t: CtPriceTable): string {
  * Collections: pick from the shop's list (or make one); each becomes a badge. Click a badge = the breadcrumb's
  * collection on the product page (★). Smart collections fill themselves by rules, so they can't be picked.
  */
+/** A smart collection's rules in short: "tag family", "type Ornament / Christmas Ornament". */
+function ruleText(c: CtShopifyCollection): string {
+  const eq = c.rules.filter((r) => r.relation === "EQUALS");
+  if (!eq.length) return "theo luật";
+  const col = (r: CtShopifyCollectionRule) => (r.column === "TAG" ? "tag" : r.column === "TYPE" ? "loại" : r.column.toLowerCase());
+  return `${col(eq[0])} ${eq.map((r) => r.condition).join(c.disjunctive ? " / " : " + ")}`;
+}
+
 function CollectionPicker({
   collections,
   picked,
@@ -469,14 +487,17 @@ function CollectionPicker({
     }
   };
   return (
-    <CtField label="Collections" hint="Bấm 1 badge để chọn collection hiện trên breadcrumb (★). Loại sản phẩm (product type) là trường khác, không phải collection.">
+    <CtField
+      label="Collections"
+      hint="Bấm 1 badge để chọn collection hiện trên breadcrumb (★). Collection tự động: deploy tự gắn tag / loại sản phẩm theo luật của nó. Tạo mới chỉ khi không có cái nào hợp — trùng tên thì dùng lại cái cũ."
+    >
       <div className="flex items-center gap-2">
         <div className="flex-1">
           <CtSelect
             value=""
             onChange={add}
             placeholder={collections.length ? "Thêm vào collection…" : "Store chưa có collection — tạo mới"}
-            options={collections.filter((c) => !picked.includes(c.id)).map((c) => ({ value: c.id, label: c.smart ? `${c.title} (tự động)` : c.title, disabled: c.smart }))}
+            options={collections.filter((c) => !picked.includes(c.id)).map((c) => ({ value: c.id, label: c.smart ? `${c.title} (tự động — ${ruleText(c)})` : c.title }))}
           />
         </div>
         <CtButton size="sm" variant="outline" onClick={() => setCreating((v) => !v)}>

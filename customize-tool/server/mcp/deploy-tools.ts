@@ -12,6 +12,8 @@
 import { CT_TABLES } from "../../config";
 import type { CtAgentTask, CtAsset, CtContentResult, CtPriceTable, CtProduct, CtShopifyCollection, CtShopifyInfo } from "../../types";
 import { auditOptions } from "../../lib/option-audit";
+import { suggestCollections } from "../../lib/collections";
+import { defaultDeployMedia } from "../../lib/deploy-media";
 import { normalizePriceTableConfig, priceCells, priceTableProblems } from "../../lib/pricing";
 import { str } from "../ai/llm";
 import { serviceSession } from "../char/product";
@@ -23,8 +25,6 @@ import { TASK_ARG, json, liveStatus, loadTask } from "./task-common";
 import type { CtMcpContext, CtMcpTool } from "./tools";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** The page shows this many mockups by default; the deploy takes them unless told otherwise. */
-const DEFAULT_MEDIA = 8;
 /** A description shorter than this (its text, tags stripped) is not a product page. */
 const MIN_DESCRIPTION = 200;
 
@@ -129,10 +129,10 @@ function defaultTable(st: DeployState, product: CtProduct): string | null {
   return linked && st.tables.some((t) => t.id === linked) ? linked : (st.tables[0]?.id ?? null);
 }
 
-/** The mockups a deploy takes when none are named: the ones already on the Shopify product, else the first few. */
+/** The mockups a deploy takes when none are named: the ones already on the Shopify product, else the scene mockups. */
 function defaultMedia(st: DeployState, product: CtProduct): string[] {
   const known = product.shopify ? Object.keys(product.shopify.media).filter((id) => st.mockups.some((a) => a.id === id)) : [];
-  return known.length ? known : st.mockups.slice(0, DEFAULT_MEDIA).map((a) => a.id);
+  return known.length ? known : defaultDeployMedia(st.mockups);
 }
 
 const strings = (v: unknown) => (Array.isArray(v) ? v.map(str).filter(Boolean) : []);
@@ -156,6 +156,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       const tableId = defaultTable(st, product);
       const title = linked?.title || st.content?.title || "";
       const descriptionHtml = linked?.descriptionHtml || st.content?.descriptionHtml || "";
+      const fit = suggestCollections(collections, { title: title || product.name, description: descriptionHtml });
       return json({
         product: { id: product.id, name: product.name, status: product.status, publishedVersion: product.published_version },
         shopify: {
@@ -176,10 +177,10 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
           ? { ok: false, error: st.templateError }
           : { ok: true, versions: st.audit?.versions ?? [], lines: (st.audit?.lines ?? []).filter((l) => l.level !== "ok") },
         mockups: st.mockups.map((a) => ({ id: a.id, url: a.url, default: defaultMedia(st, product).includes(a.id) })),
-        collections: collections.map((c) => ({ id: c.id, title: c.title, smart: c.smart })),
+        collections: collections.map((c) => ({ id: c.id, title: c.title, smart: c.smart, rules: c.smart ? c.rules.map((r) => `${r.column} ${r.relation} ${r.condition}`) : undefined, suggested: fit.some((x) => x.id === c.id) })),
         lastContent: st.content ? { title: st.content.title, descriptionHtml: st.content.descriptionHtml } : null,
         missing: blockers(st, { tableId, title, descriptionHtml, mediaIds: defaultMedia(st, product) }),
-        next: "Fill what is missing (title + description_html in US English per the content rules; a price table that fits; make_product_mockups when there is none), then deploy_product.",
+        next: "Fill what is missing (title + description_html in US English per the content rules; a price table that fits — never create one, the editor keeps them; make_product_mockups when there is none), then deploy_product. Collections: reuse the store's — the suggested ones fit the title; a smart (rule-based) one is joined through its rules (the deploy adds the tag / type), so pick it like any other. Never create a collection when one fits.",
       });
     },
   },
@@ -200,7 +201,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         product_type: { type: "string", description: "Shopify product type (e.g. Christmas Ornament)." },
         vendor: { type: "string", description: "Shopify vendor (empty = the shop's default)." },
         media_asset_ids: { type: "array", items: { type: "string" }, description: "Mockup ids, in order (default: those already on Shopify, else the first 8)." },
-        collection_ids: { type: "array", items: { type: "string" }, description: "gid://shopify/Collection/… from check_deploy (not smart ones)." },
+        collection_ids: { type: "array", items: { type: "string" }, description: "gid://shopify/Collection/… from check_deploy, smart ones too (default: the ones that fit the title)." },
         primary_collection_id: { type: "string", description: "The breadcrumb collection (one of collection_ids)." },
       },
       required: ["task_id", "product_id", "title", "description_html"],
@@ -212,7 +213,8 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       const tableId = str(args.price_table_id) || defaultTable(st, product);
       const named = strings(args.media_asset_ids).filter((id) => st.mockups.some((a) => a.id === id));
       const mediaIds = named.length ? named : defaultMedia(st, product);
-      const collectionIds = strings(args.collection_ids);
+      const namedCollections = strings(args.collection_ids);
+      const collectionIds = namedCollections.length ? namedCollections : suggestCollections(await listCollections().catch((): CtShopifyCollection[] => []), { title: str(args.title), description: str(args.description_html), tags: strings(args.tags) }).map((c) => c.id);
       const body = readDeployBody({
         priceTableId: tableId ?? "",
         title: str(args.title),

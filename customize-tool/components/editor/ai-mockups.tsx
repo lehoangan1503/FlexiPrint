@@ -122,9 +122,8 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
       const blob = await canvasToBlob(canvas, "image/png");
       const lines = scenes.split("\n").map((l) => l.trim()).filter(Boolean);
       const r = await ctApi.makeMockups(product.id, blob, lines);
-      props.onAssets([r.front]);
       setJobs((cur) => [...r.jobs, ...cur.filter((j) => !r.jobs.some((x) => x.id === j.id))]);
-      props.flash(`Đã đặt artwork lên phôi — AI đang tạo ${lines.length || 1} ảnh bối cảnh (1–2 phút / ảnh)`);
+      props.flash(`AI đang tạo ${lines.length || 1} ảnh bối cảnh từ artwork trên phôi (1–2 phút / ảnh)`);
     } catch (e) {
       props.flash(e instanceof Error ? e.message : "Không tạo được mockup");
     } finally {

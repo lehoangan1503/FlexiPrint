@@ -80,7 +80,9 @@ Every brief is built like this, so every proposal must respect it:
   with chins on hands). The sign is ONE whole picture as wide as the artwork frame (never pieced or stretched), every
   theme's sign of the same proportions — the server draws them at that ratio; an option's value says only the theme's
   look (wood, colours, end decorations).
-- slot "optional": true = the customer may also pick "NO" (glasses / no glasses, hat / no hat).
+- slot "optional": true = the customer may also pick "NO" — the shop shows a text NO tile (glasses / no glasses). A
+  "No …" choice is ALWAYS this, never an option drawn or cut ("No hat", "No glasses" as a clipart is wrong). Never
+  optional on a part other parts are drawn under (a hat over the hair).
 - elements (a bộ nhân vật's decorations, drawn ALONE after the master, never cut): {name, place behind | above |
   bottom (the ground under the characters) | free (box = shares 0–1 of the safe area), mode shape | color, options,
   front (true = over the characters: the big year numbers over the gown), follows (another element's id: shows the
@@ -111,21 +113,14 @@ Every brief is built like this, so every proposal must respect it:
   picture), "restyle": true (Halloween / Easter are redrawn from the Santa outfit keeping the hat's band: the hair fits
   them all), follows = the Theme chooser's id. The hair slots: group "hair", "on": "outfit" (drawn UNDER the hats: no
   hair sticking out; in the product the hair lies over the whole outfit exactly like 3c) — 3 colours each in "colors".
-- Hats and hair (2026-10-30) — the hair is cut against the ONE picture it is drawn on, so it fits only hats with that
-  band:
-  - every theme's hat on the SAME band (Santa / Halloween / Easter beanies): restyle, one hair slot (above).
-  - hats of DIFFERENT shapes (a Santa hat, a witch hat with a wide brim, a crown, a cap) or a theme WITHOUT a hat: the
-    outfit is drawn per shape (no restyle for those options), and ONE hair slot per kind of head: "hair (Santa hat)"
-    on "outfit", "hair (witch hat)" on "outfit", "hair (no hat)" with no "on" (drawn on the bald doll) — each
-    shownWhen {theme chooser, that theme} and every one after the first "sameAs": the first one's id (same options,
-    colours and order). The customer picks the hair once (one picker in the product); each theme shows its own files.
-  - never "optional": true on a hat the hair is drawn under (no hat would show the hair's flat top): a "Hats" chooser
-    (With Hats / No Hats) + the hair per kind of head as above instead.
-  - a name on the brim: one text per hat shape, place "on", shownWhen that theme (it follows that hat's band; names
-    of one theme share one size), ALWAYS "band": true + box = where the band is (shares of the character's box, measured
-    on that hat's picture: the Santa fur cuff, the witch hat's band above its brim): the band is found inside it. (Found
+- Hats and hair — every theme the SAME style (user 2026-10-30, like set 1c307fa0): every theme has a hat on the same
+  band (restyle from the first theme), ONE hair slot "on": "outfit" fits them all, the customer's hair pick looks the
+  same in every theme. Never a theme without the hat, a hat of another shape (a wide-brimmed witch hat) or a hair slot
+  per theme — pick themes whose hats share the band.
+  - a name on the brim: place "on", ALWAYS "band": true + box = where the band is (shares of the character's box, measured
+    on the hat's picture: the Santa fur cuff): the band is found inside it. (Found
     on its own, without band, it picked the cuff's 16 px bottom edge of a Santa hat and the witch hat's brim, 2026-10-30.)
-    A light letter colour on a dark or same-coloured band (white on the orange band). A theme without a hat: the name "under" the character or in a free box.
+    A light letter colour on a dark or same-coloured band (white on the orange band).
 - A cut colour (2026-10-30): a part is cut by how its colour differs from what it lies on, so a part the SAME colour as
   its neighbour has no edge to cut (silver hair under a white fur brim, a white sleeve on the doll's pale hand, a red
   hat over a red sweater). Compare every colour of a part with what touches it (hat, sweater, skin, the magenta

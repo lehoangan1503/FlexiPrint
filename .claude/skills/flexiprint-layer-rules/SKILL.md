@@ -59,9 +59,9 @@ character (same groups, follows the layer, mirrored with the character). One mas
   Santa hat split out over the hair showed the brim's shadow on the forehead (in the outfit file) as a skin line.
 - Hair with `on` = the outfit (drawn under the hat, cut against it) → never split the hat out (product.ts `hatOver`).
   Hair on the bald doll + `headwear` → the hat is its own layer over the hair (old sets).
-- Hair fits one hat band. Same band (restyle) → one hair slot. Different hat shapes / no-hat theme → a hair slot per
-  kind of head, `shownWhen` its theme, later ones `sameAs` the first → product makes ONE picker (blank pictures with
-  the lead's thumbs) that the lead and every sameAs slot follow. Never `optional` on a hat with hair drawn under it.
+- Every theme the SAME style (user 2026-10-30, set 1c307fa0): hats on one band (restyle), ONE hair slot under them.
+  No theme without the hat, no other hat shape, no hair slot per theme. A "No …" choice = slot `optional` (text NO
+  tile), never a drawn / cut option; never `optional` on a hat with hair drawn under it.
 - A name on a brim: `brimOf(subject, text.shownWhen)` measures the hat of that theme's option.
 
 ## Same colour as its neighbour — cut colour (user 2026-10-30)
@@ -86,8 +86,7 @@ first one too, is a recolour of that file (layer-kit `cut_colour`). The master k
 ## A clean set — checklist (user 2026-10-30: "tạo 1 bộ clipart sạch chuẩn")
 
 Layer rules §9e, also given to @flexiprint as `CLEAN_SET` in `server/mcp/char-tools.ts` (edits, chat and auto steps):
-clean master (§9-clean) → cutColor on every slot the colour of a part it touches (§9d) → one part per picture, nothing
-moved → after the cut fix each failed check by its picture ("Khớp" / "xoá / dời" → redraw, "Vùng trống" → bolder,
-"Ghép = 3b" → redraw / cutColor / file editor) — never a looser threshold. "Ghép = 3b" only reports; the 1 px
-jaw / ear gaps are filled by the back hair in the cut.
-- char_use_edit: an earlier attempt of a 3b picture becomes the one used (the best attempt kept).
+every theme the same style → cutColor on every slot the colour of a part it touches (§9d) → one part per picture,
+nothing moved → a failed Khớp / xoá / Vùng trống = redraw with the plan prompt, keep the best attempt (`char_use_edit`),
+≤ 3 — never a looser threshold. The "Ghép = 3b" check was removed 2026-10-30 (it drove redraws that never helped);
+its finding stays: the back hair fills the 1 px jaw / ear gaps in the cut.

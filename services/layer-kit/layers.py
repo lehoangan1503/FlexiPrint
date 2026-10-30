@@ -687,33 +687,6 @@ class Out:
     plate: str = ""         # key of its colours over the whole canvas (cut()["plates"])
 
 
-def stack_check(ref: np.ndarray, ref_a: np.ndarray, pic: np.ndarray, pic_a: np.ndarray, a: np.ndarray, aa: float) -> tuple[bool, str]:
-    """Does the file over what it was cut against give its 3b picture back (pixel lock: doll + file = that picture)?
-    Asked 2026-10-30: the hair files had a step of skin colour on the forehead and torn curls the 3b picture did not
-    have. Near the part: `holes` = the picture's figure the stack leaves transparent; the colour error (ΔE) of the stack
-    against the picture, mean and 99th percentile."""
-    near = cv2.dilate((a > 0.5).astype(np.uint8), kernel(max(4, round(16 * aa)))).astype(bool)
-    ys, xs = np.nonzero(near)
-    if not len(ys):
-        return True, ""
-    c = (slice(ys.min(), ys.max() + 1), slice(xs.min(), xs.max() + 1))
-    A, Pa, Ra = a[c][..., None], pic_a[c], ref_a[c]
-    comp_a = A[..., 0] + (1 - A[..., 0]) * Ra
-    comp = (pic[c] * A + ref[c] * Ra[..., None] * (1 - A)) / np.maximum(comp_a[..., None], 1e-4)
-    nr = near[c]
-    holes = int(((Pa > 0.5) & (comp_a < 0.5) & nr).sum())
-    m = nr & (Pa > 0.9) & (comp_a > 0.9)
-    if not m.any():
-        return True, ""
-    d = np.linalg.norm(to_lab(np.clip(comp, 0, 1)) - to_lab(np.clip(pic[c], 0, 1)), axis=2)[m]
-    mean, p99 = float(d.mean()), float(np.percentile(d, 99))
-    ok = holes <= 300 * aa * aa and p99 <= 20
-    detail = f"ghép lại lệch ảnh 3b: màu TB {mean:.1f} · tệ (p99) {p99:.1f} ΔE · lỗ {holes:,} px"
-    if not ok:
-        detail += " — mép cắt bẩn (bậc màu / rách): ảnh 3b trượt Khớp → vẽ lại; trùng màu chỗ nó nằm → màu cắt (cutColor); còn lại vẽ lại 1 lần rồi sửa tay file"
-    return ok, detail
-
-
 def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zone], encode: Callable[[np.ndarray], tuple[str, list[int]]], encode_plate: Callable[[np.ndarray], str]) -> dict:
     """The layer files. body / body_a: the doll × the body region. Every part file = its region × its own picture's
     alpha, in its own picture's colours (recoloured for another colour). Cropped by ONE common rectangle, 8-bit.
@@ -745,8 +718,8 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
         union |= a > 0.01
     for z in zone_out:
         union |= z["mask"]
-    # The options another is cut against (hair under the hats of an outfit picture): kept for the "Ghép = 3b" check,
-    # which stacks the real files (body + that option's file + this one), not the picture it was drawn on.
+    # The options another is cut against (hair under the hats of an outfit picture): what really lies under that file
+    # (body + that option's file) for the back hair's gap fill and the cut-colour recolour.
     hosts = {s.ref_piece: alphas[s.ref_piece].copy() for s in slots if s.ref_piece and s.ref_piece in alphas}
     host_cols = {f"{s.key}#{i}": o.col for s in slots for i, o in enumerate(s.options) if f"{s.key}#{i}" in hosts}
     ys, xs = np.where(union)
@@ -810,9 +783,6 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
                 near = cv2.dilate((a > 0.5).astype(np.uint8), kernel(max(4, round(16 * aa)))).astype(bool)
                 gap = near & (pa > 0.5) & (a + (1 - a) * ref_a < 0.5)
                 back_a = np.maximum(a, np.minimum(pa, soft(gap, grow=1, blur=0.6 * aa)))
-            ok, detail = stack_check(ref_c, ref_a, col0, pa, back_a, aa)
-            if detail:
-                checks.append({"name": f"Ghép = 3b: {s.label}: {o.name}", "ok": ok, "detail": detail, "piece": piece})
             if s.mode == "color":
                 # One drawing, one file per colour option.
                 for k, (name, hex_) in enumerate(zip([x.name for x in s.options], s.hexes)):

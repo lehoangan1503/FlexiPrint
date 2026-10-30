@@ -117,13 +117,12 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
   Santa hat moved over the hair showed the brim's shadow on the forehead — part of the outfit file — as a skin line.)
 - Hair drawn UNDER a hat (slot on = the outfit): it lies over the whole outfit, the hat is never split out of it.
   Hair drawn on the bald doll with a hat over it (no on): the hat becomes its own layer over the hair.
-- The hair fits only the hat band it was drawn under. Hats on one band (restyle): one hair slot. Hats of different
-  shapes, or a theme without a hat: one hair slot per kind of head, each shownWhen its theme, the later ones
-  sameAs the first — one picker for the customer, each theme its own files. Never an optional hat over hair drawn
-  under it.
-- A name on a brim follows the band of the hat shown with it (a text per hat shape, shownWhen its theme; one size per
-  theme). Every name on a hat: text band true + box where the band is (measured on that hat's picture) — the band
-  is found inside that box. Found on its own (no band: old sets only) it missed both the Santa cuff and the witch band.
+- Every theme the SAME style (user 2026-10-30, set 1c307fa0): every theme's hat on one band (restyle), ONE hair
+  slot drawn under it — the customer's hair pick is the same in every theme. Never a theme without the hat, a hat of
+  another shape or a hair slot per theme; never an optional hat over hair drawn under it.
+- A "No …" choice (no glasses) is the slot's optional — a text NO tile in the shop — never an option drawn or cut.
+- Every name on a hat: text band true + box where the band is (measured on that hat's picture) — the band
+  is found inside that box. Found on its own (no band: old sets only) it missed the Santa cuff.
 
 ## 9d. Same colour as its neighbour — draw it in a cut colour (2026-10-30)
 - A part is cut by how its colour differs from what it lies on. Silver hair under a white fur brim, a white sleeve on
@@ -136,21 +135,12 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
 
 ## 9e. A clean set — the checklist (2026-10-30)
 A file is its 3b picture's pixels where it differs from what it was drawn on, so the files are as clean as the
-pictures. In order:
-1. Master: solid sculpted hair, simple garments (§9-clean); loose strands refined before approval.
-2. Every pair of parts that touch (hair / hat / face / outfit, hat / sweater, sleeve / hand): same colour → cutColor
-   on the slot before its 3b pictures are drawn (§9d), colour hexes taken from the master.
-3. Every picture adds ONE part and moves nothing (§9b).
-4. After the cut every failed check is fixed by its picture, never by a looser cut: "Khớp" or "xoá / dời … px của
-   búp bê" → draw that picture again, nothing moved · "Vùng trống" → draw the part bolder · "Ghép = 3b" red (the
-   real files stacked — body + the file it was cut against + this file — vs the 3b picture: lỗ = see-through pixels,
-   p99 = colour steps; red over 300·aa² lỗ or p99 > 20) → a picture that also failed Khớp is redrawn; a part the colour
-   of its neighbour gets cutColor; otherwise redraw once, then the file editor. Ghép only reports, it changes no pixel.
-   The back hair fills the 1 px gaps along a jaw or ear (layer-kit wraps gap fill) — a few hundred lỗ px are normal.
-5. A redraw uses the picture's plan prompt (a one-off prompt replaces all of it — the 2026-10-30 witch hat came back a
-   pink beanie); a lasting change goes into the plan. Every attempt's numbers are noted, the BEST attempt is kept
-   (MCP char_use_edit when the last came out worse), at most 3 attempts per picture.
-6. Re-cut, and the set is used only when every check is green (or the editor accepted what is left).
+pictures:
+1. Every theme the same style (§9c); a "No …" choice = optional, never a drawn option.
+2. A part the colour of what it touches → cutColor before its 3b pictures are drawn (§9d), hexes from the master.
+3. Every picture adds ONE part and moves nothing (§9b). A failed "Khớp" / "xoá / dời" / "Vùng trống" → that picture
+   is drawn again with its plan prompt (a one-off prompt replaces all of it — 2026-10-30 the witch hat came back a pink
+   beanie); the best attempt is kept (MCP char_use_edit), at most 3 — never a looser cut.
 
 ## 10. Checks before a set is used
 - Every file of a slot has the same pixel size.

@@ -291,6 +291,8 @@ export const charApi = {
   },
   importStart: (id: string, files: CtCharImportFile[]) => call<{ status: string }>(`char/projects/${id}/import/start`, json("POST", { files })),
   importRebuild: (id: string) => call<{ status: string }>(`char/projects/${id}/import/rebuild`, json("POST", {})),
+  /** The imported set's product to Shopify again (a draft, the link on brief.imported.shopify). */
+  importDeploy: (id: string) => call<{ status: string }>(`char/projects/${id}/import/deploy`, json("POST", {})),
   /** An idea's preview picture becomes a master candidate (the editor took that direction). */
   adoptMaster: (id: string, imageId: string) => call<{ image: CtCharImage }>(`char/projects/${id}/masters/${imageId}/adopt`, json("POST", {})).then((r) => r.image),
   update: (id: string, body: { name?: string; brief?: CtCharBrief }) => call<{ project: CtCharProject }>(`char/projects/${id}`, json("PATCH", body)).then((r) => r.project),

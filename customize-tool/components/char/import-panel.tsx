@@ -6,9 +6,10 @@
  */
 
 import { useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { charApi } from "../../lib/api-client";
 import { CHECKER_STYLE, CtButton } from "../ui";
+import type { CtCharImported } from "../../types";
 import type { CharCtx } from "./char-project";
 
 const STALE_MS = 3 * 60 * 1000;
@@ -92,6 +93,7 @@ export function ImportPanel(ctx: CharCtx) {
           </div>
         </div>
       </section>
+      <ImportShopify {...ctx} />
       {imp.problems.length > 0 && (
         <section className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
           <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
@@ -108,5 +110,56 @@ export function ImportPanel(ctx: CharCtx) {
         Bộ import không vẽ bằng AI: mọi file layer giữ nguyên (cùng khung, không cắt, không co giãn). Muốn sửa cách đọc (lớp nào khách chọn, tên hiện cho khách…) hay thêm sản phẩm khác từ bộ thì nhắn ở ô chat bên dưới.
       </p>
     </div>
+  );
+}
+
+/** The import's own Shopify draft (server/char/import-deploy.ts): being sent, its preview in the draft theme, or why not. */
+export function ImportShopify(ctx: CharCtx) {
+  const { project, editable } = ctx;
+  const imp: CtCharImported | undefined = project.brief.imported ?? undefined;
+  const [busy, setBusy] = useState(false);
+  const shop = imp?.shopify;
+  if (!imp || imp.status !== "done" || !project.product_ids.length) return null;
+  const again = async () => {
+    setBusy(true);
+    try {
+      await charApi.importDeploy(project.id);
+      await ctx.reload();
+    } catch (e) {
+      ctx.error(e instanceof Error ? e.message : "Không đưa lên Shopify được");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const button = editable && shop?.status !== "deploying" && (
+    <CtButton onClick={() => void again()} disabled={busy} title="Đưa sản phẩm của bộ lên Shopify lần nữa (bản nháp, cùng sản phẩm Shopify) — link xem thử mới">
+      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {shop ? "Đưa lên Shopify lại" : "Đưa lên Shopify"}
+    </CtButton>
+  );
+  if (!shop) return <section className="flex items-center justify-between gap-3 rounded-xl border bg-card p-4 text-sm">Sản phẩm chưa lên Shopify. {button}</section>;
+  return (
+    <section className={`space-y-2 rounded-xl border p-4 ${shop.status === "failed" ? "border-destructive/40 bg-destructive/5" : "bg-card"}`}>
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        {shop.status === "deploying" ? <Loader2 className="h-4 w-4 animate-spin text-sky-500" /> : shop.status === "done" ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <AlertTriangle className="h-4 w-4 text-destructive" />}
+        {shop.status === "deploying" ? "Đang đưa sản phẩm lên Shopify (bản nháp)…" : shop.status === "done" ? "Đã lên Shopify — bản nháp, chưa bán" : "Chưa lên được Shopify"}
+      </div>
+      {shop.status === "done" && (
+        <div className="flex flex-wrap gap-2">
+          {shop.previewUrl && (
+            <a href={shop.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">
+              <ExternalLink className="h-3.5 w-3.5" /> Xem thử trên store (theme nháp)
+            </a>
+          )}
+          {shop.adminUrl && (
+            <a href={shop.adminUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-accent">
+              <ExternalLink className="h-3.5 w-3.5" /> Mở trong Shopify admin
+            </a>
+          )}
+        </div>
+      )}
+      {shop.status === "done" && shop.priceTable && <p className="text-xs text-muted-foreground">Bảng giá: {shop.priceTable}. Link xem thử có hạn — hết hạn thì bấm Đưa lên Shopify lại.</p>}
+      {shop.error && <p className={`whitespace-pre-wrap text-xs ${shop.status === "failed" ? "text-destructive" : "text-muted-foreground"}`}>{shop.error}</p>}
+      {button}
+    </section>
   );
 }

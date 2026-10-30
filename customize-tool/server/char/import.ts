@@ -9,6 +9,8 @@
  *                                                read here and the product built in the background; any other folder
  *                                                goes to @flexiprint (a chat task: char_import_files → char_import_build)
  *   POST char/projects/:id/import/rebuild        the product built again from the saved manifest
+ *   POST char/projects/:id/import/deploy         the product to Shopify again as a draft (import-deploy.ts — a build
+ *                                                does it by itself)
  *
  * The build (layer rules, server/mcp/layer-rules.ts): every image layer is the whole canvas — files used as they are,
  * never trimmed or scaled; a file of another size is named in `problems` and left empty. One product version per
@@ -34,6 +36,7 @@ import { r2Get, r2Keys, r2PublicUrl } from "../r2";
 import { ctLibraryPath, ctRemove, ctUpload } from "../storage";
 import type { CtSession } from "../supabase";
 import { charFolder, saveCharFile, saveCharRaw } from "./files";
+import { deployImported, deployInfo, saveImportShopify, savedDeployInfo } from "./import-deploy";
 import { refreshSetUsers } from "./set-users";
 import { serviceSession } from "./product";
 import { NOT_YOURS, canEditProject, jobDb, jsonError, loadProject, projectRow, type Db } from "./projects";
@@ -243,6 +246,22 @@ async function rebuildImport(s: CtSession, p: CtCharProject): Promise<NextRespon
   if (!b) return jsonError("Chưa có manifest — tải folder lên trước", 409);
   await startBuild(db, p.user_id ?? s.user.id, p.id, JSON.parse(b.toString("utf8")) as CtCharImportManifest, imp.format, imp.summary, []);
   return NextResponse.json({ status: "building" });
+}
+
+/** POST char/projects/:id/import/deploy — the set's product to Shopify again (a draft; after a price table was added…). */
+async function redeployImport(s: CtSession, p: CtCharProject): Promise<NextResponse> {
+  const productId = p.product_ids[0];
+  if (!productId) return jsonError("Bộ chưa có sản phẩm", 409);
+  if (p.brief.imported?.shopify?.status === "deploying") return jsonError("Đang đưa lên Shopify — chờ xong", 409);
+  const db = jobDb(s);
+  const userId = p.user_id ?? s.user.id;
+  const { data: product } = await db.from(CT_TABLES.products).select("*").eq("id", productId).maybeSingle<CtProduct>();
+  const ss = await serviceSession(db, userId);
+  const info = savedDeployInfo(p, product ?? null);
+  // In the background (the template + Shopify take up to a minute; the page polls while it is "deploying").
+  await saveImportShopify(ss, p.id, { status: "deploying", error: "", ...info });
+  void deployImported(ss, p.id, productId, info);
+  return NextResponse.json({ status: "deploying" });
 }
 
 /** Runs one at a time per set. */
@@ -517,6 +536,7 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     await refreshSetUsers(s, { ...p, product_ids: old }, product.id).catch((e: Error) => console.warn("[ct] import set users", e.message));
     for (const pid of old) await dropProduct(s, pid);
     await dropLeftovers(db, p, userId).catch((e: Error) => console.warn("[ct] import leftovers", e.message));
+    await deployImported(s, p.id, product.id, deployInfo(m));
     return product.id;
   } catch (e) {
     await dropProduct(s, product.id).catch(() => undefined);
@@ -623,5 +643,6 @@ export async function importRoute(req: Request, s: CtSession, id: string, sub: s
   if (sub === "files") return uploadFiles(s, p, await req.formData());
   if (sub === "start") return startImport(s, p, await req.json().catch(() => null));
   if (sub === "rebuild") return rebuildImport(s, p);
+  if (sub === "deploy") return redeployImport(s, p);
   return jsonError("Not found", 404);
 }

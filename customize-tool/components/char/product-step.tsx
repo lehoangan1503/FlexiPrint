@@ -21,6 +21,7 @@ import { PrintSheet } from "../print/print-sheet";
 import type { CharCtx } from "./char-project";
 import { BlankSection } from "./blank-section";
 import { ElementGallery } from "./elements-panel";
+import { ImportShopify } from "./import-panel";
 import { AutoStepGuide } from "./step-guide";
 
 /** A product made from the chat (char_add_product) shows up without a reload. */
@@ -77,6 +78,7 @@ export function ProductStep(ctx: CharCtx) {
       {/* The text layer is drawn with the product's font. */}
       <link rel="stylesheet" href={ctGoogleFontsHref()} />
       <AutoStepGuide what="@flexiprint dựng sản phẩm, nền và mockup" />
+      <ImportShopify {...ctx} />
       {products === null ? (
         <div className="flex justify-center py-6">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />

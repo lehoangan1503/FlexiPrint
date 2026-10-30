@@ -358,6 +358,21 @@ function parseImported(raw: unknown): CtCharImported | null {
     problems: arr(o.problems).map((x) => s(x, 400)).filter(Boolean).slice(0, 60),
     ...(s(o.productId, 60) ? { productId: s(o.productId, 60) } : {}),
     ...(s(o.beat, 40) ? { beat: s(o.beat, 40) } : {}),
+    ...(Object.keys(rec(o.shopify)).length ? { shopify: parseImportShopify(rec(o.shopify)) } : {}),
+  };
+}
+
+function parseImportShopify(o: Record<string, unknown>): NonNullable<CtCharImported["shopify"]> {
+  return {
+    status: o.status === "deploying" || o.status === "done" ? o.status : "failed",
+    previewUrl: s(o.previewUrl, 1000),
+    adminUrl: s(o.adminUrl, 1000),
+    priceTable: s(o.priceTable, 200),
+    error: s(o.error, 2000),
+    at: s(o.at, 40),
+    title: s(o.title, 255),
+    description: s(o.description, 20000),
+    material: s(o.material, 40),
   };
 }
 

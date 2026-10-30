@@ -102,7 +102,8 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
     project?.layers?.status === "building" ||
     project?.cut?.matte?.status === "running" ||
     project?.cut?.plan?.status === "running" ||
-    ["analyzing", "building", "agent"].includes(project?.brief.imported?.status ?? "");
+    ["analyzing", "building", "agent"].includes(project?.brief.imported?.status ?? "") ||
+    project?.brief.imported?.shopify?.status === "deploying";
   useEffect(() => {
     if (!running) return;
     const t = setInterval(() => void reload(), 3000);

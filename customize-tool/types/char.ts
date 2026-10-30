@@ -457,6 +457,24 @@ export interface CtCharImported {
   productId?: string;
   /** Last sign of life of the build (ISO) — none for minutes = cut off (the app restarted). */
   beat?: string;
+  /** The built product sent to Shopify as a draft right away (server/char/import-deploy.ts). */
+  shopify?: CtCharImportShopify;
+}
+
+/** An import's own deploy: a Shopify draft and the link that opens it in the draft theme. */
+export interface CtCharImportShopify {
+  status: "deploying" | "done" | "failed";
+  /** Staff preview in the draft theme (expires; a new deploy makes a new one). */
+  previewUrl: string;
+  adminUrl: string;
+  /** The price table it took (by the material). */
+  priceTable: string;
+  error: string;
+  at: string;
+  /** What a deploy again takes (the uploaded folder is gone by then): the folder's title, description, material. */
+  title: string;
+  description: string;
+  material: string;
 }
 
 /** One uploaded file of an import: its path in the folder, where it is. */

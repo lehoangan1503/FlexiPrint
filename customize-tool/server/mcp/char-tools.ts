@@ -19,7 +19,7 @@ import { templateRow } from "../print-templates";
 import { addSetProduct } from "../char/set-users";
 import { buildFromAgent, importFiles, importText } from "../char/import";
 import { siteUrl } from "../site-url";
-import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharPhotoStyle, CtCharProject, CtCharRefUse, CtCharTaskResult } from "../../types";
+import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharPhotoStyle, CtCharProject, CtCharRefUse, CtCharTaskResult, CtProduct } from "../../types";
 import { REF_USES, REF_USE_INFO, masterPrompt, parseCharBrief, shownByDefault } from "../../lib/char-brief";
 import { saveCharFile } from "../char/files";
 import { KEEP, KEEP_CLEAR, optionPictures, planEdits, tailOf } from "../../lib/char-plan";
@@ -32,7 +32,8 @@ import { CHAR_BRIEF_RULES, ideaRoundFrom } from "../char/brainstorm";
 import { KEEP_REFINE, drawIdeaPreviews, drawMasters, loadImages, loadProject, projectRow, refineMasterImage, setApprovedMaster } from "../char/projects";
 import { startBackdrops } from "../char/backdrops";
 import { briefTemplate, projectBlank, startCharBlank, withTemplateProduct } from "../char/blank";
-import { remakeSetProduct, versionSetsOf } from "../char/product";
+import { remakeSetProduct, serviceSession, versionSetsOf } from "../char/product";
+import { deployImported, savedDeployInfo } from "../char/import-deploy";
 import { followParentPlan, remakeDrawnProduct, runVersionChain, startVersionSets } from "../char/versions";
 import { startPoseSets } from "../char/poses";
 import { polygonMask, setBehind } from "../char/behind";
@@ -127,7 +128,7 @@ const SHORT_REQUESTS =
   "SHORT REQUESTS (asked 2026-10-28): editors write a few loose lines (\"4 style: siêu nhân, khăn len…; 4 khung giáng sinh; tên trên trái; slogan trắng dưới; khuôn tròn; phôi kính\") and attach a sample. Never ask them for the details — fill them in from the sample picture and these defaults: decorations follow the khuôn's outline (a round khuôn → a wreath / garland curving with the circle, a U hugging the bottom and sides of the subject — never straight bars or a square frame on a round piece), every option of an element the same size, place and curve; the photo zone in the middle, the frame over its cut-off bottom; a customer name in a script font where they said; a fixed slogan curved along the edge when the sample does so; everything clear of the hanging hole and inside the safe area; a khuôn of that shape already in list_print_templates is reused, never a duplicate; a material they name (glass_clear…) is the khuôn's blank for the mockups (a khuôn with no phôi of that material yet → char_make_blank before the mockups); the texts' colour readable on that material. Then, in your first summary, write back in short Vietnamese what you decided (each style, each element and its options, the texts, khuôn, phôi, which attached picture went where) so the editor reviews it there and corrects only what is off.";
 
 const IMPORTED =
-  "AN IMPORTED SET (set.brief.imported — someone's own finished files, a Teeinblue export…, asked 2026-10-29): no master, no 3a/3b/3c, nothing drawn by AI. A known layout is read by the server; any other folder is yours: char_import_files (the folder: paths, sizes, small text files) → char_import_read (a json / csv / md / txt) and view_image a few layer files (url) → understand it: the canvas size (every layer file is the WHOLE canvas, same size — layer rules), the versions the customer picks first (number of people…) and inside one the variants (layout), each layer bottom → top — static (always there), choice (the customer picks: groups = a first row like skin tone / hair colour, options = the files), linked (follows another layer's choice: a head with the body's skin + outfit, the hair under the hat — its groups and options mirror the leader's, same counts and order) — and the texts the customer types (centre, width, letter height px, angle, colour, Google font + weight). Then char_import_build {task_id, manifest} (files by their path in the folder); set.brief.imported shows the build (status building → done, problems). Afterwards the set works like any other: render_artwork its product, make_product_mockups, char_add_product. Once built, the uploaded folder is deleted (only the library clipart stays): a layout change after the build = the folder uploaded again, then char_import_build. Never draw, trim or scale a file.";
+  "AN IMPORTED SET (set.brief.imported — someone's own finished files, a Teeinblue export…, asked 2026-10-29): no master, no 3a/3b/3c, nothing drawn by AI. A known layout is read by the server; any other folder is yours: char_import_files (the folder: paths, sizes, small text files) → char_import_read (a json / csv / md / txt) and view_image a few layer files (url) → understand it: the canvas size (every layer file is the WHOLE canvas, same size — layer rules), the versions the customer picks first (number of people…) and inside one the variants (layout), each layer bottom → top — static (always there), choice (the customer picks: groups = a first row like skin tone / hair colour, options = the files), linked (follows another layer's choice: a head with the body's skin + outfit, the hair under the hat — its groups and options mirror the leader's, same counts and order) — and the texts the customer types (centre, width, letter height px, angle, colour, Google font + weight). Then char_import_build {task_id, manifest} (files by their path in the folder); set.brief.imported shows the build (status building → done, problems). Afterwards the set works like any other: render_artwork its product, make_product_mockups, char_add_product. Once built, the uploaded folder is deleted (only the library clipart stays): a layout change after the build = the folder uploaded again, then char_import_build. A finished build goes to Shopify by itself as a DRAFT (the folder's title + description, the price table named after the material, the mockups) — set.brief.imported.shopify has the preview link (draft theme) or why not; char_import_deploy sends it again (after a price table was added, or for a fresh preview link). Give the editor that link. Never draw, trim or scale a file.";
 
 const CHAT_INSTRUCTIONS = [
   ...COMMON,
@@ -1350,6 +1351,25 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const r = await buildFromAgent(db, project, args.manifest);
       await progress(db, task.id, "Đang dựng bộ import từ manifest");
       return json({ building: true, ...r, next: "get_task (set.brief.imported) until status done, then render_artwork the product (list_product_options for its options) and fix the manifest if a layer is wrong." });
+    },
+  },
+  {
+    name: "char_import_deploy",
+    description:
+      "Bộ import: its product to Shopify again as a draft (a finished build already did it once) — the import's title, description and material, the price table whose name carries the material (Acrylic / Glass / Ceramic…), the product's mockups. Waits for it (≤ 60 s). → set.brief.imported.shopify: status, previewUrl (staff preview in the draft theme, expires), adminUrl, priceTable, error.",
+    inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id);
+      if (!project.brief.imported) throw new Error("This set is not an imported one");
+      const productId = project.product_ids[0];
+      if (!productId) throw new Error("The set has no product yet — char_import_build first");
+      const { data: product } = await db.from(CT_TABLES.products).select("*").eq("id", productId).maybeSingle<CtProduct>();
+      await deployImported(await serviceSession(db, project.user_id ?? task.user_id!), project.id, productId, savedDeployInfo(project, product ?? null));
+      const { data } = await db.from(CT_TABLES.charProjects).select("brief").eq("id", project.id).single<{ brief: { imported?: { shopify?: unknown } } }>();
+      const shopify = data?.brief.imported?.shopify ?? null;
+      await progress(db, task.id, "Đã đưa sản phẩm của bộ import lên Shopify (bản nháp)");
+      return json({ shopify, next: "Give the editor previewUrl (and adminUrl); on an error, say what is missing (a price table for the material…)." });
     },
   },
   {

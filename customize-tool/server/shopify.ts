@@ -346,8 +346,8 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
   const shopDomain = DOMAIN();
   return {
     warnings,
-    // Staff preview (passes the store password; expires) — not stored.
-    previewUrl: p.onlineStorePreviewUrl,
+    // Staff preview (passes the store password, works for a draft; expires) — not stored.
+    previewUrl: themePreview(p.onlineStorePreviewUrl),
     link: {
       productId: p.id,
       handle: p.handle,
@@ -361,6 +361,23 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
       adminUrl: `https://admin.shopify.com/store/${shopDomain.replace(/\.myshopify\.com$/, "")}/products/${numericId}`,
     },
   };
+}
+
+/**
+ * The preview link opened in the draft theme. Shopify's own link (…shopifypreview.com/products_preview?preview_key=…)
+ * always renders the live theme; the same path on the shop's domain with _sc=1&preview_theme_id=… renders the given
+ * one, draft product included (verified 2026-10-30).
+ */
+function themePreview(url: string | null): string | null {
+  if (!url || !PREVIEW_THEME()) return url;
+  const u = new URL(url);
+  u.protocol = "https:";
+  u.host = DOMAIN();
+  u.searchParams.set("_ab", "0");
+  u.searchParams.set("_fd", "0");
+  u.searchParams.set("_sc", "1");
+  u.searchParams.set("preview_theme_id", PREVIEW_THEME());
+  return u.toString();
 }
 
 /** Publish on the Online Store channel. true, or why not (missing scope…). */

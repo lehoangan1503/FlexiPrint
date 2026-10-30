@@ -82,13 +82,16 @@ and `CT_PHOTO_STYLE_URL` can go from `.env`.
 0 3 * * *   docker exec supabase-db pg_dump -U postgres -n flexiprint -n auth -Fc postgres > /var/backups/flexiprint-$(date +\%F).dump
 ```
 
-## 5. Shopify (giftself-2.myshopify.com)
+## 5. Shopify (CHERIVIA, v5bpim-cd.myshopify.com = cherivia.com) — since 2026-10-30
 
-- App **FlexiPrint** (Dev Dashboard, same org as the store): client credentials in the app `.env`
-  (`SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`) → Admin API token, auto-refreshed. Scopes: themes, products,
-  files, read_orders. The metafield definition `customize_tool.product_id` (product, storefront read) exists.
-- Theme **FlexiPrint** (live, #196148625691) = Shopify Horizon + the FlexiPrint section. Its default product
-  template uses the section, so a product only needs the metafield. Theme files can't be written through the
-  Admin API without a Shopify exemption; `scripts/push-theme.sh` updates them with Shopify CLI (staff login),
-  pushing only the FlexiPrint files.
+giftself-2 is no longer used. flexi2 (deploy/flexi2/README.md) deploys every product here.
+
+- App (Dev Dashboard, same org as the store): client credentials in the app `.env`
+  (`SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`) → Admin API token, auto-refreshed. Scopes: write_products,
+  write_themes. Without read/write_publications a deploy does not turn on the Online Store channel (it warns).
+- Theme: FlexiPrint files go only to the draft **Copy of Cherivia Ornament (nháp)** (#189900521626), never the live
+  "Cherivia Ornament (nháp)". `node --env-file=.env.local scripts/push-theme.mjs` writes them through the Admin API
+  (themeFilesUpsert): the FlexiPrint section + assets + `templates/product.flexiprint.json`; the theme's own
+  `product.json` is left alone. Deployed products carry template suffix `flexiprint`; `SHOPIFY_PREVIEW_THEME_ID`
+  makes their store link open in that draft theme.
 - A personalized product: metafield `customize_tool.product_id` = FlexiPrint id.

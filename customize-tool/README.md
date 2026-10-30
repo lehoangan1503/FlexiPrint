@@ -247,13 +247,14 @@ customize-tool/shopify/
   templates/product.customize.json
 ```
 
-Theme: `scripts/push-theme.sh` (Shopify CLI, staff login) đẩy section thành `sections/flexiprint-product.liquid`
-+ 2 asset + `templates/product.json` / `product.flexiprint.json` (api_base = APP_URL) lên theme FlexiPrint.
+Theme: `node --env-file=.env.local scripts/push-theme.mjs` (Admin API, scope write_themes) đẩy section thành
+`sections/flexiprint-product.liquid` + 2 asset + `templates/product.flexiprint.json` (api_base = flexi2) lên theme nháp
+"Copy of Cherivia Ornament (nháp)" của store CHERIVIA; theme live bị chặn.
 
 ### Deploy sản phẩm (`components/deploy/`, `server/shopify.ts`)
 
 Env: `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` (app Dev Dashboard, client credentials →
-token 24h), `SHOPIFY_API_VERSION`. Scope dùng: `write_products`. Muốn tự bật kênh Online Store cần thêm
+token 24h), `SHOPIFY_API_VERSION`. Scope dùng: `write_products`, `write_themes`. Muốn tự bật kênh Online Store cần thêm
 `read_publications` + `write_publications` (thiếu thì deploy báo cảnh báo).
 
 1. **Bảng giá** (`ct_price_tables`, migration 018, `lib/pricing.ts`): đặt tên, mọi người dùng chung, chọn từ list.

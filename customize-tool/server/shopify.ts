@@ -25,6 +25,8 @@ import { priceCells, shopifyPricing, usesPacks, usesSizes } from "../lib/pricing
 
 const API_VERSION = () => process.env.SHOPIFY_API_VERSION || "2026-07";
 const DOMAIN = () => process.env.SHOPIFY_STORE_DOMAIN ?? "";
+/** The draft theme carrying the FlexiPrint section — product links open in it, never the live theme. */
+const PREVIEW_THEME = () => process.env.SHOPIFY_PREVIEW_THEME_ID ?? "";
 
 /** The theme template the deployed product uses (templates/product.flexiprint.json → section flexiprint-product). */
 export const CT_SHOPIFY_TEMPLATE_SUFFIX = "flexiprint";
@@ -355,7 +357,7 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
       media,
       deployedAt: new Date().toISOString(),
       templateVersion: input.templateVersion,
-      url: p.onlineStoreUrl ?? `https://${shopDomain}/products/${p.handle}`,
+      url: `${p.onlineStoreUrl ?? `https://${shopDomain}/products/${p.handle}`}${PREVIEW_THEME() ? `?preview_theme_id=${PREVIEW_THEME()}` : ""}`,
       adminUrl: `https://admin.shopify.com/store/${shopDomain.replace(/\.myshopify\.com$/, "")}/products/${numericId}`,
     },
   };

@@ -6,7 +6,7 @@
  *   cell compare = size.compareAt × qty; with no compareAt, a discounted pack shows size.price × qty struck out
  */
 
-import type { CtPriceCell, CtPricePack, CtPriceSize, CtPriceTableConfig, CtShopifyPricing } from "../types";
+import type { CtMaterialId, CtPriceCell, CtPricePack, CtPriceSize, CtPriceTable, CtPriceTableConfig, CtShopifyPricing } from "../types";
 import { newId } from "./geometry";
 
 export const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -154,4 +154,28 @@ export function shopifyPricing(cfg: CtPriceTableConfig): CtShopifyPricing {
 
 export function formatUsd(n: number): string {
   return `$${n.toFixed(2)}`;
+}
+
+/**
+ * The word a price table's name carries for a material ("Acrylic Ornament 1 side · Cherivia"): the store keeps one
+ * table per kind of piece (2026-10-30: the Notion price list — updated, never one more per product).
+ */
+const MATERIAL_WORD: Partial<Record<CtMaterialId, { find: RegExp; name: string }>> = {
+  acrylic_clear: { find: /acrylic/i, name: "Acrylic" },
+  acrylic_white: { find: /acrylic/i, name: "Acrylic" },
+  glass_clear: { find: /glass/i, name: "Glass" },
+  ceramic_gloss: { find: /ceramic/i, name: "Ceramic" },
+  ceramic_matte: { find: /ceramic/i, name: "Ceramic" },
+  aluminum: { find: /alumin|metal/i, name: "Aluminum" },
+  wood: { find: /wood/i, name: "Wooden" },
+};
+
+export function materialWord(material: string): { find: RegExp; name: string } | null {
+  return MATERIAL_WORD[material as CtMaterialId] ?? null;
+}
+
+/** The price table of a product's material, or null when no table names it. */
+export function priceTableFor<T extends Pick<CtPriceTable, "name">>(tables: T[], material: string): T | null {
+  const word = materialWord(material);
+  return (word && tables.find((t) => word.find.test(t.name))) || null;
 }

@@ -32,7 +32,7 @@ import { buildTemplate } from "../../lib/template";
 import { suggestCollections } from "../../lib/collections";
 import { defaultDeployMedia, productMockups } from "../../lib/deploy-media";
 import { auditOptions, type CtAuditLevel } from "../../lib/option-audit";
-import { formatUsd, priceCell, priceCells, priceTableProblems, usesPacks, usesSizes } from "../../lib/pricing";
+import { formatUsd, priceCell, priceCells, priceTableFor, priceTableProblems, usesPacks, usesSizes } from "../../lib/pricing";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtSelect, CtTextarea, cx } from "../ui";
 import { PriceTableEditor } from "./price-table-editor";
 import { ContentAgent } from "./content-agent";
@@ -100,7 +100,8 @@ export function DeployPage({ productId }: { productId: string }) {
         setInfo(shop);
         setCollections(cols);
         const link = b.product.shopify ?? null;
-        setTableId(link?.priceTableId && list.some((t) => t.id === link.priceTableId) ? link.priceTableId : (list[0]?.id ?? ""));
+        // The table it was deployed with, else the one of its material (never just the newest — 2026-10-30).
+        setTableId(link?.priceTableId && list.some((t) => t.id === link.priceTableId) ? link.priceTableId : (priceTableFor(list, b.product.config?.material?.id ?? "")?.id ?? ""));
         fill(shop.product, link?.title ?? b.product.name);
         // Not on Shopify yet: it starts in the collections that fit it (no twin collections — 2026-10-30).
         if (!shop.product) {

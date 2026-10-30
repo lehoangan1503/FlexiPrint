@@ -7,24 +7,15 @@
  */
 
 import { CT_TABLES } from "../../config";
-import type { CtAsset, CtCharImportManifest, CtCharImportShopify, CtCharProject, CtMaterialId, CtPriceTable, CtProduct } from "../../types";
+import type { CtAsset, CtCharImportManifest, CtCharImportShopify, CtCharProject, CtPriceTable, CtProduct } from "../../types";
 import { suggestCollections } from "../../lib/collections";
 import { defaultDeployMedia } from "../../lib/deploy-media";
+import { materialWord, priceTableFor } from "../../lib/pricing";
 import { runDeploy } from "../handlers";
 import { createCollection, listCollections, shopifyConfigured } from "../shopify";
 import { siteUrl } from "../site-url";
 import type { CtSession } from "../supabase";
 
-/** The word a price table's name carries for a material ("Acrylic Ornament 1 side · Cherivia"). */
-const MATERIAL_WORD: Partial<Record<CtMaterialId, { find: RegExp; name: string }>> = {
-  acrylic_clear: { find: /acrylic/i, name: "Acrylic" },
-  acrylic_white: { find: /acrylic/i, name: "Acrylic" },
-  glass_clear: { find: /glass/i, name: "Glass" },
-  ceramic_gloss: { find: /ceramic/i, name: "Ceramic" },
-  ceramic_matte: { find: /ceramic/i, name: "Ceramic" },
-  aluminum: { find: /alumin|metal/i, name: "Aluminum" },
-  wood: { find: /wood/i, name: "Wooden" },
-};
 
 /** Images Shopify gets: the import's sales pictures, in order. */
 const MAX_MEDIA = 10;
@@ -100,9 +91,9 @@ export async function deployImported(s: CtSession, setId: string, productId: str
     const { data: product } = await db.from(CT_TABLES.products).select("*").eq("id", productId).single<CtProduct>();
     if (!product) throw new Error("Không thấy sản phẩm của bộ");
 
-    const word = MATERIAL_WORD[info.material as CtMaterialId];
+    const word = materialWord(info.material);
     const { data: tables } = await db.from(CT_TABLES.priceTables).select("*").order("updated_at", { ascending: false }).limit(200).returns<CtPriceTable[]>();
-    const table = word ? (tables ?? []).find((t) => word.find.test(t.name)) : undefined;
+    const table = priceTableFor(tables ?? [], info.material);
     if (!table) {
       throw new Error(
         word

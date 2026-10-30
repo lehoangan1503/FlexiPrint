@@ -14,7 +14,7 @@ import type { CtAgentTask, CtAsset, CtContentResult, CtPriceTable, CtProduct, Ct
 import { auditOptions } from "../../lib/option-audit";
 import { suggestCollections } from "../../lib/collections";
 import { defaultDeployMedia } from "../../lib/deploy-media";
-import { normalizePriceTableConfig, priceCells, priceTableProblems } from "../../lib/pricing";
+import { normalizePriceTableConfig, priceCells, priceTableFor, priceTableProblems } from "../../lib/pricing";
 import { str } from "../ai/llm";
 import { serviceSession } from "../char/product";
 import { ownedProduct, productTemplate, readDeployBody, runDeploy } from "../handlers";
@@ -123,10 +123,11 @@ function blockers(st: DeployState, pick: { tableId: string | null; title: string
   return out;
 }
 
-/** The price table a deploy takes when none is named: the one the product was deployed with, else the newest. */
+/** The price table a deploy takes when none is named: the one the product was deployed with, else its material's. */
 function defaultTable(st: DeployState, product: CtProduct): string | null {
   const linked = product.shopify?.priceTableId;
-  return linked && st.tables.some((t) => t.id === linked) ? linked : (st.tables[0]?.id ?? null);
+  if (linked && st.tables.some((t) => t.id === linked)) return linked;
+  return priceTableFor(st.tables, product.config?.material?.id ?? "")?.id ?? null;
 }
 
 /** The mockups a deploy takes when none are named: the ones already on the Shopify product, else the scene mockups. */

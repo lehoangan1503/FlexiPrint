@@ -82,3 +82,11 @@ first one too, is a recolour of that file (layer-kit `cut_colour`). The master k
 - Every theme of the same element has the SAME width × height (one ratio: `lib/char-brief.ts plaqueAspect`, drawn at
   it by `plaqueShape`, put on one canvas by `server/char/product.ts signCanvas`). A theme changes only the look, never
   the size. Check all themes side by side before building the product; a theme that differs is redrawn.
+
+## A clean set — checklist (user 2026-10-30: "tạo 1 bộ clipart sạch chuẩn")
+
+Layer rules §9e, also given to @flexiprint as `CLEAN_SET` in `server/mcp/char-tools.ts` (edits, chat and auto steps):
+clean master (§9-clean) → cutColor on every slot the colour of a part it touches (§9d) → one part per picture, nothing
+moved → after the cut fix each failed check by its picture ("Khớp" / "xoá / dời" → redraw, "Vùng trống" → bolder,
+"Ghép = 3b" → redraw / cutColor / file editor) — never a looser threshold. "Ghép = 3b" only reports; the 1 px
+jaw / ear gaps are filled by the back hair in the cut.

@@ -83,6 +83,16 @@ const BRAINSTORM_INSTRUCTIONS = [
   "3. submit_result(task_id, {summary, questions, ideas: [exactly 3 × {title, why, brief}]}) — the page shows them as directions the editor can take, each with a master the server draws from its brief (so every brief must be complete enough to draw).",
 ].join("\n");
 
+/** How a set is made so its clipart cuts clean, and what each failed cut check means (asked 2026-10-30: "cho flexiprint
+ * biết đường mà sau này tạo 1 bộ clipart sạch chuẩn"). Same as layer rules §9e. */
+const CLEAN_SET =
+  "CLEAN CLIPART (layer rules §9e, asked 2026-10-30) — a file is the 3b picture's pixels where it differs from what it was drawn on, so a set is clean when its pictures are: " +
+  "1) master: solid sculpted hair with one outline, simple garments (§9-clean) — a master with loose strands is refined before approval. " +
+  "2) same colour as the neighbour (silver hair under a white fur brim, a white sleeve on a pale hand, a red hat on a red sweater, hair the colour of the skin): give the slot cutColor in the brief BEFORE its 3b pictures are drawn — a #rrggbb far from every neighbour, mid-light, never magenta or skin; the colours of that slot (the first one too) take their hex from the part in the master. Check every pair of parts that touch: the hair against the hat, face and outfit; a hat against the sweater; a sleeve against the hand. " +
+  "3) every picture adds ONE part and moves nothing of the picture it is drawn on (the doll's face, arms, outline stay where they were). " +
+  "4) after char_cut read char_status failedChecks and fix by the check, never by asking for a looser cut: \"Khớp\" (the picture moved) or \"xoá / dời … px của búp bê\" → char_run_edits that picture again (same prompt + \"keep the figure exactly where it is, do not move or resize anything\") · \"Vùng trống\" → the part was not drawn: draw it bolder · \"Ghép = 3b\" red (lỗ = see-through pixels, p99 = colour steps): when the same picture also failed Khớp, redraw it; when its part is the same colour as its neighbour, give the slot cutColor and redraw; otherwise view_image the file and its picture, redraw once, and if it stays red say so in the summary (the editor fixes it by hand). A few hundred lỗ px along a jaw or ear are normal (the back hair fills them). " +
+  "5) re-cut (char_cut \"plan\" after a redrawn picture) and report every check that is still red.";
+
 const MASTER_INSTRUCTIONS = [
   ...COMMON,
   "STEP master — make the ONE master every layer will be cut from. \"assembledPrompt\" is the server's template from the brief: a starting point, not a rule — improve it.",
@@ -103,6 +113,7 @@ const EDITS_INSTRUCTIONS = [
   "2. char_run_edits(task_id, prompts: {role: prompt}, roles: [...]) — the doll is made first automatically; \"roles\" runs a role with its starting prompt (get_task \"startingPromptExamples\"); give a prompt only where you want a different one. → char_wait → view_image the results (a few at a time).",
   "3. Check each: transparent background; the doll's body, face, arms and hands did NOT move or change (a layer can only ADD to the doll — an arm drawn in a new place leaves the old arm visible); no magenta shows on a garment (it is a chroma key: never part of a clipart); the part looks right in the art style. Wrong → a better prompt and char_run_edits for that role again (at most ~3 tries per role). After the cut, the plan checks say it too (\"Khớp\" = the picture moved, \"xoá / dời … px của búp bê\" = it changed the doll).",
   "4. submit_result(task_id, {summary: Vietnamese — what you ran, what you redid and why, what is still off; image_ids: the final edits}). The editor then cuts the layers (layer-kit) and sees the checks.",
+  CLEAN_SET,
 ].join("\n");
 
 /** The material ids a brief's product can name (asked 2026-10-28: a clear glass ornament with a diamond-cut edge). */
@@ -136,6 +147,7 @@ const CHAT_INSTRUCTIONS = [
   "BỘ ẢNH KHÁCH (set.brief.kind \"photo\" — the customer's own photo is the hero: a pet memorial ornament, a portrait): there are no characters, no 3a/3b/3c and no cut. brief.photoZones[0] = the customer's photo (where = what it shows, e.g. \"the customer's pet, sitting\"; treat \"ai\" + styles = the styles the customer picks from — the set's OWN styles written from the request (PHOTO_STYLES; a library style from list_ai_styles only when the editor names one); \"face\" = head only; box = shares of the safe area, null = laid out). brief.elements = the decorations, each {name, place: behind (wings) | above (halo) | bottom (a band of clouds over the photo's cut body, the texts lie on it) | free (box), mode shape | color (#hex options, the first drawn, the others recoloured), options, perBackdrop (one picture per background in its colours, follows the background)}. Flow: char_update_brief → char_draw_masters (the whole flat design with a SAMPLE pet) → the editor approves (or char_approve_master when handed the whole set) → char_draw_backdrops → char_draw_elements (every element option + the zone's sample: the master's pet alone) → char_wait, view_image each (whole? transparent? same look as the master?) → char_remake_product (keeps a photo zone the editor reshaped; reset_zones true = the layout again) → list_product_options, render_artwork, make_product_mockups.",
   PHOTO_STYLES,
   SHORT_REQUESTS,
+  CLEAN_SET,
   MATERIALS,
   "A bộ nhân vật with a CHOICE OF WHO is in the picture (brief.lineup — a boy OR a girl; 1–5 people of a family): every subject drawn once in the master, standing apart (the server splits the body file per subject); the product gets one version per choice with only its subjects' layers — render_artwork / make_product_mockups pick it with {\"Version\": \"Girl\"} (or the lineup label). Decorations of a bộ nhân vật (brief.elements: a ribbon banner, a year in glitter numbers, trees beside the family, a ground band) are drawn after the master approval with char_draw_elements (each option alone, the master as the style reference) and placed by place / box; texts can be \"under\" a subject or \"free\" in a box; brief.charactersBox places the characters. Backdrops with tile true are seamless pattern squares repeated over the piece (a rug's plaid). A product with no fitting khuôn: create_print_template with the real size first. brief.choosers (boy / girl per child, grandma / grandpa, hats / no hats) + shownWhen on slots / texts / elements, slot follows (an element id: sweaters and hats follow the Theme), subject always (the grandma in every version), texts kind fixed / place on (a name on a hat brim): see briefRules in a brainstorm or the layer rules; render_artwork picks a chooser option by its label ({\"Grandchild 1\": \"Girl\", \"Hats\": \"No Hats\"}).",
   "A bộ nhân vật with a customer FACE (an elf / Santa body with the customers' faces, a die-cut acrylic): a normal character set with brief.photoZones [{where: \"the left elf's face\", treat: \"face\"}] and product.cut \"alpha\" — the master leaves the face empty, the body file gets a hole there and the face sits under it (hat brim, hair edge and collar over it).",
@@ -155,6 +167,7 @@ const AUTO_INSTRUCTIONS = [
   "4b. Bộ ảnh khách with treat \"ai\": the styles (PHOTO_STYLES below) before char_remake_product — none yet → write them from the request; test, fix, pick the demos.",
   PHOTO_STYLES,
   MATERIALS,
+  CLEAN_SET,
   "5. submit_result {summary: Vietnamese — what was made (versions, options, mockups), what you fixed, what is still worth a look; image_ids: a few mockups}. Then the editor asks for changes in the chat.",
   POSED,
   DRAWN_LINEUP,

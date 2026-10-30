@@ -134,6 +134,21 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
   take the hex from the part in the master). The master keeps the real colour.
 - The same for every part with options: hat / hair, sweater / hat, hand / sleeve.
 
+## 9e. A clean set — the checklist (2026-10-30)
+A file is its 3b picture's pixels where it differs from what it was drawn on, so the files are as clean as the
+pictures. In order:
+1. Master: solid sculpted hair, simple garments (§9-clean); loose strands refined before approval.
+2. Every pair of parts that touch (hair / hat / face / outfit, hat / sweater, sleeve / hand): same colour → cutColor
+   on the slot before its 3b pictures are drawn (§9d), colour hexes taken from the master.
+3. Every picture adds ONE part and moves nothing (§9b).
+4. After the cut every failed check is fixed by its picture, never by a looser cut: "Khớp" or "xoá / dời … px của
+   búp bê" → draw that picture again, nothing moved · "Vùng trống" → draw the part bolder · "Ghép = 3b" red (the
+   real files stacked — body + the file it was cut against + this file — vs the 3b picture: lỗ = see-through pixels,
+   p99 = colour steps; red over 300·aa² lỗ or p99 > 20) → a picture that also failed Khớp is redrawn; a part the colour
+   of its neighbour gets cutColor; otherwise redraw once, then the file editor. Ghép only reports, it changes no pixel.
+   The back hair fills the 1 px gaps along a jaw or ear (layer-kit wraps gap fill) — a few hundred lỗ px are normal.
+5. Re-cut, and the set is used only when every check is green (or the editor accepted what is left).
+
 ## 10. Checks before a set is used
 - Every file of a slot has the same pixel size.
 - Every option of a slot has the same box in the product (no per-item transform).

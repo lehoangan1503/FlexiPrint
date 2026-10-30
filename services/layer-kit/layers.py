@@ -710,7 +710,7 @@ def stack_check(ref: np.ndarray, ref_a: np.ndarray, pic: np.ndarray, pic_a: np.n
     ok = holes <= 300 * aa * aa and p99 <= 20
     detail = f"ghép lại lệch ảnh 3b: màu TB {mean:.1f} · tệ (p99) {p99:.1f} ΔE · lỗ {holes:,} px"
     if not ok:
-        detail += " — mép cắt bẩn (bậc màu / rách): sửa tay file hoặc vẽ lại ảnh 3b"
+        detail += " — mép cắt bẩn (bậc màu / rách): ảnh 3b trượt Khớp → vẽ lại; trùng màu chỗ nó nằm → màu cắt (cutColor); còn lại vẽ lại 1 lần rồi sửa tay file"
     return ok, detail
 
 

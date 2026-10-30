@@ -602,9 +602,13 @@ def register_option(doll: np.ndarray, rgba: np.ndarray, key: str | None, own: np
 
 # ---- 3. cut: the files ---------------------------------------------------------------------------------------
 
-def recolor(colour: np.ndarray, alpha: np.ndarray, target_hex: str | None, tint: float = 0.15) -> np.ndarray:
+def recolor(colour: np.ndarray, alpha: np.ndarray, target_hex: str | None, tint: float = 0.15, key: bool = False, under: np.ndarray | None = None) -> np.ndarray:
     """The part in another colour: where the file has the part's own hue (its median), the lightness keeps its shading
-    around the target's and the hue moves to the target; an outline, a button, a bit of skin (another hue) keep theirs."""
+    around the target's and the hue moves to the target; an outline, a button, a bit of skin (another hue) keep theirs.
+    The shading rolls off softly near 0 and 100 (blue hair → silver came out flat white, 2026-10-30).
+    `key`: drawn in a cut colour — the part is every pixel of that hue angle (its paler / darker strands too), and with
+    `under` (the picture it was drawn on) every pixel holding some of the key over it: the dark outline along the
+    hairline, half key and half skin, kept as it was, showed as a lilac line."""
     if not target_hex:
         return colour
     sel = alpha > 0.5
@@ -615,11 +619,24 @@ def recolor(colour: np.ndarray, alpha: np.ndarray, target_hex: str | None, tint:
     ab0 = np.median(ab[sel], axis=0)
     dist = np.linalg.norm(ab - ab0, axis=2)
     w = np.clip(1 - (dist - 18) / 12, 0, 1)
+    if key:
+        turn = np.degrees(np.abs(np.angle(np.exp(1j * (np.arctan2(ab[..., 1], ab[..., 0]) - np.arctan2(ab0[1], ab0[0]))))))
+        w = np.maximum(w, np.clip(1 - (turn - 35) / 25, 0, 1) * np.clip((np.linalg.norm(ab, axis=2) - 4) / 6, 0, 1))
+        if under is not None:
+            ub = to_lab(under)[..., 1:]
+            d = ab0[None, None] - ub
+            dn = (d ** 2).sum(2)
+            held = np.clip(((ab - ub) * d).sum(2) / np.maximum(dn, 1e-3), 0, 1)
+            w = np.maximum(w, np.where(dn > 30 ** 2, np.clip(held / 0.5, 0, 1), 0) * (alpha > 0))
     own = sel & (dist < 18)
-    lm = float(lab[..., 0][own].mean()) if own.sum() >= 10 else float(lab[..., 0][sel].mean())
+    if own.sum() < 10:
+        own = sel
+    off = lab[..., 0] - float(lab[..., 0][own].mean())
     tl = to_lab(hex_rgb(target_hex)[None, None])[0, 0]
+    up, down = max(100 - tl[0], 1.0), max(tl[0], 1.0)
     out = lab.copy()
-    out[..., 0] = np.clip(tl[0] + (lab[..., 0] - lm) * (0.85 if tl[0] < 30 else 1.0), 0, 100)
+    k = 0.85 if tl[0] < 30 else 1.0
+    out[..., 0] = np.where(off > 0, tl[0] + up * np.tanh(off * k / up), tl[0] + down * np.tanh(off * k / down))
     out[..., 1:] = tl[1:] + (ab - ab0) * tint
     return colour * (1 - w[..., None]) + from_lab(out) * w[..., None]
 
@@ -791,11 +808,11 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
             if s.mode == "color":
                 # One drawing, one file per colour option.
                 for k, (name, hex_) in enumerate(zip([x.name for x in s.options], s.hexes)):
-                    col = col0 if k == 0 and not s.cut_colour else recolor(col0, a, hex_)
+                    col = col0 if k == 0 and not s.cut_colour else recolor(col0, a, hex_, key=s.cut_colour, under=ref_c if s.cut_colour else None)
                     files.append(Out(s.key, s.label, name, "", *px(col, a), piece, plate_of(col, pa)))
                 break
             for k, (cname, hex_) in enumerate(s.colors or [("", None)]):
-                col = col0 if k == 0 and not s.cut_colour else recolor(col0, a, hex_)
+                col = col0 if k == 0 and not s.cut_colour else recolor(col0, a, hex_, key=s.cut_colour, under=ref_c if s.cut_colour else None)
                 plate = plate_of(col, pa)
                 if s.wraps:
                     whole = px(col, a)

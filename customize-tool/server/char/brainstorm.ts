@@ -132,7 +132,8 @@ Every brief is built like this, so every proposal must respect it:
   underwear); when one is close, give the slot "cutColor": a #rrggbb far from ALL of them, mid-light (L 40–60 —
   a blue #3f6fd8, a green #3fa34d, a brown #8a5a2b), never magenta / purple (the doll's key) nor a skin tone. Its 3b
   pictures draw the part in it; every colour the customer picks (the first one too, in "colors" / the colour options)
-  is a recolour of that clean file. The master keeps the real colour.
+  is a recolour of that clean file, to exactly its hex — so take each colour's hex from the part as the master shows it
+  (its middle tone: silver hair in a master is ~#b8b4b0, not a pale #c9ced6 swatch). The master keeps the real colour.
   Face expressions: a shape slot part "face expression", group "face" (the doll's face is blank, every expression is
   drawn on it). The Theme = a chooser [{id: "theme", label: "Theme", options: Christmas /
   Halloween / Easter}]; the sign = an element with place "plaque", one option per theme, follows "theme"; the slogan on

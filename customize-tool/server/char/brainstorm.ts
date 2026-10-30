@@ -126,6 +126,13 @@ Every brief is built like this, so every proposal must respect it:
     on that hat's picture: the Santa fur cuff, the witch hat's band above its brim): the band is found inside it. (Found
     on its own, without band, it picked the cuff's 16 px bottom edge of a Santa hat and the witch hat's brim, 2026-10-30.)
     A light letter colour on a dark or same-coloured band (white on the orange band). A theme without a hat: the name "under" the character or in a free box.
+- A cut colour (2026-10-30): a part is cut by how its colour differs from what it lies on, so a part the SAME colour as
+  its neighbour has no edge to cut (silver hair under a white fur brim, a white sleeve on the doll's pale hand, a red
+  hat over a red sweater). Compare every colour of a part with what touches it (hat, sweater, skin, the magenta
+  underwear); when one is close, give the slot "cutColor": a #rrggbb far from ALL of them, mid-light (L 40–60 —
+  a blue #3f6fd8, a green #3fa34d, a brown #8a5a2b), never magenta / purple (the doll's key) nor a skin tone. Its 3b
+  pictures draw the part in it; every colour the customer picks (the first one too, in "colors" / the colour options)
+  is a recolour of that clean file. The master keeps the real colour.
   Face expressions: a shape slot part "face expression", group "face" (the doll's face is blank, every expression is
   drawn on it). The Theme = a chooser [{id: "theme", label: "Theme", options: Christmas /
   Halloween / Easter}]; the sign = an element with place "plaque", one option per theme, follows "theme"; the slogan on

@@ -87,6 +87,13 @@ export interface CtCharSlot {
    * so the hair the customer picked stays when the theme changes. Same options, colours and order as that slot.
    */
   sameAs?: string | null;
+  /**
+   * The colour (#rrggbb) its 3b pictures draw the part in, when the real colour is (nearly) that of what it lies on or
+   * against (asked 2026-10-30: silver hair under a white fur brim, a white sweater on a white doll hand — the cut finds
+   * no edge between them): a colour far from its neighbours, mid-light so the shading stays. Every colour the customer
+   * picks is then a recolour of that drawing, the first one too; the master keeps the real colour.
+   */
+  cutColor?: string | null;
 }
 
 /** A condition on a chooser (brief.choosers): the part / text / decoration exists only while it shows `option`. */

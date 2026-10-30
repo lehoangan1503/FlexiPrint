@@ -159,8 +159,9 @@ async function applyMask(db: Db, userId: string, p: CtCharProject, set: CtCharLa
   const src = await rgba(await fetchImage(f.url), W, H);
   const out: Raw = { data: Buffer.alloc(W * H * 4), w: W, h: H };
   for (let i = 0; i < W * H * 4; i += 4) {
-    const alpha = mask.data[i + 3];
     const from = src.data[i + 3] > 0 || !plate ? src : plate;
+    // An added pixel never goes past its picture's own soft outline (a plate since 2026-10-30 has that alpha).
+    const alpha = from === plate ? Math.min(mask.data[i + 3], plate.data[i + 3]) : mask.data[i + 3];
     out.data[i] = alpha ? from.data[i] : 0;
     out.data[i + 1] = alpha ? from.data[i + 1] : 0;
     out.data[i + 2] = alpha ? from.data[i + 2] : 0;

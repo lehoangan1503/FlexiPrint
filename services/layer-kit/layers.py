@@ -648,6 +648,8 @@ class Slot:
     wraps: bool = False                      # back (the whole part) + front (where it lies on the doll's figure)
     figure: np.ndarray | None = None         # wraps: the figure the front lies on (8-bit alpha, full canvas); None = the doll
     ref_piece: str | None = None             # the option (piece key) whose picture it is cut against; None = the doll
+    cut_colour: bool = False                 # drawn in a cut colour that stands out from what it lies on (white hair
+                                             # under a white fur brim drawn blue): every colour is a recolour of it
 
 
 @dataclass
@@ -698,7 +700,7 @@ def stack_check(ref: np.ndarray, ref_a: np.ndarray, pic: np.ndarray, pic_a: np.n
 def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zone], encode: Callable[[np.ndarray], tuple[str, list[int]]], encode_plate: Callable[[np.ndarray], str]) -> dict:
     """The layer files. body / body_a: the doll × the body region. Every part file = its region × its own picture's
     alpha, in its own picture's colours (recoloured for another colour). Cropped by ONE common rectangle, 8-bit.
-    encode: an RGBA file → (PNG, bbox); encode_plate: RGB colours → JPEG — each done at once, nothing big is kept."""
+    encode: an RGBA file → (PNG, bbox); encode_plate: RGBA colours + the picture's alpha → PNG — each done at once, nothing big is kept."""
     H, W = body.shape[:2]
     checks: list[dict] = []
 
@@ -754,9 +756,9 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
             figs[s.key] = soft((fa[c] > 0.02) | (body_a[c] > 0.02), grow=max(2, round(2 * aa)), blur=0.8 * aa)
         return figs[s.key]
 
-    def plate_of(col: np.ndarray) -> str:
+    def plate_of(col: np.ndarray, pa: np.ndarray) -> str:
         name = f"p{len(plates)}"
-        plates[name] = encode_plate((np.clip(col, 0, 1) * 255).round().astype(np.uint8))
+        plates[name] = encode_plate((np.clip(np.dstack([col, pa]), 0, 1) * 255).round().astype(np.uint8))
         return name
 
     def px(col: np.ndarray, a: np.ndarray) -> tuple[str, list[int]]:
@@ -776,24 +778,25 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
             made = True
             a = alphas.pop(piece)[c].astype(np.float32)
             col0 = unit(o.col[c])
+            pa = np.clip(unit(o.alpha[c]), 0, 1)
             ref_c, ref_a = body[c], np.clip(body_a[c], 0, 1)
             if s.ref_piece in hosts:
                 ha = hosts[s.ref_piece][c].astype(np.float32)
                 ra = ha + ref_a * (1 - ha)
                 ref_c = (unit(host_cols[s.ref_piece][c]) * ha[..., None] + ref_c * (ref_a * (1 - ha))[..., None]) / np.maximum(ra[..., None], 1e-4)
                 ref_a = ra
-            ok, detail = stack_check(ref_c, ref_a, col0, unit(o.alpha[c]), a, aa)
+            ok, detail = stack_check(ref_c, ref_a, col0, pa, a, aa)
             if detail:
                 checks.append({"name": f"Ghép = 3b: {s.label}: {o.name}", "ok": ok, "detail": detail, "piece": piece})
             if s.mode == "color":
                 # One drawing, one file per colour option.
                 for k, (name, hex_) in enumerate(zip([x.name for x in s.options], s.hexes)):
-                    col = col0 if k == 0 else recolor(col0, a, hex_)
-                    files.append(Out(s.key, s.label, name, "", *px(col, a), piece, plate_of(col)))
+                    col = col0 if k == 0 and not s.cut_colour else recolor(col0, a, hex_)
+                    files.append(Out(s.key, s.label, name, "", *px(col, a), piece, plate_of(col, pa)))
                 break
             for k, (cname, hex_) in enumerate(s.colors or [("", None)]):
-                col = col0 if k == 0 else recolor(col0, a, hex_)
-                plate = plate_of(col)
+                col = col0 if k == 0 and not s.cut_colour else recolor(col0, a, hex_)
+                plate = plate_of(col, pa)
                 if s.wraps:
                     whole = px(col, a)
                     files.append(Out(f"{s.key}:back", f"{s.label} — lớp sau", o.name, cname, *whole, piece, plate))
@@ -808,7 +811,7 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
             fronts.append({"key": f"{s.key}:front", "label": f"{s.label} — lớp trước", "follows": None})
         else:
             parts.append({"key": s.key, "label": s.label, "follows": None})
-    files.append(Out("body", "Thân", "Body", "", *px(body[c], body_a[c]), "body", plate_of(body[c])))
+    files.append(Out("body", "Thân", "Body", "", *px(body[c], body_a[c]), "body", plate_of(body[c], body_a[c])))
     order = backs + [{"key": "body", "label": "Thân", "follows": None}] + parts + fronts
     checks.append({"name": "Cắt theo phần khác búp bê", "ok": True, "detail": f"{len(files)} file — mỗi file là đúng pixel ảnh 3b của nó, thân là búp bê nguyên vẹn"})
     h, w = y1 - y0, x1 - x0

@@ -97,7 +97,14 @@ export function picturePrompt(brief: CtCharBrief, p: CtCharPlanPicture): string 
     const i = brief.subjects.findIndex((x) => x.id === l.subject);
     return `- ${l.text.replaceAll("{who}", subjectRef(brief, i))}`;
   });
-  const body = [p.prompt.replaceAll("{who}", "the character"), ...lines].filter(Boolean).join("\n");
+  // A part drawn in its cut colour (slot cutColor): said by the server, whatever the agent wrote of its real colour.
+  const cutColours = new Map<string, string>();
+  for (const c of p.covers) {
+    const slot = slotOf(brief, c.slot)?.slot;
+    if (slot?.cutColor) cutColours.set(slot.part.replace(/\s*\(.*?\)/g, ""), slot.cutColor);
+  }
+  const cut = [...cutColours].map(([part, hex]) => `Draw the ${part} in solid ${hex} (a cut colour, recoloured later — not its real colour), with all its shading, highlights and strand detail; nothing else in the picture takes that colour.`);
+  const body = [p.prompt.replaceAll("{who}", "the character"), ...lines, ...cut].filter(Boolean).join("\n");
   const tail = tailOf(p.role);
   return body.includes(tail.trim()) ? body : body.replace(/\.?\s*$/, ".") + tail;
 }
@@ -219,6 +226,7 @@ export const PICTURE_PLAN_RULES = [
   "- against: cut against that picture instead of the doll (only what this picture adds over it is the option). It must be a picture that itself covers options.",
   "- hats and hair: the hair is cut against ONE outfit picture, so it fits only hats with that band. Hats on one band (restyle): one hair slot, its pictures source = against = the first outfit picture. Hats of different shapes / a theme without a hat: the brief has one hair slot per kind of head (sameAs the first) — draw each one's options on THAT head's outfit picture (source = against = the witch outfit picture for the witch-hat hair; the no-hat hair on base, against base), the SAME styles in the same order and colours, so one pick of the customer looks the same under every hat.",
   "- prompt: English, the change said once (\"Give each listed character the hairstyle written for them, drawn UNDER their hat …\"); lines: [{subject: subject id, text}] — one per character (\"{who}: long wavy hair\"; {who} is filled with how the image model is told which character it is). Lines of a character a version does not have are dropped automatically, so ALWAYS put per-character wording in lines, never in the prompt. Do not write the keep-everything ending: the server adds it (transparent background, nothing else moves).",
+  "- cut colour: a slot with cutColor (its real colours too close to what it lies on) is drawn in that colour — the server adds the sentence to every picture that covers it; do not name its real colour in that prompt (\"short curly hair\", not \"silver-grey curly hair\"). Its files are recoloured to every colour the customer picks.",
   "- fine: true for thin features on a blank face (eyes, brows, mouth): small pieces kept.",
   "- zone:<photo zone id> (one per brief.photoZones, required): drawn from base, \"Paint ONLY <where> solid flat pure magenta #FF00FF …\" (drawn on white).",
   "- thumb:<slot id>:<option id> (optional): a held item drawn ALONE and complete from the picture that covers it (source = that picture) — only the option's thumbnail in the shop, never cut.",

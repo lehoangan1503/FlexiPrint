@@ -64,6 +64,13 @@ character (same groups, follows the layer, mirrored with the character). One mas
   the lead's thumbs) that the lead and every sameAs slot follow. Never `optional` on a hat with hair drawn under it.
 - A name on a brim: `brimOf(subject, text.shownWhen)` measures the hat of that theme's option.
 
+## Same colour as its neighbour — cut colour (user 2026-10-30)
+
+A part the same colour as what it lies on (silver hair under a white fur brim, a white sleeve on a pale hand) has no
+edge to cut. Its slot gets `cutColor` (#rrggbb, far from every neighbour, mid-light, never magenta or skin): the 3b
+pictures draw it in that colour (lib/char-pictures.ts picturePrompt adds the sentence), and EVERY customer colour, the
+first one too, is a recolour of that file (layer-kit `cut_colour`). The master keeps the real colour.
+
 ## Theme decorations and backgrounds — whole pictures, one size (user 2026-10-22)
 
 - A decoration (the sign / plaque, a band, a frame) and a theme background are ONE whole AI picture. Never piece one

@@ -134,9 +134,10 @@ def png_b64(rgba: np.ndarray) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def plate_b64(rgb: np.ndarray) -> str:
-    """A file's colour plate, lossless (2026-10-30: the JPEG plate looked blurred as the source of "Thêm vào lớp")."""
-    ok, buf = cv2.imencode(".png", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_PNG_COMPRESSION, 6])
+def plate_b64(rgba: np.ndarray) -> str:
+    """A file's colour plate, lossless (2026-10-30: the JPEG plate looked blurred as the source of "Thêm vào lớp"),
+    with its picture's own soft alpha (an opaque plate showed a hard stair-stepped outline on white)."""
+    ok, buf = cv2.imencode(".png", cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA), [cv2.IMWRITE_PNG_COMPRESSION, 6])
     if not ok:
         raise HTTPException(500, "không mã hoá được PNG")
     return base64.b64encode(buf.tobytes()).decode()
@@ -522,6 +523,8 @@ class CutSlot(BaseModel):
     colors: list[CutColour] = []
     figure: str | None = None    # wraps: the picture whose figure the front layer lies on (hair drawn over the
                                  # sweaters of an outfit picture); default the doll
+    cut_colour: bool = False     # drawn in a cut colour (the slot's cutColor, 2026-10-30): EVERY colour the customer
+                                 # picks is a recolour, the first one too
 
 
 class CutZone(BaseModel):
@@ -566,7 +569,7 @@ def _cut(body: CutBody, out_dir: str) -> dict:
 
     slots: list[Slot] = []
     for s in body.slots:
-        slot = Slot(s.key, s.label, s.mode, wraps=s.wraps, colors=[(c.name, c.hex) for c in s.colors], hexes=[o.hex for o in s.options])
+        slot = Slot(s.key, s.label, s.mode, wraps=s.wraps, colors=[(c.name, c.hex) for c in s.colors], hexes=[o.hex for o in s.options], cut_colour=s.cut_colour)
         if s.figure:
             slot.figure = pic(s.figure)[1]
             slot.ref_piece = next((f"{h.key}#{i}" for h in body.slots for i, ho in enumerate(h.options) if ho.picture == s.figure), None)

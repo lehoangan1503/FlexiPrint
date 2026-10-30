@@ -1,6 +1,8 @@
 """
-Free print upscale (no API): Real-ESRGAN realesr-animevideov3 (BSD-3, xinntao/Real-ESRGAN, 2.5 MB) on CPU via
-spandrel. Made for cartoon / line art: sharp outlines, flat fills kept flat. ~9 s for a 1536×1024 picture on 4 cores.
+Free print upscale (no API): Real-ESRGAN realesr-general-x4v3 (BSD-3, xinntao/Real-ESRGAN, 4.9 MB) on CPU via
+spandrel: sharp outlines AND the picture's texture (fur, hair strands) kept. Same speed as animevideov3, used until
+2026-10-30 — made for flat cartoon fills, it turned fur and hair into waxy stripes (compared on a Santa set 3b).
+A plan upscales the doll and every option with the same model, so they stay registered.
 
 The image models hand back ~1–1.5 K pictures (gpt-image: 1536×1024); the layer set is cut on an upscaled canvas so
 a print has ≈ 300 dpi at ~20–25 cm. The model is a deterministic, local convolution: the same input pixels give the
@@ -16,7 +18,7 @@ import threading
 import cv2
 import numpy as np
 
-WEIGHTS = os.getenv("UPSCALE_WEIGHTS", os.path.join(os.path.dirname(__file__), "weights", "realesr-animevideov3.pth"))
+WEIGHTS = os.getenv("UPSCALE_WEIGHTS", os.path.join(os.path.dirname(__file__), "weights", "realesr-general-x4v3.pth"))
 TILE = 512
 PAD = 16
 

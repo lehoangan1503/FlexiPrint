@@ -125,6 +125,14 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
   theme). Every name on a hat: text band true + box where the band is (measured on that hat's picture) — the band
   is found inside that box. Found on its own (no band: old sets only) it missed both the Santa cuff and the witch band.
 
+## 9d. Same colour as its neighbour — draw it in a cut colour (2026-10-30)
+- A part is cut by how its colour differs from what it lies on. Silver hair under a white fur brim, a white sleeve on
+  a pale hand, a red hat on a red sweater: no edge to find, the file comes out with holes and ragged edges.
+- Such a slot gets cutColor (#rrggbb): far from every neighbour, mid-light (the shading stays), never the doll's
+  magenta nor a skin tone. Its 3b pictures draw the part in it (the server says so in the prompt); every colour the
+  customer picks — the first one too — is a recolour of that clean file. The master keeps the real colour.
+- The same for every part with options: hat / hair, sweater / hat, hand / sleeve.
+
 ## 10. Checks before a set is used
 - Every file of a slot has the same pixel size.
 - Every option of a slot has the same box in the product (no per-item transform).

@@ -219,7 +219,7 @@ interface KitView {
 
 interface KitCut {
   views?: KitView[];
-  /** Colour plates (JPEG base64) by key: each file's colours over the whole canvas. */
+  /** Colour plates (PNG base64, the picture's own alpha since 2026-10-30; JPEG before) by key: each file's colours over the whole canvas. */
   plates?: Record<string, string>;
   crop?: { x: number; y: number; w: number; h: number };
   width: number;
@@ -313,6 +313,8 @@ function cutInput(p: CtCharProject): Record<string, unknown> {
       }),
       colors: slot.mode === "shape" ? slot.colors.map((c) => ({ name: c.name, hex: c.value })) : [],
       ...(slot.mode === "shape" && slot.wraps && figureOf(slot.id) ? { figure: figureOf(slot.id) } : {}),
+      // Drawn in a cut colour: every colour is a recolour, the first one too.
+      cut_colour: !!slot.cutColor,
     })),
   );
   const zones = plan.pieces.filter((x) => x.kind === "zone").map((x) => ({ id: x.key.slice(5), region: x.region.url }));

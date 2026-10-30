@@ -269,6 +269,7 @@ function parseSlot(raw: unknown): CtCharSlot | null {
     restyle: o.restyle === true,
     headwear: o.headwear === true,
     sameAs: typeof o.sameAs === "string" && /^[\w-]{1,40}$/.test(o.sameAs) ? o.sameAs : null,
+    cutColor: typeof o.cutColor === "string" && o.cutColor ? hexOr(o.cutColor) : null,
   };
 }
 
@@ -734,6 +735,9 @@ export function briefProblems(brief: CtCharBrief): string[] {
         else if (lead.sameAs) out.push(`Nhân vật ${i + 1}: "${slot.part}" phải cùng lựa chọn với phần gốc, không phải "${lead.part}" (đã cùng lựa chọn với phần khác).`);
         else if (names(lead) !== names(slot)) out.push(`Nhân vật ${i + 1}: "${slot.part}" cùng lựa chọn với "${lead.part}" nhưng khác kiểu / màu hoặc thứ tự.`);
       }
+      if (slot.cutColor && !/^#[0-9a-f]{6}$/.test(slot.cutColor)) out.push(`Nhân vật ${i + 1}: màu cắt của "${slot.part}" cần mã #rrggbb.`);
+      if (slot.cutColor && (slot.mode === "texture" || (slot.mode === "shape" && !slot.colors.length)))
+        out.push(`Nhân vật ${i + 1}: "${slot.part}" vẽ bằng màu cắt nhưng không có màu nào cho khách (colors) — khách sẽ thấy màu cắt.`);
       if (slot.on && !sub.slots.some((x) => x !== slot && (x.id === slot.on || x.group === slot.on)))
         out.push(`Nhân vật ${i + 1}: "${slot.part}" vẽ trên "${slot.on}" nhưng nhân vật này không có phần nào có id / group đó.`);
     });

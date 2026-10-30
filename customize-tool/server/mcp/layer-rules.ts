@@ -147,7 +147,10 @@ pictures. In order:
    p99 = colour steps; red over 300·aa² lỗ or p99 > 20) → a picture that also failed Khớp is redrawn; a part the colour
    of its neighbour gets cutColor; otherwise redraw once, then the file editor. Ghép only reports, it changes no pixel.
    The back hair fills the 1 px gaps along a jaw or ear (layer-kit wraps gap fill) — a few hundred lỗ px are normal.
-5. Re-cut, and the set is used only when every check is green (or the editor accepted what is left).
+5. A redraw uses the picture's plan prompt (a one-off prompt replaces all of it — the 2026-10-30 witch hat came back a
+   pink beanie); a lasting change goes into the plan. Every attempt's numbers are noted, the BEST attempt is kept
+   (MCP char_use_edit when the last came out worse), at most 3 attempts per picture.
+6. Re-cut, and the set is used only when every check is green (or the editor accepted what is left).
 
 ## 10. Checks before a set is used
 - Every file of a slot has the same pixel size.

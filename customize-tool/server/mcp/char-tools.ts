@@ -91,7 +91,8 @@ const CLEAN_SET =
   "2) same colour as the neighbour (silver hair under a white fur brim, a white sleeve on a pale hand, a red hat on a red sweater, hair the colour of the skin): give the slot cutColor in the brief BEFORE its 3b pictures are drawn — a #rrggbb far from every neighbour, mid-light, never magenta or skin; the colours of that slot (the first one too) take their hex from the part in the master. Check every pair of parts that touch: the hair against the hat, face and outfit; a hat against the sweater; a sleeve against the hand. " +
   "3) every picture adds ONE part and moves nothing of the picture it is drawn on (the doll's face, arms, outline stay where they were). " +
   "4) after char_cut read char_status failedChecks and fix by the check, never by asking for a looser cut: \"Khớp\" (the picture moved) or \"xoá / dời … px của búp bê\" → char_run_edits that picture again (same prompt + \"keep the figure exactly where it is, do not move or resize anything\") · \"Vùng trống\" → the part was not drawn: draw it bolder · \"Ghép = 3b\" red (lỗ = see-through pixels, p99 = colour steps): when the same picture also failed Khớp, redraw it; when its part is the same colour as its neighbour, give the slot cutColor and redraw; otherwise view_image the file and its picture, redraw once, and if it stays red say so in the summary (the editor fixes it by hand). A few hundred lỗ px along a jaw or ear are normal (the back hair fills them). " +
-  "5) re-cut (char_cut \"plan\" after a redrawn picture) and report every check that is still red.";
+  "5) redraw a picture with its PLAN prompt: char_run_edits {roles: [role]} (prompts {role} replaces the whole prompt, the part's description too — then copy it in), and a lasting change (\"keep the figure exactly where it is\") goes into the plan with char_plan_pictures. Note each attempt's numbers (Khớp px, Ghép lỗ / p99); when the last is worse than an earlier one, char_use_edit the best attempt (then redraw the pictures drawn from it). At most 3 attempts per picture — then keep the best and say what is still red. " +
+  "6) re-cut (char_cut \"plan\" after a redrawn picture) and report every check that is still red.";
 
 const MASTER_INSTRUCTIONS = [
   ...COMMON,
@@ -1043,6 +1044,39 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
         ...(p.brief.versionOf ? { lineupProductIds: (await loadProject(db, p.brief.versionOf.id))?.product_ids ?? [] } : {}),
         ...(busy(p) ? { message: "Still running — call char_status again." } : {}),
       });
+    },
+  },
+  {
+    name: "char_use_edit",
+    description:
+      "Bộ nhân vật (chat / auto): go back to an EARLIER attempt of a 3b picture (asked 2026-10-30: a redraw that came out worse replaced the better one). image_id = an attempt of that role from char_run_edits / char_wait. It becomes the picture the role uses; the pictures drawn from that role are listed in \"redraw\" — run them again (char_run_edits roles) so they lie on it, then char_cut \"plan\".",
+    inputSchema: { type: "object", properties: { ...TASK_ARG, ...SET_ARG, image_id: { type: "string", description: "The earlier attempt (a 3b picture of the set, status done)." } }, required: ["task_id", "image_id"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
+      if (!["edits", "chat", "auto"].includes(task.input.char?.step ?? "")) throw new Error("char_use_edit is for the edits, chat and auto steps");
+      if (project.layers?.status === "building") throw new Error("Đang cắt layer — chờ xong");
+      const id = str(args.image_id);
+      if (!UUID.test(id)) throw new Error("image_id is not a valid id");
+      const images = await loadImages(db, project.id);
+      const im = images.find((x) => x.id === id);
+      if (!im || im.kind !== "edit" || im.role === "work") throw new Error("image_id is not a 3b picture of this set");
+      if (im.status !== "done") throw new Error(`That attempt is ${im.status}, not done`);
+      // The role uses its newest picture (latestEditsOf), so the attempt is made the newest.
+      const { error } = await db.from(CT_TABLES.charImages).update({ created_at: new Date().toISOString() }).eq("id", id);
+      if (error) throw new Error(error.message);
+      const plan = planEdits(project.brief);
+      const redraw = new Set<string>();
+      for (let grew = true; grew; ) {
+        grew = false;
+        for (const e of plan)
+          if (!redraw.has(e.role) && (e.source === im.role || redraw.has(e.source))) {
+            redraw.add(e.role);
+            grew = true;
+          }
+      }
+      await progress(db, task.id, `Dùng lại bản trước của ${im.note || im.role}`);
+      return json({ ok: true, role: im.role, redraw: [...redraw], next: redraw.size ? "char_run_edits {roles: redraw} → char_wait → view_image, then char_cut \"plan\"." : "char_cut \"plan\"." });
     },
   },
   {

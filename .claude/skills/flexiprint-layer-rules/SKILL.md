@@ -90,3 +90,4 @@ clean master (§9-clean) → cutColor on every slot the colour of a part it touc
 moved → after the cut fix each failed check by its picture ("Khớp" / "xoá / dời" → redraw, "Vùng trống" → bolder,
 "Ghép = 3b" → redraw / cutColor / file editor) — never a looser threshold. "Ghép = 3b" only reports; the 1 px
 jaw / ear gaps are filled by the back hair in the cut.
+- char_use_edit: an earlier attempt of a 3b picture becomes the one used (the best attempt kept).

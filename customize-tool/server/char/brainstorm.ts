@@ -111,10 +111,11 @@ Every brief is built like this, so every proposal must respect it:
 - Theme outfits (a Santa hat + a Christmas sweater / Halloween / Easter): ONE shape slot per subject, part "outfit (hat
   and sweater)", "headwear": true, group "outfit" (a group name per kind of part — inside a pose it only names the
   picture), "restyle": true (Halloween / Easter are redrawn from the Santa outfit keeping the hat's band: the hair fits
-  them all), follows = the Theme chooser's id. The hair slots: group "hair", "on": "outfit" (drawn UNDER the hats: no
-  hair sticking out; in the product the hair lies over the whole outfit exactly like 3c) — 3 colours each in "colors".
+  them all), follows = the Theme chooser's id. The hair slots: group "hair", NO "on" (drawn on the bald doll — the WHOLE
+  head of hair, the top of the head too, lying close to the head; the product puts the hat over it as its own layer,
+  so the seam is the hat's own outline and the hair fits every hat) — 3 colours each in "colors".
 - Hats and hair — every theme the SAME style (user 2026-10-30, like set 1c307fa0): every theme has a hat on the same
-  band (restyle from the first theme), ONE hair slot "on": "outfit" fits them all, the customer's hair pick looks the
+  band (restyle from the first theme), ONE hair slot (on the bald doll, the hats over it) fits them all, the customer's hair pick looks the
   same in every theme. Never a theme without the hat, a hat of another shape (a wide-brimmed witch hat) or a hair slot
   per theme — pick themes whose hats share the band.
   - a name on the brim: place "on", ALWAYS "band": true + box = where the band is (shares of the character's box, measured

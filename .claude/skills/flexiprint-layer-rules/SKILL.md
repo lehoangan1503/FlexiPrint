@@ -57,9 +57,10 @@ character (same groups, follows the layer, mirrored with the character). One mas
 
 - The product stacks the files in the cut's order; any reorder shows what the upper file hid. Bug 2026-10-29: the
   Santa hat split out over the hair showed the brim's shadow on the forehead (in the outfit file) as a skin line.
-- Hair with `on` = the outfit (drawn under the hat, cut against it) → never split the hat out (product.ts `hatOver`).
-  Hair on the bald doll + `headwear` → the hat is its own layer over the hair (old sets).
-- Every theme the SAME style (user 2026-10-30, set 1c307fa0): hats on one band (restyle), ONE hair slot under them.
+- Hair on the bald doll (no `on`, whole head of hair) + `headwear` → the hat is its own layer over the hair (product.ts
+  `hatOver`), its forehead shadow dropped in the cut (layer-kit `cast_shadow`) — the Teeinblue way, since 2026-10-30.
+  Hair with `on` = the outfit (older sets) fits only that hat: another theme's brim showed bald patches.
+- Every theme the SAME style (user 2026-10-30, set 1c307fa0): hats on one band (restyle), ONE hair slot on the bald doll, the hats over it.
   No theme without the hat, no other hat shape, no hair slot per theme. A "No …" choice = slot `optional` (text NO
   tile), never a drawn / cut option; never `optional` on a hat with hair drawn under it.
 - A name on a brim: `brimOf(subject, text.shownWhen)` measures the hat of that theme's option.

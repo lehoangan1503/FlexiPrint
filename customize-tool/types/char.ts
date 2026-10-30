@@ -517,6 +517,9 @@ export interface CtCharImportLayer {
   /** Label of the group row ("Skin tone") when there are 2+ groups. */
   groupLabel: string;
   groups: CtCharImportGroup[];
+  /** Its option pictures show the layers that follow it drawn in (the hair under a hat: the choice is the hat, the
+   * file only a sliver of hair). */
+  thumbWithFollowers?: boolean;
 }
 
 export interface CtCharImportGroup {

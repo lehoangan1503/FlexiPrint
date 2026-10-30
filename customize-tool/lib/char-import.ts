@@ -299,6 +299,7 @@ export function readTeeinblue(name: string, files: CtCharImportFile[], texts: Ct
         swatch: "",
         options: order.map((o, oi) => ({ name: hatLabels[oi], url: fileOf(p.follower, `${c}--${o.sfx}`)?.url ?? "", default: c === defHair && o.hat === defHat })),
       }));
+      lead.thumbWithFollowers = true;
       follow.kind = "linked";
       follow.follows = lead.key;
       follow.groups = colours.map((_, ci) => ({ name: colourNames[ci], swatch: "", options: order.map((o, oi) => ({ name: hatLabels[oi], url: fileOf(p.leader, o.hat)?.url ?? "", default: false })) }));
@@ -488,6 +489,7 @@ export function parseManifest(raw: unknown, files: CtCharImportFile[]): { manife
               kind,
               follows: kind === "linked" ? txt(l.follows, 120) : "",
               groupLabel: txt(l.groupLabel, 120),
+              ...(l.thumbWithFollowers === true ? { thumbWithFollowers: true } : {}),
               groups: arr(l.groups).map((rg) => {
                 const g = rec(rg);
                 return {

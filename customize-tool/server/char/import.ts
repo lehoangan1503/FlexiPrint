@@ -286,8 +286,7 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     // ---- every file: fetched, checked (canvas size), its option picture (thumb) made once per look ----
     let done = 0;
     const thumbs = new Map<string, Promise<string>>();
-    const thumbOf = (url: string, png: Buffer): Promise<string> => {
-      const look = url.split("/").pop() ?? url;
+    const thumbOf = (look: string, png: Buffer): Promise<string> => {
       const hit = thumbs.get(look);
       if (hit) return hit;
       const made = (async () => {
@@ -327,18 +326,33 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
       done++;
       if (done % 100 === 0) await setImported(db, p.id, { done, beat: new Date().toISOString() });
     };
+    /** A layer that follows the one being made (the hat on the hair): drawn into its option pictures, above or under. */
+    type Linked = { layer: CtCharImportLayer; above: boolean };
+    /**
+     * An option's picture with the files of the layers that follow it (2026-10-30: the hair under a hat is a sliver
+     * around the hat — alone, the "Hat" choices showed four scraps of hair; with the hat drawn in they show the hat).
+     */
+    const optionThumb = async (url: string, png: Buffer, linked: Array<{ url: string; above: boolean }>): Promise<string> => {
+      const parts = linked.filter((l) => l.url);
+      if (!parts.length) return thumbOf(url.split("/").pop() ?? url, png);
+      const files = await Promise.all(parts.map(async (l) => ({ ...l, png: await fileOf(l.url) })));
+      const under = files.filter((f) => !f.above && f.png !== sheet).map((f) => ({ input: f.png }));
+      const over = files.filter((f) => f.above && f.png !== sheet).map((f) => ({ input: f.png }));
+      const base = under.length ? await sharp(under[0].input).composite([...under.slice(1), { input: png }, ...over]).png().toBuffer() : await sharp(png).composite(over).png().toBuffer();
+      return thumbOf([url, ...parts.map((l) => l.url)].map((u) => u.split("/").pop() ?? u).join("+"), base);
+    };
     /**
      * A group's cliparts — every group its own (a linked hat repeated in each hair colour group too). Written in one go:
      * ids made here, the files stored side by side, one insert for the group (a clipart at a time — insertClipart's
      * lookups — took ~40 min for 6915 files, 2026-10-29).
      */
-    const groupOf = async (layer: CtCharImportLayer, gi: number, withThumbs: boolean): Promise<Made> => {
+    const groupOf = async (layer: CtCharImportLayer, gi: number, withThumbs: boolean, linked: Linked[] = []): Promise<Made> => {
       const g = layer.groups[gi];
       const gocId = crypto.randomUUID();
       const rows = await Promise.all(
         g.options.map(async (o, oi) => {
           const png = await fileOf(o.url);
-          const thumb = withThumbs && png !== sheet ? await thumbOf(o.url, png) : "";
+          const thumb = withThumbs && png !== sheet ? await optionThumb(o.url, png, linked.map((l) => ({ url: l.layer.groups[gi]?.options[oi]?.url ?? "", above: l.above }))) : "";
           const role = oi === 0 ? "sub" : "variant";
           const path = ctLibraryPath(userId, folder.id, role, "image/png");
           const url = await ctUpload(path, png, "image/png");
@@ -422,6 +436,8 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
         for (const layer of x.layers) {
           const cfg = defaultRegionConfig("image");
           const choice = layer.kind === "choice";
+          const at = x.layers.indexOf(layer);
+          const linked: Linked[] = x.layers.filter((l) => layer.thumbWithFollowers && l.kind === "linked" && l.follows === layer.key).map((l) => ({ layer: l, above: x.layers.indexOf(l) > at }));
           const swatches = layer.groups.some((g) => g.swatch);
           const r: CtRegion = {
             id: crypto.randomUUID(),
@@ -445,7 +461,7 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
             const itemId = crypto.randomUUID();
             results.push(
               later(async () => {
-                const made = await groupOf(layer, gi, choice);
+                const made = await groupOf(layer, gi, choice, linked);
                 items.push({ id: itemId, region_id: r.id, asset_id: made.sub.id, transform: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0 }, is_default: gi === 0, sort_order: gi });
                 if (g.name) r.config.image.groupNames[itemId] = g.name;
                 const def = g.options.find((o) => o.default);

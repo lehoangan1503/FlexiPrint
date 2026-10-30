@@ -524,18 +524,6 @@ def shared_lands(doll: np.ndarray, opt: np.ndarray, key: str | None, count: int,
     return [(big == k + 1) | ((big == 0) & t) for k, t in enumerate(sides)]
 
 
-def cast_shadow(doll: np.ndarray, opt: np.ndarray, m: np.ndarray, s: float) -> np.ndarray:
-    """The shadow a hat casts on the doll (a headwear outfit, 2026-10-30): along the part's edge, the doll's own colours
-    only darker (every channel by about the same factor). The hat lies over the hair in the product — its shadow on
-    the forehead showed as a skin line across the hair (2026-10-29); Teeinblue's hat files have none."""
-    d, o = doll[..., :3], opt[..., :3]
-    r = o / np.maximum(d, 0.04)
-    mean = r.mean(axis=2)
-    flat = (r.max(axis=2) - r.min(axis=2)) < 0.12 * np.maximum(mean, 0.5)
-    edge = cv2.distanceTransform(m.astype(np.uint8), cv2.DIST_L2, 5) <= 40 * s
-    return (doll[..., 3] > 0.9) & (opt[..., 3] > 0.9) & (mean > 0.35) & (mean < 0.97) & flat & edge
-
-
 def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: np.ndarray | None = None, fine: bool = False, spread: bool = False) -> tuple[np.ndarray, dict]:
     """The pixels an option picture (registered onto the doll, both RGBA on one canvas) drew anew: a clearly different
     colour where both are figure, or figure where the doll has none (hair past the head, a skirt past the legs).
@@ -591,8 +579,6 @@ def part_region(doll: np.ndarray, opt: np.ndarray, key: str | None = None, own: 
         holes = [i + 1 for i, v in enumerate(sizes) if v <= 1500 * s * s and (i + 1) not in border]
         if holes:
             m |= np.isin(lab, holes)
-    if spread:
-        m &= ~cast_shadow(doll, opt, m, s)
     # The part's own drawn outline round it: one px more (never past the picture's own alpha).
     m = cv2.dilate(m.astype(np.uint8), kernel(1)).astype(bool) & (oa > 0.02) & ~keyed
     lost = clean((da - oa) > 0.5, open_r=1, close_r=1, min_px=round(150 * s * s))

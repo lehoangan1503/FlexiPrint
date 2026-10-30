@@ -75,7 +75,7 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
   lib/char-pictures.ts PICTURE_PLAN_RULES; a set without a plan keeps the old lib/char-plan.ts rules). Always:
   base = the PAPER DOLL drawn from the master (every part the customer changes taken off: bald, flat magenta #D81BD8
   tank top + shorts, empty hands, blank face) · every option drawn IN PLACE on the doll or on another picture of the
-  plan — one part per character per picture, the same
+  plan (hair under the hats of the outfit picture, cut against it) — one part per character per picture, the same
   part of every character may share one · colour parts draw only their first option (the rest are recolours) ·
   zones painted magenta on the doll. The doll is the canvas: fix the doll (legs, body) and every option is drawn
   again on it.
@@ -115,14 +115,13 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
 - A file is cut to lie on the picture it was drawn on. The product keeps the cut's order: back hair → body → parts in
   the set's order → front hair. Changing that order shows exactly the pixels the upper file hid. (2026-10-29: the
   Santa hat moved over the hair showed the brim's shadow on the forehead — part of the outfit file — as a skin line.)
-- Hair is drawn on the BALD doll (no on) — the whole head of hair, its top too, close to the head — and the hat is
-  its own layer OVER the hair (2026-10-30, the Teeinblue way): every visible seam is the hat's own outline, any hat
-  fits. The hat file has no shadow on the forehead (layer-kit cast_shadow). Hair drawn under a hat (on = the outfit,
-  older sets) lies over the whole outfit and fits only that hat: another theme's brim showed bald patches and a
-  white fur fringe (2026-10-30).
-- Every theme the SAME style (user 2026-10-30, set 1c307fa0): every theme's hat on one band (restyle), ONE hair
-  slot under it — the customer's hair pick is the same in every theme. Never a theme without the hat, a hat of
-  another shape or a hair slot per theme; never an optional hat over hair drawn under it.
+- Hair drawn UNDER a hat (slot on = the outfit): it lies over the whole outfit, the hat is never split out of it.
+  Hair drawn on the bald doll with a hat over it (no on): the hat becomes its own layer over the hair.
+- Every theme the SAME style (user 2026-10-30, set 1c307fa0): every theme's hat on one band (restyle). The hair is
+  cut from the picture with the hat (drawn under it; a hat laid over separately drawn hair looked stuck on) and fits
+  only that hat (a restyled brim showed bald patches), so one hair slot per theme drawn under its hat, the later ones
+  sameAs the first — one picker, the same styles. Never a theme without the hat, a hat of another shape, or an
+  optional hat over hair drawn under it.
 - A "No …" choice (no glasses) is the slot's optional — a text NO tile in the shop — never an option drawn or cut.
 - Every name on a hat: text band true + box where the band is (measured on that hat's picture) — the band
   is found inside that box. Found on its own (no band: old sets only) it missed the Santa cuff.

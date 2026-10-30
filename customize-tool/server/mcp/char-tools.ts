@@ -87,7 +87,7 @@ const BRAINSTORM_INSTRUCTIONS = [
  * biết đường mà sau này tạo 1 bộ clipart sạch chuẩn"). Same as layer rules §9e. */
 const CLEAN_SET =
   "CLEAN CLIPART (layer rules §9e, asked 2026-10-30) — a file is the 3b picture's pixels where it differs from what it was drawn on, so the files are as clean as the pictures: " +
-  "1) every theme the SAME style (one hat band, one hair slot — like set 1c307fa0); a \"No …\" choice is the slot's optional (a text NO tile), never a drawn option. " +
+  "1) every theme the SAME style (hats on one band, like set 1c307fa0; the hair drawn UNDER each theme's hat, one hair slot per theme sameAs the first); a \"No …\" choice is the slot's optional (a text NO tile), never a drawn option. " +
   "2) a part the same colour as what it touches (silver hair under a white fur brim, a white sleeve on a pale hand): give the slot cutColor before its 3b pictures are drawn; its colours take their hex from the part in the master. " +
   "3) every picture adds ONE part and moves nothing. A failed \"Khớp\" / \"xoá / dời … px của búp bê\" / \"Vùng trống\" → redraw that picture with its PLAN prompt (char_run_edits {roles: [role]}; prompts {role} replaces the part's description too). Note each attempt's Khớp px, keep the best (char_use_edit when the last came out worse), at most 3 attempts — then say what is still red. Never ask for a looser cut.";
 

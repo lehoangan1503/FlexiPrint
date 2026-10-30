@@ -169,7 +169,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
             ? { product_id: p.id, name: p.name, title: x.title, status: x.status, preview: x.previewUrl, store: x.storeUrl, admin: p.shopify!.adminUrl }
             : { product_id: p.id, name: p.name, error: "Sản phẩm Shopify không còn (đã xoá?) — deploy lại" };
         }),
-        note: "preview = link xem thử theme nháp (sản phẩm DRAFT: tạm thời, mỗi lần lấy link mới thì link cũ hỏng; không thêm vào giỏ được). store = trang cố định khi sản phẩm ACTIVE + bật Online Store.",
+        note: "preview = link xem thử theme nháp (sản phẩm DRAFT: hết hạn sau một thời gian — gọi lại để lấy link đang dùng được; không thêm vào giỏ được). store = trang cố định khi sản phẩm ACTIVE + bật Online Store.",
       });
     },
   },

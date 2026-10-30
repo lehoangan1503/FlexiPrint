@@ -416,7 +416,7 @@ export interface ShopifyPreview {
   id: string;
   title: string;
   status: CtShopifyStatus;
-  /** Staff preview in the draft theme — Shopify makes a new one each time and the earlier ones stop working. */
+  /** Staff preview in the draft theme — temporary: it expires after a while, a new call gives the valid one. */
   previewUrl: string | null;
   /** The product's own page (a published product), in the draft theme. */
   storeUrl: string | null;

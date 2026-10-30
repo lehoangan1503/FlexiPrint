@@ -67,6 +67,18 @@ export async function r2Remove(keys: string[]): Promise<void> {
   }
 }
 
+/** Every key under `prefix`. */
+export async function r2Keys(prefix: string): Promise<string[]> {
+  const out: string[] = [];
+  let token: string | undefined;
+  do {
+    const page = await s3().send(new ListObjectsV2Command({ Bucket: bucket(), Prefix: `${full(prefix)}/`, ContinuationToken: token }));
+    for (const o of page.Contents ?? []) if (o.Key) out.push(bare(o.Key));
+    token = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (token);
+  return out;
+}
+
 /** Keys under `prefix` last modified before `cutoff`, oldest first, at most `limit`. */
 export async function r2ListOlderThan(prefix: string, cutoff: Date, limit: number): Promise<string[]> {
   const out: Array<{ key: string; at: number }> = [];

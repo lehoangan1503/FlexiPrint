@@ -30,7 +30,7 @@ import { findProductFolder, productFolder } from "../artworks";
 import * as h from "../handlers";
 import { readImageInfo } from "../image-size";
 import { insertClipart } from "../library";
-import { r2Get, r2PublicUrl } from "../r2";
+import { r2Get, r2Keys, r2PublicUrl } from "../r2";
 import { ctLibraryPath, ctRemove, ctUpload } from "../storage";
 import type { CtSession } from "../supabase";
 import { charFolder, saveCharFile, saveCharRaw } from "./files";
@@ -516,11 +516,40 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     // Products the set was dragged into take the new layers, then the old product and its clipart go.
     await refreshSetUsers(s, { ...p, product_ids: old }, product.id).catch((e: Error) => console.warn("[ct] import set users", e.message));
     for (const pid of old) await dropProduct(s, pid);
+    await dropLeftovers(db, p, userId).catch((e: Error) => console.warn("[ct] import leftovers", e.message));
     return product.id;
   } catch (e) {
     await dropProduct(s, product.id).catch(() => undefined);
     throw e;
   }
+}
+
+/**
+ * Once the product is built, what only served the build goes (asked 2026-10-30: "chỉ hướng tới việc store lên được
+ * sản phẩm, sau đó các cái không cần bỏ hết"): the uploaded folder (every file is now a library clipart — n00-POD-02
+ * kept 527 MB of it) and option pictures no clipart points at (earlier builds'). A rebuild needs the folder uploaded
+ * again.
+ */
+async function dropLeftovers(db: Db, p: CtCharProject, userId: string): Promise<void> {
+  const folder = charFolder(p.user_id ?? userId, p.id);
+  await ctRemove(await r2Keys(`${folder}/import`));
+  await setImported(db, p.id, { indexUrl: "", manifestUrl: "" });
+  const thumbs = await r2Keys(`${folder}/thumb`);
+  if (!thumbs.length) return;
+  const used = new Set<string>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db
+      .from(CT_TABLES.assets)
+      .select("meta")
+      .like("meta->>thumb", `%/char/${p.id}/thumb/%`)
+      .order("id")
+      .range(from, from + 999)
+      .returns<Array<{ meta: { thumb?: string } }>>();
+    if (error) throw new Error(error.message);
+    for (const a of data ?? []) used.add(a.meta.thumb?.split("/").pop() ?? "");
+    if ((data ?? []).length < 1000) break;
+  }
+  await ctRemove(thumbs.filter((k) => !used.has(k.split("/").pop() ?? "")));
 }
 
 /** A product of the set with its clipart folder (its files on R2 too). */

@@ -25,7 +25,11 @@ const API = `${BASE}/api/customize-tool`;
 const JUNK = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|__MACOSX)(\/|$)|(^|\/)\._/i;
 const KEEP = /\.(png|jpe?g|webp|json|csv|md|txt|ttf|otf)$/i;
 const MIME = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", json: "application/json", csv: "text/csv", md: "text/markdown", txt: "text/plain", ttf: "font/ttf", otf: "font/otf" };
+/** Folders of a Teeinblue hand-off that only repeat its case layers (lib/char-import.ts IMPORT_COPIES). */
+const COPIES = /(^|\/)(clipart-cat|file-in|preview)\//i;
 const BATCH_BYTES = 8 * 1024 * 1024;
+/** A zip goes in chunks of this size, like the web page (lib/import-queue.ts ZIP_CHUNK). */
+const ZIP_CHUNK = 4 * 1024 * 1024;
 const BATCH_FILES = 30;
 const PARALLEL = 6;
 /** One tool call waits this long for the build + Shopify, then hands back the set id for flexiprint_import_status. */
@@ -84,20 +88,26 @@ function walk(root) {
   return out;
 }
 
-/** The web page's selectFiles: a Teeinblue hand-off sends only its case folders, the top files and the notes. */
+/** The web page's importKeep (lib/char-import.ts): a Teeinblue hand-off leaves home only its copies of the case layers. */
 function selectFiles(all) {
   const files = all.filter((f) => !JUNK.test(f.path) && KEEP.test(f.path));
   const cases = files.filter((f) => /(^|\/)teeinblue\.json$/i.test(f.path)).map((f) => f.path.split("/").slice(0, -1).join("/"));
   if (!cases.length) return files;
-  return files.filter((f) => !f.path.includes("/") || /\.(json|csv|md|txt)$/i.test(f.path) || cases.some((d) => f.path.startsWith(`${d}/`)));
+  return files.filter((f) => cases.some((d) => f.path.startsWith(`${d}/`)) || /\.(json|csv|md|txt)$/i.test(f.path) || !COPIES.test(f.path));
 }
 
-/** A folder named or found: an absolute path, ~/…, or a name under ~/Downloads / ~/Desktop / the cwd. */
-function findFolder(raw) {
+/** A folder or a .zip named or found: an absolute path, ~/…, or a name under ~/Downloads / ~/Desktop / the cwd. */
+function findSource(raw) {
   const p = String(raw ?? "").trim().replace(/^~(?=$|\/)/, os.homedir());
-  const tries = path.isAbsolute(p) ? [p] : [path.resolve(p), path.join(os.homedir(), "Downloads", p), path.join(os.homedir(), "Desktop", p), path.join(os.homedir(), "Downloads", "linh-download-output", p)];
-  for (const t of tries) if (fs.existsSync(t) && fs.statSync(t).isDirectory()) return t;
-  throw new Error(`Không thấy folder "${raw}" (đã tìm: ${tries.join(", ")})`);
+  const bases = path.isAbsolute(p) ? [p] : [path.resolve(p), path.join(os.homedir(), "Downloads", p), path.join(os.homedir(), "Desktop", p), path.join(os.homedir(), "Downloads", "linh-download-output", p)];
+  const tries = bases.flatMap((t) => (/\.zip$/i.test(t) ? [t] : [t, `${t}.zip`]));
+  for (const t of tries) {
+    if (!fs.existsSync(t)) continue;
+    const st = fs.statSync(t);
+    if (st.isDirectory()) return { root: t, zip: false };
+    if (st.isFile() && /\.zip$/i.test(t)) return { root: t, zip: true, size: st.size };
+  }
+  throw new Error(`Không thấy folder / file .zip "${raw}" (đã tìm: ${tries.join(", ")})`);
 }
 
 // ---------------------------------------------------------------- import
@@ -135,12 +145,36 @@ async function upload(setId, files, onBytes) {
   return uploaded;
 }
 
+/** A zip in fixed chunks (several at once); chunks the server already has are not sent again. */
+async function uploadZip(setId, file, size, onBytes) {
+  const state = await call(`char/projects/${setId}/import/zip`);
+  const have = new Set(state.total === size && state.chunk === ZIP_CHUNK ? state.have : []);
+  const count = Math.ceil(size / ZIP_CHUNK);
+  const todo = Array.from({ length: count }, (_, i) => i).filter((i) => !have.has(i));
+  const fd = fs.openSync(file, "r");
+  try {
+    let next = 0;
+    const worker = async () => {
+      for (let k = next++; k < todo.length; k = next++) {
+        const i = todo[k];
+        const buf = Buffer.alloc(Math.min(ZIP_CHUNK, size - i * ZIP_CHUNK));
+        fs.readSync(fd, buf, 0, buf.length, i * ZIP_CHUNK);
+        await call(`char/projects/${setId}/import/zip?index=${i}&chunk=${ZIP_CHUNK}&total=${size}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: buf });
+        onBytes(buf.length);
+      }
+    };
+    await Promise.all(Array.from({ length: PARALLEL }, worker));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** Where the set is: build, Shopify, links. */
 async function status(setId) {
   const { project } = await call(`char/projects/${setId}`);
   const imp = project.brief?.imported ?? {};
   const shop = imp.shopify ?? null;
-  const building = ["uploading", "analyzing", "agent", "building"].includes(imp.status);
+  const building = ["uploading", "unpacking", "analyzing", "agent", "building"].includes(imp.status);
   return {
     set_id: setId,
     name: project.name,
@@ -156,23 +190,33 @@ async function status(setId) {
 }
 
 async function importFolder({ folder, name }) {
-  const root = findFolder(folder);
-  const all = walk(root);
-  const files = selectFiles(all);
-  if (!files.length) throw new Error(`Folder ${root} không có ảnh / ghi chú nào để import`);
-  const bytes = files.reduce((n, f) => n + f.size, 0);
+  const src = findSource(folder);
+  const { root } = src;
+  const all = src.zip ? [] : walk(root);
+  const files = src.zip ? [] : selectFiles(all);
+  if (!src.zip && !files.length) throw new Error(`Folder ${root} không có ảnh / ghi chú nào để import`);
+  const bytes = src.zip ? src.size : files.reduce((n, f) => n + f.size, 0);
   const big = files.find((f) => f.size > 60 * 1024 * 1024);
   if (big) throw new Error(`${big.path} quá lớn (tối đa 60 MB một file)`);
-  const setName = String(name || path.basename(root)).slice(0, 200);
+  const setName = String(name || path.basename(root).replace(/\.zip$/i, "")).slice(0, 200);
   const { project } = await postJson("char/projects/import", { name: setName });
   const run = { setId: project.id, sent: 0, bytes, files: files.length, phase: "uploading", started: Date.now() };
   runs.set(project.id, run);
-  log(`${setName}: ${files.length} file (${mb(bytes)}) → ${project.id}`);
-  const uploaded = await upload(project.id, files, (n) => {
+  const onBytes = (n) => {
     run.sent += n;
-  });
-  run.phase = "started";
-  await postJson(`char/projects/${project.id}/import/start`, { files: uploaded });
+  };
+  if (src.zip) {
+    log(`${setName}: zip ${mb(bytes)} → ${project.id}`);
+    await uploadZip(project.id, root, bytes, onBytes);
+    run.phase = "started";
+    // The server unpacks it, keeps what a folder upload would, then reads it as a folder.
+    await postJson(`char/projects/${project.id}/import/unzip`, {});
+  } else {
+    log(`${setName}: ${files.length} file (${mb(bytes)}) → ${project.id}`);
+    const uploaded = await upload(project.id, files, onBytes);
+    run.phase = "started";
+    await postJson(`char/projects/${project.id}/import/start`, { files: uploaded });
+  }
   const until = Date.now() + WAIT_MS;
   let st = await status(project.id);
   while (!st.finished && Date.now() < until) {
@@ -182,7 +226,7 @@ async function importFolder({ folder, name }) {
   run.phase = "done";
   return {
     folder: root,
-    sent: `${files.length} file (${mb(bytes)})${all.length - files.length ? `, bỏ ${all.length - files.length} file không cần` : ""}`,
+    sent: src.zip ? `zip ${mb(bytes)} (server giải nén)` : `${files.length} file (${mb(bytes)})${all.length - files.length ? `, bỏ ${all.length - files.length} file không cần` : ""}`,
     ...st,
     next: st.finished
       ? st.shopify?.preview
@@ -197,11 +241,11 @@ const TOOLS = [
   {
     name: "flexiprint_import",
     description:
-      "Import a finished bộ clipart folder on THIS machine (a Teeinblue hand-off like n00-POD-02, or any folder of layer files + mockups + notes) into FlexiPrint (flexi2). It uploads the folder, the server builds the bộ nhân vật + its product, then puts the product on the Shopify store as a DRAFT (price table by material, title/description from the folder). Waits up to ~12 min. → page (the set on flexi2), shopify.preview (store preview in the draft theme), shopify.admin, problems. folder = absolute path, ~/…, or a folder name in ~/Downloads.",
+      "Import a finished bộ clipart folder — or a .zip of one — on THIS machine (a Teeinblue hand-off like n00-POD-02, or any folder of layer files + mockups + notes) into FlexiPrint (flexi2). It uploads the folder, the server builds the bộ nhân vật + its product, then puts the product on the Shopify store as a DRAFT (price table by material, title/description from the folder). Waits up to ~12 min. → page (the set on flexi2), shopify.preview (store preview in the draft theme), shopify.admin, problems. folder = absolute path, ~/…, or a folder / zip name in ~/Downloads (a .zip is sent whole in 4 MB chunks and unpacked by the server).",
     inputSchema: {
       type: "object",
       properties: {
-        folder: { type: "string", description: "The folder: /Users/…/n00-POD-02, ~/Downloads/n00-POD-02, or just n00-POD-02." },
+        folder: { type: "string", description: "The folder or .zip: /Users/…/n00-POD-02, ~/Downloads/n00-POD-02.zip, or just n00-POD-02." },
         name: { type: "string", description: "Name of the set (default: the folder name)." },
       },
       required: ["folder"],
@@ -231,7 +275,7 @@ async function handle(msg) {
   if (id === undefined) return;
   try {
     if (method === "initialize")
-      return send({ jsonrpc: "2.0", id, result: { protocolVersion: params?.protocolVersion ?? "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "flexiprint-import", version: "1.0.0" } } });
+      return send({ jsonrpc: "2.0", id, result: { protocolVersion: params?.protocolVersion ?? "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "flexiprint-import", version: "1.1.0" } } });
     if (method === "ping") return send({ jsonrpc: "2.0", id, result: {} });
     if (method === "tools/list") return send({ jsonrpc: "2.0", id, result: { tools: TOOLS } });
     if (method === "tools/call") {

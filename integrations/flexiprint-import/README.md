@@ -10,12 +10,14 @@ Không chạy được trên agent @flexiprint (server công ty không đọc đ
 
 | Tool | Việc |
 |---|---|
-| `flexiprint_import {folder, name?}` | Tải folder lên, chờ dựng xong + lên Shopify (tối đa ~12 phút). Trả `page` (bộ trên flexi2), `shopify.preview` (xem thử trên store, theme nháp), `shopify.admin`, `problems` |
+| `flexiprint_import {folder, name?}` | Tải folder (hoặc file `.zip`) lên, chờ dựng xong + lên Shopify (tối đa ~12 phút). Trả `page` (bộ trên flexi2), `shopify.preview` (xem thử trên store, theme nháp), `shopify.admin`, `problems` |
 | `flexiprint_import_status {set_id}` | Tiến độ / kết quả khi lần gọi trên chưa chờ hết |
 
-`folder`: đường dẫn đầy đủ, `~/…`, hoặc chỉ tên folder (tìm trong `~/Downloads`, `~/Desktop`, `~/Downloads/linh-download-output`).
-File gửi lên giống trang web: ảnh / json / csv / md / txt / font; bộ Teeinblue chỉ gửi các folder `teeinblue/<case>/`,
-file ở ngoài cùng (mockup, ảnh mẫu, title-description.txt) và ghi chú — bản cắt sẵn ở lại máy.
+`folder`: đường dẫn đầy đủ, `~/…`, hoặc chỉ tên folder / zip (tìm trong `~/Downloads`, `~/Desktop`, `~/Downloads/linh-download-output`).
+Folder: chọn file giống trang web (`importKeep` trong lib/char-import.ts) — ảnh / json / csv / md / txt / font; bộ Teeinblue
+chỉ để lại máy các bản sao lớp (`clipart-cat/`, `file-in/`, `preview/`), còn lại (ảnh bán hàng, ảnh mẫu, nền preview, font,
+ghi chú) đều gửi. File `.zip`: gửi nguyên theo mảnh 4 MB (song song, đứt thì gửi tiếp phần thiếu), server giải nén rồi chọn
+file y như folder.
 
 ## Cài (một lần)
 

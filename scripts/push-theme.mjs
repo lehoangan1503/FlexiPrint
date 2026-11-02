@@ -10,6 +10,10 @@
 //   assets/ct-customizer.{js,css}
 //   templates/product.flexiprint.json    (section flexiprint-product, api_base = API_BASE, default flexi2) — the template every
 //                                        deployed product uses (server/shopify.ts CT_SHOPIFY_TEMPLATE_SUFFIX)
+// The template copies the live theme's product page (read only, asked 2026-11-02 "cho giống store chính"): its info blocks
+// the section knows (sale, delivery date, benefits, collapsible rows — Description shows the product description —,
+// custom liquid) in their order, and the sections under it (disclosures, related products).
+// SKIP_ASSETS=1 sends only the section + template (no storefront build, ct-customizer.* left as they are on the theme).
 // The live (MAIN) theme is refused unless ALLOW_LIVE=1.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -49,19 +53,47 @@ const theme = themes.nodes.find((t) => t.name === THEME || t.id.endsWith(`/${THE
 if (!theme) throw new Error(`Không thấy theme "${THEME}". Có: ${themes.nodes.map((t) => `${t.name} (${t.id.split("/").pop()}, ${t.role})`).join(", ")}`);
 if (theme.role === "MAIN" && process.env.ALLOW_LIVE !== "1") throw new Error(`"${theme.name}" là theme live — không đẩy (ALLOW_LIVE=1 nếu thật sự muốn).`);
 
-execFileSync("npm", ["run", "-s", "build:ct-storefront"], { cwd: root, stdio: "inherit" });
+const skipAssets = process.env.SKIP_ASSETS === "1";
+if (!skipAssets) execFileSync("npm", ["run", "-s", "build:ct-storefront"], { cwd: root, stdio: "inherit" });
 
 const src = (p) => fs.readFileSync(path.join(root, "customize-tool/shopify", p), "utf8");
 const template = JSON.parse(src("templates/product.customize.json"));
 template.sections.main.type = "flexiprint-product";
 template.sections.main.settings.api_base = API_BASE;
 
+// The live theme's product page, read only.
+const OWN_BLOCKS = new Set(["custom_liquid", "cv_sale_banner", "cv_delivery", "cv_benefits", "collapsible_tab"]);
+const live = themes.nodes.find((t) => t.role === "MAIN");
+if (live) {
+  const { theme: lt } = await gql(
+    `query($id: ID!) { theme(id: $id) { files(filenames: ["templates/product.json"]) { nodes { body { ... on OnlineStoreThemeFileBodyText { content } } } } } }`,
+    { id: live.id },
+  );
+  const text = lt?.files.nodes[0]?.body?.content ?? "";
+  const page = text ? JSON.parse(text.replace(/^\s*\/\*[\s\S]*?\*\//, "")) : null;
+  const main = page?.sections?.[page.order.find((k) => page.sections[k].type === "main-product") ?? "main"];
+  if (main) {
+    const order = (main.block_order ?? Object.keys(main.blocks ?? {})).filter((k) => OWN_BLOCKS.has(main.blocks[k]?.type) && !main.blocks[k].disabled);
+    template.sections.main.blocks = Object.fromEntries(order.map((k) => [k, main.blocks[k]]));
+    template.sections.main.block_order = order;
+    for (const k of page.order.filter((k) => page.sections[k].type !== "main-product")) {
+      template.sections[k] = page.sections[k];
+      template.order.push(k);
+    }
+    console.log(`Theo trang sản phẩm theme live "${live.name}": khối ${order.join(", ")}; section ${template.order.join(", ")}`);
+  }
+}
+
 // Section first: a template may only reference a section that already exists on the theme.
 const batches = [
   [
     ["sections/flexiprint-product.liquid", src("sections/main-product.liquid")],
-    ["assets/ct-customizer.js", src("assets/ct-customizer.js")],
-    ["assets/ct-customizer.css", src("assets/ct-customizer.css")],
+    ...(skipAssets
+      ? []
+      : [
+          ["assets/ct-customizer.js", src("assets/ct-customizer.js")],
+          ["assets/ct-customizer.css", src("assets/ct-customizer.css")],
+        ]),
   ],
   [["templates/product.flexiprint.json", JSON.stringify(template, null, 2)]],
 ];

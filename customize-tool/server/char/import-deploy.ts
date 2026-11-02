@@ -2,7 +2,7 @@
  * An imported bộ goes to Shopify by itself (asked 2026-10-30: "việc import bộ là thẳng tới deploy và ra sản phẩm
  * preview luôn chứ không deploy tay"): once built, its product is deployed as a DRAFT — the folder's title and
  * description (title-description.txt), the price table named after its material, its mockups as images — and the set
- * keeps the staff preview link that opens it in the draft theme (SHOPIFY_PREVIEW_THEME_ID). Nothing goes on sale: an
+ * keeps the staff preview link (live theme, template flexi2). Nothing goes on sale: an
  * editor turns it ACTIVE later.
  */
 
@@ -146,7 +146,9 @@ export async function deployImported(s: CtSession, setId: string, productId: str
       siteUrl(),
     );
     if ("error" in r) throw new Error(r.error);
-    await saveImportShopify(s, setId, { status: "done", previewUrl: r.previewUrl ?? r.shopify.url, adminUrl: r.shopify.adminUrl, priceTable: table.name, error: r.warnings.join(" ") });
+    // An active product opens its own page (a preview link expires); a draft one only has the preview link (live theme).
+    const live = (product.shopify?.status ?? "DRAFT") === "ACTIVE";
+    await saveImportShopify(s, setId, { status: "done", previewUrl: live ? r.shopify.url : (r.previewUrl ?? r.shopify.url), adminUrl: r.shopify.adminUrl, priceTable: table.name, error: r.warnings.join(" ") });
   } catch (e) {
     await saveImportShopify(s, setId, { status: "failed", error: e instanceof Error ? e.message : String(e) }).catch(() => undefined);
   }

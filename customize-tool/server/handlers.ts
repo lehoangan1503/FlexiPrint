@@ -46,7 +46,7 @@ import { printPack, readPrintPackForm } from "./material";
 import { deleteClipart, loadProductAssets } from "./library";
 import { renameProductFolder } from "./artworks";
 import { loadPriceTable } from "./price-tables";
-import { createCollection, deployToShopify, listCollections, searchShopifyProducts, shopifyConfigured, shopifyInfo } from "./shopify";
+import { createCollection, deployToShopify, listCollections, previewLinks, searchShopifyProducts, shopifyConfigured, shopifyInfo } from "./shopify";
 import { priceTableProblems } from "../lib/pricing";
 
 const ROLES: CtAssetRole[] = ["main", "sub", "variant", "rendition", "composite", "mockup", "reference"];
@@ -380,6 +380,25 @@ export async function shopifyStatus(s: CtSession, productId: string): Promise<Ne
   } catch (e) {
     const info: CtShopifyInfo = { configured: shopifyConfigured(), shop: null, product: null, error: e instanceof Error ? e.message : String(e) };
     return NextResponse.json(info);
+  }
+}
+
+/**
+ * Open the product on the store with a link made now: its own page when it is on sale, else a fresh staff preview
+ * (Shopify's preview_key links expire, so a stored one goes 404). Live theme — template flexi2.
+ */
+export async function shopifyOpen(s: CtSession, productId: string): Promise<NextResponse> {
+  const product = await ownedProduct(s, productId);
+  if (!product) return jsonError("Không có quyền xem sản phẩm này", 403);
+  const gid = product.shopify?.productId;
+  if (!gid) return jsonError("Sản phẩm chưa lên Shopify", 404);
+  try {
+    const [link] = await previewLinks([gid]);
+    const url = (link?.status === "ACTIVE" ? link.storeUrl : null) ?? link?.previewUrl ?? link?.storeUrl ?? product.shopify?.url;
+    if (!url) return jsonError("Shopify không trả link sản phẩm", 502);
+    return NextResponse.redirect(url, 302);
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : String(e), 502);
   }
 }
 

@@ -85,6 +85,8 @@ export const ctApi = {
   photoCapabilities: () => call<CtPhotoCapabilities>("ai/photo"),
   /** Server step of customer-photo processing, for lib/photo-process.ts. */
   photoEndpoint: (productId: string) => `${CT_CONFIG.apiBase}/products/${productId}/photo`,
+  /** Opens the product on the store with a link made at click time (stored preview links expire). */
+  shopifyOpenUrl: (productId: string) => `${CT_CONFIG.apiBase}/products/${productId}/shopify/open`,
 
   listProducts: (q: string) =>
     call<{ products: CtProductListRow[] }>(`products?q=${encodeURIComponent(q)}`).then((r) => r.products),

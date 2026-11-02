@@ -7,7 +7,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, RefreshCw } from "lucide-react";
-import { charApi } from "../../lib/api-client";
+import { charApi, ctApi } from "../../lib/api-client";
 import { CHECKER_STYLE, CtButton } from "../ui";
 import type { CtCharImported } from "../../types";
 import type { CharCtx } from "./char-project";
@@ -147,8 +147,8 @@ export function ImportShopify(ctx: CharCtx) {
       {shop.status === "done" && (
         <div className="flex flex-wrap gap-2">
           {shop.previewUrl && (
-            <a href={shop.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">
-              <ExternalLink className="h-3.5 w-3.5" /> Xem thử trên store (theme nháp)
+            <a href={imp.productId ? ctApi.shopifyOpenUrl(imp.productId) : shop.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">
+              <ExternalLink className="h-3.5 w-3.5" /> Xem thử trên store
             </a>
           )}
           {shop.adminUrl && (

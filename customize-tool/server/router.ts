@@ -21,6 +21,7 @@
  *   POST   products/:id/publish          → snapshot into ct_templates (Shopify)
  *   POST   products/:id/deploy           CtDeployBody → publish + Shopify product with the price table's variants (server/shopify.ts)
  *   GET    products/:id/shopify          → CtShopifyInfo (shop + the linked Shopify product now)
+ *   GET    products/:id/shopify/open     → 302 to the product on the store, link made now (page when on sale, else a fresh preview)
  *   GET    shopify/products?q=           → { products } Shopify products to deploy onto
  *   GET    shopify/collections · POST {title}  → collections (deploy page badges; the starred one = breadcrumb)
  *   GET    price-tables · POST CtPriceTableBody · PATCH :id · DELETE :id   bảng giá (server/price-tables.ts)
@@ -263,6 +264,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return h.publish(session, id, publicOrigin(req));
     } else if (sub === "deploy" && method === "POST") {
       return h.deploy(session, id, await readJson<unknown>(req), publicOrigin(req));
+    } else if (sub === "shopify" && path[3] === "open" && method === "GET") {
+      return h.shopifyOpen(session, id);
     } else if (sub === "shopify" && method === "GET") {
       return h.shopifyStatus(session, id);
     } else if (sub === "assets" && method === "POST") {

@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, FileArchive, FolderUp, Loader2, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import type { CtCharImportRow } from "../../types";
-import { charApi } from "../../lib/api-client";
+import { charApi, ctApi } from "../../lib/api-client";
 import {
   RUNNING,
   STAGE_TEXT,
@@ -349,7 +349,7 @@ function RowCard({ row, onResume, onRemove }: { row: CtCharImportRow; onResume: 
           Mở bộ
         </Link>
         {shop?.status === "done" && shop.previewUrl && (
-          <a href={shop.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">
+          <a href={imp.productId ? ctApi.shopifyOpenUrl(imp.productId) : shop.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">
             <ExternalLink className="h-3.5 w-3.5" /> Xem thử trên store
           </a>
         )}

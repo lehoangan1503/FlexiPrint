@@ -293,6 +293,10 @@ export const charApi = {
   listImports: () => call<{ imports: CtCharImportRow[] }>("char/projects/imports").then((r) => r.imports),
   /** Files of an import already on the server (a cut-off upload sends only the rest). */
   importUploaded: (id: string) => call<{ files: CtCharImportFile[] }>(`char/projects/${id}/import/files`).then((r) => r.files),
+  /** A zip sent in chunks: which chunks the server has (a cut-off upload sends the rest). */
+  importZipState: (id: string) => call<{ total: number; chunk: number; have: number[] }>(`char/projects/${id}/import/zip`),
+  /** Every chunk came: the server unpacks the zip, then reads it as a folder. */
+  importUnzip: (id: string) => call<{ status: string }>(`char/projects/${id}/import/unzip`, json("POST", {})),
   importStart: (id: string, files: CtCharImportFile[]) => call<{ status: string }>(`char/projects/${id}/import/start`, json("POST", { files })),
   importRebuild: (id: string) => call<{ status: string }>(`char/projects/${id}/import/rebuild`, json("POST", {})),
   /** The imported set's product to Shopify again (a draft, the link on brief.imported.shopify). */

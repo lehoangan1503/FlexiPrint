@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, FolderUp, Loader2, RefreshCw, Trash2, Upload, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, FileArchive, FolderUp, Loader2, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import type { CtCharImportRow } from "../../types";
 import { charApi } from "../../lib/api-client";
 import {
@@ -16,6 +16,7 @@ import {
   STAGE_TEXT,
   cancelImport,
   enqueueImport,
+  enqueueZip,
   importStage,
   markSeen,
   pickedFromDrop,
@@ -33,6 +34,23 @@ import { ctConfirm } from "../dialogs";
 
 const mb = (n: number) => `${(n / 1024 / 1024).toFixed(n >= 100 * 1024 * 1024 ? 0 : 1)} MB`;
 const STEPS = ["Tải lên", "Đọc folder", "Dựng bộ + sản phẩm", "Shopify nháp"];
+
+/** Zip files (several at once). */
+function ZipInput({ onPick, inputRef }: { onPick: (files: File[]) => void; inputRef: (el: HTMLInputElement | null) => void }) {
+  return (
+    <input
+      type="file"
+      multiple
+      accept=".zip,application/zip"
+      className="hidden"
+      ref={inputRef}
+      onChange={(e) => {
+        if (e.target.files?.length) onPick([...e.target.files]);
+        e.target.value = "";
+      }}
+    />
+  );
+}
 
 /** A folder input (React has no typed prop for webkitdirectory). */
 function FolderInput({ onPick, inputRef }: { onPick: (name: string, files: CtPickedFile[]) => void; inputRef: (el: HTMLInputElement | null) => void }) {
@@ -62,6 +80,8 @@ export function ImportPage() {
   const [drag, setDrag] = useState(false);
   const picker = useRef<HTMLInputElement | null>(null);
   const resumeInput = useRef<HTMLInputElement | null>(null);
+  const zipPicker = useRef<HTMLInputElement | null>(null);
+  const resumeZipInput = useRef<HTMLInputElement | null>(null);
   const [resumeRow, setResumeRow] = useState<CtCharImportRow | null>(null);
 
   useEffect(() => {
@@ -77,12 +97,27 @@ export function ImportPage() {
     setError(msg);
   };
 
+  const addZips = (files: File[], resumeId = "") => {
+    const msgs = files.map((f) => enqueueZip(f, resumeId)).filter(Boolean);
+    setError(msgs.join("\n"));
+  };
+
   const resume = async (name: string, files: CtPickedFile[]) => {
     const row = resumeRow;
     setResumeRow(null);
     if (!row) return;
     if (name !== row.name && !(await ctConfirm({ title: "Folder khác tên", message: `Bộ đang dở là “${row.name}”, folder vừa chọn là “${name}”. Vẫn tải tiếp vào bộ này?`, confirmLabel: "Tải tiếp" }))) return;
     add(row.name, files, row.id);
+  };
+
+  const resumeZip = async (files: File[]) => {
+    const row = resumeRow;
+    setResumeRow(null);
+    const zip = files[0];
+    if (!row || !zip) return;
+    const name = zip.name.replace(/\.zip$/i, "");
+    if (name !== row.name && !(await ctConfirm({ title: "File zip khác tên", message: `Bộ đang dở là “${row.name}”, file vừa chọn là “${zip.name}”. Vẫn tải tiếp vào bộ này?`, confirmLabel: "Tải tiếp" }))) return;
+    addZips([zip], row.id);
   };
 
   const remove = async (row: CtCharImportRow) => {
@@ -112,13 +147,18 @@ export function ImportPage() {
           </Link>
           <FolderUp className="h-5 w-5 text-sky-500" />
           <h1 className="text-lg font-semibold">Import bộ</h1>
-          <CtButton variant="primary" className="ml-auto" onClick={() => picker.current?.click()}>
+          <CtButton className="ml-auto" onClick={() => zipPicker.current?.click()} title="Một hoặc nhiều file .zip — mỗi file là một bộ, server tự giải nén">
+            <FileArchive className="h-4 w-4" /> Chọn file zip
+          </CtButton>
+          <CtButton variant="primary" onClick={() => picker.current?.click()}>
             <Upload className="h-4 w-4" /> Chọn folder
           </CtButton>
         </div>
       </header>
       <FolderInput inputRef={(el) => (picker.current = el)} onPick={(name, files) => add(name, files)} />
       <FolderInput inputRef={(el) => (resumeInput.current = el)} onPick={(name, files) => void resume(name, files)} />
+      <ZipInput inputRef={(el) => (zipPicker.current = el)} onPick={(files) => addZips(files)} />
+      <ZipInput inputRef={(el) => (resumeZipInput.current = el)} onPick={(files) => void resumeZip(files)} />
 
       <main className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6">
         <div
@@ -130,18 +170,19 @@ export function ImportPage() {
           onDrop={(e) => {
             e.preventDefault();
             setDrag(false);
-            void pickedFromDrop(e.dataTransfer.items).then((list) => {
-              if (!list.length) setError("Kéo thả cả folder (không phải từng file)");
-              for (const f of list) add(f.name, f.files);
+            void pickedFromDrop(e.dataTransfer.items).then(({ folders, zips }) => {
+              if (!folders.length && !zips.length) setError("Kéo thả cả folder hoặc file .zip (không phải từng file ảnh)");
+              for (const f of folders) add(f.name, f.files);
+              if (zips.length) addZips(zips);
             });
           }}
           onClick={() => picker.current?.click()}
           className={`cursor-pointer rounded-xl border-2 border-dashed p-6 text-center transition-colors ${drag ? "border-sky-500 bg-sky-500/10" : "hover:border-sky-500/60 hover:bg-accent/40"}`}
         >
           <FolderUp className="mx-auto mb-2 h-8 w-8 text-sky-500" />
-          <div className="text-sm font-medium">Kéo thả một hoặc nhiều folder bộ vào đây — hoặc bấm để chọn (chọn tiếp được trong lúc đang tải)</div>
+          <div className="text-sm font-medium">Kéo thả một hoặc nhiều folder bộ / file .zip vào đây — hoặc bấm để chọn folder (chọn tiếp được trong lúc đang tải)</div>
           <p className="mx-auto mt-1 max-w-2xl text-xs text-muted-foreground">
-            Mỗi folder là một bộ: 2 bộ tải cùng lúc, các bộ khác xếp hàng. Chuyển sang trang khác trong app vẫn tải tiếp (góc header báo tiến độ) — chỉ đừng tải lại / đóng tab. Bị ngắt thì chọn lại đúng folder, chỉ phần còn thiếu được gửi.
+            Mỗi folder / file zip là một bộ (zip thì server tự giải nén): 2 bộ tải cùng lúc, các bộ khác xếp hàng. Chuyển sang trang khác trong app vẫn tải tiếp (góc header báo tiến độ) — chỉ đừng tải lại / đóng tab. Bị ngắt thì chọn lại đúng folder, chỉ phần còn thiếu được gửi.
           </p>
         </div>
 
@@ -182,9 +223,9 @@ export function ImportPage() {
               <RowCard
                 key={r.id}
                 row={r}
-                onResume={() => {
+                onResume={(zip) => {
                   setResumeRow(r);
-                  resumeInput.current?.click();
+                  (zip ? resumeZipInput : resumeInput).current?.click();
                 }}
                 onRemove={() => void remove(r)}
               />
@@ -251,14 +292,14 @@ function JobCard({ job, onCancel }: { job: CtImportJob; onCancel: () => void }) 
         </CtButton>
       </div>
       {/* Every file sent = the upload is done (a stop after it was telling the server to read the folder). */}
-      <Steps at={job.phase === "starting" || (!job.files.length && job.doneFiles > 0) ? 1 : 0} failed={failed} done={false} />
+      <Steps at={job.phase === "starting" || job.doneFiles >= job.total ? 1 : 0} failed={failed} done={false} />
       <Bar value={pct} tone={failed ? "bg-destructive" : "bg-sky-500"} />
       <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
         <span>
-          {job.phase === "queued" ? "Đang chờ lượt (2 bộ tải cùng lúc)" : job.phase === "starting" ? "Đã tải xong — đang báo server đọc folder…" : failed ? "Đã dừng" : "Đang tải lên"}
+          {job.phase === "queued" ? "Đang chờ lượt (2 bộ tải cùng lúc)" : job.phase === "starting" ? (job.zip ? "Đã tải xong — đang báo server giải nén…" : "Đã tải xong — đang báo server đọc folder…") : failed ? "Đã dừng" : "Đang tải lên"}
         </span>
         <span>
-          {job.doneFiles} / {job.total} file · {mb(sent)} / {mb(job.totalBytes)} · {Math.floor(pct)}%
+          {job.zip ? "file zip" : `${job.doneFiles} / ${job.total} file`} · {mb(sent)} / {mb(job.totalBytes)} · {Math.floor(pct)}%
         </span>
         {job.phase === "uploading" && job.speed > 0 && (
           <span>
@@ -266,7 +307,7 @@ function JobCard({ job, onCancel }: { job: CtImportJob; onCancel: () => void }) 
           </span>
         )}
         {job.skipped > 0 && <span>bỏ {job.skipped} file không cần</span>}
-        {job.resumed > 0 && <span>{job.resumed} file đã có trên server — không gửi lại</span>}
+        {job.resumed > 0 && <span>{job.resumed} {job.zip ? "mảnh" : "file"} đã có trên server — không gửi lại</span>}
       </div>
       {job.note && <p className="text-xs text-amber-600 dark:text-amber-400">{job.note}</p>}
       {job.error && <p className="whitespace-pre-wrap rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">{job.error}</p>}
@@ -274,9 +315,9 @@ function JobCard({ job, onCancel }: { job: CtImportJob; onCancel: () => void }) 
   );
 }
 
-const STEP_OF: Record<CtImportStage, number> = { uploading: 0, interrupted: 0, reading: 1, agent: 1, building: 2, stale: 2, deploying: 3, "deploy-failed": 3, done: 4, failed: 1 };
+const STEP_OF: Record<CtImportStage, number> = { uploading: 0, interrupted: 0, unpacking: 1, reading: 1, agent: 1, building: 2, stale: 2, deploying: 3, "deploy-failed": 3, done: 4, failed: 1 };
 
-function RowCard({ row, onResume, onRemove }: { row: CtCharImportRow; onResume: () => void; onRemove: () => void }) {
+function RowCard({ row, onResume, onRemove }: { row: CtCharImportRow; onResume: (zip: boolean) => void; onRemove: () => void }) {
   const imp = row.imported;
   const stage = importStage(row, uploadingHere(row.id));
   const bad = stage === "failed" || stage === "stale" || stage === "deploy-failed" || stage === "interrupted";
@@ -293,11 +334,11 @@ function RowCard({ row, onResume, onRemove }: { row: CtCharImportRow; onResume: 
       </div>
       <Steps at={at} failed={bad} done={stage === "done"} />
       <div className="text-xs">{STAGE_TEXT[stage]}</div>
-      {stage === "building" && imp.total > 0 && (
+      {(stage === "building" || stage === "unpacking") && imp.total > 0 && (
         <div className="space-y-1">
           <Bar value={(imp.done / imp.total) * 100} />
           <div className="text-xs text-muted-foreground">
-            {imp.done} / {imp.total} file layer
+            {imp.done} / {imp.total} {stage === "unpacking" ? "file đã giải nén" : "file layer"}
           </div>
         </div>
       )}
@@ -313,9 +354,14 @@ function RowCard({ row, onResume, onRemove }: { row: CtCharImportRow; onResume: 
           </a>
         )}
         {stage === "interrupted" && (
-          <CtButton onClick={onResume} title="Chọn lại đúng folder này — file đã có trên server không gửi lại">
-            <Upload className="h-4 w-4" /> Chọn lại folder để tải tiếp
-          </CtButton>
+          <>
+            <CtButton onClick={() => onResume(false)} title="Chọn lại đúng folder này — file đã có trên server không gửi lại">
+              <Upload className="h-4 w-4" /> Chọn lại folder để tải tiếp
+            </CtButton>
+            <CtButton onClick={() => onResume(true)} title="Chọn lại đúng file zip này — phần đã có trên server không gửi lại">
+              <FileArchive className="h-4 w-4" /> Chọn lại file zip
+            </CtButton>
+          </>
         )}
         {imp.files > 0 && <span className="text-[11px] text-muted-foreground">{imp.files} file · {mb(imp.bytes)}</span>}
         {!RUNNING.has(stage) && stage !== "done" && (

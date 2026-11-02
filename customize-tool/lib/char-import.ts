@@ -184,6 +184,24 @@ function grouped(stems: string[], ownToken: string): Array<{ token: string; stem
 /** The layer's own word in its file names ("09-chau1-dau" → "dau"). */
 const ownToken = (key: string) => key.split("-").pop() ?? "";
 
+const IMPORT_JUNK = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|__MACOSX)(\/|$)|(^|\/)\._/i;
+const IMPORT_KEEP = /\.(png|jpe?g|webp|json|csv|md|txt|ttf|otf)$/i;
+/** Folders of a Teeinblue hand-off that only repeat its case layers (cut copies, composed print / preview per case). */
+const IMPORT_COPIES = /(^|\/)(clipart-cat|file-in|preview)\//i;
+
+/**
+ * What of a picked folder (or an unpacked zip) is uploaded: every image / note / font. A Teeinblue hand-off (folders
+ * with teeinblue.json) brings its layers there whole-canvas, so only its copies of them (IMPORT_COPIES) stay home;
+ * everything else goes — the sales pictures (anh-ban-hang/mock-*), the sample (mau-goc), the preview background, fonts
+ * and notes, wherever they sit. Used by the page (lib/import-queue.ts) and by the server for a zip.
+ */
+export function importKeep<T extends { path: string }>(all: T[]): T[] {
+  const files = all.filter((f) => !IMPORT_JUNK.test(f.path) && IMPORT_KEEP.test(f.path));
+  const cases = files.filter((f) => /(^|\/)teeinblue\.json$/i.test(f.path)).map((f) => f.path.split("/").slice(0, -1).join("/"));
+  if (!cases.length) return files;
+  return files.filter((f) => cases.some((d) => f.path.startsWith(`${d}/`)) || /\.(json|csv|md|txt)$/i.test(f.path) || !IMPORT_COPIES.test(f.path));
+}
+
 /** Read a Teeinblue hand-off; null when the folder is not one. */
 export function readTeeinblue(name: string, files: CtCharImportFile[], texts: CtImportTexts): CtImportRead | null {
   const cases = files.filter((f) => base(f.path).toLowerCase() === "teeinblue.json").map((f) => dir(f.path));

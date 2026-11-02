@@ -7,6 +7,10 @@
  *   GET  char/projects/:id/import/files          → { files } already uploaded (an upload cut off goes on from there)
  *   POST char/projects/:id/import/files          multipart file[] + path[] (the folder, a few files a request)
  *                                                → { files: CtCharImportFile[] } saved under <set folder>/import/<path>
+ *   GET  char/projects/:id/import/zip            → { total, chunk, have[] } the chunks of a zip already on the server
+ *   POST char/projects/:id/import/zip?index=&chunk=&total=   one chunk of a zip (raw bytes)
+ *   POST char/projects/:id/import/unzip          all chunks came: unpacked in the background (status "unpacking"),
+ *                                                then read as an uploaded folder (start)
  *   POST char/projects/:id/import/start {files}  the whole list once uploaded: a known format (lib/char-import.ts) is
  *                                                read here and the product built in the background; any other folder
  *                                                goes to @flexiprint (a chat task: char_import_files → char_import_build)
@@ -22,12 +26,16 @@
  */
 
 import { createHash } from "node:crypto";
+import { promises as fsp } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import yauzl from "yauzl";
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_FONTS, CT_TABLES } from "../../config";
 import type { CtAsset, CtCharImported, CtCharImportFile, CtCharImportRow, CtCharImportLayer, CtCharImportManifest, CtCharImportText, CtCharProject, CtProduct, CtRegion, CtRegionItem } from "../../types";
 import { defaultCharBrief, parseCharBrief } from "../../lib/char-brief";
-import { manifestFiles, parseManifest, readTeeinblue, type CtImportTexts } from "../../lib/char-import";
+import { importKeep, manifestFiles, parseManifest, readTeeinblue, type CtImportTexts } from "../../lib/char-import";
 import { defaultProductConfig, defaultRegionConfig } from "../../lib/design";
 import { applyMaterialPreset, isMaterialId } from "../../lib/materials";
 import { createAgentTask } from "../agent/tasks";
@@ -175,6 +183,12 @@ async function startImport(s: CtSession, p: CtCharProject, body: unknown): Promi
     // Only files of this import.
     .filter((f) => f.path && keyOf(root, f.url) === `${root}/${f.path}`);
   if (!files.length) return jsonError("Chưa có file nào", 400);
+  return NextResponse.json(await startFrom(s, p, files));
+}
+
+/** The uploaded files read: a known format is built in the background, any other goes to @flexiprint. */
+async function startFrom(s: CtSession, p: CtCharProject, files: CtCharImportFile[]): Promise<{ status: string; summary?: string[]; problems?: string[] }> {
+  const root = importRoot(p, s.user.id);
   const indexUrl = await ctUpload(`${root}/_index.json`, Buffer.from(JSON.stringify(files)), "application/json");
   const db = jobDb(s);
   await setImported(db, p.id, { status: "analyzing", files: files.length, bytes: files.reduce((n, f) => n + f.size, 0), indexUrl, error: "", summary: [], problems: [] });
@@ -182,7 +196,7 @@ async function startImport(s: CtSession, p: CtCharProject, body: unknown): Promi
   const read = readTeeinblue(p.name, files, texts);
   if (read) {
     await startBuild(db, p.user_id ?? s.user.id, p.id, read.manifest, "teeinblue", read.summary, read.problems);
-    return NextResponse.json({ status: "building", summary: read.summary, problems: read.problems });
+    return { status: "building", summary: read.summary, problems: read.problems };
   }
   // Another layout: @flexiprint reads the folder and writes the manifest.
   await setImported(db, p.id, { status: "agent", format: "agent", summary: [`${files.length} file — không phải định dạng đã biết, @flexiprint đang phân tích folder`] });
@@ -193,7 +207,174 @@ async function startImport(s: CtSession, p: CtCharProject, body: unknown): Promi
     const err = ((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`;
     await setImported(db, p.id, { status: "failed", error: `Không nhận ra định dạng folder và không gọi được @flexiprint: ${err}` });
   }
-  return NextResponse.json({ status: res.ok ? "agent" : "failed" });
+  return { status: res.ok ? "agent" : "failed" };
+}
+
+// ---------------------------------------------------------------- a zip (asked 2026-11-02: "cho nó tải zip đi")
+//
+// One file instead of a thousand: the page sends the zip in fixed-size chunks (several at once, each written at its
+// place), the server keeps them on its own disk until all came, then opens the zip, keeps what a folder upload would
+// keep (importKeep) and goes on as after a folder upload. A cut-off upload asks which chunks came and sends the rest.
+
+/** Largest zip / chunk taken. */
+const MAX_ZIP = 8 * 1024 * 1024 * 1024;
+const MAX_CHUNK = 32 * 1024 * 1024;
+/** Files unpacked and stored at once. */
+const UNZIP_POOL = 8;
+
+interface ZipState {
+  total: number;
+  chunk: number;
+  have: number[];
+}
+
+const zipDir = () => path.join(os.tmpdir(), "ct-import-zip");
+const zipFile = (id: string) => path.join(zipDir(), `${id}.zip`);
+const zipMeta = (id: string) => path.join(zipDir(), `${id}.json`);
+const chunksOf = (z: Pick<ZipState, "total" | "chunk">) => Math.ceil(z.total / z.chunk);
+
+async function readZipState(id: string): Promise<ZipState | null> {
+  try {
+    const z = JSON.parse(await fsp.readFile(zipMeta(id), "utf8")) as ZipState;
+    return Array.isArray(z.have) && z.total > 0 && z.chunk > 0 ? z : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Chunk writes of one set go one after the other (the state file is read and written by each). */
+const zipLocks = new Map<string, Promise<unknown>>();
+function zipLocked<T>(id: string, run: () => Promise<T>): Promise<T> {
+  const next = (zipLocks.get(id) ?? Promise.resolve()).catch(() => undefined).then(run);
+  zipLocks.set(id, next);
+  void next.finally(() => zipLocks.get(id) === next && zipLocks.delete(id)).catch(() => undefined);
+  return next;
+}
+
+async function dropZip(id: string): Promise<void> {
+  await fsp.rm(zipFile(id), { force: true }).catch(() => undefined);
+  await fsp.rm(zipMeta(id), { force: true }).catch(() => undefined);
+}
+
+/** GET char/projects/:id/import/zip — the chunks already here. */
+async function zipStatus(p: CtCharProject): Promise<NextResponse> {
+  return NextResponse.json((await readZipState(p.id)) ?? { total: 0, chunk: 0, have: [] });
+}
+
+/** POST char/projects/:id/import/zip?index=&chunk=&total= — one chunk (raw bytes) written at its place. */
+async function zipChunk(req: Request, p: CtCharProject): Promise<NextResponse> {
+  if (p.brief.imported?.status !== "uploading") return jsonError("Bộ này không còn chờ file", 409);
+  const q = new URL(req.url).searchParams;
+  const index = Number(q.get("index"));
+  const chunk = Number(q.get("chunk"));
+  const total = Number(q.get("total"));
+  if (!Number.isInteger(total) || total <= 0 || total > MAX_ZIP) return jsonError("File zip tối đa 8 GB", 413);
+  if (!Number.isInteger(chunk) || chunk < 1024 * 1024 || chunk > MAX_CHUNK) return jsonError("Cỡ mảnh không hợp lệ", 400);
+  if (!Number.isInteger(index) || index < 0 || index >= chunksOf({ total, chunk })) return jsonError("Số mảnh không hợp lệ", 400);
+  const data = Buffer.from(await req.arrayBuffer());
+  const want = Math.min(chunk, total - index * chunk);
+  if (data.length !== want) return jsonError(`Mảnh ${index} thiếu dữ liệu (${data.length}/${want} byte) — gửi lại`, 400);
+  const state = await zipLocked(p.id, async () => {
+    await fsp.mkdir(zipDir(), { recursive: true });
+    let z = await readZipState(p.id);
+    // Another file picked for this set: start over.
+    if (!z || z.total !== total || z.chunk !== chunk) {
+      await dropZip(p.id);
+      z = { total, chunk, have: [] };
+    }
+    // "r+" writes anywhere in the file but needs it to exist.
+    await fsp.writeFile(zipFile(p.id), "", { flag: "a" });
+    const fh = await fsp.open(zipFile(p.id), "r+");
+    try {
+      await fh.write(data, 0, data.length, index * chunk);
+    } finally {
+      await fh.close();
+    }
+    if (!z.have.includes(index)) z.have.push(index);
+    await fsp.writeFile(zipMeta(p.id), JSON.stringify(z));
+    return z;
+  });
+  return NextResponse.json({ have: state.have.length, of: chunksOf(state) });
+}
+
+const unpacking = new Set<string>();
+
+/** POST char/projects/:id/import/unzip — every chunk came: opened in the background, then read as a folder would be. */
+async function unzipImport(s: CtSession, p: CtCharProject): Promise<NextResponse> {
+  if (unpacking.has(p.id)) return jsonError("Đang giải nén — chờ xong", 409);
+  const z = await readZipState(p.id);
+  const of = z ? chunksOf(z) : 0;
+  if (!z || z.have.length < of) return jsonError(`File zip chưa tải đủ (${z?.have.length ?? 0}/${of} mảnh)`, 409);
+  const db = jobDb(s);
+  await setImported(db, p.id, { status: "unpacking", done: 0, total: 0, files: 0, bytes: z.total, error: "", beat: new Date().toISOString() });
+  unpacking.add(p.id);
+  void unpackZip(s, p)
+    .then(async (files) => {
+      await dropZip(p.id);
+      if (!files.length) throw new Error("File zip không có ảnh / ghi chú nào để import");
+      await startFrom(s, p, files);
+    })
+    .catch(async (e: Error) => {
+      console.warn("[ct] import unzip", p.id, e.message);
+      await setImported(db, p.id, { status: "failed", error: `Giải nén lỗi: ${e.message}` }).catch(() => undefined);
+    })
+    .finally(() => unpacking.delete(p.id));
+  return NextResponse.json({ status: "unpacking" });
+}
+
+/** The zip's kept files stored under the import folder, as a folder upload would have put them. */
+async function unpackZip(s: CtSession, p: CtCharProject): Promise<CtCharImportFile[]> {
+  const root = importRoot(p, s.user.id);
+  const db = jobDb(s);
+  const zip = await new Promise<yauzl.ZipFile>((ok, no) => yauzl.open(zipFile(p.id), { lazyEntries: true, autoClose: false }, (e, z) => (e || !z ? no(e ?? new Error("Không mở được zip")) : ok(z))));
+  try {
+    const entries: yauzl.Entry[] = [];
+    await new Promise<void>((ok, no) => {
+      zip.on("entry", (e: yauzl.Entry) => {
+        if (!e.fileName.endsWith("/")) entries.push(e);
+        zip.readEntry();
+      });
+      zip.on("end", () => ok());
+      zip.on("error", no);
+      zip.readEntry();
+    });
+    // A zip of one folder: paths inside that folder (as a picked folder's are).
+    const names = entries.map((e) => e.fileName.replace(/\\/g, "/")).filter((n) => !/(^|\/)__MACOSX\//.test(n));
+    const tops = new Set(names.map((n) => (n.includes("/") ? n.split("/")[0] : "")));
+    const strip = tops.size === 1 && !tops.has("") ? `${[...tops][0]}/` : "";
+    const picked = importKeep(
+      entries.flatMap((entry) => {
+        const name = entry.fileName.replace(/\\/g, "/");
+        const clean = cleanPath(strip && name.startsWith(strip) ? name.slice(strip.length) : name);
+        return clean && entry.uncompressedSize <= MAX_IMPORT_FILE ? [{ path: clean, entry }] : [];
+      }),
+    );
+    await setImported(db, p.id, { total: picked.length, done: 0, beat: new Date().toISOString() });
+    const out: CtCharImportFile[] = [];
+    let next = 0;
+    let done = 0;
+    const worker = async () => {
+      for (let i = next++; i < picked.length; i = next++) {
+        const { path: rel, entry } = picked[i];
+        const data = await new Promise<Buffer>((ok, no) =>
+          zip.openReadStream(entry, (e, stream) => {
+            if (e || !stream) return no(e ?? new Error(`Không đọc được ${rel}`));
+            const parts: Buffer[] = [];
+            stream.on("data", (b: Buffer) => parts.push(b));
+            stream.on("end", () => ok(Buffer.concat(parts)));
+            stream.on("error", no);
+          }),
+        );
+        out.push({ path: rel, url: await ctUpload(`${root}/${rel}`, data, MIME[extOf(rel)] ?? "application/octet-stream"), size: data.length });
+        if (++done % 25 === 0) await setImported(db, p.id, { done, beat: new Date().toISOString() });
+      }
+    };
+    await Promise.all(Array.from({ length: UNZIP_POOL }, worker));
+    await setImported(db, p.id, { done, beat: new Date().toISOString() });
+    return out;
+  } finally {
+    zip.close();
+  }
 }
 
 async function readTexts(root: string, files: CtCharImportFile[]): Promise<CtImportTexts> {
@@ -677,8 +858,11 @@ export async function importRoute(req: Request, s: CtSession, id: string, sub: s
   const p = await importProject(s, id);
   if (p instanceof NextResponse) return p;
   if (sub === "files" && req.method === "GET") return uploadedFiles(s, p);
+  if (sub === "zip" && req.method === "GET") return zipStatus(p);
   if (req.method !== "POST") return jsonError("Not found", 404);
   if (sub === "files") return uploadFiles(s, p, await req.formData());
+  if (sub === "zip") return zipChunk(req, p);
+  if (sub === "unzip") return unzipImport(s, p);
   if (sub === "start") return startImport(s, p, await req.json().catch(() => null));
   if (sub === "rebuild") return rebuildImport(s, p);
   if (sub === "deploy") return redeployImport(s, p);

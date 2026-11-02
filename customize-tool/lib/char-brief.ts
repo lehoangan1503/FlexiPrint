@@ -337,7 +337,7 @@ function parseCompose(raw: unknown): CtCharComposeVersion[] | null {
   return list.length ? list : null;
 }
 
-const IMPORT_STATUSES: CtCharImported["status"][] = ["uploading", "analyzing", "agent", "building", "done", "failed"];
+const IMPORT_STATUSES: CtCharImported["status"][] = ["uploading", "unpacking", "analyzing", "agent", "building", "done", "failed"];
 
 /** An imported set's state (types/char.ts CtCharImported); null = a set drawn by AI. */
 function parseImported(raw: unknown): CtCharImported | null {

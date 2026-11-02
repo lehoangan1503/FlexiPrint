@@ -16,6 +16,7 @@ const STALE_MS = 3 * 60 * 1000;
 
 const STATUS_TEXT: Record<string, string> = {
   uploading: "Đang tải folder lên (trang import chưa xong — mở lại từ danh sách nếu bị ngắt)",
+  unpacking: "Đang giải nén file zip trên server…",
   analyzing: "Đang đọc folder…",
   agent: "@flexiprint đang phân tích folder (định dạng lạ) — xem ở ô chat",
   building: "Đang dựng bộ + sản phẩm từ file…",
@@ -30,8 +31,8 @@ export function ImportPanel(ctx: CharCtx) {
   if (!imp) return null;
   // A build with no sign of life for minutes was cut off (the app restarted, 2026-10-29): it can be started again.
   // eslint-disable-next-line react-hooks/purity -- a page that polls: "now" is meant to move
-  const stale = imp.status === "building" && (!imp.beat || Date.now() - Date.parse(imp.beat) > STALE_MS);
-  const running = !stale && (imp.status === "analyzing" || imp.status === "building" || imp.status === "agent");
+  const stale = (imp.status === "building" || imp.status === "unpacking") && (!imp.beat || Date.now() - Date.parse(imp.beat) > STALE_MS);
+  const running = !stale && (imp.status === "unpacking" || imp.status === "analyzing" || imp.status === "building" || imp.status === "agent");
   const sample = images.find((im) => im.id === project.master_id);
   const rebuild = async () => {
     setBusy(true);
@@ -56,15 +57,15 @@ export function ImportPanel(ctx: CharCtx) {
         <div className="min-w-[260px] flex-1 space-y-2">
           <div className="flex items-center gap-2 text-sm font-semibold">
             {stale ? <AlertTriangle className="h-4 w-4 text-amber-500" /> : running ? <Loader2 className="h-4 w-4 animate-spin text-sky-500" /> : imp.status === "done" ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : imp.status === "failed" ? <AlertTriangle className="h-4 w-4 text-destructive" /> : null}
-            {stale ? "Lần dựng bị ngắt (app khởi động lại) — bấm Dựng lại" : (STATUS_TEXT[imp.status] ?? imp.status)}
+            {stale && imp.status === "unpacking" ? "Giải nén bị ngắt (app khởi động lại) — vào trang Import bộ, chọn lại file zip" : stale ? "Lần dựng bị ngắt (app khởi động lại) — bấm Dựng lại" : (STATUS_TEXT[imp.status] ?? imp.status)}
           </div>
-          {imp.status === "building" && !stale && imp.total > 0 && (
+          {(imp.status === "building" || imp.status === "unpacking") && !stale && imp.total > 0 && (
             <div>
               <div className="h-2 overflow-hidden rounded bg-muted">
                 <div className="h-full bg-sky-500 transition-all" style={{ width: `${Math.round((imp.done / imp.total) * 100)}%` }} />
               </div>
               <div className="mt-1 text-xs text-muted-foreground">
-                {imp.done} / {imp.total} file layer
+                {imp.done} / {imp.total} {imp.status === "unpacking" ? "file đã giải nén" : "file layer"}
               </div>
             </div>
           )}

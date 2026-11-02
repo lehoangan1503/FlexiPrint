@@ -18,12 +18,15 @@ import { useSyncExternalStore } from "react";
 import { CT_CONFIG } from "../config";
 import type { CtCharImportFile, CtCharImportRow } from "../types";
 import { charApi } from "./api-client";
+import { importKeep } from "./char-import";
 
 /** One request: about this many bytes, at most this many files (a single bigger file goes alone). */
 const BATCH_BYTES = 3 * 1024 * 1024;
 const BATCH_FILES = 16;
 /** Requests of one folder at once. */
 const PARALLEL = 3;
+/** A zip goes in chunks of this size (the server writes each at its place). */
+const ZIP_CHUNK = 4 * 1024 * 1024;
 /** Folders uploading at once. */
 const MAX_JOBS = 2;
 /** No byte sent (or no answer after the last byte) for this long = the request is stuck. */
@@ -36,9 +39,6 @@ const POLL_IDLE_MS = 60_000;
 /** A build with no sign of life for this long was cut off (as import-panel.tsx). */
 const STALE_MS = 3 * 60 * 1000;
 
-const JUNK = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|__MACOSX)(\/|$)|(^|\/)\._/i;
-const KEEP = /\.(png|jpe?g|webp|json|csv|md|txt|ttf|otf)$/i;
-
 export interface CtPickedFile {
   file: File;
   /** Path inside the folder (without the folder's own name). */
@@ -47,14 +47,16 @@ export interface CtPickedFile {
 
 export type CtImportJobPhase = "queued" | "uploading" | "starting" | "failed";
 
-/** A folder being sent from this tab. */
+/** A folder (or a zip) being sent from this tab. */
 export interface CtImportJob {
   key: string;
   name: string;
   /** The set it goes to ("" until made). */
   projectId: string;
-  /** Files still to send. */
+  /** Files still to send (a folder). */
   files: CtPickedFile[];
+  /** A zip sent whole instead (null = a folder). */
+  zip: File | null;
   /** Files picked from the folder / left out (cut copies, system files). */
   total: number;
   skipped: number;
@@ -118,12 +120,14 @@ export function useImports(): State {
 
 // ---------------------------------------------------------------- what an import is doing
 
-export type CtImportStage = "uploading" | "interrupted" | "reading" | "agent" | "building" | "stale" | "deploying" | "done" | "deploy-failed" | "failed";
+export type CtImportStage = "uploading" | "interrupted" | "unpacking" | "reading" | "agent" | "building" | "stale" | "deploying" | "done" | "deploy-failed" | "failed";
 
 /** The stage of a server row, in words a person reads. */
 export function importStage(row: CtCharImportRow, uploadingHere: boolean): CtImportStage {
   const imp = row.imported;
   if (imp.status === "uploading") return uploadingHere ? "uploading" : "interrupted";
+  // Unpacking cut off (the app restarted): the zip is sent again — chunks still on the server are not.
+  if (imp.status === "unpacking") return !imp.beat || Date.now() - Date.parse(imp.beat) > STALE_MS ? "interrupted" : "unpacking";
   if (imp.status === "analyzing") return "reading";
   if (imp.status === "agent") return "agent";
   if (imp.status === "building") return !imp.beat || Date.now() - Date.parse(imp.beat) > STALE_MS ? "stale" : "building";
@@ -135,7 +139,8 @@ export function importStage(row: CtCharImportRow, uploadingHere: boolean): CtImp
 
 export const STAGE_TEXT: Record<CtImportStage, string> = {
   uploading: "Đang tải lên",
-  interrupted: "Tải lên bị ngắt — chọn lại đúng folder để tải tiếp",
+  interrupted: "Tải lên bị ngắt — chọn lại đúng folder / file zip để tải tiếp",
+  unpacking: "Đang giải nén file zip trên server",
   reading: "Đang đọc folder",
   agent: "@flexiprint đang phân tích folder (định dạng lạ)",
   building: "Đang dựng bộ + sản phẩm",
@@ -147,25 +152,12 @@ export const STAGE_TEXT: Record<CtImportStage, string> = {
 };
 
 /** Still working on the server (polled; the header spins). */
-export const RUNNING: ReadonlySet<CtImportStage> = new Set<CtImportStage>(["reading", "agent", "building", "deploying"]);
+export const RUNNING: ReadonlySet<CtImportStage> = new Set<CtImportStage>(["unpacking", "reading", "agent", "building", "deploying"]);
 
 // ---------------------------------------------------------------- picking
 
-/** Folders of a Teeinblue hand-off that only repeat its case layers (cut copies, composed print / preview per case). */
-const COPIES = /(^|\/)(clipart-cat|file-in|preview)\//i;
-
-/**
- * What is sent: every image / note / font of the folder. A Teeinblue hand-off (folders with teeinblue.json) brings its
- * layers there whole-canvas, so only its copies of them (COPIES) stay home; everything else goes — the sales pictures
- * (anh-ban-hang/mock-*), the sample (mau-goc), the preview background, fonts and notes, wherever they sit (2026-11-02:
- * the sales pictures one folder down were left out).
- */
-export function selectFiles(all: CtPickedFile[]): CtPickedFile[] {
-  const files = all.filter((f) => !JUNK.test(f.path) && KEEP.test(f.path));
-  const cases = files.filter((f) => /(^|\/)teeinblue\.json$/i.test(f.path)).map((f) => f.path.split("/").slice(0, -1).join("/"));
-  if (!cases.length) return files;
-  return files.filter((f) => cases.some((d) => f.path.startsWith(`${d}/`)) || /\.(json|csv|md|txt)$/i.test(f.path) || !COPIES.test(f.path));
-}
+/** What of a folder is uploaded (lib/char-import.ts — the server takes the same out of a zip). */
+export const selectFiles = (all: CtPickedFile[]): CtPickedFile[] => importKeep(all);
 
 /** An <input webkitdirectory> pick → its folder name and files. */
 export function pickedFromInput(list: FileList): { name: string; files: CtPickedFile[] } {
@@ -176,12 +168,17 @@ export function pickedFromInput(list: FileList): { name: string; files: CtPicked
   return { name: (list[0]?.webkitRelativePath || "").split("/")[0] || "Bộ import", files };
 }
 
-/** Folders dropped on the page (each its own import); loose files dropped are ignored. */
-export async function pickedFromDrop(items: DataTransferItemList): Promise<Array<{ name: string; files: CtPickedFile[] }>> {
+/** Folders dropped on the page (each its own import) and zips; other loose files are ignored. */
+export async function pickedFromDrop(items: DataTransferItemList): Promise<{ folders: Array<{ name: string; files: CtPickedFile[] }>; zips: File[] }> {
   const dirs: FileSystemDirectoryEntry[] = [];
+  const zips: File[] = [];
   for (const it of [...items]) {
     const e = it.kind === "file" ? it.webkitGetAsEntry() : null;
     if (e?.isDirectory) dirs.push(e as FileSystemDirectoryEntry);
+    else if (e?.isFile && /\.zip$/i.test(e.name)) {
+      const f = it.getAsFile();
+      if (f) zips.push(f);
+    }
   }
   const readAll = async (dir: FileSystemDirectoryEntry, prefix: string, out: CtPickedFile[]): Promise<void> => {
     const reader = dir.createReader();
@@ -202,7 +199,7 @@ export async function pickedFromDrop(items: DataTransferItemList): Promise<Array
     await readAll(d, "", files);
     out.push({ name: d.name, files });
   }
-  return out;
+  return { folders: out, zips };
 }
 
 // ---------------------------------------------------------------- uploading
@@ -210,9 +207,16 @@ export async function pickedFromDrop(items: DataTransferItemList): Promise<Array
 let seq = 0;
 /** In-flight requests per job (cancel aborts them). */
 const inflight = new Map<string, Set<XMLHttpRequest>>();
-/** What each job got back so far (the list import/start takes). */
+/** What each folder job got back so far (the list import/start takes). */
 const uploaded = new Map<string, CtCharImportFile[]>();
 const cancelled = new Set<string>();
+
+function addJob(job: Omit<CtImportJob, "key" | "doneFiles" | "doneBytes" | "liveBytes" | "speed" | "phase" | "error" | "note" | "resumed">): void {
+  const key = `j${++seq}`;
+  set({ jobs: [...state.jobs, { ...job, key, doneFiles: 0, doneBytes: 0, liveBytes: 0, speed: 0, phase: "queued", error: "", note: "", resumed: 0 }] });
+  uploaded.set(key, []);
+  pump();
+}
 
 /**
  * A folder into the queue. `resumeId` = a set whose upload was cut off: only files not on the server yet are sent.
@@ -221,31 +225,14 @@ const cancelled = new Set<string>();
 export function enqueueImport(name: string, all: CtPickedFile[], resumeId = ""): string {
   const files = selectFiles(all);
   if (!files.length) return `“${name}”: folder không có ảnh / ghi chú nào để import`;
-  const key = `j${++seq}`;
-  set({
-    jobs: [
-      ...state.jobs,
-      {
-        key,
-        name,
-        projectId: resumeId,
-        files,
-        total: files.length,
-        skipped: all.length - files.length,
-        totalBytes: files.reduce((n, f) => n + f.file.size, 0),
-        doneFiles: 0,
-        doneBytes: 0,
-        liveBytes: 0,
-        speed: 0,
-        phase: "queued",
-        error: "",
-        note: "",
-        resumed: 0,
-      },
-    ],
-  });
-  uploaded.set(key, []);
-  pump();
+  addJob({ name, projectId: resumeId, files, zip: null, total: files.length, skipped: all.length - files.length, totalBytes: files.reduce((n, f) => n + f.file.size, 0) });
+  return "";
+}
+
+/** A zip into the queue (the server unpacks it and keeps what a folder upload would). */
+export function enqueueZip(file: File, resumeId = ""): string {
+  if (!/\.zip$/i.test(file.name)) return `“${file.name}” không phải file .zip`;
+  addJob({ name: file.name.replace(/\.zip$/i, "") || "Bộ import", projectId: resumeId, files: [], zip: file, total: 1, skipped: 0, totalBytes: file.size });
   return "";
 }
 
@@ -259,6 +246,58 @@ function pump(): void {
 
 const jobOf = (key: string) => state.jobs.find((j) => j.key === key);
 
+/** Pieces of one job sent a few at once; each sent again when its line drops; progress byte by byte. */
+async function sendAll<T>(key: string, pieces: T[], bytesOf: (p: T) => number, send: (p: T, progress: (sent: number) => void) => Promise<void>, describe: (p: T) => string): Promise<void> {
+  const live = new Map<number, number>();
+  const speed = { at: Date.now(), bytes: jobOf(key)?.doneBytes ?? 0, value: 0 };
+  const showLive = () => {
+    const j = jobOf(key);
+    if (!j) return;
+    const now = Date.now();
+    const total = j.doneBytes + [...live.values()].reduce((n, x) => n + x, 0);
+    if (now - speed.at >= 1000) {
+      const v = ((total - speed.bytes) * 1000) / (now - speed.at);
+      speed.value = speed.value ? speed.value * 0.6 + v * 0.4 : v;
+      speed.at = now;
+      speed.bytes = total;
+    }
+    patchJob(key, { liveBytes: total - j.doneBytes, speed: Math.max(0, speed.value) });
+  };
+  let next = 0;
+  let failure: Error | null = null;
+  const worker = async () => {
+    for (let i = next++; i < pieces.length && !failure && !cancelled.has(key); i = next++) {
+      const piece = pieces[i];
+      const bytes = bytesOf(piece);
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await send(piece, (sent) => {
+            live.set(i, Math.min(sent, bytes));
+            showLive();
+          });
+          break;
+        } catch (e) {
+          live.delete(i);
+          if (cancelled.has(key)) return;
+          const msg = e instanceof Error ? e.message : String(e);
+          // The server said no (not a dropped line): sending again does not help.
+          if (attempt >= RETRIES || /^HTTP 4\d\d/.test(msg)) {
+            failure = new Error(`${msg} (${describe(piece)})`);
+            return;
+          }
+          patchJob(key, { note: `Mạng chập chờn (${msg}) — gửi lại lần ${attempt + 1}/${RETRIES}…` });
+          await new Promise((ok) => setTimeout(ok, Math.min(30_000, 2000 * 2 ** attempt)));
+        }
+      }
+      live.delete(i);
+      patchJob(key, (j) => ({ doneBytes: j.doneBytes + bytes, note: "" }));
+      showLive();
+    }
+  };
+  await Promise.all(Array.from({ length: PARALLEL }, worker));
+  if (failure) throw failure;
+}
+
 async function runJob(key: string): Promise<void> {
   try {
     let job = jobOf(key);
@@ -267,106 +306,22 @@ async function runJob(key: string): Promise<void> {
       const project = await charApi.createImport(job.name);
       patchJob(key, { projectId: project.id });
       void refreshImports();
-    } else if (!uploaded.get(key)?.length) {
-      // A cut-off upload picked again: what the server has already is not sent again.
-      const have = await charApi.importUploaded(job.projectId);
-      const byPath = new Map(have.map((f) => [f.path, f]));
-      const got = job.files.flatMap((f) => {
-        const h = byPath.get(f.path);
-        return h && h.size === f.file.size ? [h] : [];
-      });
-      if (got.length) {
-        const sent = new Set(got.map((f) => f.path));
-        uploaded.set(key, [...(uploaded.get(key) ?? []).filter((f) => !sent.has(f.path)), ...got]);
-        patchJob(key, (j) => ({
-          files: j.files.filter((f) => !sent.has(f.path)),
-          resumed: got.length,
-          doneFiles: got.length,
-          doneBytes: got.reduce((n, f) => n + f.size, 0),
-        }));
-      }
     }
     job = jobOf(key);
     if (!job || cancelled.has(key)) return;
-    const projectId = job.projectId;
-
-    // Batches by size; a few requests at once.
-    const batches: CtPickedFile[][] = [];
-    let cur: CtPickedFile[] = [];
-    let size = 0;
-    for (const f of job.files) {
-      if (cur.length && (cur.length >= BATCH_FILES || size + f.file.size > BATCH_BYTES)) {
-        batches.push(cur);
-        cur = [];
-        size = 0;
-      }
-      cur.push(f);
-      size += f.file.size;
-    }
-    if (cur.length) batches.push(cur);
-
-    const live = new Map<number, number>();
-    const speed = { at: Date.now(), bytes: 0, value: 0 };
-    const showLive = () => {
-      const now = Date.now();
-      const j = jobOf(key);
-      if (!j) return;
-      const total = j.doneBytes + [...live.values()].reduce((n, x) => n + x, 0);
-      if (now - speed.at >= 1000) {
-        const v = ((total - speed.bytes) * 1000) / (now - speed.at);
-        speed.value = speed.value ? speed.value * 0.6 + v * 0.4 : v;
-        speed.at = now;
-        speed.bytes = total;
-      }
-      patchJob(key, { liveBytes: total - j.doneBytes, speed: Math.max(0, speed.value) });
-    };
-    speed.bytes = job.doneBytes;
-
-    let next = 0;
-    let failure: Error | null = null;
-    const worker = async () => {
-      for (let i = next++; i < batches.length && !failure && !cancelled.has(key); i = next++) {
-        const b = batches[i];
-        const bytes = b.reduce((n, f) => n + f.file.size, 0);
-        let got: CtCharImportFile[] | null = null;
-        for (let attempt = 0; !got; attempt++) {
-          try {
-            got = await sendBatch(key, projectId, b, (sent) => {
-              live.set(i, Math.min(sent, bytes));
-              showLive();
-            });
-          } catch (e) {
-            live.delete(i);
-            if (cancelled.has(key)) return;
-            const msg = e instanceof Error ? e.message : String(e);
-            // The server said no (not a dropped line): sending again does not help.
-            if (attempt >= RETRIES || /^HTTP 4\d\d|^4\d\d /.test(msg)) {
-              failure = new Error(`${msg} (${b.length} file, ví dụ ${b[0].path})`);
-              return;
-            }
-            patchJob(key, { note: `Mạng chập chờn (${msg}) — gửi lại lần ${attempt + 1}/${RETRIES}…` });
-            await new Promise((ok) => setTimeout(ok, Math.min(30_000, 2000 * 2 ** attempt)));
-          }
-        }
-        live.delete(i);
-        const sent = new Set(b.map((f) => f.path));
-        uploaded.set(key, [...(uploaded.get(key) ?? []), ...got]);
-        patchJob(key, (j) => ({ files: j.files.filter((f) => !sent.has(f.path)), doneFiles: j.doneFiles + b.length, doneBytes: j.doneBytes + bytes, note: "" }));
-        showLive();
-      }
-    };
-    await Promise.all(Array.from({ length: PARALLEL }, worker));
+    if (job.zip) await sendZip(key, job.projectId, job.zip);
+    else await sendFolder(key, job.projectId);
     if (cancelled.has(key)) return;
-    if (failure) throw failure;
 
     patchJob(key, { phase: "starting", liveBytes: 0, note: "" });
-    await charApi.importStart(projectId, uploaded.get(key) ?? []);
+    if (job.zip) await charApi.importUnzip(job.projectId);
+    else await charApi.importStart(job.projectId, uploaded.get(key) ?? []);
     // From here the server's row tells the story.
-    watchStarted.add(projectId);
+    watchStarted.add(job.projectId);
     await refreshImports();
     set({ jobs: state.jobs.filter((j) => j.key !== key) });
     uploaded.delete(key);
-    toast({ kind: "info", title: `Đã tải xong “${job.name}”`, body: "Server đang đọc folder và dựng bộ — sẽ báo khi xong.", href: `/v2/${projectId}` });
+    toast({ kind: "info", title: `Đã tải xong “${job.name}”`, body: job.zip ? "Server đang giải nén rồi dựng bộ — sẽ báo khi xong." : "Server đang đọc folder và dựng bộ — sẽ báo khi xong.", href: `/v2/${job.projectId}` });
   } catch (e) {
     if (!cancelled.has(key)) patchJob(key, { phase: "failed", error: e instanceof Error ? e.message : "Tải lên thất bại", liveBytes: 0, note: "" });
   } finally {
@@ -375,14 +330,79 @@ async function runJob(key: string): Promise<void> {
   }
 }
 
-/** One request with byte progress; dropped when it stalls. */
-function sendBatch(key: string, projectId: string, files: CtPickedFile[], progress: (sent: number) => void): Promise<CtCharImportFile[]> {
-  return new Promise((resolve, reject) => {
-    const form = new FormData();
-    for (const f of files) {
-      form.append("file", f.file, f.file.name);
-      form.append("path", f.path);
+/** A folder: small batches of files; what the server has already (a cut-off upload picked again) is not sent. */
+async function sendFolder(key: string, projectId: string): Promise<void> {
+  if (!uploaded.get(key)?.length) {
+    const job = jobOf(key)!;
+    const have = new Map((await charApi.importUploaded(projectId)).map((f) => [f.path, f]));
+    const got = job.files.flatMap((f) => {
+      const h = have.get(f.path);
+      return h && h.size === f.file.size ? [h] : [];
+    });
+    if (got.length) {
+      const sent = new Set(got.map((f) => f.path));
+      uploaded.set(key, got);
+      patchJob(key, (j) => ({ files: j.files.filter((f) => !sent.has(f.path)), resumed: got.length, doneFiles: got.length, doneBytes: got.reduce((n, f) => n + f.size, 0) }));
     }
+  }
+  const batches: CtPickedFile[][] = [];
+  let cur: CtPickedFile[] = [];
+  let size = 0;
+  for (const f of jobOf(key)?.files ?? []) {
+    if (cur.length && (cur.length >= BATCH_FILES || size + f.file.size > BATCH_BYTES)) {
+      batches.push(cur);
+      cur = [];
+      size = 0;
+    }
+    cur.push(f);
+    size += f.file.size;
+  }
+  if (cur.length) batches.push(cur);
+  await sendAll(
+    key,
+    batches,
+    (b) => b.reduce((n, f) => n + f.file.size, 0),
+    async (b, progress) => {
+      const form = new FormData();
+      for (const f of b) {
+        form.append("file", f.file, f.file.name);
+        form.append("path", f.path);
+      }
+      const body = (await sendXhr(key, `${CT_CONFIG.apiBase}/char/projects/${projectId}/import/files`, form, progress)) as { files?: CtCharImportFile[] };
+      if (!body.files) throw new Error("server trả lời thiếu danh sách file");
+      const sent = new Set(b.map((f) => f.path));
+      uploaded.set(key, [...(uploaded.get(key) ?? []), ...body.files]);
+      patchJob(key, (j) => ({ files: j.files.filter((f) => !sent.has(f.path)), doneFiles: j.doneFiles + b.length }));
+    },
+    (b) => `${b.length} file, ví dụ ${b[0].path}`,
+  );
+}
+
+/** A zip: fixed chunks written at their place on the server; chunks it has already are not sent again. */
+async function sendZip(key: string, projectId: string, zip: File): Promise<void> {
+  const state0 = await charApi.importZipState(projectId);
+  const have = new Set(state0.total === zip.size && state0.chunk === ZIP_CHUNK ? state0.have : []);
+  const count = Math.ceil(zip.size / ZIP_CHUNK);
+  const sizeOf = (i: number) => Math.min(ZIP_CHUNK, zip.size - i * ZIP_CHUNK);
+  const todo = Array.from({ length: count }, (_, i) => i).filter((i) => !have.has(i));
+  const already = [...have].reduce((n, i) => n + sizeOf(i), 0);
+  if (have.size) patchJob(key, { doneBytes: already, resumed: have.size });
+  await sendAll(
+    key,
+    todo,
+    sizeOf,
+    async (i, progress) => {
+      const url = `${CT_CONFIG.apiBase}/char/projects/${projectId}/import/zip?index=${i}&chunk=${ZIP_CHUNK}&total=${zip.size}`;
+      await sendXhr(key, url, zip.slice(i * ZIP_CHUNK, i * ZIP_CHUNK + sizeOf(i)), progress);
+    },
+    (i) => `mảnh ${i + 1}/${count}`,
+  );
+  patchJob(key, { doneFiles: 1 });
+}
+
+/** One request with byte progress; dropped when it stalls. Resolves with the JSON answer. */
+function sendXhr(key: string, url: string, body: FormData | Blob, progress: (sent: number) => void): Promise<unknown> {
+  return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const mine = inflight.get(key) ?? new Set<XMLHttpRequest>();
     inflight.set(key, mine);
@@ -400,8 +420,9 @@ function sendBatch(key: string, projectId: string, files: CtPickedFile[], progre
       clearTimeout(timer);
       mine.delete(xhr);
     };
-    xhr.open("POST", `${CT_CONFIG.apiBase}/char/projects/${projectId}/import/files`);
+    xhr.open("POST", url);
     xhr.responseType = "json";
+    if (body instanceof Blob) xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.upload.onprogress = (e) => {
       progress(e.loaded);
       arm(STALL_MS, `không gửi được byte nào trong ${STALL_MS / 1000} s`);
@@ -409,9 +430,9 @@ function sendBatch(key: string, projectId: string, files: CtPickedFile[], progre
     xhr.upload.onload = () => arm(ANSWER_MS, `server không trả lời sau ${ANSWER_MS / 1000} s`);
     xhr.onload = () => {
       end();
-      const body = xhr.response as { files?: CtCharImportFile[]; error?: string } | null;
-      if (xhr.status >= 200 && xhr.status < 300 && body?.files) resolve(body.files);
-      else reject(new Error(`HTTP ${xhr.status}${body?.error ? ` ${body.error}` : ""}`));
+      const res = xhr.response as { error?: string } | null;
+      if (xhr.status >= 200 && xhr.status < 300 && res) resolve(res);
+      else reject(new Error(`HTTP ${xhr.status}${res?.error ? ` ${res.error}` : ""}`));
     };
     xhr.onerror = () => {
       end();
@@ -422,7 +443,7 @@ function sendBatch(key: string, projectId: string, files: CtPickedFile[], progre
       reject(new Error(why || "đã huỷ"));
     };
     arm(STALL_MS, `không gửi được byte nào trong ${STALL_MS / 1000} s`);
-    xhr.send(form);
+    xhr.send(body);
   });
 }
 

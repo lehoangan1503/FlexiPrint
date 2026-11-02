@@ -435,7 +435,8 @@ export interface CtCharBrief {
  * is built from.
  */
 export interface CtCharImported {
-  status: "uploading" | "analyzing" | "agent" | "building" | "done" | "failed";
+  /** "unpacking": a zip uploaded whole is being opened on the server (done / total = files). */
+  status: "uploading" | "unpacking" | "analyzing" | "agent" | "building" | "done" | "failed";
   /** "teeinblue" (read by the server) or "agent" (@flexiprint wrote the manifest). */
   format: string;
   /** Uploaded files and their total bytes. */

@@ -1295,10 +1295,15 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   {
     name: "char_import_files",
     description:
-      "Bộ import (set.brief.imported): the uploaded folder — every file's path, size and url (images: view_image the url), folder by folder; small text files (json / md / txt / csv ≤ 6 KB) come with their contents. under = only that sub-folder. Large folders are paged (offset).",
+      "Bộ import (set.brief.imported): the uploaded folder — every file's path and size (a file's url = url_base + its path; images: view_image that url), folder by folder; small text files (json / md / txt / csv ≤ 6 KB) come with their contents. under = only that sub-folder. Large folders are paged: limit files a call (default 300), then next_offset.",
     inputSchema: {
       type: "object",
-      properties: { ...TASK_ARG, under: { type: "string", description: "A sub-folder path (default: all)." }, offset: { type: "number", description: "Skip this many files (paging)." } },
+      properties: {
+        ...TASK_ARG,
+        under: { type: "string", description: "A sub-folder path (default: all)." },
+        offset: { type: "number", description: "Skip this many files (paging)." },
+        limit: { type: "number", description: "Files in this call (default 300, at most 500)." },
+      },
       required: ["task_id"],
     },
     callers: ["agent"],
@@ -1308,7 +1313,12 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const under = str(args.under).replace(/^\/+|\/+$/g, "");
       const all = (await importFiles(project)).filter((f) => !under || f.path.startsWith(`${under}/`));
       const offset = Math.max(0, Math.round(Number(args.offset) || 0));
-      const page = all.slice(offset, offset + 400);
+      const limit = Math.min(500, Math.max(1, Math.round(Number(args.limit) || 300)));
+      const page = all.slice(offset, offset + limit);
+      // A thousand files with full urls overflowed the agent's tool output (asked 2026-11-02, a 1031-file folder): the
+      // urls' shared start is sent once; a file whose url is not url_base + path keeps its own.
+      const sample = all.find((f) => f.url.endsWith(f.path));
+      const urlBase = sample ? sample.url.slice(0, sample.url.length - sample.path.length) : "";
       // Folders first (how many files each), then the page of files.
       const folders = new Map<string, number>();
       for (const f of all) {
@@ -1320,7 +1330,8 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       return json({
         total: all.length,
         folders: Object.fromEntries([...folders].slice(0, 300)),
-        files: page.map((f) => ({ path: f.path, size: f.size, url: f.url })),
+        url_base: urlBase,
+        files: page.map((f) => (urlBase && f.url === urlBase + f.path ? { path: f.path, size: f.size } : { path: f.path, size: f.size, url: f.url })),
         texts,
         ...(offset + page.length < all.length ? { next_offset: offset + page.length } : {}),
       });
@@ -1328,15 +1339,21 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   },
   {
     name: "char_import_read",
-    description: "Bộ import: one text file of the uploaded folder (json / csv / md / txt), up to 60 000 characters.",
-    inputSchema: { type: "object", properties: { ...TASK_ARG, path: { type: "string", description: "Its path in the folder (char_import_files)." } }, required: ["task_id", "path"] },
+    description: "Bộ import: one text file of the uploaded folder (json / csv / md / txt), 30 000 characters a call — a longer file goes on from next_offset.",
+    inputSchema: {
+      type: "object",
+      properties: { ...TASK_ARG, path: { type: "string", description: "Its path in the folder (char_import_files)." }, offset: { type: "number", description: "Start at this character (paging)." } },
+      required: ["task_id", "path"],
+    },
     callers: ["agent"],
     run: async (ctx, args) => {
       const { project } = await openCharTask(ctx, args.task_id);
       if (!project.brief.imported) throw new Error("This set is not an imported one");
-      const text = await importText(project, str(args.path), 60_000);
-      if (text === null) throw new Error("No such file in the folder");
-      return json({ path: str(args.path), text });
+      const all = await importText(project, str(args.path), 2_000_000);
+      if (all === null) throw new Error("No such file in the folder");
+      const offset = Math.max(0, Math.round(Number(args.offset) || 0));
+      const text = all.slice(offset, offset + 30_000);
+      return json({ path: str(args.path), length: all.length, text, ...(offset + text.length < all.length ? { next_offset: offset + text.length } : {}) });
     },
   },
   {

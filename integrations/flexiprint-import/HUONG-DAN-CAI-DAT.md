@@ -1,0 +1,404 @@
+# Cài MCP `flexiprint-import` — import bộ lên FlexiPrint (flexi2) bằng lệnh chat
+
+> **Gửi agent (Claude Code):** đọc hết file này rồi làm đúng các bước ở phần **"Việc agent cần làm"**. Đừng sửa code trong file.
+> **Đã cài bản cũ rồi?** Chỉ cần ghi đè `~/.claude/flexiprint-import/server.mjs` bằng phần "server.mjs" cuối file (bản 1.1.0, 2026-11-02), giữ nguyên `.env`, rồi mở lại Claude Code.
+
+## Nó là gì, sao chạy local được
+
+- Đây là **MCP chạy ngay trên máy của người dùng** (giống `linh-download`), không phải MCP trên server. Server flexi2 không đọc được ổ đĩa máy mình, nên phần đọc folder phải chạy local.
+- Khi gọi `flexiprint_import {folder}`: MCP đọc folder trên máy → **chia nhỏ** gửi lên flexi2 (mỗi lần ≤ 8 MB / 30 file, 6 luồng song song, rớt mạng tự gửi lại; file `.zip` thì gửi nguyên theo mảnh 4 MB, server giải nén) — y như nút **Import bộ** trên web → server flexi2 dựng bộ nhân vật + sản phẩm → đẩy lên Shopify CHERIVIA dạng **DRAFT** → trả link.
+- Không cần build, không cần `npm install`: chỉ 1 file `server.mjs`, cần **Node 20+**.
+
+## Việc agent cần làm
+
+1. Kiểm tra `node -v` ≥ 20. Nếu thiếu thì cài Node 20+ (hỏi người dùng trước).
+2. Tạo folder `~/.claude/flexiprint-import/`.
+3. Tạo file `~/.claude/flexiprint-import/server.mjs` với **nguyên văn** nội dung ở phần **"server.mjs"** cuối file này.
+4. Tạo file `~/.claude/flexiprint-import/.env`:
+
+   ```
+   FLEXI_URL=https://flexi2.next.lc
+   FLEXI_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzkyMzQ2MzQyLCJleHAiOjE5NTAwMjYzNDJ9.MoaTdOqjxSe9wMQddh_bvgCpwCZNfX5X-GeH9WfOuw4
+   FLEXI_EMAIL=
+   FLEXI_PASSWORD=
+   ```
+
+   **Hỏi người dùng** email + mật khẩu tài khoản flexi2 (đăng nhập ở https://flexi2.next.lc) rồi điền vào. Không in mật khẩu ra màn hình. `chmod 600` file này.
+5. Thử đăng nhập (không tải gì lên): `node ~/.claude/flexiprint-import/server.mjs status 00000000-0000-0000-0000-000000000000`
+   - Báo lỗi kiểu *"Đăng nhập flexi2 lỗi"* → sai email/mật khẩu, hỏi lại.
+   - Báo lỗi khác (không tìm thấy bộ / 404) → đăng nhập OK.
+6. Thêm MCP vào Claude Code:
+
+   ```bash
+   claude mcp add --scope user flexiprint-import -- node ~/.claude/flexiprint-import/server.mjs
+   ```
+
+   (Nếu `~` không được mở rộng thì dùng đường dẫn đầy đủ, ví dụ `/Users/<tên>/.claude/flexiprint-import/server.mjs`.) Kiểm tra: `claude mcp list` thấy `flexiprint-import ✓ Connected`.
+7. Báo người dùng: **thoát Claude Code rồi mở lại** (MCP mới chỉ có ở phiên mới).
+
+## Cách dùng (sau khi mở lại Claude Code)
+
+Nói tự nhiên, ví dụ:
+
+- *"import folder n00-POD-02 lên FlexiPrint"*
+- *"import ~/Downloads/linh-download-output/abc lên flexi2, tên bộ là Cherivia Dog Ornament"*
+
+`folder` nhận: folder **hoặc file `.zip`** — đường dẫn đầy đủ, `~/…`, hoặc chỉ tên (tự tìm trong `~/Downloads`, `~/Desktop`, `~/Downloads/linh-download-output`; tên không đuôi thì tìm cả `<tên>.zip`).
+
+| Tool | Việc |
+|---|---|
+| `flexiprint_import {folder, name?}` | Tải folder / zip lên, chờ dựng + lên Shopify (tối đa ~12 phút). Trả `page` (bộ trên flexi2), `shopify.preview` (xem thử, theme nháp), `shopify.admin`, `problems` |
+| `flexiprint_import_status {set_id}` | Hỏi tiến độ khi lần gọi trên chưa chờ xong |
+
+File được gửi (giống hệt trang web Import bộ): ảnh png/jpg/webp, json, csv, md, txt, font ttf/otf; tối đa 60 MB/file. Bộ Teeinblue chỉ để lại máy các bản sao lớp (`clipart-cat/`, `file-in/`, `preview/`); ảnh bán hàng, ảnh mẫu, nền preview, font, ghi chú ở thư mục con đều gửi.
+
+## Server đọc folder thế nào
+
+Có 2 đường, tự chọn theo nội dung folder:
+
+1. **Bản giao Teeinblue — server tự đọc, không cần AI.** Folder có ít nhất một file `teeinblue.json`, ở **bất kỳ cấp
+   thư mục con nào** (vd. `n00-POD-02/teeinblue/c1-qua/teeinblue.json` — mỗi case một folder, trong đó là các lớp ảnh +
+   `print/` + `fonts/`). Server đọc thẳng các json đó ra canvas, lớp, lựa chọn, chữ → dựng bộ + sản phẩm ngay (vài phút).
+2. **Định dạng lạ — @flexiprint phân tích.** Không có `teeinblue.json` nào (vd. folder phẳng `teeinblue-clipart-NN-…png`
+   + `bang-vi-tri.csv` + ghi chú): trang bộ báo *"@flexiprint đang phân tích folder (định dạng lạ)"*. Agent dùng MCP
+   `char_import_files` (danh sách file, mỗi lần ≤ 300 file, link = `url_base` + path) → `char_import_read` (đọc json /
+   csv / md / txt theo đoạn 30 000 ký tự) → xem vài ảnh lớp → tự viết manifest → `char_import_build`. Chậm hơn và có thể
+   hỏi lại; agent kẹt thì nhắn vào chat của bộ (vd. "dựng lại bộ import này").
+
+Muốn nhanh và chắc thì gửi bản giao Teeinblue có `teeinblue.json`.
+
+## Sau khi import
+
+- Sản phẩm Shopify luôn là **DRAFT** (khách không thấy). Bảng giá chọn theo chất liệu (tên bảng giá có Acrylic / Glass / Ceramic…). Thiếu bảng giá → báo lỗi; tạo bảng giá rồi bấm **Đưa lên Shopify lại** ở trang bộ.
+- Link xem thử có hạn; hết hạn → bấm **Đưa lên Shopify lại** (hoặc gọi lại `flexiprint_import_status`).
+- Folder tải lên bị xoá khỏi server khi dựng xong (chỉ giữ clipart cần cho sản phẩm) — muốn đổi bố cục thì import lại.
+
+## Lỗi hay gặp
+
+| Lỗi | Xử lý |
+|---|---|
+| `Thiếu FLEXI_EMAIL / FLEXI_PASSWORD / FLEXI_ANON_KEY` | Điền đủ `.env` (bước 4) |
+| `Đăng nhập flexi2 lỗi` | Sai email/mật khẩu flexi2 |
+| `Không thấy folder / file .zip "…"` | Đưa đường dẫn đầy đủ |
+| Tool không xuất hiện | Chưa mở lại Claude Code, hoặc `claude mcp list` báo lỗi → chạy thử `node …/server.mjs status x` xem lỗi |
+| Chờ quá 12 phút | Bình thường với bộ lớn — gọi `flexiprint_import_status {set_id}` sau vài phút |
+
+## server.mjs
+
+```js
+#!/usr/bin/env node
+// flexiprint-import — MCP (stdio) on the editor's own machine (asked 2026-10-30: "sếp chỉ cần đề cập folder rồi tải
+// content từ folder đó lên"). Claude Code is told "import ~/Downloads/n00-POD-02 lên FlexiPrint": this reads the
+// folder, sends it to flexi2 the way the "Import bộ" button does (components/char/import-button.tsx), and the server
+// builds the set + product and puts it on Shopify as a draft (server/char/import-deploy.ts) — the reply carries the
+// set's page and the store preview link.
+//
+// Env (see README.md): FLEXI_EMAIL, FLEXI_PASSWORD (a flexi2 account), FLEXI_URL, FLEXI_ANON_KEY.
+// No dependencies: Node 20+.
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+
+const ENV_FILE = path.join(path.dirname(new URL(import.meta.url).pathname), ".env");
+if (fs.existsSync(ENV_FILE)) {
+  for (const line of fs.readFileSync(ENV_FILE, "utf8").split("\n")) {
+    const m = /^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/.exec(line);
+    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+  }
+}
+const BASE = (process.env.FLEXI_URL || "https://flexi2.next.lc").replace(/\/$/, "");
+const API = `${BASE}/api/customize-tool`;
+
+// The same choice of files as the web page's Import bộ.
+const JUNK = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|__MACOSX)(\/|$)|(^|\/)\._/i;
+const KEEP = /\.(png|jpe?g|webp|json|csv|md|txt|ttf|otf)$/i;
+const MIME = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", json: "application/json", csv: "text/csv", md: "text/markdown", txt: "text/plain", ttf: "font/ttf", otf: "font/otf" };
+/** Folders of a Teeinblue hand-off that only repeat its case layers (lib/char-import.ts IMPORT_COPIES). */
+const COPIES = /(^|\/)(clipart-cat|file-in|preview)\//i;
+const BATCH_BYTES = 8 * 1024 * 1024;
+/** A zip goes in chunks of this size, like the web page (lib/import-queue.ts ZIP_CHUNK). */
+const ZIP_CHUNK = 4 * 1024 * 1024;
+const BATCH_FILES = 30;
+const PARALLEL = 6;
+/** One tool call waits this long for the build + Shopify, then hands back the set id for flexiprint_import_status. */
+const WAIT_MS = 12 * 60 * 1000;
+
+const log = (...a) => process.stderr.write(`[flexiprint-import] ${a.join(" ")}\n`);
+const mb = (n) => `${(n / 1024 / 1024).toFixed(n > 100 * 1024 * 1024 ? 0 : 1)} MB`;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------- flexi2
+let session = null;
+async function token() {
+  if (session && session.until > Date.now()) return session.token;
+  const { FLEXI_EMAIL: email, FLEXI_PASSWORD: password, FLEXI_ANON_KEY: anon } = process.env;
+  if (!email || !password || !anon) throw new Error(`Thiếu FLEXI_EMAIL / FLEXI_PASSWORD / FLEXI_ANON_KEY (file ${ENV_FILE})`);
+  const res = await fetch(`${BASE}/auth/v1/token?grant_type=password`, { method: "POST", headers: { apikey: anon, "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.access_token) throw new Error(`Đăng nhập flexi2 lỗi: ${body.error_description || body.msg || `HTTP ${res.status}`}`);
+  session = { token: body.access_token, until: Date.now() + (Math.max(120, body.expires_in ?? 3600) - 60) * 1000 };
+  return session.token;
+}
+
+async function call(p, init = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await fetch(`${API}/${p}`, { ...init, headers: { ...(init.headers ?? {}), Authorization: `Bearer ${await token()}` }, signal: AbortSignal.timeout(180_000) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401) session = null;
+        if (res.status >= 500 && attempt < 3) throw new Error(body.error || `HTTP ${res.status}`);
+        const e = new Error(body.error || `HTTP ${res.status}`);
+        e.final = true;
+        throw e;
+      }
+      return body;
+    } catch (e) {
+      // A dropped request over a slow line is sent again; an answer from the server is final.
+      if (e.final || attempt >= 3) throw e;
+      await sleep(2000 * attempt);
+    }
+  }
+}
+const postJson = (p, body) => call(p, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+// ---------------------------------------------------------------- folder
+function walk(root) {
+  const out = [];
+  const go = (dir) => {
+    for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, d.name);
+      if (d.isDirectory()) go(full);
+      else if (d.isFile()) out.push({ full, path: path.relative(root, full).split(path.sep).join("/"), size: fs.statSync(full).size });
+    }
+  };
+  go(root);
+  return out;
+}
+
+/** The web page's importKeep (lib/char-import.ts): a Teeinblue hand-off leaves home only its copies of the case layers. */
+function selectFiles(all) {
+  const files = all.filter((f) => !JUNK.test(f.path) && KEEP.test(f.path));
+  const cases = files.filter((f) => /(^|\/)teeinblue\.json$/i.test(f.path)).map((f) => f.path.split("/").slice(0, -1).join("/"));
+  if (!cases.length) return files;
+  return files.filter((f) => cases.some((d) => f.path.startsWith(`${d}/`)) || /\.(json|csv|md|txt)$/i.test(f.path) || !COPIES.test(f.path));
+}
+
+/** A folder or a .zip named or found: an absolute path, ~/…, or a name under ~/Downloads / ~/Desktop / the cwd. */
+function findSource(raw) {
+  const p = String(raw ?? "").trim().replace(/^~(?=$|\/)/, os.homedir());
+  const bases = path.isAbsolute(p) ? [p] : [path.resolve(p), path.join(os.homedir(), "Downloads", p), path.join(os.homedir(), "Desktop", p), path.join(os.homedir(), "Downloads", "linh-download-output", p)];
+  const tries = bases.flatMap((t) => (/\.zip$/i.test(t) ? [t] : [t, `${t}.zip`]));
+  for (const t of tries) {
+    if (!fs.existsSync(t)) continue;
+    const st = fs.statSync(t);
+    if (st.isDirectory()) return { root: t, zip: false };
+    if (st.isFile() && /\.zip$/i.test(t)) return { root: t, zip: true, size: st.size };
+  }
+  throw new Error(`Không thấy folder / file .zip "${raw}" (đã tìm: ${tries.join(", ")})`);
+}
+
+// ---------------------------------------------------------------- import
+const runs = new Map();
+
+async function upload(setId, files, onBytes) {
+  const batches = [];
+  let cur = [];
+  let size = 0;
+  for (const f of files) {
+    if (cur.length && (cur.length >= BATCH_FILES || size + f.size > BATCH_BYTES)) {
+      batches.push(cur);
+      cur = [];
+      size = 0;
+    }
+    cur.push(f);
+    size += f.size;
+  }
+  if (cur.length) batches.push(cur);
+  const uploaded = [];
+  let next = 0;
+  const worker = async () => {
+    for (let i = next++; i < batches.length; i = next++) {
+      const form = new FormData();
+      for (const f of batches[i]) {
+        form.append("file", new Blob([fs.readFileSync(f.full)], { type: MIME[f.path.split(".").pop().toLowerCase()] ?? "application/octet-stream" }), path.basename(f.path));
+        form.append("path", f.path);
+      }
+      const r = await call(`char/projects/${setId}/import/files`, { method: "POST", body: form });
+      uploaded.push(...r.files);
+      onBytes(batches[i].reduce((n, f) => n + f.size, 0));
+    }
+  };
+  await Promise.all(Array.from({ length: PARALLEL }, worker));
+  return uploaded;
+}
+
+/** A zip in fixed chunks (several at once); chunks the server already has are not sent again. */
+async function uploadZip(setId, file, size, onBytes) {
+  const state = await call(`char/projects/${setId}/import/zip`);
+  const have = new Set(state.total === size && state.chunk === ZIP_CHUNK ? state.have : []);
+  const count = Math.ceil(size / ZIP_CHUNK);
+  const todo = Array.from({ length: count }, (_, i) => i).filter((i) => !have.has(i));
+  const fd = fs.openSync(file, "r");
+  try {
+    let next = 0;
+    const worker = async () => {
+      for (let k = next++; k < todo.length; k = next++) {
+        const i = todo[k];
+        const buf = Buffer.alloc(Math.min(ZIP_CHUNK, size - i * ZIP_CHUNK));
+        fs.readSync(fd, buf, 0, buf.length, i * ZIP_CHUNK);
+        await call(`char/projects/${setId}/import/zip?index=${i}&chunk=${ZIP_CHUNK}&total=${size}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: buf });
+        onBytes(buf.length);
+      }
+    };
+    await Promise.all(Array.from({ length: PARALLEL }, worker));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Where the set is: build, Shopify, links. */
+async function status(setId) {
+  const { project } = await call(`char/projects/${setId}`);
+  const imp = project.brief?.imported ?? {};
+  const shop = imp.shopify ?? null;
+  const building = ["uploading", "unpacking", "analyzing", "agent", "building"].includes(imp.status);
+  return {
+    set_id: setId,
+    name: project.name,
+    page: `${BASE}/v2/${setId}`,
+    build: imp.status,
+    progress: imp.total ? `${imp.done}/${imp.total} file layer` : undefined,
+    summary: imp.summary,
+    problems: imp.problems?.length ? imp.problems : undefined,
+    error: imp.error || undefined,
+    shopify: shop ? { status: shop.status, preview: shop.previewUrl || undefined, admin: shop.adminUrl || undefined, price_table: shop.priceTable || undefined, note: shop.error || undefined } : null,
+    finished: !building && (imp.status !== "done" || !!shop && shop.status !== "deploying"),
+  };
+}
+
+async function importFolder({ folder, name }) {
+  const src = findSource(folder);
+  const { root } = src;
+  const all = src.zip ? [] : walk(root);
+  const files = src.zip ? [] : selectFiles(all);
+  if (!src.zip && !files.length) throw new Error(`Folder ${root} không có ảnh / ghi chú nào để import`);
+  const bytes = src.zip ? src.size : files.reduce((n, f) => n + f.size, 0);
+  const big = files.find((f) => f.size > 60 * 1024 * 1024);
+  if (big) throw new Error(`${big.path} quá lớn (tối đa 60 MB một file)`);
+  const setName = String(name || path.basename(root).replace(/\.zip$/i, "")).slice(0, 200);
+  const { project } = await postJson("char/projects/import", { name: setName });
+  const run = { setId: project.id, sent: 0, bytes, files: files.length, phase: "uploading", started: Date.now() };
+  runs.set(project.id, run);
+  const onBytes = (n) => {
+    run.sent += n;
+  };
+  if (src.zip) {
+    log(`${setName}: zip ${mb(bytes)} → ${project.id}`);
+    await uploadZip(project.id, root, bytes, onBytes);
+    run.phase = "started";
+    // The server unpacks it, keeps what a folder upload would, then reads it as a folder.
+    await postJson(`char/projects/${project.id}/import/unzip`, {});
+  } else {
+    log(`${setName}: ${files.length} file (${mb(bytes)}) → ${project.id}`);
+    const uploaded = await upload(project.id, files, onBytes);
+    run.phase = "started";
+    await postJson(`char/projects/${project.id}/import/start`, { files: uploaded });
+  }
+  const until = Date.now() + WAIT_MS;
+  let st = await status(project.id);
+  while (!st.finished && Date.now() < until) {
+    await sleep(10_000);
+    st = await status(project.id).catch(() => st);
+  }
+  run.phase = "done";
+  return {
+    folder: root,
+    sent: src.zip ? `zip ${mb(bytes)} (server giải nén)` : `${files.length} file (${mb(bytes)})${all.length - files.length ? `, bỏ ${all.length - files.length} file không cần` : ""}`,
+    ...st,
+    next: st.finished
+      ? st.shopify?.preview
+        ? "Đưa link preview (Shopify, theme nháp) và link page cho người dùng."
+        : "Báo lỗi / việc còn thiếu cho người dùng (vd. chưa có bảng giá cho chất liệu)."
+      : "Chưa xong — gọi flexiprint_import_status với set_id sau ít phút.",
+  };
+}
+
+// ---------------------------------------------------------------- MCP (stdio, newline-delimited JSON-RPC)
+const TOOLS = [
+  {
+    name: "flexiprint_import",
+    description:
+      "Import a finished bộ clipart folder — or a .zip of one — on THIS machine (a Teeinblue hand-off like n00-POD-02, or any folder of layer files + mockups + notes) into FlexiPrint (flexi2). It uploads the folder, the server builds the bộ nhân vật + its product, then puts the product on the Shopify store as a DRAFT (price table by material, title/description from the folder). Waits up to ~12 min. → page (the set on flexi2), shopify.preview (store preview in the draft theme), shopify.admin, problems. folder = absolute path, ~/…, or a folder / zip name in ~/Downloads (a .zip is sent whole in 4 MB chunks and unpacked by the server).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        folder: { type: "string", description: "The folder or .zip: /Users/…/n00-POD-02, ~/Downloads/n00-POD-02.zip, or just n00-POD-02." },
+        name: { type: "string", description: "Name of the set (default: the folder name)." },
+      },
+      required: ["folder"],
+    },
+  },
+  {
+    name: "flexiprint_import_status",
+    description: "Where an import is: build progress, problems, the Shopify draft (preview / admin link, or why it did not go up). set_id from flexiprint_import.",
+    inputSchema: { type: "object", properties: { set_id: { type: "string" } }, required: ["set_id"] },
+  },
+];
+
+async function runTool(name, args) {
+  if (name === "flexiprint_import") return importFolder(args ?? {});
+  if (name === "flexiprint_import_status") {
+    const id = String(args?.set_id ?? "");
+    const run = runs.get(id);
+    const st = await status(id);
+    return run && run.phase === "uploading" ? { ...st, upload: `${mb(run.sent)} / ${mb(run.bytes)}` } : st;
+  }
+  throw new Error(`Unknown tool: ${name}`);
+}
+
+const send = (msg) => process.stdout.write(`${JSON.stringify(msg)}\n`);
+async function handle(msg) {
+  const { id, method, params } = msg;
+  if (id === undefined) return;
+  try {
+    if (method === "initialize")
+      return send({ jsonrpc: "2.0", id, result: { protocolVersion: params?.protocolVersion ?? "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "flexiprint-import", version: "1.1.0" } } });
+    if (method === "ping") return send({ jsonrpc: "2.0", id, result: {} });
+    if (method === "tools/list") return send({ jsonrpc: "2.0", id, result: { tools: TOOLS } });
+    if (method === "tools/call") {
+      try {
+        const out = await runTool(params?.name, params?.arguments);
+        return send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(out, null, 1) }] } });
+      } catch (e) {
+        return send({ jsonrpc: "2.0", id, result: { isError: true, content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }] } });
+      }
+    }
+    send({ jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown method ${method}` } });
+  } catch (e) {
+    send({ jsonrpc: "2.0", id, error: { code: -32603, message: e instanceof Error ? e.message : String(e) } });
+  }
+}
+
+// CLI: `node server.mjs import <folder>` / `node server.mjs status <set_id>` (a test without an MCP client).
+if (process.argv[2] === "import" || process.argv[2] === "status") {
+  const out = process.argv[2] === "import" ? await importFolder({ folder: process.argv[3], name: process.argv[4] }) : await runTool("flexiprint_import_status", { set_id: process.argv[3] });
+  console.log(JSON.stringify(out, null, 1));
+} else {
+  let buf = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buf += chunk;
+    for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line) continue;
+      try {
+        void handle(JSON.parse(line));
+      } catch {
+        log("bad message", line.slice(0, 200));
+      }
+    }
+  });
+}
+```

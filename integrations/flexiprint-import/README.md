@@ -19,6 +19,21 @@ chỉ để lại máy các bản sao lớp (`clipart-cat/`, `file-in/`, `previe
 ghi chú) đều gửi. File `.zip`: gửi nguyên theo mảnh 4 MB (song song, đứt thì gửi tiếp phần thiếu), server giải nén rồi chọn
 file y như folder.
 
+## Server đọc folder thế nào
+
+Có 2 đường, tự chọn theo nội dung folder:
+
+1. **Bản giao Teeinblue — server tự đọc, không cần AI.** Folder có ít nhất một file `teeinblue.json`, ở **bất kỳ cấp
+   thư mục con nào** (vd. `n00-POD-02/teeinblue/c1-qua/teeinblue.json` — mỗi case một folder, trong đó là các lớp ảnh +
+   `print/` + `fonts/`). Server đọc thẳng các json đó ra canvas, lớp, lựa chọn, chữ → dựng bộ + sản phẩm ngay (vài phút).
+2. **Định dạng lạ — @flexiprint phân tích.** Không có `teeinblue.json` nào (vd. folder phẳng `teeinblue-clipart-NN-…png`
+   + `bang-vi-tri.csv` + ghi chú): trang bộ báo *"@flexiprint đang phân tích folder (định dạng lạ)"*. Agent dùng MCP
+   `char_import_files` (danh sách file, mỗi lần ≤ 300 file, link = `url_base` + path) → `char_import_read` (đọc json /
+   csv / md / txt theo đoạn 30 000 ký tự) → xem vài ảnh lớp → tự viết manifest → `char_import_build`. Chậm hơn và có thể
+   hỏi lại; agent kẹt thì nhắn vào chat của bộ (vd. "dựng lại bộ import này").
+
+Muốn nhanh và chắc thì gửi bản giao Teeinblue có `teeinblue.json`.
+
 ## Cài (một lần)
 
 1. Node 20+.

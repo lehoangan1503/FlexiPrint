@@ -40,7 +40,7 @@ this MCP. Everything you read here is live production data.
 mockup scenes) → 2 Master (one picture, approved) → 3 Layer: 3a the master at print size, 3b the pictures the files
 are cut from (the paper doll + every option drawn on it), 3c regions (what each option drew anew) → files ("Tạo bộ custom" cuts them AND builds the product: clipart
 folder + layers + texts + background + phôi) → 4 Sản phẩm: phôi / khuôn, backgrounds, mockups → the editor
-(Thiết kế / Xem trước = main-product.liquid / File in / Mockups) → Deploy (Shopify product + template).
+(Thiết kế / Xem trước = flexi2-product.liquid / File in / Mockups) → Deploy (Shopify product + template).
 Deploy by tool (asked 2026-10-29): check_deploy (what is missing) → fill it → deploy_product (ACTIVE by default).
 
 ## Tasks from the web app

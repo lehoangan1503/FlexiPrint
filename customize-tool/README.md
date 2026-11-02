@@ -34,10 +34,10 @@ customize-tool/
     product-list.tsx       grid (trang index + tab dashboard)
     editor/                editor: stage, inspector, asset panel, dialogs, publish
   routes/index.tsx       ← page components mà shim của host re-export
-  storefront/customizer.ts ← customizer của main-product.liquid (không side effect): theme + tab Xem trước dùng chung
-  storefront/index.ts    ← entry Shopify: boot mọi section (bundle → ct-customizer.js)
-  scripts/build-storefront.mjs → shopify/assets/ct-customizer.js
-  shopify/               ← file theme: sections/main-product.liquid, assets/, templates/
+  storefront/customizer.ts ← customizer của flexi2-product.liquid (không side effect): theme + tab Xem trước dùng chung
+  storefront/index.ts    ← entry Shopify: boot mọi section (bundle → flexi2-customizer.js)
+  scripts/build-storefront.mjs → shopify/assets/flexi2-customizer.js
+  shopify/               ← file theme: sections/flexi2-product.liquid, assets/, templates/
 ```
 
 Shim trên host (khi tách site thì tạo lại y hệt):
@@ -170,7 +170,7 @@ ct_products ─┬─ main_asset_id ──► ct_assets(main)
 3. **Sub object**: upload hoặc AI (1 request). Sau đó **Version AI**: mỗi version là 1 request, sub gốc là ảnh tham chiếu đầu tiên để giữ khung hình.
 4. **Xoá nền / trim** cho output AI (Gemini không có alpha).
 5. **Đặt vào vùng**, rồi vào Chế độ Object (Enter hoặc double-click) để kéo, scale, xoay object trong vùng.
-6. Tab **Xem trước**: đúng trang sản phẩm khách thấy trên Shopify — markup của `main-product.liquid`, CSS của theme và
+6. Tab **Xem trước**: đúng trang sản phẩm khách thấy trên Shopify — markup của `flexi2-product.liquid`, CSS của theme và
    cùng class `Customizer` với storefront, chạy trên bản thiết kế hiện tại (kể cả chưa lưu). Vùng / option mới hiện ngay,
    không reset lựa chọn đang thử. Không sửa gì ở đây. Add to cart hiện danh sách line-item properties sẽ vào giỏ (không upload).
    Tab **Mockups**: dựng mockup tay (nền, image frame, version, chữ) → **Lưu mockup**; cần bản vật liệu của mọi clipart trong khung.
@@ -241,15 +241,18 @@ Chi tiết đường cắt:
 
 ```
 customize-tool/shopify/
-  sections/main-product.liquid   section sản phẩm (gallery, variant, form, personalization)
-  assets/ct-customizer.js        build từ storefront/index.ts — npm run build:ct-storefront
-  assets/ct-customizer.css
+  sections/flexi2-product.liquid section sản phẩm (gallery, variant, form, personalization)
+  assets/flexi2-customizer.js    build từ storefront/index.ts — npm run build:ct-storefront
+  assets/flexi2-customizer.css
   templates/product.customize.json
 ```
 
-Theme: `node --env-file=.env.local scripts/push-theme.mjs` (Admin API, scope write_themes) đẩy section thành
-`sections/flexiprint-product.liquid` + 2 asset + `templates/product.flexiprint.json` (api_base = flexi2) lên theme nháp
-"Copy of Cherivia Ornament (nháp)" của store CHERIVIA; theme live bị chặn.
+Theme: `node --env-file=.env.local scripts/push-theme.mjs` (Admin API, scope write_themes) đẩy
+`sections/flexi2-product.liquid` + `assets/flexi2-customizer.{js,css}` + `templates/product.flexi2.json` (api_base = flexi2)
+lên theme LIVE của store CHERIVIA (từ 2026-11-03) — chỉ 4 file riêng này, script từ chối ghi mọi tên file khác, nên code /
+template sẵn có của theme không bị đụng. `THEME="Copy of Cherivia Ornament (nháp)"` = đẩy lên theme nháp để thử
+(`/products/<handle>?view=flexi2&preview_theme_id=…`). Section tự chứa: không dùng snippet / asset / JS nào của theme
+(sale, giao hàng, accordion, quantity −/+, sticky Add to cart, cart drawer riêng — `storefront/shop-extras.ts`).
 
 ### Deploy sản phẩm (`components/deploy/`, `server/shopify.ts`)
 
@@ -270,7 +273,7 @@ token 24h), `SHOPIFY_API_VERSION`. Scope dùng: `write_products`, `write_themes`
 3. Trang deploy liệt kê option khách sẽ thấy theo từng version (`lib/option-audit.ts`) và cảnh báo trước:
    trường chưa có nhãn, 2 trường trùng nhãn, custom layer trống…
 
-### main-product.liquid — dynamic
+### flexi2-product.liquid — dynamic
 
 - Mọi option Shopify của sản phẩm đều render (bao nhiêu option, tên gì cũng được). Option trùng
   `pricing.packOption` hiện thành thẻ "N PCS · $x/pc" (giá 1 cái theo size đang chọn, tính từ giá variant).

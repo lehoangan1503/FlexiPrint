@@ -1,8 +1,8 @@
 /**
- * The storefront customizer for `shopify/sections/main-product.liquid` — no
+ * The storefront customizer for `shopify/sections/flexi2-product.liquid` — no
  * side effects on import. Two hosts mount it:
  *
- *   storefront/index.ts   the Shopify theme (bundled to shopify/assets/ct-customizer.js),
+ *   storefront/index.ts   the Shopify theme (bundled to shopify/assets/flexi2-customizer.js),
  *                         template fetched from the public endpoint (latest Publish)
  *   editor "Xem trước"    components/editor/storefront-preview.tsx, template built
  *                         from the unsaved draft and swapped live via setTemplate(),
@@ -239,8 +239,11 @@ export function initVariants(root: HTMLElement, form: HTMLFormElement, showMedia
   const moneyFormat = root.dataset.ctMoneyFormat || "${{amount}}";
   const idInput = form.querySelector<HTMLInputElement>('input[name="id"]');
   const selects = Array.from(root.querySelectorAll<HTMLSelectElement | HTMLInputElement>("[data-ct-option-index]"));
-  const price = root.querySelector<HTMLElement>("[data-ct-price]");
-  const compare = root.querySelector<HTMLElement>("[data-ct-compare]");
+  // The info column + the sticky bar both show the price.
+  const prices = Array.from(root.querySelectorAll<HTMLElement>("[data-ct-price]"));
+  const compares = Array.from(root.querySelectorAll<HTMLElement>("[data-ct-compare]"));
+  // Other forms of the variant (Shop Pay installments) follow the picked variant too.
+  const otherIds = Array.from(root.querySelectorAll<HTMLInputElement>("input[data-ct-variant-id]")).filter((i) => i !== idInput);
   const submit = form.querySelector<HTMLButtonElement>('[type="submit"]');
   const names = optionNames(root);
   const packIndex = pricing?.packOption ? names.findIndex((n) => n.toLowerCase() === pricing.packOption?.toLowerCase()) : -1;
@@ -264,15 +267,23 @@ export function initVariants(root: HTMLElement, form: HTMLFormElement, showMedia
     for (const s of selects) {
       if (s instanceof HTMLInputElement && s.type === "radio") s.closest(".ct-pill, .ct-pack")?.classList.toggle("is-selected", s.checked);
     }
+    // "Size: 4"x4"" — the picked value next to each option name.
+    for (const node of Array.from(root.querySelectorAll<HTMLElement>("[data-ct-option-value]"))) {
+      node.textContent = chosen[Number(node.dataset.ctOptionValue)] ?? "";
+    }
     root.dispatchEvent(new CustomEvent<CtVariantChange>("ct:variant", { detail: { options: chosen, names } }));
     if (initial) return;
     const match = matrix.find((v) => v.options.every((o, i) => chosen[i] === undefined || chosen[i] === o));
     if (!match) return;
     if (idInput) idInput.value = String(match.id);
+    for (const other of otherIds) {
+      other.value = String(match.id);
+      other.dispatchEvent(new Event("change", { bubbles: true }));
+    }
     const info = variants[String(match.id)];
     if (!info) return;
-    if (price) price.textContent = info.price;
-    if (compare) {
+    for (const price of prices) price.textContent = info.price;
+    for (const compare of compares) {
       compare.textContent = info.compare ?? "";
       compare.hidden = !info.compare;
     }

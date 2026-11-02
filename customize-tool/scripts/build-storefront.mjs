@@ -1,6 +1,6 @@
 /**
  * Bundle the storefront runtime (customize-tool/storefront/index.ts) into the
- * Shopify theme asset customize-tool/shopify/assets/ct-customizer.js.
+ * Shopify theme asset customize-tool/shopify/assets/flexi2-customizer.js.
  *
  *   npm run build:ct-storefront
  *
@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
-const outfile = path.join(root, "shopify", "assets", "ct-customizer.js");
+const outfile = path.join(root, "shopify", "assets", "flexi2-customizer.js");
 
 await build({
   entryPoints: [path.join(root, "storefront", "index.ts")],

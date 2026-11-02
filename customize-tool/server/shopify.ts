@@ -8,7 +8,7 @@
  *
  * Deploy = one `productSet` (synchronous): title / description / status, the price table's options + one variant
  * per cell (price = the pack's total), metafields customize_tool.product_id + customize_tool.pricing (read by
- * main-product.liquid), template suffix "flexiprint" and the chosen mockups as product images. Run again, it
+ * flexi2-product.liquid), template suffix "flexi2" and the chosen mockups as product images. Run again, it
  * updates the same product: variants are matched by option values so their ids (and carts) survive.
  */
 
@@ -30,8 +30,8 @@ const DOMAIN = () => process.env.SHOPIFY_STORE_DOMAIN ?? "";
 /** The draft theme carrying the FlexiPrint section — product links open in it, never the live theme. */
 const PREVIEW_THEME = () => process.env.SHOPIFY_PREVIEW_THEME_ID ?? "";
 
-/** The theme template the deployed product uses (templates/product.flexiprint.json → section flexiprint-product). */
-export const CT_SHOPIFY_TEMPLATE_SUFFIX = "flexiprint";
+/** The theme template the deployed product uses (templates/product.flexi2.json → section flexi2-product, on the live theme — scripts/push-theme.mjs). */
+export const CT_SHOPIFY_TEMPLATE_SUFFIX = "flexi2";
 export const CT_METAFIELD_NS = "customize_tool";
 
 export function shopifyConfigured(): boolean {
@@ -316,7 +316,7 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
     metafields: [
       { namespace: CT_METAFIELD_NS, key: "product_id", type: "single_line_text_field", value: input.ctProductId },
       { namespace: CT_METAFIELD_NS, key: "pricing", type: "json", value: JSON.stringify(shopifyPricing(cfg)) },
-      // The collection main-product.liquid shows in the breadcrumb (Home › Ornaments › product).
+      // The collection flexi2-product.liquid shows in the breadcrumb (Home › Ornaments › product).
       ...(input.primaryCollectionId ? [{ namespace: CT_METAFIELD_NS, key: "breadcrumb_collection", type: "collection_reference", value: input.primaryCollectionId }] : []),
     ],
     collections: picked.filter((c) => !c.smart).map((c) => c.id),

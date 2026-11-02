@@ -2,7 +2,7 @@
 
 /**
  * "Xem trước": the product page exactly as a Shopify customer sees it — the
- * markup of shopify/sections/main-product.liquid, its CSS, and the SAME
+ * markup of shopify/sections/flexi2-product.liquid, its CSS, and the SAME
  * storefront Customizer class (storefront/customizer.ts) that the theme runs.
  *
  * The template is built from the current, unsaved design with the same
@@ -10,11 +10,11 @@
  * added in "Thiết kế" appears here at once. Nothing is uploaded; Add to cart
  * shows the line-item properties the real cart would receive.
  *
- * Keep the markup below in sync with main-product.liquid (DOM contract at the
+ * Keep the markup below in sync with flexi2-product.liquid (DOM contract at the
  * top of storefront/customizer.ts).
  */
 
-import "../../shopify/assets/ct-customizer.css";
+import "../../shopify/assets/flexi2-customizer.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Eye, ShoppingCart, X } from "lucide-react";
 import type { CtAsset, CtPriceTable, CtPriceTableConfig, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtTemplate } from "../../types";
@@ -93,7 +93,7 @@ export function StorefrontPreview({ product, assets, regions, items, config }: S
       <div className="flex shrink-0 items-center gap-2 border-b bg-background px-3 py-2 text-xs text-muted-foreground">
         <Eye className="h-3.5 w-3.5" />
         <span>
-          Trang sản phẩm như khách thấy trên Shopify (<code>main-product.liquid</code>) — chạy trên bản thiết kế hiện tại, kể cả chưa lưu. Sửa ở tab
+          Trang sản phẩm như khách thấy trên Shopify (<code>flexi2-product.liquid</code>) — chạy trên bản thiết kế hiện tại, kể cả chưa lưu. Sửa ở tab
           <b className="text-foreground"> Thiết kế</b>; lên store sau khi <b className="text-foreground">Deploy sản phẩm</b>.
         </span>
       </div>
@@ -177,7 +177,7 @@ function LiveStorefront({
   }, [template]);
 
   return (
-    <section ref={rootRef} id="ct-editor-preview" className="ct-product mx-auto max-w-[1200px] px-6" data-ct-product style={{ fontFamily: "Poppins, system-ui, sans-serif" }}>
+    <section ref={rootRef} id="ct-editor-preview" className="ct-product mx-auto max-w-[1200px] px-6" data-ct-product style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <div className="ct-product__media">
         <div className="ct-gallery" data-ct-gallery hidden={mockups.length === 0}>
           <div className="ct-gallery__main" data-ct-gallery-main>
@@ -226,14 +226,21 @@ function LiveStorefront({
         <PricePreview pricing={pricing} />
         <form ref={formRef} className="ct-form" data-ct-form noValidate onSubmit={(e) => e.preventDefault()}>
           <div className="ct-options" data-ct-options />
-          <div className="ct-buy">
-            <label className="ct-qty">
-              <input type="number" name="quantity" defaultValue={1} min={1} inputMode="numeric" aria-label="Quantity" />
-            </label>
-            <button type="submit" name="add" className="ct-btn ct-btn--primary ct-add">
-              <span data-ct-submit-label>{SECTION_TEXT.add}</span>
-            </button>
+          <div className="ct-qty">
+            <span className="ct-qty__label">Quantity</span>
+            <div className="ct-qty__box">
+              <button type="button" disabled aria-label="Decrease quantity">
+                −
+              </button>
+              <input type="number" name="quantity" defaultValue={1} min={1} inputMode="numeric" aria-label="Quantity" readOnly />
+              <button type="button" disabled aria-label="Increase quantity">
+                +
+              </button>
+            </div>
           </div>
+          <button type="submit" name="add" className="ct-btn ct-btn--primary ct-add">
+            <span data-ct-submit-label>{SECTION_TEXT.add}</span>
+          </button>
         </form>
       </div>
     </section>
@@ -241,7 +248,7 @@ function LiveStorefront({
 }
 
 /**
- * Price + Shopify option pickers as main-product.liquid renders them for a product deployed with `pricing`
+ * Price + Shopify option pickers as flexi2-product.liquid renders them for a product deployed with `pricing`
  * (variants numbered 1…n here), with the same data scripts the storefront reads.
  */
 function PricePreview({ pricing }: { pricing: CtPriceTableConfig | null }) {
@@ -268,15 +275,22 @@ function PricePreview({ pricing }: { pricing: CtPriceTableConfig | null }) {
   return (
     <>
       <div className="ct-product__price">
-        <span data-ct-price>{first ? formatUsd(first.price) : ""}</span>{" "}
         <s className="ct-product__compare" data-ct-compare hidden={!first?.compareAt}>
           {first?.compareAt ? formatUsd(first.compareAt) : ""}
         </s>
+        <span className="ct-product__now" data-ct-price>
+          {first ? formatUsd(first.price) : ""}
+        </span>
       </div>
       <div className="ct-variants">
         {options.map((o, oi) => (
           <fieldset key={o.name} className={`ct-variant${o.pack ? " ct-variant--pack" : ""}`} data-ct-option-name={o.name} data-ct-option-position={oi}>
-            <legend className="ct-field__label">{o.name}</legend>
+            <legend className="ct-field__label">
+              {o.name}
+              <span className="ct-field__value" data-ct-option-value={oi}>
+                {o.values[0]}
+              </span>
+            </legend>
             <div className={o.pack ? "ct-packs" : "ct-pills"}>
               {o.values.map((v, vi) => (
                 <label key={v} className={`${o.pack ? "ct-pack" : "ct-pill"}${vi === 0 ? " is-selected" : ""}`}>

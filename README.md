@@ -9,7 +9,7 @@ metal, wood) and print files with a laser cut path.
 - **Files**: Cloudflare R2 (private bucket), served by the app at `/files/*` behind an nginx cache.
 - **Services** (`services/`, Python, no AI): `bg-remover` (BiRefNet cut-out), `face-detect` (face crops),
   `material-render` (print files + cut SVG), `layer-kit` (v2 layer sets).
-- **Storefront**: `customize-tool/shopify/` — theme section + `ct-customizer.js` (Shopify store `giftself-2`).
+- **Storefront**: `customize-tool/shopify/` — theme section `flexi2-product.liquid` + `flexi2-customizer.js` (Shopify store CHERIVIA, live theme, own files only).
 
 ## Layout
 

@@ -1721,7 +1721,7 @@ export interface CtPriceCell {
 }
 
 /**
- * Metafield customize_tool.pricing (json) of a deployed product — how main-product.liquid tells the pack option
+ * Metafield customize_tool.pricing (json) of a deployed product — how flexi2-product.liquid tells the pack option
  * from the others and how many designs each of its values holds.
  */
 export interface CtShopifyPricing {

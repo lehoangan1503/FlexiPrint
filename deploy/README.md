@@ -89,9 +89,10 @@ giftself-2 is no longer used. flexi2 (deploy/flexi2/README.md) deploys every pro
 - App (Dev Dashboard, same org as the store): client credentials in the app `.env`
   (`SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`) → Admin API token, auto-refreshed. Scopes: write_products,
   write_themes. Without read/write_publications a deploy does not turn on the Online Store channel (it warns).
-- Theme: FlexiPrint files go only to the draft **Copy of Cherivia Ornament (nháp)** (#189900521626), never the live
-  "Cherivia Ornament (nháp)". `node --env-file=.env.local scripts/push-theme.mjs` writes them through the Admin API
-  (themeFilesUpsert): the FlexiPrint section + assets + `templates/product.flexiprint.json`; the theme's own
-  `product.json` is left alone. Deployed products carry template suffix `flexiprint`; `SHOPIFY_PREVIEW_THEME_ID`
-  makes their store link open in that draft theme.
+- Theme: since 2026-11-03 the FlexiPrint page goes on the LIVE theme "Cherivia Ornament (nháp)" as files of its own only —
+  `node --env-file=.env.local scripts/push-theme.mjs` (Admin API themeFilesUpsert) writes `sections/flexi2-product.liquid`,
+  `assets/flexi2-customizer.{js,css}` and `templates/product.flexi2.json` and refuses any other filename, so the theme's own
+  code and templates are never touched. Deployed products carry template suffix `flexi2`. `THEME=<name or id>` pushes to
+  another theme (the draft **Copy of Cherivia Ornament (nháp)** #189900521626 for tests); `SHOPIFY_PREVIEW_THEME_ID`
+  makes the store link open in that draft theme.
 - A personalized product: metafield `customize_tool.product_id` = FlexiPrint id.

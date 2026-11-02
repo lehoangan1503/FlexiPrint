@@ -1,0 +1,486 @@
+{%- comment -%}
+  FlexiPrint (flexi2) — product page section, theme file sections/flexi2-product.liquid.
+
+  Self-contained: it renders only from this file + its own assets flexi2-customizer.js / .css and reads no
+  snippet, asset or script of the theme, so it can sit on the live theme next to the theme's own product
+  page without touching it (scripts/push-theme.mjs writes only the flexi2-* files + templates/product.flexi2.json).
+
+  Renders every product (gallery, variants, add to cart). When the product has the metafield
+  customize_tool.product_id (the id shown in the tool's Publish dialog) it also loads the latest
+  published template from the tool and shows the personalization form:
+
+    - the left column starts with the product media (mockups) — or the live design when the product has no media;
+    - as soon as the customer changes any option it swaps to the live custom canvas ("View product photos" swaps back);
+    - customer photos open a dialog: upload → drag / zoom / rotate → Apply;
+    - Add to cart uploads a flattened preview and adds line-item properties
+      (visible choices + hidden _ct_preview, _ct_template, _ct_selection), posts /cart/add.js and opens the
+      section's own cart drawer (storefront/shop-extras.ts); a sticky Add to cart bar shows once the real button
+      is scrolled past.
+
+  Every Shopify option of the product is rendered, whatever it is called and however many there are.
+  A product deployed from the tool (Deploy sản phẩm → bảng giá) also has the metafield
+  customize_tool.pricing (json): which option holds the packs ("Buy More Save More (Different
+  Designs)") and how many designs each pack value holds. That option is shown as cards with the
+  price of one piece for the chosen size, and a pack of N gets N independent designs (tabs
+  "<item> 1…N" in the form, "<item> k/N" arrows on the preview).
+
+  Every option (zones, groups, preset texts, photo styles, main versions) is rendered from the template
+  JSON, so anything created in the tool works here with no theme edit. The tool's "Xem trước" tab runs this
+  same markup + script on the unsaved draft (components/editor/storefront-preview.tsx).
+{%- endcomment -%}
+
+{%- liquid
+  assign current_variant = product.selected_or_first_available_variant
+  assign featured = current_variant.featured_media | default: product.featured_media
+  assign ct_id = product.metafields.customize_tool.product_id.value | default: product.metafields.customize_tool.product_id | strip
+  assign api_base = section.settings.api_base | strip
+  assign last_char = api_base | slice: -1
+  if last_char == '/'
+    assign api_base = api_base | remove_last: '/'
+  endif
+  assign is_custom = false
+  if ct_id != blank and api_base != blank
+    assign is_custom = true
+  endif
+  assign ct_pricing = product.metafields.customize_tool.pricing.value
+  assign pack_option = ct_pricing.packOption | default: ''
+  assign product_form_id = 'product-form-' | append: section.id
+  assign with_code = settings.currency_code_enabled
+  if with_code
+    assign money_format = shop.money_with_currency_format
+  else
+    assign money_format = shop.money_format
+  endif
+  assign on_sale = false
+  if current_variant.compare_at_price > current_variant.price
+    assign on_sale = true
+  endif
+  assign description_in_tab = false
+  for block in section.blocks
+    if block.type == 'collapsible_tab' and block.settings.cv_show_description
+      assign description_in_tab = true
+    endif
+  endfor
+-%}
+
+{{ 'flexi2-customizer.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'flexi2-customizer.js' | asset_url }}" defer="defer"></script>
+
+<section
+  id="CtProduct-{{ section.id }}"
+  class="ct-product page-width"
+  data-ct-product
+  {% if is_custom %}
+    data-ct-template-url="{{ api_base }}/api/customize-tool/public/templates/{{ ct_id | url_encode }}"
+    data-ct-upload-url="{{ api_base }}/api/customize-tool/public/uploads/{{ ct_id | url_encode }}"
+    data-ct-photo-url="{{ api_base }}/api/customize-tool/public/photo/{{ ct_id | url_encode }}"
+  {% endif %}
+  data-ct-t-heading="{{ section.settings.heading | escape }}"
+  data-ct-t-upload="{{ section.settings.upload_label | escape }}"
+  data-ct-t-required="{{ section.settings.required_label | escape }}"
+  data-ct-t-magic="{% if section.settings.magic_label != blank %}{{ section.settings.magic_label | escape }}{% else %}{{ shop.name | append: ' magic' | escape }}{% endif %}"
+  data-ct-money-format="{{ money_format | escape }}"
+  style="--ct-accent: {{ section.settings.accent }};"
+>
+  {%- if section.settings.show_breadcrumb -%}
+    {%- comment -%} The deploy page's starred collection (customize_tool.breadcrumb_collection), else the one browsed from, else the first. {%- endcomment -%}
+    {%- assign crumb = product.metafields.customize_tool.breadcrumb_collection.value -%}
+    {%- if crumb == blank -%}{%- assign crumb = collection -%}{%- endif -%}
+    {%- if crumb == blank -%}{%- assign crumb = product.collections.first -%}{%- endif -%}
+    <nav class="ct-breadcrumb" aria-label="Breadcrumb">
+      <a href="{{ routes.root_url }}">Home</a>
+      {%- if crumb != blank -%}
+        <span aria-hidden="true">›</span><a href="{{ crumb.url }}">{{ crumb.title }}</a>
+      {%- endif -%}
+      <span aria-hidden="true">›</span><span aria-current="page">{{ product.title }}</span>
+    </nav>
+  {%- endif -%}
+
+  <div class="ct-product__media">
+    <div class="ct-gallery" data-ct-gallery>
+      <div class="ct-gallery__main" data-ct-gallery-main>
+        {%- for media in product.media -%}
+          <div class="ct-gallery__slide" data-media-id="{{ media.id }}" {% unless media.id == featured.id %}hidden{% endunless %}>
+            {%- case media.media_type -%}
+              {%- when 'image' -%}
+                {{
+                  media
+                  | image_url: width: 1600
+                  | image_tag:
+                    loading: 'eager',
+                    widths: '600, 900, 1200, 1600',
+                    sizes: '(min-width: 990px) 55vw, 100vw',
+                    alt: media.alt
+                }}
+              {%- when 'video' -%}
+                {{ media | video_tag: controls: true, image_size: '1200x' }}
+              {%- when 'external_video' -%}
+                {{ media | external_video_tag }}
+              {%- when 'model' -%}
+                {{ media | model_viewer_tag }}
+              {%- else -%}
+                {{ media | media_tag }}
+            {%- endcase -%}
+          </div>
+        {%- else -%}
+          <div class="ct-gallery__slide">{{ 'product-1' | placeholder_svg_tag: 'ct-placeholder' }}</div>
+        {%- endfor -%}
+      </div>
+      {%- if product.media.size > 1 -%}
+        <div class="ct-gallery__thumbs">
+          {%- for media in product.media -%}
+            <button type="button" class="ct-gallery__thumb{% if media.id == featured.id %} is-active{% endif %}" data-ct-thumb="{{ media.id }}" aria-label="{{ media.alt | default: product.title | escape }}">
+              {{ media.preview_image | image_url: width: 160 | image_tag: loading: 'lazy', alt: '' }}
+            </button>
+          {%- endfor -%}
+        </div>
+      {%- endif -%}
+    </div>
+
+    {%- if is_custom -%}
+      <div class="ct-stage" data-ct-stage hidden>
+        <canvas aria-label="{{ section.settings.preview_label | escape }}"></canvas>
+        <div class="ct-stage__nav" data-ct-design-nav hidden>
+          <button type="button" class="ct-stage__arrow" data-ct-design-prev aria-label="Previous">&lsaquo;</button>
+          <span data-ct-design-label></span>
+          <button type="button" class="ct-stage__arrow" data-ct-design-next aria-label="Next">&rsaquo;</button>
+        </div>
+        <button type="button" class="ct-stage__toggle" data-ct-show-photos>{{ section.settings.photos_label }}</button>
+      </div>
+      <button type="button" class="ct-show-design" data-ct-show-design>{{ section.settings.design_label }}</button>
+    {%- endif -%}
+  </div>
+
+  <div class="ct-product__info">
+    {%- if section.settings.show_vendor -%}
+      <p class="ct-product__vendor">{{ product.vendor }}</p>
+    {%- endif -%}
+    <h1 class="ct-product__title">{{ product.title }}</h1>
+    {%- for block in section.blocks -%}
+      {%- if block.type == 'custom_liquid' -%}<div class="ct-block" {{ block.shopify_attributes }}>{{ block.settings.custom_liquid }}</div>{%- endif -%}
+    {%- endfor -%}
+
+    <div class="ct-product__price" role="status">
+      <s class="ct-product__compare" data-ct-compare {% unless on_sale %}hidden{% endunless %}>
+        {%- if on_sale -%}{% if with_code %}{{ current_variant.compare_at_price | money_with_currency }}{% else %}{{ current_variant.compare_at_price | money }}{% endif %}{%- endif -%}
+      </s>
+      <span class="ct-product__now" data-ct-price>{% if with_code %}{{ current_variant.price | money_with_currency }}{% else %}{{ current_variant.price | money }}{% endif %}</span>
+    </div>
+    {%- if cart.taxes_included or shop.shipping_policy.body != blank -%}
+      <p class="ct-product__tax">
+        {%- if cart.taxes_included -%}Taxes included. {% endif -%}
+        {%- if shop.shipping_policy.body != blank -%}<a href="{{ shop.shipping_policy.url }}">Shipping</a> calculated at checkout.{%- endif -%}
+      </p>
+    {%- endif -%}
+    {%- if section.settings.show_installments -%}
+      {%- assign installment_form_id = 'product-form-installment-' | append: section.id -%}
+      {%- form 'product', product, id: installment_form_id, class: 'ct-installment' -%}
+        <input type="hidden" name="id" value="{{ current_variant.id }}" data-ct-variant-id>
+        {{ form | payment_terms }}
+      {%- endform -%}
+    {%- endif -%}
+
+    {%- for block in section.blocks -%}
+      {%- case block.type -%}
+        {%- when 'cv_sale_banner' -%}
+          {%- if on_sale -%}
+            {%- assign pct = current_variant.compare_at_price | minus: current_variant.price | times: 100.0 | divided_by: current_variant.compare_at_price | round -%}
+            <div class="ct-sale" {{ block.shopify_attributes }}>
+              <div>
+                <p class="ct-sale__pct">{{ pct }}% OFF</p>
+                {%- if block.settings.end_date != blank -%}<p class="ct-sale__label">{{ block.settings.label }}</p>{%- endif -%}
+              </div>
+              {%- if block.settings.end_date != blank -%}
+                <div class="ct-sale__timer" data-ct-countdown="{{ block.settings.end_date | escape }}">
+                  <span><b data-d>00</b><small>Days</small></span>
+                  <span><b data-h>00</b><small>Hours</small></span>
+                  <span><b data-m>00</b><small>Min</small></span>
+                  <span><b data-s>00</b><small>Sec</small></span>
+                </div>
+              {%- endif -%}
+            </div>
+          {%- endif -%}
+        {%- when 'cv_delivery' -%}
+          <div class="ct-delivery" data-ct-delivery data-min="{{ block.settings.min_days }}" data-max="{{ block.settings.max_days }}" {{ block.shopify_attributes }}>
+            <p><span class="ct-muted">Deliver to:</span> <strong>{{ block.settings.country }}</strong></p>
+            <p>
+              <span class="ct-muted">Order today, get it as early as:</span>
+              <strong data-ct-delivery-range>{{ block.settings.min_days }}–{{ block.settings.max_days }} business days</strong>
+            </p>
+          </div>
+      {%- endcase -%}
+    {%- endfor -%}
+
+    {%- unless product.has_only_default_variant -%}
+      {%- comment -%} Outside the form so the pickers are not posted to /cart/add. {%- endcomment -%}
+      <div class="ct-variants">
+        {%- for option in product.options_with_values -%}
+          {%- assign option_index = forloop.index0 -%}
+          {%- assign is_pack = false -%}
+          {%- if pack_option != blank and option.name == pack_option -%}
+            {%- assign is_pack = true -%}
+          {%- endif -%}
+          <fieldset class="ct-variant{% if is_pack %} ct-variant--pack{% endif %}" data-ct-option-name="{{ option.name | escape }}" data-ct-option-position="{{ option_index }}">
+            <legend class="ct-field__label">
+              {{- option.name -}}<span class="ct-field__value" data-ct-option-value="{{ option_index }}">{{ option.selected_value }}</span>
+            </legend>
+            <div class="{% if is_pack %}ct-packs{% else %}ct-pills{% endif %}">
+              {%- for value in option.values -%}
+                <label class="{% if is_pack %}ct-pack{% else %}ct-pill{% endif %}{% if option.selected_value == value %} is-selected{% endif %}">
+                  <input
+                    type="radio"
+                    name="ct-{{ section.id }}-option-{{ option_index }}"
+                    value="{{ value | escape }}"
+                    data-ct-option-index="{{ option_index }}"
+                    {% if option.selected_value == value %}checked{% endif %}
+                  >
+                  {%- if is_pack -%}
+                    <span class="ct-pack__label">{{ value }}</span>
+                    <span class="ct-pack__unit" data-ct-pack-unit="{{ value | escape }}"></span>
+                  {%- else -%}
+                    <span>{{ value }}</span>
+                  {%- endif -%}
+                </label>
+              {%- endfor -%}
+            </div>
+          </fieldset>
+        {%- endfor -%}
+      </div>
+    {%- endunless -%}
+
+    {%- form 'product', product, id: product_form_id, class: 'ct-form', data-ct-form: 'true', novalidate: 'novalidate' -%}
+      <input type="hidden" name="id" value="{{ current_variant.id }}" data-ct-variant-id>
+
+      {%- if is_custom -%}
+        <div class="ct-options" data-ct-options></div>
+      {%- endif -%}
+
+      <div class="ct-qty">
+        <label class="ct-qty__label" for="Quantity-{{ section.id }}">{{ section.settings.quantity_label }}</label>
+        <div class="ct-qty__box" data-ct-qty>
+          <button type="button" data-ct-qty-step="-1" aria-label="Decrease quantity">−</button>
+          <input id="Quantity-{{ section.id }}" type="number" name="quantity" value="1" min="1" max="999" inputmode="numeric">
+          <button type="button" data-ct-qty-step="1" aria-label="Increase quantity">+</button>
+        </div>
+      </div>
+      <p class="ct-error" data-ct-cart-error hidden></p>
+      <button
+        type="submit"
+        name="add"
+        class="ct-btn ct-btn--primary ct-add"
+        data-label-add="{{ section.settings.add_label | escape }}"
+        data-label-soldout="{{ section.settings.soldout_label | escape }}"
+        {% unless current_variant.available %}disabled{% endunless %}
+      >
+        <span data-ct-submit-label>
+          {%- if current_variant.available -%}{{ section.settings.add_label }}{%- else -%}{{ section.settings.soldout_label }}{%- endif -%}
+        </span>
+      </button>
+    {%- endform -%}
+
+    {%- for block in section.blocks -%}
+      {%- case block.type -%}
+        {%- when 'cv_benefits' -%}
+          <ul class="ct-benefits" role="list" {{ block.shopify_attributes }}>
+            {%- assign lines = block.settings.lines | newline_to_br | split: '<br />' -%}
+            {%- for l in lines -%}
+              {%- assign t = l | strip -%}
+              {%- if t != blank -%}
+                <li><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ t }}</li>
+              {%- endif -%}
+            {%- endfor -%}
+          </ul>
+        {%- when 'collapsible_tab' -%}
+          <details class="ct-acc" id="Details-{{ block.id }}-{{ section.id }}" {{ block.shopify_attributes }}>
+            <summary>
+              <span class="ct-acc__icon" aria-hidden="true">
+                {%- case block.settings.icon -%}
+                  {%- when 'clipboard' -%}<svg viewBox="0 0 20 20"><path d="M6.311 9.136a.25.25 0 0 1 .25-.25h7.185a.25.25 0 0 1 0 .5H6.561a.25.25 0 0 1-.25-.25M6.311 14.054a.25.25 0 0 1 .25-.25h6.878a.25.25 0 0 1 0 .5H6.561a.25.25 0 0 1-.25-.25M6.926 11.595a.25.25 0 0 1 .25-.25h5.648a.25.25 0 1 1 0 .5H7.176a.25.25 0 0 1-.25-.25M5.196 1.778a1.5 1.5 0 0 1 1.5-1.5h6.608a1.5 1.5 0 0 1 1.5 1.5v1.69a1.5 1.5 0 0 1-1.5 1.5H6.696a1.5 1.5 0 0 1-1.5-1.5zm1.5-.5a.5.5 0 0 0-.5.5v1.69a.5.5 0 0 0 .5.5h6.608a.5.5 0 0 0 .5-.5v-1.69a.5.5 0 0 0-.5-.5z"/><path d="M3.737 2.508v16.215h12.526V2.508h-1.765v-1h1.765a1 1 0 0 1 1 1v16.215a1 1 0 0 1-1 1H3.737a1 1 0 0 1-1-1V2.508a1 1 0 0 1 1-1H5.76v1z"/></svg>
+                  {%- when 'truck' -%}<svg viewBox="0 0 20 20"><path d="M0 3.752c0-.277.224-.502.5-.502h10.147a.5.5 0 0 1 .5.502v9.91l-.595 1.003H7.223V13.66h2.923V4.253H1.002v9.408h1.682v1.004H.501A.5.5 0 0 1 0 14.163zm18.999 4.332-7.851-1.975V5.075l8.473 2.131a.5.5 0 0 1 .379.487v6.47a.5.5 0 0 1-.5.502h-2.193v-1.003H19zm-7.851 5.578h2.196v1.003h-2.792z"/><path d="M7.713 14.185a2.56 2.56 0 0 1-2.56 2.565 2.56 2.56 0 0 1-2.56-2.565 2.56 2.56 0 0 1 2.56-2.564 2.56 2.56 0 0 1 2.56 2.564m-2.56 1.562a1.56 1.56 0 0 0 1.558-1.562 1.56 1.56 0 0 0-1.559-1.56 1.56 1.56 0 0 0-1.558 1.56 1.56 1.56 0 0 0 1.558 1.562m12.368-1.562a2.56 2.56 0 0 1-2.56 2.565 2.56 2.56 0 0 1-2.56-2.565 2.56 2.56 0 0 1 2.56-2.564 2.56 2.56 0 0 1 2.56 2.564m-2.56 1.562a1.56 1.56 0 0 0 1.558-1.562 1.56 1.56 0 0 0-1.559-1.56 1.56 1.56 0 0 0-1.558 1.56 1.56 1.56 0 0 0 1.558 1.562"/></svg>
+                  {%- when 'heart' -%}<svg viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 5.24 8.515 3.773a4.433 4.433 0 0 0-6.21 0 4.293 4.293 0 0 0 0 6.128L10 17.495l7.695-7.593a4.293 4.293 0 0 0 0-6.128 4.433 4.433 0 0 0-6.21 0zm.765-2.177c2.113-2.084 5.538-2.084 7.65 0a5.29 5.29 0 0 1 0 7.55l-7.695 7.593a1.03 1.03 0 0 1-1.44 0l-7.696-7.594a5.29 5.29 0 0 1 0-7.549C3.697.98 7.122.98 9.234 3.063l.766.755z"/></svg>
+                  {%- when 'check_mark' -%}<svg viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18.5 1.5h-17v17h17zm-17-1a1 1 0 0 0-1 1v17a1 1 0 0 0 1 1h17a1 1 0 0 0 1-1v-17a1 1 0 0 0-1-1z"/><path d="M14.998 6.09a.5.5 0 0 1 .03.707l-6.112 6.666a.5.5 0 0 1-.733.004l-3.188-3.394a.5.5 0 0 1 .729-.685l2.82 3.002 5.746-6.27a.5.5 0 0 1 .707-.03"/></svg>
+                  {%- when 'box' -%}<svg viewBox="0 0 20 20"><path fill-rule="evenodd" d="M9.695.679a1 1 0 0 1 .674.003l7.846 2.859a1 1 0 0 1 .658.94v9.948a1 1 0 0 1-.553.894l-7.847 3.924a1 1 0 0 1-.882.006l-8.137-3.929a1 1 0 0 1-.565-.9v-9.94a1 1 0 0 1 .668-.943zM6.08 3.01 2.535 4.257l7.614 3.378 3.42-1.517zm.706-.248L14.2 5.838l3.337-1.48-7.51-2.736zM1.89 14.424v-9.36l7.76 3.444v9.662zm15.984.005-7.224 3.612V8.508l7.224-3.205z"/></svg>
+                  {%- when 'return' -%}<svg viewBox="0 0 20 20"><path d="M11.571 1.059c0-.309.249-.559.556-.559h1.33C17.07.5 20 3.453 20 7.09s-2.93 6.589-6.543 6.589L1.9 13.71l-.591-.59.59-.572 11.558.013c2.997 0 5.432-2.451 5.432-5.472 0-3.02-2.435-5.471-5.432-5.471h-1.33a.557.557 0 0 1-.556-.56"/><path d="M6.003 7.007a.553.553 0 0 1 .786.011.56.56 0 0 1-.012.79zM1.31 13.12l5.43 5.426a.56.56 0 0 1 0 .79.553.553 0 0 1-.785 0L.162 13.503a.56.56 0 0 1 .007-.796l3.035-2.965 2.8-2.735.773.801-2.798 2.736c-1.025 1-2.108 2.027-2.67 2.576"/></svg>
+                {%- endcase -%}
+              </span>
+              <span class="ct-acc__title">{{ block.settings.heading | default: block.settings.page.title | escape }}</span>
+              <svg class="ct-acc__caret" viewBox="0 0 10 6" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M9.354.646a.5.5 0 0 0-.708 0L5 4.293 1.354.646a.5.5 0 0 0-.708.708l4 4a.5.5 0 0 0 .708 0l4-4a.5.5 0 0 0 0-.708" clip-rule="evenodd"/></svg>
+            </summary>
+            <div class="ct-acc__content rte">
+              {%- if block.settings.cv_show_description -%}{{ product.description }}{%- endif -%}
+              {{ block.settings.content }}
+              {{ block.settings.page.content }}
+            </div>
+          </details>
+      {%- endcase -%}
+    {%- endfor -%}
+
+    {%- if section.settings.show_description and product.description != blank and description_in_tab == false -%}
+      <div class="ct-product__description rte">{{ product.description }}</div>
+    {%- endif -%}
+  </div>
+
+  {%- if section.settings.show_sticky -%}
+    <div class="ct-sticky" data-ct-sticky aria-hidden="true" style="--ct-accent: {{ section.settings.accent }};">
+      <div class="ct-sticky__inner">
+        {%- if product.featured_media -%}
+          {{ product.featured_media | image_url: width: 120 | image_tag: class: 'ct-sticky__img', loading: 'lazy', alt: '' }}
+        {%- endif -%}
+        <div class="ct-sticky__text">
+          <p class="ct-sticky__title">{{ product.title }}</p>
+          <p class="ct-sticky__price">
+            <span data-ct-price>{% if with_code %}{{ current_variant.price | money_with_currency }}{% else %}{{ current_variant.price | money }}{% endif %}</span>
+            <s data-ct-compare {% unless on_sale %}hidden{% endunless %}>
+              {%- if on_sale -%}{% if with_code %}{{ current_variant.compare_at_price | money_with_currency }}{% else %}{{ current_variant.compare_at_price | money }}{% endif %}{%- endif -%}
+            </s>
+          </p>
+        </div>
+        <button type="button" class="ct-btn ct-btn--primary ct-sticky__btn" data-ct-sticky-add tabindex="-1">
+          <span data-ct-sticky-label>{{ section.settings.add_label }}</span>
+        </button>
+      </div>
+    </div>
+  {%- endif -%}
+
+  {%- if section.settings.cart_drawer -%}
+    <div class="ct-drawer" data-ct-drawer data-ct-empty="{{ section.settings.cart_empty_label | escape }}" hidden style="--ct-accent: {{ section.settings.accent }};">
+      <div class="ct-drawer__overlay" data-ct-drawer-close></div>
+      <div class="ct-drawer__panel" data-ct-drawer-panel role="dialog" aria-modal="true" aria-labelledby="CtDrawerTitle-{{ section.id }}" tabindex="-1">
+        <div class="ct-drawer__head">
+          <h2 id="CtDrawerTitle-{{ section.id }}">{{ section.settings.cart_heading }} <span data-ct-drawer-count></span></h2>
+          <button type="button" class="ct-drawer__close" data-ct-drawer-close aria-label="Close">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="ct-drawer__items" data-ct-drawer-items></div>
+        <div class="ct-drawer__foot">
+          <div class="ct-drawer__total"><span>Total</span><strong data-ct-drawer-total></strong></div>
+          <p class="ct-drawer__note">
+            Taxes and {% if shop.shipping_policy.body != blank %}<a href="{{ shop.shipping_policy.url }}">shipping</a>{% else %}shipping{% endif %} calculated at checkout
+          </p>
+          <div class="ct-drawer__actions">
+            <form action="{{ routes.cart_url }}" method="post">
+              <button type="submit" name="checkout" class="ct-btn ct-drawer__checkout">{{ section.settings.checkout_label }}</button>
+            </form>
+            <a href="{{ routes.cart_url }}" class="ct-btn ct-drawer__view">{{ section.settings.view_cart_label }}</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  {%- endif -%}
+
+  <script type="application/json" data-ct-variants>
+    {
+      {%- for v in product.variants -%}
+        "{{ v.id }}": {
+          "price": {% if with_code %}{{ v.price | money_with_currency | json }}{% else %}{{ v.price | money | json }}{% endif %},
+          "compare": {% if v.compare_at_price > v.price %}{% if with_code %}{{ v.compare_at_price | money_with_currency | json }}{% else %}{{ v.compare_at_price | money | json }}{% endif %}{% else %}null{% endif %},
+          "available": {{ v.available | json }},
+          "cents": {{ v.price | json }},
+          "media": {% if v.featured_media %}"{{ v.featured_media.id }}"{% else %}null{% endif %}
+        }{% unless forloop.last %},{% endunless %}
+      {%- endfor -%}
+    }
+  </script>
+  {%- if ct_pricing != blank -%}
+    <script type="application/json" data-ct-pricing>{{ ct_pricing | json }}</script>
+  {%- endif -%}
+  <script type="application/json" data-ct-variant-options>
+    [{%- for v in product.variants -%}{"id": {{ v.id }}, "options": {{ v.options | json }}}{% unless forloop.last %},{% endunless %}{%- endfor -%}]
+  </script>
+</section>
+
+{% schema %}
+{
+  "name": "Product (FlexiPrint)",
+  "tag": "section",
+  "class": "section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "api_base",
+      "label": "FlexiPrint URL",
+      "info": "Origin of the FlexiPrint app, e.g. https://flexi2.next.lc (no trailing slash). Products need the metafield customize_tool.product_id."
+    },
+    { "type": "color", "id": "accent", "label": "Accent color", "default": "#f06724" },
+    { "type": "text", "id": "heading", "label": "Personalization heading", "default": "Personalized" },
+    { "type": "text", "id": "upload_label", "label": "Upload button", "default": "Upload your photo" },
+    { "type": "text", "id": "required_label", "label": "Missing-field message", "default": "Please complete" },
+    { "type": "text", "id": "magic_label", "label": "AI photo loading text", "info": "Shimmers over the twinkling stars while a photo is redrawn. Empty = \"<store name> magic\"." },
+    { "type": "text", "id": "photos_label", "label": "Back-to-photos button", "default": "View product photos" },
+    { "type": "text", "id": "design_label", "label": "Back-to-design button", "default": "Preview my design" },
+    { "type": "text", "id": "preview_label", "label": "Preview canvas label", "default": "Live preview of your design" },
+    { "type": "text", "id": "quantity_label", "label": "Quantity label", "default": "Quantity" },
+    { "type": "text", "id": "add_label", "label": "Add to cart label", "default": "Add to cart" },
+    { "type": "text", "id": "soldout_label", "label": "Sold out label", "default": "Sold out" },
+    { "type": "checkbox", "id": "show_breadcrumb", "label": "Show breadcrumb", "default": true },
+    { "type": "checkbox", "id": "show_vendor", "label": "Show vendor", "default": false },
+    { "type": "checkbox", "id": "show_installments", "label": "Show Shop Pay installments", "default": true },
+    { "type": "checkbox", "id": "show_description", "label": "Show description", "default": true, "info": "Hidden when a collapsible row shows the description." },
+    { "type": "checkbox", "id": "show_sticky", "label": "Sticky Add to cart bar", "default": true },
+    { "type": "header", "content": "Cart drawer" },
+    { "type": "checkbox", "id": "cart_drawer", "label": "Open the cart drawer after Add to cart", "default": true, "info": "Off = go to the cart page." },
+    { "type": "text", "id": "cart_heading", "label": "Heading", "default": "Shopping Cart" },
+    { "type": "text", "id": "cart_empty_label", "label": "Empty cart text", "default": "Your cart is empty" },
+    { "type": "text", "id": "checkout_label", "label": "Checkout button", "default": "Check Out" },
+    { "type": "text", "id": "view_cart_label", "label": "View cart button", "default": "View Cart" }
+  ],
+  "blocks": [
+    {
+      "type": "cv_sale_banner",
+      "name": "Sale banner",
+      "limit": 1,
+      "settings": [
+        { "type": "text", "id": "label", "label": "Label", "default": "LIMITED TIME OFFER ENDS IN" },
+        { "type": "text", "id": "end_date", "label": "End date", "info": "e.g. 2026-12-24T23:59:00" }
+      ]
+    },
+    {
+      "type": "cv_delivery",
+      "name": "Delivery estimate",
+      "limit": 1,
+      "settings": [
+        { "type": "text", "id": "country", "label": "Country", "default": "United States" },
+        { "type": "number", "id": "min_days", "label": "Min business days", "default": 7 },
+        { "type": "number", "id": "max_days", "label": "Max business days", "default": 12 }
+      ]
+    },
+    {
+      "type": "cv_benefits",
+      "name": "Benefits",
+      "limit": 1,
+      "settings": [{ "type": "textarea", "id": "lines", "label": "Lines", "info": "One per line." }]
+    },
+    {
+      "type": "collapsible_tab",
+      "name": "Collapsible row",
+      "settings": [
+        { "type": "text", "id": "heading", "label": "Heading", "default": "Collapsible row" },
+        {
+          "type": "select",
+          "id": "icon",
+          "label": "Icon",
+          "default": "check_mark",
+          "options": [
+            { "value": "none", "label": "None" },
+            { "value": "box", "label": "Box" },
+            { "value": "check_mark", "label": "Check mark" },
+            { "value": "clipboard", "label": "Clipboard" },
+            { "value": "heart", "label": "Heart" },
+            { "value": "return", "label": "Return" },
+            { "value": "truck", "label": "Truck" }
+          ]
+        },
+        { "type": "checkbox", "id": "cv_show_description", "label": "Show product description", "default": false },
+        { "type": "richtext", "id": "content", "label": "Content" },
+        { "type": "page", "id": "page", "label": "Content from page" }
+      ]
+    },
+    {
+      "type": "custom_liquid",
+      "name": "Custom liquid",
+      "settings": [{ "type": "liquid", "id": "custom_liquid", "label": "Custom liquid" }]
+    }
+  ]
+}
+{% endschema %}

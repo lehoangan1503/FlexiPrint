@@ -5,7 +5,7 @@
  *
  * One click: the saved design is published as the next storefront template, then the Shopify product is
  * created / updated (server/shopify.ts): title, description, status, the chosen price table as options + priced
- * variants (Size × Pack), the metafields main-product.liquid reads, and the chosen mockups as product images.
+ * variants (Size × Pack), the metafields flexi2-product.liquid reads, and the chosen mockups as product images.
  *
  * Also lists what the customer will be asked (lib/option-audit.ts), so a field without a label or an empty custom
  * layer is caught before it is live.

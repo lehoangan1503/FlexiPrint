@@ -817,19 +817,27 @@ export async function rethumbImport(s: CtSession, p: CtCharProject, fixes: CtImp
   const userId = p.user_id ?? s.user.id;
   const { data: regions } = await db.from(CT_TABLES.regions).select("*").eq("product_id", productId).returns<CtRegion[]>();
   const images = (regions ?? []).filter((r) => r.kind === "image");
-  const { data: items } = images.length ? await db.from(CT_TABLES.items).select("*").in("region_id", images.map((r) => r.id)).returns<CtRegionItem[]>() : { data: [] as CtRegionItem[] };
-  const subIds = [...new Set((items ?? []).map((i) => i.asset_id))];
+  // Ids go in the request url: a few dozen at a time (n00-POD-02 has 465 layers — one request was too long and came
+  // back empty).
+  const items: CtRegionItem[] = [];
+  for (let i = 0; i < images.length; i += 60) {
+    const { data, error } = await db.from(CT_TABLES.items).select("*").in("region_id", images.slice(i, i + 60).map((r) => r.id)).returns<CtRegionItem[]>();
+    if (error) throw new Error(error.message);
+    items.push(...(data ?? []));
+  }
+  const subIds = [...new Set(items.map((i) => i.asset_id))];
   const assets: CtAsset[] = [];
-  for (let i = 0; i < subIds.length; i += 200) {
-    const ids = subIds.slice(i, i + 200);
-    const { data: subs } = await db.from(CT_TABLES.assets).select("*").in("id", ids).returns<CtAsset[]>();
-    const { data: kids } = await db.from(CT_TABLES.assets).select("*").in("parent_id", ids).returns<CtAsset[]>();
+  for (let i = 0; i < subIds.length; i += 60) {
+    const ids = subIds.slice(i, i + 60);
+    const { data: subs, error } = await db.from(CT_TABLES.assets).select("*").in("id", ids).returns<CtAsset[]>();
+    const { data: kids, error: kidsError } = await db.from(CT_TABLES.assets).select("*").in("parent_id", ids).returns<CtAsset[]>();
+    if (error || kidsError) throw new Error((error ?? kidsError)!.message);
     assets.push(...(subs ?? []), ...(kids ?? []));
   }
   const byId = new Map(assets.map((a) => [a.id, a]));
   /** A layer's groups, each its options in order (the sub, then its đa sắc). */
   const groupsOf = (r: CtRegion): CtAsset[][] =>
-    (items ?? [])
+    items
       .filter((i) => i.region_id === r.id)
       .sort((a, b) => a.sort_order - b.sort_order)
       .map((i) => {

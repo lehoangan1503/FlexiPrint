@@ -82,11 +82,14 @@ export async function productOptionFields(db: Db, productId: string, maxZones = 
     const field = fields.get(name) ?? { label: name, options: [] };
     for (const a of options) {
       if (field.options.length >= maxOptions) break;
+      // The option's own picture (made by the import, rethumbImport); without one the file is the whole canvas with a
+      // sliver on it — a blank tile (the layout choice of n00-POD-02).
+      if (!a.meta?.thumb) continue;
       const shown = customerOptionName(a.name, name);
       if (field.options.some((o) => o.name === shown)) continue;
-      field.options.push({ name: shown, thumb: a.meta?.thumb ?? a.url });
+      field.options.push({ name: shown, thumb: a.meta.thumb });
     }
-    fields.set(name, field);
+    if (field.options.length) fields.set(name, field);
   }
   return [...fields.values()];
 }

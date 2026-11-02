@@ -17,7 +17,7 @@ import { CT_CONFIG, CT_TABLES } from "../../config";
 import type { CtPrintTemplate } from "../../types/print";
 import { templateRow } from "../print-templates";
 import { addSetProduct } from "../char/set-users";
-import { buildFromAgent, importFiles, importText, rethumbImport, type CtImportThumbFix } from "../char/import";
+import { buildFromAgent, importFiles, importText, parseThumbFixes, rethumbImport } from "../char/import";
 import { siteUrl } from "../site-url";
 import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharPhotoStyle, CtCharProject, CtCharRefUse, CtCharTaskResult, CtProduct } from "../../types";
 import { REF_USES, REF_USE_INFO, masterPrompt, parseCharBrief, shownByDefault } from "../../lib/char-brief";
@@ -1405,17 +1405,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (!project.brief.imported) throw new Error("This set is not an imported one");
-      const fixes: CtImportThumbFix[] = (Array.isArray(args.fixes) ? args.fixes : []).map((raw: unknown) => {
-        const f = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-        const c = f.crop && typeof f.crop === "object" ? (f.crop as Record<string, unknown>) : null;
-        return {
-          layer: str(f.layer),
-          option: str(f.option),
-          ...(str(f.url) ? { url: str(f.url) } : {}),
-          ...(c ? { crop: { x: Number(c.x) || 0, y: Number(c.y) || 0, w: Number(c.w) || 0, h: Number(c.h) || 0 } } : {}),
-        };
-      });
-      const out = await rethumbImport(await serviceSession(db, project.user_id ?? task.user_id!), project, fixes.filter((f) => f.layer && f.option));
+      const out = await rethumbImport(await serviceSession(db, project.user_id ?? task.user_id!), project, parseThumbFixes(args.fixes));
       await progress(db, task.id, `Đã làm lại ${out.made} ảnh lựa chọn (thumb) của bộ import`);
       return json({ ...out, next: out.empty.length ? "Give the empty options a picture: fixes with url + crop." : "view_image a few thumbs (list_product_options) to check." });
     },

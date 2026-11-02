@@ -17,8 +17,8 @@
  *   POST char/projects/:id/import/rebuild        the product built again from the saved manifest
  *   POST char/projects/:id/import/deploy         the product to Shopify again as a draft (import-deploy.ts — a build
  *                                                does it by itself)
- *   POST char/projects/:id/import/rethumb        the option pictures made again from the library clipart, the
- *                                                product published again (MCP char_import_rethumb sets some by hand)
+ *   POST char/projects/:id/import/rethumb {fixes?}  the option pictures made again from the library clipart, the
+ *                                                product published again; fixes = some set by hand (char_import_rethumb)
  *
  * The build (layer rules, server/mcp/layer-rules.ts): every image layer is the whole canvas — files used as they are,
  * never trimmed or scaled; a file of another size is named in `problems` and left empty. One product version per
@@ -784,6 +784,24 @@ export interface CtImportThumbFix {
   crop?: { x: number; y: number; w: number; h: number };
 }
 
+/** Hand-set option pictures as sent (MCP / route body): the ones naming a layer and an option. */
+export function parseThumbFixes(raw: unknown): CtImportThumbFix[] {
+  const num = (v: unknown) => Number(v) || 0;
+  return (Array.isArray(raw) ? raw : [])
+    .map((x): CtImportThumbFix => {
+      const f = x && typeof x === "object" ? (x as Record<string, unknown>) : {};
+      const c = f.crop && typeof f.crop === "object" ? (f.crop as Record<string, unknown>) : null;
+      const url = typeof f.url === "string" ? f.url.trim() : "";
+      return {
+        layer: typeof f.layer === "string" ? f.layer.trim() : "",
+        option: typeof f.option === "string" ? f.option.trim() : "",
+        ...(url ? { url } : {}),
+        ...(c ? { crop: { x: num(c.x), y: num(c.y), w: num(c.w), h: num(c.h) } } : {}),
+      };
+    })
+    .filter((f) => f.layer && f.option);
+}
+
 /**
  * The option pictures of an imported set's product made again from its library clipart (asked 2026-11-02: thumbs
  * were cut wrong by the resize-before-extend slip, and the folder is gone after the build). Every option of a choice
@@ -1007,6 +1025,6 @@ export async function importRoute(req: Request, s: CtSession, id: string, sub: s
   if (sub === "start") return startImport(s, p, await req.json().catch(() => null));
   if (sub === "rebuild") return rebuildImport(s, p);
   if (sub === "deploy") return redeployImport(s, p);
-  if (sub === "rethumb") return NextResponse.json(await rethumbImport(s, p, []));
+  if (sub === "rethumb") return NextResponse.json(await rethumbImport(s, p, parseThumbFixes(((await req.json().catch(() => null)) as { fixes?: unknown } | null)?.fixes)));
   return jsonError("Not found", 404);
 }

@@ -733,3 +733,31 @@ export function zoneSubtree(regions: CtRegion[], id: string): Set<string> {
   }
   return out;
 }
+
+/** Internal suffixes in clipart names (server/char/product.ts): the blank pick of a slot, a back layer. */
+const NAME_NOISE = new Set(["chọn", "chon", "back", "front"]);
+const foldName = (s: string) => s.normalize("NFC").trim().toLowerCase();
+
+/**
+ * The name a customer sees for an option, from its clipart name. Sets name their cliparts
+ * "<field> · <style> · <colour> · chọn" (server/char/product.ts, server/char/import.ts) — fine in the library,
+ * noise on the store: "Hair: Hair · Short Curly · Silver · chọn". Drops the parts that repeat the field's own
+ * label, the internal suffixes, and the parts already shown as another answer (`known`, e.g. the colour picked in
+ * the colour field) → "Hair: Short Curly". A name with no " · " is kept as it is; nothing left = the original name.
+ */
+export function customerOptionName(name: string, label = "", known: string[] = []): string {
+  const raw = name.trim();
+  if (!raw.includes(" · ")) return raw;
+  const fieldLabel = foldName(label);
+  const fieldHead = foldName(label.replace(/\s*\(.*$/, "").split(/\s+/)[0] ?? "");
+  const parts = raw.split(" · ").map((p) => p.trim());
+  const clean = (seen: Set<string>) =>
+    parts.filter((p) => {
+      const f = foldName(p);
+      return f && !NAME_NOISE.has(f) && f !== fieldLabel && f !== fieldHead && !seen.has(f);
+    });
+  // Dropping the known answers must not empty it (the option is just "Silver" itself): then only the noise goes.
+  const kept = clean(new Set(known.map(foldName).filter(Boolean)));
+  const fallback = kept.length ? kept : clean(new Set());
+  return fallback.length ? fallback.join(" · ") : raw;
+}

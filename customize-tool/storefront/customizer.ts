@@ -60,6 +60,7 @@ import { renderZoneMockup, zoneFills } from "../lib/zone-mockup";
 import { printSize } from "../lib/print-template";
 import { renderSlide, type CtSlotArt } from "../lib/mockup";
 import {
+  customerOptionName,
   defaultRegionSelection,
   formatDateInput,
   isValidDate,
@@ -795,7 +796,8 @@ export class Customizer {
   private flatLayerOptions(r: CtRegion): Array<{ id: string; label: string; image?: string; swatch?: string }> | null {
     const groups = regionGroups(r, this.tpl.items, this.tpl.assets);
     if (!groups.every((g) => g.options.length === 1)) return null;
-    return groups.map((g) => ({ id: g.options[0].id, label: g.options[0].name || g.name, image: g.options[0].meta.thumb ?? g.options[0].url, swatch: g.options[0].meta.swatch }));
+    const label = r.config.image.label || r.name;
+    return groups.map((g) => ({ id: g.options[0].id, label: customerOptionName(g.options[0].name || g.name, label), image: g.options[0].meta.thumb ?? g.options[0].url, swatch: g.options[0].meta.swatch }));
   }
 
   /** The form fields of one zone (none for a fixed text / a one-picture layer). */
@@ -826,7 +828,7 @@ export class Customizer {
             r.config.image.groupLabel,
             this.picker(
               r.config.image.groupDisplay,
-              groups.map((g) => ({ id: g.item.id, label: g.name, image: g.options[0].meta.thumb ?? g.options[0].url, swatch: g.options[0].meta.swatch })),
+              groups.map((g) => ({ id: g.item.id, label: customerOptionName(g.name, r.config.image.groupLabel), image: g.options[0].meta.thumb ?? g.options[0].url, swatch: g.options[0].meta.swatch })),
               group.item.id,
               false,
               (id) => {
@@ -835,7 +837,7 @@ export class Customizer {
               },
             ),
             true,
-            group.name,
+            customerOptionName(group.name, r.config.image.groupLabel),
           ),
         );
       }
@@ -844,13 +846,13 @@ export class Customizer {
           r.config.image.label || r.name,
           this.picker(
             r.config.image.display,
-            group.options.map((o) => ({ id: o.id, label: o.name, image: o.meta.thumb ?? o.url, swatch: o.meta.swatch })),
+            group.options.map((o) => ({ id: o.id, label: customerOptionName(o.name, r.config.image.label || r.name), image: o.meta.thumb ?? o.url, swatch: o.meta.swatch })),
             current,
             r.config.image.allowNone,
             (id) => this.change(r.id, { kind: "image", assetId: id }),
           ),
           !r.config.image.allowNone,
-          current ? group.options.find((o) => o.id === current)?.name : undefined,
+          current ? customerOptionName(group.options.find((o) => o.id === current)?.name ?? "", r.config.image.label || r.name) || undefined : undefined,
         ),
       );
       return out;
@@ -928,6 +930,7 @@ export class Customizer {
     };
     if (allowNone) add(null, el("span", { class: "ct-choice__none", text: "NO" }), this.t("none", "None"));
     // A clipart's name is "<layer> · <option>" ("Theme · Christmas"): a button says only the option.
+    // Labels come cleaned (customerOptionName); a leftover "a · b" shows its last part on a small button.
     const short = (x: string) => (x.includes(" · ") ? x.slice(x.lastIndexOf(" · ") + 3) : x);
     for (const o of options) {
       if (display === "button") add(o.id, el("span", { class: "ct-choice__text", text: short(o.label) }), o.label);
@@ -1622,6 +1625,13 @@ export class Customizer {
       const prefix = many ? `${this.itemLabel(i)} · ` : "";
       // Hidden properties start with "_" — the prefix goes after it.
       const named = (name: string, value: string) => (name.startsWith("_") ? add(`_${prefix}${name.slice(1)}`, value) : add(`${prefix}${name}`, value));
+      // This design's answers so far: an option name does not repeat one ("Hair: Short Curly", the colour has its own line).
+      const answers: string[] = [];
+      const option = (label: string, name: string) => {
+        const v = customerOptionName(name, label, answers);
+        answers.push(v);
+        named(label, v);
+      };
       if (tpl.config.main.enabled) {
         const m = byId.get(selectedMainId(selection, tpl.assets, tpl.mainAssetId));
         if (m) named(tpl.config.main.label, m.name);
@@ -1638,8 +1648,8 @@ export class Customizer {
             if (r.config.image.allowNone) named(r.config.image.label, this.t("none", "None"));
             continue;
           }
-          if (groups.length > 1) named(r.config.image.groupLabel, groups[at.group].name);
-          named(r.config.image.label || r.name, groups[at.group].options[at.option].name);
+          if (groups.length > 1) option(r.config.image.groupLabel, groups[at.group].name);
+          option(r.config.image.label || r.name, groups[at.group].options[at.option].name);
         } else if (r.kind === "text") {
           const mode = textMode(r);
           const tsel: CtTextSelection = sel?.kind === "text" ? sel : { kind: "text", text: "" };

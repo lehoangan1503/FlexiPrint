@@ -31,7 +31,7 @@
  *
  * Public (no session, CORS *) — used by the Shopify section:
  *   GET    public/templates/:productId[?version=N]   → CtTemplate
- *   POST   public/uploads/:productId     multipart: file, kind=photo|preview
+ *   POST   public/uploads/:productId     multipart: file, kind=photo|preview|print
  *   POST   public/photo/:productId       multipart: file, region, style, cutout=0|1 → processed image bytes
  *
  * Jobs (server/jobs.ts) — any POST sent with ?async=1 that runs longer than a few seconds answers 202 CtJobPending:

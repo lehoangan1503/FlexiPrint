@@ -459,7 +459,7 @@ export async function publicUpload(productId: string, form: FormData): Promise<N
   const file = form.get("file");
   if (!(file instanceof Blob)) return publicError("Thiếu file", 400);
   if (file.size > CT_CONFIG.publicUploadBytes) return publicError(`File quá lớn (tối đa ${Math.round(CT_CONFIG.publicUploadBytes / 1048576)}MB)`, 413);
-  // preview: the cart's flattened picture · print: the full-size print file (khuôn in products) · photo: a customer photo.
+  // preview: the cart's flattened picture · print: the full-size print file · photo: a customer photo.
   const k = form.get("kind");
   const kind = k === "preview" || k === "print" ? k : "photo";
   const data = Buffer.from(await file.arrayBuffer());

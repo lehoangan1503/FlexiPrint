@@ -56,8 +56,8 @@
 .ct-product__compare { color: var(--ct-muted); font-size: 16px; }
 .ct-product__description { margin-top: 28px; }
 
-.ct-variants { display: grid; gap: 14px; margin-bottom: 18px; }
-.ct-variant { border: 0; margin: 0; padding: 0; }
+.ct-variants { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-bottom: 18px; }
+.ct-variant { border: 0; margin: 0; padding: 0; min-width: 0; } /* a fieldset is min-content wide by default */
 .ct-pills { display: flex; flex-wrap: wrap; gap: 8px; }
 .ct-pill { position: relative; cursor: pointer; }
 .ct-pill input { position: absolute; opacity: 0; pointer-events: none; }
@@ -81,7 +81,7 @@
 .ct-breadcrumb [aria-current] { color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 
 /* ------------------------------------------------------------------ personalization */
-.ct-personalize { background: var(--ct-panel); border-radius: 14px; padding: 18px; display: grid; gap: 18px; margin-bottom: 18px; }
+.ct-personalize { background: var(--ct-panel); border-radius: 14px; padding: 18px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; margin-bottom: 18px; }
 .ct-personalize__head {
   padding: 10px 16px; border-radius: 8px; color: #fff; font-weight: 700; font-size: 17px;
   background: linear-gradient(90deg, var(--ct-accent) 0%, color-mix(in srgb, var(--ct-accent) 40%, transparent) 75%, transparent 100%);

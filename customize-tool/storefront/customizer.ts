@@ -659,14 +659,15 @@ export class Customizer {
 
   /**
    * The print file of a design on a khuôn in (config.print), full size: the sheet of the size picked in the variant
-   * picker (an option value equal to a size name), cut to the khuôn's line; null = the product has no khuôn in.
+   * picker (an option value equal to a size name), cut to the khuôn's line. A product with no khuôn in still gets
+   * one: the whole edit frame at full size, cut to the frame.
    */
-  private async printFile(selection: CtSelection): Promise<HTMLCanvasElement | null> {
+  private async printFile(selection: CtSelection): Promise<HTMLCanvasElement> {
+    const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts };
     const print = this.tpl.config.print;
-    if (!print) return null;
+    if (!print) return renderComposite({ ...input, scale: 1, cutToFrame: true });
     const picked = pickedOptions(this.root);
     const size = print.spec.sizes.length ? printSize(print.spec, picked.find((v) => print.spec.sizes.some((s) => s.name.toLowerCase() === v.toLowerCase())) ?? null) : null;
-    const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts };
     const sheet = await renderComposite({ ...input, scale: 1, cutToFrame: !size, size: size && size.id ? size : null });
     // A khuôn made as one half (one trouser leg): the other half is its mirror image.
     return print.spec.mirror ? mirrorSheet(sheet) : sheet;
@@ -1493,13 +1494,12 @@ export class Customizer {
         }
         previews.push(url);
       }
-      // The print file of each design (khuôn in products), full size — what goes to the printer as it is.
+      // The print file of each design, full size — what goes to the printer as it is.
       const prints: string[] = [];
       for (const selection of designs) {
         let url = "";
         try {
-          const c = await this.printFile(selection);
-          if (c) url = await this.upload(await canvasToBlob(c, "image/png"), "print");
+          url = await this.upload(await canvasToBlob(await this.printFile(selection), "image/png"), "print");
         } catch (err) {
           console.warn("[ct] print file upload failed", err);
         }

@@ -60,3 +60,9 @@ Thử không cần Claude Code: `node server.mjs import ~/Downloads/n00-POD-02` 
   Ceramic… trong tên. Thiếu bảng giá → báo lỗi; tạo bảng giá rồi bấm **Đưa lên Shopify lại** ở trang bộ.
 - Link xem thử có hạn; hết hạn thì bấm **Đưa lên Shopify lại**.
 - Folder đã tải lên được xoá khỏi server khi dựng xong (chỉ giữ clipart cần cho sản phẩm) — sửa bố cục = import lại.
+- **Ảnh lựa chọn (thumb) sai / trống**: nhắn @flexiprint trong chat của bộ *"làm lại thumb"* — tool MCP `char_import_rethumb`
+  làm lại mọi thumb từ clipart thư viện (không cần tải folder lại) rồi publish lại sản phẩm; lựa chọn không có file (vd. mắt
+  mặc định vẽ sẵn trong lớp da) thì agent đặt thumb bằng một vùng cắt của file khác. Thumb dựng trước 2026-11-02 bị cắt sai
+  (hình dẹt / cao mất 2 đầu) — chạy lại là đúng.
+- **Mô tả** có thể là HTML hoặc chữ thường (**đậm**, gạch đầu dòng "- ", tiêu đề "### "); lên Shopify hiện trong mục
+  *Description* của trang sản phẩm (theme nháp giờ có giao hàng dự kiến, 3 dòng cam kết, các mục thu gọn như store chính).

@@ -74,8 +74,9 @@ export async function productOptionFields(db: Db, productId: string, maxZones = 
         const sub = byId.get(i.asset_id);
         return sub ? [sub, ...kids.filter((k) => k.parent_id === sub.id).sort((a, b) => a.sort_order - b.sort_order)] : [];
       });
-    // One picture only = a fixed part of the design (background, shadow), not a choice.
-    if (options.length < 2) continue;
+    // One picture only = a fixed part of the design (background, shadow), not a choice; a layer that follows another
+    // choice (its outfit under the picked head…) is not picked by the customer either.
+    if (options.length < 2 || r.config?.image?.follows) continue;
     // Zones are per version ("Grandma — Hat · Grandkids sitting with Grandma]"): the field is the part before " · ".
     const name = label.split(" · ")[0].trim() || label;
     const field = fields.get(name) ?? { label: name, options: [] };

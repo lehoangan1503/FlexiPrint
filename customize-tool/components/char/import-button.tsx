@@ -16,7 +16,7 @@ export function ImportButton() {
       title="Tải folder bộ clipart đã làm sẵn (Teeinblue…) → bộ nhân vật + sản phẩm — được nhiều bộ cùng lúc"
       className="inline-flex h-9 items-center gap-2 rounded-md border bg-background px-3.5 text-sm font-medium hover:bg-accent"
     >
-      <FolderUp className="h-4 w-4" /> Import bộ
+      <FolderUp className="h-4 w-4" /> Import bộ clipart
     </Link>
   );
 }

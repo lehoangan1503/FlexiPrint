@@ -151,16 +151,20 @@ export const RUNNING: ReadonlySet<CtImportStage> = new Set<CtImportStage>(["read
 
 // ---------------------------------------------------------------- picking
 
+/** Folders of a Teeinblue hand-off that only repeat its case layers (cut copies, composed print / preview per case). */
+const COPIES = /(^|\/)(clipart-cat|file-in|preview)\//i;
+
 /**
  * What is sent: every image / note / font of the folder. A Teeinblue hand-off (folders with teeinblue.json) brings its
- * layers there whole-canvas, so its other copies (cut clipart, print files per case) stay home — only those folders,
- * the files at the top (mockups, the sample, the sales text) and the notes go.
+ * layers there whole-canvas, so only its copies of them (COPIES) stay home; everything else goes — the sales pictures
+ * (anh-ban-hang/mock-*), the sample (mau-goc), the preview background, fonts and notes, wherever they sit (2026-11-02:
+ * the sales pictures one folder down were left out).
  */
 export function selectFiles(all: CtPickedFile[]): CtPickedFile[] {
   const files = all.filter((f) => !JUNK.test(f.path) && KEEP.test(f.path));
   const cases = files.filter((f) => /(^|\/)teeinblue\.json$/i.test(f.path)).map((f) => f.path.split("/").slice(0, -1).join("/"));
   if (!cases.length) return files;
-  return files.filter((f) => !f.path.includes("/") || /\.(json|csv|md|txt)$/i.test(f.path) || cases.some((d) => f.path.startsWith(`${d}/`)));
+  return files.filter((f) => cases.some((d) => f.path.startsWith(`${d}/`)) || /\.(json|csv|md|txt)$/i.test(f.path) || !COPIES.test(f.path));
 }
 
 /** An <input webkitdirectory> pick → its folder name and files. */

@@ -21,6 +21,7 @@
  * first file the gốc, the others its đa sắc), so the set can be dragged into any product (lib/char-set-layers.ts).
  */
 
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_FONTS, CT_TABLES } from "../../config";
@@ -541,10 +542,15 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     await body(await h.saveDesign(s, product.id, { regions: regions.map((r, i) => ({ ...r, sort_order: i })), items, config }));
     await db.from(CT_TABLES.products).update({ main_asset_id: mains[0].id }).eq("id", product.id);
 
+    // A hand-off often keeps the same sales picture twice (at the top and in anh-ban-hang/): each goes once.
+    const seen = new Set<string>();
     for (const [i, url] of m.mockupUrls.entries()) {
       const key = keyOf(root, url);
       const png = key ? await readKey(key) : null;
       if (!png) continue;
+      const hash = createHash("sha1").update(png).digest("hex");
+      if (seen.has(hash)) continue;
+      seen.add(hash);
       const jpeg = await sharp(png).flatten({ background: "#ffffff" }).jpeg({ quality: 90 }).toBuffer();
       const a = await upload(jpeg, "mockup", `mockup_${i + 1}`, "image/jpeg");
       const meta = await sharp(jpeg).metadata();

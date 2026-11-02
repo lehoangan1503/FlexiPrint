@@ -425,7 +425,8 @@ export function readTeeinblue(name: string, files: CtCharImportFile[], texts: Ct
   const material = acrylic ? (clear ? "acrylic_clear" : "acrylic_white") : "";
   const cut: "alpha" | "rect" = /custom-cut|cắt theo dáng|die-cut/i.test(all) ? "alpha" : "rect";
 
-  const roots = files.filter((f) => !f.path.slice(f.path.indexOf("/") + 1).includes("/"));
+  // The sales pictures and the sample: anywhere outside the case folders (bo-giao-teeinblue/anh-ban-hang/… too).
+  const roots = files.filter((f) => !cases.some((d) => d && f.path.startsWith(`${d}/`)));
   const sample = roots.find((f) => /^(mau-goc|sample|master)\.(png|jpe?g|webp)$/i.test(base(f.path))) ?? files.find((f) => /preview/i.test(f.path) && isImage(f.path));
   const mockups = roots.filter((f) => /^mock/i.test(base(f.path)) && isImage(f.path)).sort((a, b) => natural(a.path, b.path));
 
@@ -442,7 +443,8 @@ export function readTeeinblue(name: string, files: CtCharImportFile[], texts: Ct
     variantLabel,
     versions,
     sampleUrl: sample?.url ?? "",
-    mockupUrls: mockups.map((f) => f.url).slice(0, 12),
+    // Copies of one picture are dropped when built (server/char/import.ts), so a few more are kept here.
+    mockupUrls: mockups.map((f) => f.url).slice(0, 24),
   };
   const layersOf = (x: CtCharImportVariant) => x.layers.length;
   const optionsOf = (x: CtCharImportVariant) => x.layers.reduce((n, l) => n + l.groups.reduce((k, g) => k + g.options.length, 0), 0);

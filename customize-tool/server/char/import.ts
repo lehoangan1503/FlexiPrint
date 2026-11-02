@@ -845,14 +845,8 @@ export async function rethumbImport(s: CtSession, p: CtCharProject, fixes: CtImp
         if (!sub) return [];
         return [sub, ...assets.filter((a) => a.parent_id === sub.id).sort((a, b) => a.sort_order - b.sort_order)];
       });
-  const fileCache = new Map<string, Promise<Buffer | null>>();
-  const fileOf = (key: string) => {
-    const hit = fileCache.get(key);
-    if (hit) return hit;
-    const made = readKey(key);
-    fileCache.set(key, made);
-    return made;
-  };
+  // Files read as needed, never kept (n00-POD-02's are ~430 MB).
+  const fileOf = readKey;
   const publicRoot = r2PublicUrl("");
   const keyOfUrl = (url: string) => (url.startsWith(publicRoot) ? url.slice(publicRoot.length).split("/").map(decodeURIComponent).join("/") : null);
   const optionName = (a: CtAsset) => a.name.split(" · ").slice(1).join(" · ");
@@ -872,6 +866,38 @@ export async function rethumbImport(s: CtSession, p: CtCharProject, fixes: CtImp
 
   let made = 0;
   const empty: string[] = [];
+  /** One option's picture. */
+  const remake = async (label: string, followers: Array<{ groups: CtAsset[][]; above: boolean }>, gi: number, oi: number, a: CtAsset, fix: CtImportThumbFix | undefined) => {
+    const key = fix?.url ? keyOfUrl(fix.url) : a.storage_path;
+    if (fix?.url && !key) throw new Error(`${label} · ${optionName(a)}: url must be a picture of this app (${publicRoot}…)`);
+    let png = key ? await fileOf(key) : null;
+    if (png && !fix?.url && followers.length) {
+      const parts = await Promise.all(
+        followers.map(async (f) => {
+          const x = f.groups[gi]?.[oi];
+          return { above: f.above, png: x?.storage_path ? await fileOf(x.storage_path) : null };
+        }),
+      );
+      const under = parts.filter((x) => !x.above && x.png).map((x) => ({ input: x.png! }));
+      const over = parts.filter((x) => x.above && x.png).map((x) => ({ input: x.png! }));
+      if (under.length || over.length) png = await sharp(under.length ? under[0].input : png).composite([...under.slice(1), ...(under.length ? [{ input: png }] : []), ...over]).png().toBuffer();
+    }
+    if (png && fix?.crop) {
+      const c = fix.crop;
+      png = await sharp(png).extract({ left: Math.max(0, Math.round(c.x)), top: Math.max(0, Math.round(c.y)), width: Math.max(1, Math.round(c.w)), height: Math.max(1, Math.round(c.h)) }).png().toBuffer().catch(() => {
+        throw new Error(`${label} · ${optionName(a)}: crop is outside the picture`);
+      });
+    }
+    const square = png ? await optionPicture(png) : null;
+    if (!square) {
+      empty.push(`${label} · ${optionName(a)}`);
+      return;
+    }
+    const thumb = (await saveCharRaw(userId, p.id, "thumb", square, "image/webp")).url;
+    await db.from(CT_TABLES.assets).update({ meta: { ...(a.meta ?? {}), thumb } }).eq("id", a.id);
+    made++;
+  };
+  const jobs: Array<() => Promise<void>> = [];
   for (const r of images) {
     const groups = groupsOf(r);
     const isChoice = !r.config.image.follows && groups.some((g) => g.some((a) => a.meta?.thumb));
@@ -886,37 +912,17 @@ export async function rethumbImport(s: CtSession, p: CtCharProject, fixes: CtImp
       for (const [oi, a] of g.entries()) {
         const fix = fixFor(r, a);
         if (!isChoice && !fix) continue;
-        const key = fix?.url ? keyOfUrl(fix.url) : a.storage_path;
-        if (fix?.url && !key) throw new Error(`${label} · ${optionName(a)}: url must be a picture of this app (${publicRoot}…)`);
-        let png = key ? await fileOf(key) : null;
-        if (png && !fix?.url && followers.length) {
-          const parts = await Promise.all(
-            followers.map(async (f) => {
-              const x = f.groups[gi]?.[oi];
-              return { above: f.above, png: x?.storage_path ? await fileOf(x.storage_path) : null };
-            }),
-          );
-          const under = parts.filter((x) => !x.above && x.png).map((x) => ({ input: x.png! }));
-          const over = parts.filter((x) => x.above && x.png).map((x) => ({ input: x.png! }));
-          if (under.length || over.length) png = await sharp(under.length ? under[0].input : png).composite([...under.slice(1), ...(under.length ? [{ input: png }] : []), ...over]).png().toBuffer();
-        }
-        if (png && fix?.crop) {
-          const c = fix.crop;
-          png = await sharp(png).extract({ left: Math.max(0, Math.round(c.x)), top: Math.max(0, Math.round(c.y)), width: Math.max(1, Math.round(c.w)), height: Math.max(1, Math.round(c.h)) }).png().toBuffer().catch(() => {
-            throw new Error(`${label} · ${optionName(a)}: crop is outside the picture`);
-          });
-        }
-        const square = png ? await optionPicture(png) : null;
-        if (!square) {
-          empty.push(`${label} · ${optionName(a)}`);
-          continue;
-        }
-        const thumb = (await saveCharRaw(userId, p.id, "thumb", square, "image/webp")).url;
-        await db.from(CT_TABLES.assets).update({ meta: { ...(a.meta ?? {}), thumb } }).eq("id", a.id);
-        made++;
+        jobs.push(() => remake(label, followers, gi, oi, a, fix));
       }
     }
   }
+  // A few at once (one at a time took ~70 min for n00-POD-02's 4416 options).
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: 8 }, async () => {
+      for (let i = next++; i < jobs.length; i = next++) await jobs[i]();
+    }),
+  );
   // The storefront shows the published template: every product of the set that was published takes the new pictures.
   const published: string[] = [];
   const { data: products } = await db.from(CT_TABLES.products).select("id, published_version").in("id", p.product_ids).returns<Array<{ id: string; published_version: number | null }>>();

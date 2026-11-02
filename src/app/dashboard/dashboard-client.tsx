@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Printer } from "lucide-react";
 import type { UserProfile } from "@/types/auth";
 import { UserDropdown } from "@/components/user-dropdown";
 import { FirstLoginDialog } from "@/components/first-login-dialog";
@@ -39,7 +38,8 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-20 border-b bg-card/80 backdrop-blur-sm">
         <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:px-6 lg:px-8">
-          <Printer className="h-5 w-5 text-primary" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.svg" alt="" className="h-7 w-7" />
           <h1 className="text-lg font-semibold">FlexiPrint</h1>
           <div className="ml-auto flex items-center gap-2">
             <ImportStatus />

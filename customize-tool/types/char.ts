@@ -987,3 +987,9 @@ export interface CtCharSetProduct {
   created_at: string;
   own: boolean;
 }
+
+/** A field the customer picks in a set, as its product offers it (server/char/set-options.ts). */
+export interface CtSetOptionField {
+  label: string;
+  options: Array<{ name: string; thumb: string }>;
+}

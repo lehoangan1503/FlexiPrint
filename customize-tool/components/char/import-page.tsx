@@ -142,7 +142,7 @@ export function ImportPage() {
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-20 border-b bg-card/80 backdrop-blur-sm">
         <div className="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4 sm:px-6">
-          <Link href="/v2" className="rounded p-1.5 hover:bg-accent" aria-label="Về danh sách bộ">
+          <Link href="/dashboard?tab=library" className="rounded p-1.5 hover:bg-accent" aria-label="Về thư viện">
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <FolderUp className="h-5 w-5 text-sky-500" />

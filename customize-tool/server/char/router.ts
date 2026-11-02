@@ -2,6 +2,7 @@
  * char/* routes (v2 bộ nhân vật) — see server/char/projects.ts for the list.
  */
 
+import { getSetOptions } from "./set-options";
 import type { NextRequest, NextResponse } from "next/server";
 import type { CtSession } from "../supabase";
 import type { CtCharProject } from "../../types";
@@ -113,6 +114,7 @@ async function route(req: NextRequest, s: CtSession, path: string[]): Promise<Ne
   if (action === "import" && sub && !subAction) return importRoute(req, s, id, sub);
   if (action === "versions" && !sub && method === "GET") return listVersionSets(s, id);
   if (action === "used-by" && !sub && method === "GET") return setProducts(s, id);
+  if (action === "options" && !sub && method === "GET") return getSetOptions(s, id);
   if (!action) {
     if (method === "GET") return getCharProject(s, id);
     if (method === "PATCH") return updateCharProject(s, id, await json(req));

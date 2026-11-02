@@ -11,13 +11,15 @@ import { Loader2, Sparkles, Trash2, Upload } from "lucide-react";
 import type { CtPrintTemplate } from "../../types/print";
 import { printApi } from "../../lib/print-api";
 import { ctConfirm } from "../dialogs";
-import { CHECKER_STYLE, CtButton } from "../ui";
+import { CHECKER_STYLE, CtButton, CtModal } from "../ui";
 import { KhuonPreview } from "./khuon-tab";
 
 export function PhoiTab() {
   const [templates, setTemplates] = useState<CtPrintTemplate[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Record<string, string>>({});
+  /** The khuôn whose phôi are open (cards since 2026-11-03, like the clipart sets). */
+  const [openId, setOpenId] = useState<string | null>(null);
 
   useEffect(() => {
     printApi
@@ -54,23 +56,51 @@ export function PhoiTab() {
     await work(t, "Đang lưu…", () => printApi.update(t.id, { spec: { ...t.spec, blanks: [pick, ...t.spec.blanks.filter((b) => b.id !== id)] } }));
   };
 
+  const open = templates?.find((t) => t.id === openId) ?? null;
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      <div className="mb-4">
-        <h2 className="text-base font-semibold">Phôi trơn</h2>
-        <p className="text-xs text-muted-foreground">
-          Ảnh sản phẩm chưa in, chụp thẳng — theo từng khuôn. Xem trước, storefront và mockup đặt artwork lên phôi (giữ bóng, độ sáng của chất liệu). Phôi đầu tiên là phôi mặc định của khuôn.
-        </p>
-      </div>
+    <div className="min-h-0 flex-1 overflow-y-auto">
       {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
       {!templates ? (
         <Loader2 className="h-5 w-5 animate-spin" />
       ) : (
-        <div className="space-y-4">
-          {templates.map((t) => (
-            <PhoiRow key={t.id} template={t} busy={busy[t.id] ?? null} onUpload={(f) => void work(t, "Đang upload…", () => printApi.uploadBlank(t.id, f))} onAi={() => void work(t, "AI đang vẽ phôi (~1 phút)…", () => printApi.aiBlank(t.id))} onRemove={(id) => void remove(t, id)} onFirst={(id) => void first(t, id)} />
-          ))}
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {templates.map((t) => {
+            const cover = t.spec.blanks[0];
+            return (
+              <button key={t.id} onClick={() => setOpenId(t.id)} className="group overflow-hidden rounded-xl border bg-card text-left hover:border-foreground/40">
+                <div className="relative aspect-square" style={CHECKER_STYLE}>
+                  {cover ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- our R2 picture
+                    <img src={cover.url} alt={t.name} className="h-full w-full object-contain p-2" loading="lazy" />
+                  ) : (
+                    <KhuonPreview spec={t.spec} className="h-full w-full p-6 opacity-60" />
+                  )}
+                  {busy[t.id] && (
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/40">
+                      <Loader2 className="h-6 w-6 animate-spin text-white" />
+                    </span>
+                  )}
+                </div>
+                <div className="p-2.5">
+                  <div className="truncate text-sm font-medium">{t.name}</div>
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">{t.spec.blanks.length ? `${t.spec.blanks.length} phôi` : "Chưa có phôi"}</div>
+                </div>
+              </button>
+            );
+          })}
         </div>
+      )}
+      {open && (
+        <CtModal open onOpenChange={(o) => !o && setOpenId(null)} title={`Phôi — ${open.name}`} wide keepOpenOnOutside={false}>
+          <PhoiRow
+            template={open}
+            busy={busy[open.id] ?? null}
+            onUpload={(f) => void work(open, "Đang upload…", () => printApi.uploadBlank(open.id, f))}
+            onAi={() => void work(open, "AI đang vẽ phôi (~1 phút)…", () => printApi.aiBlank(open.id))}
+            onRemove={(id) => void remove(open, id)}
+            onFirst={(id) => void first(open, id)}
+          />
+        </CtModal>
       )}
     </div>
   );
@@ -80,7 +110,7 @@ function PhoiRow(props: { template: CtPrintTemplate; busy: string | null; onUplo
   const { template: t } = props;
   const input = useRef<HTMLInputElement | null>(null);
   return (
-    <section className="rounded-xl border bg-card p-3">
+    <section>
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <div className="h-12 w-12 shrink-0 overflow-hidden rounded border bg-muted/40 p-1">
           <KhuonPreview spec={t.spec} className="h-full w-full" />

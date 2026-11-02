@@ -13,7 +13,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, Check, CheckCircle2, ExternalLink, Info, Link2, Loader2, Pencil, Plus, Rocket, Search, Star, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, CheckCircle2, ExternalLink, Info, Link2, Loader2, Pencil, Plus, Rocket, Star, X } from "lucide-react";
 import { CT_CONFIG } from "../../config";
 import type {
   CtAsset,
@@ -62,9 +62,6 @@ export function DeployPage({ productId }: { productId: string }) {
   const [editing, setEditing] = useState<CtPriceTable | "new" | null>(null);
   const [form, setForm] = useState<Form>({ title: "", descriptionHtml: "", status: "ACTIVE", vendor: "", productType: "", tags: "" });
   const [media, setMedia] = useState<string[]>([]);
-  /** Deploy onto this existing Shopify product (picked by search) instead of the linked one / a new one. */
-  const [target, setTarget] = useState<CtShopifyProductSummary | null>(null);
-  const [searching, setSearching] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CtDeployResponse | null>(null);
@@ -159,7 +156,7 @@ export function DeployPage({ productId }: { productId: string }) {
 
   const product = bundle.product;
   const link = product.shopify ?? null;
-  const linked = target ?? info?.product ?? null;
+  const linked = info?.product ?? null;
   const canDeploy = Boolean(table && !problems.length && template.tpl && form.title.trim() && info?.configured !== false);
 
   const deploy = async () => {
@@ -177,13 +174,13 @@ export function DeployPage({ productId }: { productId: string }) {
         productType: form.productType,
         tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
         mediaAssetIds: media,
-        shopifyProductId: target?.id ?? null,
+        // Always the linked product, or a new one: deploying onto another existing product was dropped (2026-11-03).
+        shopifyProductId: null,
         collectionIds: picked,
         primaryCollectionId: primary && picked.includes(primary) ? primary : (picked[0] ?? null),
       });
       setResult(r);
       setBundle({ ...bundle, product: r.product });
-      setTarget(null);
       setInfo(await ctApi.shopifyInfo(product.id).catch(() => info));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Deploy thất bại");
@@ -200,17 +197,14 @@ export function DeployPage({ productId }: { productId: string }) {
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <div className="min-w-0">
-            <h1 className="truncate text-base font-semibold">Deploy sản phẩm — {product.name}</h1>
-            <div className="text-[11px] text-muted-foreground">
-              {product.published_version ? `Template đang live v${product.published_version}` : "Chưa publish template"}
-              {link && ` · Shopify: ${link.status.toLowerCase()} · deploy lần cuối ${new Date(link.deployedAt).toLocaleString()}`}
-            </div>
+            <h1 className="truncate text-base font-semibold">{product.name}</h1>
+            <div className="text-[11px] text-muted-foreground">{link ? `Deploy lần cuối ${new Date(link.deployedAt).toLocaleString("vi-VN")}` : "Chưa deploy"}</div>
           </div>
           <span className="ml-auto" />
           <ImportStatus />
           <CtButton variant="primary" onClick={() => void deploy()} disabled={!canDeploy || running}>
             {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-            {link || target ? "Deploy cập nhật" : "Deploy lên Shopify"}
+            {link ? "Deploy cập nhật" : "Deploy lên Shopify"}
           </CtButton>
         </div>
       </header>
@@ -243,9 +237,11 @@ export function DeployPage({ productId }: { productId: string }) {
                         {linked.storeUrl}
                       </a>
                     )}
-                    <div className="text-[11px] text-muted-foreground">
-                      {target ? "Sẽ deploy lên sản phẩm này" : "Đã liên kết"} · {linked.status.toLowerCase()} · {linked.variantsCount} variant · /{linked.handle}
-                    </div>
+                    {link?.adminUrl && (
+                      <a href={link.adminUrl} target="_blank" rel="noreferrer" className="block truncate text-xs text-muted-foreground hover:text-foreground hover:underline">
+                        {link.adminUrl}
+                      </a>
+                    )}
                   </>
                 ) : (
                   <>
@@ -254,34 +250,7 @@ export function DeployPage({ productId }: { productId: string }) {
                   </>
                 )}
               </div>
-              {link && !target && (
-                <div className="flex gap-1">
-                  <a href={link.adminUrl} target="_blank" rel="noreferrer" className="rounded p-1.5 hover:bg-accent" title="Mở trong Shopify admin">
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
-                </div>
-              )}
-              {target ? (
-                <CtButton size="sm" variant="ghost" onClick={() => setTarget(null)}>
-                  <X className="h-3.5 w-3.5" /> Bỏ chọn
-                </CtButton>
-              ) : (
-                <CtButton size="sm" variant="outline" onClick={() => setSearching((v) => !v)}>
-                  <Search className="h-3.5 w-3.5" /> {link ? "Đổi sản phẩm" : "Chọn sản phẩm có sẵn"}
-                </CtButton>
-              )}
             </div>
-            {searching && (
-              <ShopifyPicker
-                currentCtId={product.id}
-                onPick={(p) => {
-                  setTarget(p);
-                  setSearching(false);
-                  fill(p, product.name);
-                }}
-                onClose={() => setSearching(false)}
-              />
-            )}
 
             <div className="grid gap-3">
               {audit && (
@@ -382,7 +351,6 @@ export function DeployPage({ productId }: { productId: string }) {
                     <div key={i} className="rounded-md border p-2 text-xs">
                       <div className="mb-1 font-medium">
                         {audit.versions.length > 1 ? `Version “${v.name}”` : "Trang sản phẩm"}
-                        <span className="ml-1 font-normal text-muted-foreground">· {v.layers} custom layer 1 ảnh (cố định)</span>
                       </div>
                       {v.fields.length ? (
                         <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
@@ -396,13 +364,15 @@ export function DeployPage({ productId }: { productId: string }) {
                     </div>
                   ))}
                 </div>
-                <div className="space-y-1">
-                  {audit.lines.map((l, i) => (
-                    <Notice key={i} level={l.level} text={l.text} />
-                  ))}
-                </div>
-                {table && usesPacks(table.config) && (
-                  <Notice level="info" text={`Pack N cái: khách thiết kế N “${table.config.itemLabel}” độc lập (tab ${table.config.itemLabel} 1…N), cả N vào 1 dòng giỏ hàng.`} />
+                {/* Only what needs a look before deploying (the ok / info lines were noise, 2026-11-03). */}
+                {audit.lines.some((l) => l.level === "warn") && (
+                  <div className="space-y-1">
+                    {audit.lines
+                      .filter((l) => l.level === "warn")
+                      .map((l, i) => (
+                        <Notice key={i} level={l.level} text={l.text} />
+                      ))}
+                  </div>
                 )}
               </>
             )}
@@ -619,12 +589,6 @@ function PriceSummary({ table }: { table: CtPriceTable }) {
   const packs = usesPacks(cfg) ? cfg.packs : [];
   return (
     <div className="space-y-2 text-xs">
-      <div className="text-muted-foreground">
-        {[sizes.length ? `${cfg.sizeLabel}: ${sizes.map((s) => s.label).join(" · ")}` : null, packs.length ? `${cfg.packLabel}: ${packs.map((p) => p.label).join(" · ")}` : null]
-          .filter(Boolean)
-          .join(" — ") || "1 giá, không option"}
-        {` → ${cells.length} variant`}
-      </div>
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full">
           <thead className="bg-muted/40">
@@ -670,56 +634,4 @@ function MediaTile({ asset, index, onToggle }: { asset: CtAsset; index: number; 
   );
 }
 
-function ShopifyPicker({ currentCtId, onPick, onClose }: { currentCtId: string; onPick: (p: CtShopifyProductSummary) => void; onClose: () => void }) {
-  const [q, setQ] = useState("");
-  const [list, setList] = useState<CtShopifyProductSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    const t = setTimeout(() => {
-      ctApi
-        .searchShopifyProducts(q)
-        .then((r) => !cancelled && (setList(r), setError(null)))
-        .catch((e: Error) => !cancelled && setError(e.message));
-    }, 250);
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
-  }, [q]);
-  return (
-    <div className="space-y-2 rounded-md border p-2">
-      <div className="flex items-center gap-2">
-        <CtInput className="h-8" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm sản phẩm Shopify theo tên / handle…" autoFocus />
-        <CtButton size="icon" variant="ghost" onClick={onClose} aria-label="Đóng">
-          <X className="h-4 w-4" />
-        </CtButton>
-      </div>
-      {error && <Notice level="error" text={error} />}
-      {!list ? (
-        <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-      ) : list.length === 0 ? (
-        <p className="text-xs text-muted-foreground">Không thấy sản phẩm.</p>
-      ) : (
-        <div className="max-h-64 space-y-1 overflow-y-auto">
-          {list.map((p) => {
-            const other = p.ctProductId && p.ctProductId !== currentCtId;
-            return (
-              <button key={p.id} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-xs hover:bg-accent" onClick={() => onPick(p)}>
-                {p.imageUrl ? <img src={p.imageUrl} alt="" className="h-8 w-8 rounded object-cover" /> : <div className="h-8 w-8 rounded bg-muted" />}
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">{p.title}</div>
-                  <div className="truncate text-muted-foreground">
-                    {p.status.toLowerCase()} · {p.variantsCount} variant · {p.options.map((o) => o.name).join(" / ")}
-                    {other && <span className="ml-1 text-amber-600">· đang gắn sản phẩm FlexiPrint khác</span>}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-      <p className="text-[11px] text-muted-foreground">Deploy sẽ thay options + variants + giá của sản phẩm đó theo bảng giá.</p>
-    </div>
-  );
-}
+

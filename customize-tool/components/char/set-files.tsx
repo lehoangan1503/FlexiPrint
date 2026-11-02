@@ -10,9 +10,11 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ExternalLink, Loader2 } from "lucide-react";
-import type { CtCharImage, CtCharProject, CtCharSetProduct } from "../../types";
+import type { CtCharImage, CtCharProject, CtCharSetProduct, CtSetOptionField } from "../../types";
 import { charApi } from "../../lib/api-client";
 import { CT_CONFIG } from "../../config";
+import { SET_KIND_INFO, setKind } from "../../lib/set-kind";
+import { CHECKER_STYLE } from "../ui";
 import type { CharCtx } from "./char-project";
 import { useCharAgent } from "./char-agent";
 import { CutEditor, LayerView, type CutEdit } from "./cut-panel";
@@ -83,8 +85,7 @@ export function CharSetFiles({ projectId, currentUserId, admin }: { projectId: s
         <div className="min-w-0 flex-1">
           <h2 className="text-base font-semibold">{project.name}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {total ? `${total} clipart` : ""} — bộ nhân vật hoàn chỉnh: chọn kiểu ở cột phải để xem cả nhân vật, bấm bút chì trên 1 clipart để sửa tay (lưu là file, mọi sản phẩm dùng bộ đổi theo). Clipart của bộ chỉ khớp với bộ này nên không tách lẻ.
-            {!ctx.editable && " Bộ của người khác — chỉ xem."}
+            {[`${SET_KIND_INFO[setKind(project)].label} · ${SET_KIND_INFO[setKind(project)].short}`, total ? `${total} clipart` : "", !ctx.editable ? "chỉ xem" : ""].filter(Boolean).join(" · ")}
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
@@ -116,7 +117,9 @@ export function CharSetFiles({ projectId, currentUserId, admin }: { projectId: s
         )}
       </div>
       {error && <p className="rounded bg-destructive/10 p-2 text-xs text-destructive">{error}</p>}
-      {project.brief.poses?.length ? (
+      {project.brief.imported ? (
+        <ImportedOptions project={project} images={images} />
+      ) : project.brief.poses?.length ? (
         <VersionsPanel {...ctx} show="files" />
       ) : project.brief.kind === "photo" ? (
         <p className="py-10 text-center text-sm text-muted-foreground">Bộ ảnh khách không có clipart cắt — phần tử của bộ xem ở trang bộ (Mở bộ).</p>
@@ -126,6 +129,55 @@ export function CharSetFiles({ projectId, currentUserId, admin }: { projectId: s
         <LayerView ctx={ctx} set={set} plan={project.cut?.plan ?? null} onEdit={ctx.editable ? setEdit : null} checks={false} />
       )}
       {edit && <CutEditor {...ctx} edit={edit} onClose={() => setEdit(null)} />}
+    </div>
+  );
+}
+
+/**
+ * An imported set (Teeinblue…) has no cut files: its clipart are its product's zone pictures (server/char/set-options.ts).
+ * Shown like a drawn set: the sample on the left, every field with its option pictures on the right.
+ */
+function ImportedOptions({ project, images }: { project: CtCharProject; images: CtCharImage[] }) {
+  const [fields, setFields] = useState<CtSetOptionField[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    charApi
+      .options(project.id)
+      .then(setFields)
+      .catch((e: Error) => setError(e.message));
+  }, [project.id]);
+  const sample = images.find((im) => im.id === project.master_id);
+  if (error) return <p className="text-sm text-destructive">{error}</p>;
+  if (!fields) return <Loader2 className="h-5 w-5 animate-spin" />;
+  if (!fields.length) return <p className="py-10 text-center text-sm text-muted-foreground">Sản phẩm của bộ chưa có lựa chọn clipart.</p>;
+  return (
+    <div className="flex flex-wrap items-start gap-6">
+      {sample && (
+        <div className="aspect-square w-full max-w-xl overflow-hidden rounded-lg border lg:sticky lg:top-4 lg:w-1/2" style={CHECKER_STYLE}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- our R2 preview */}
+          <img src={sample.url} alt={project.name} className="h-full w-full object-contain" />
+        </div>
+      )}
+      <div className="min-w-[280px] flex-1 space-y-4">
+        {fields.map((f) => (
+          <section key={f.label}>
+            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {f.label} ({f.options.length})
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {f.options.map((o) => (
+                <figure key={o.name} className="w-20" title={o.name}>
+                  <div className="aspect-square overflow-hidden rounded-md border bg-white">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- option thumbnail */}
+                    <img src={o.thumb} alt={o.name} className="h-full w-full object-contain" loading="lazy" />
+                  </div>
+                  <figcaption className="mt-0.5 truncate text-[10px] text-muted-foreground">{o.name}</figcaption>
+                </figure>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }

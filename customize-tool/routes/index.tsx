@@ -16,8 +16,6 @@ import { ctSession } from "../server/supabase";
 import { CustomizeProductList } from "../components/product-list";
 import { CustomizeEditor } from "../components/editor/editor";
 import { DeployPage } from "../components/deploy/deploy-page";
-import { LibraryManager } from "../components/library/library-manager";
-import { CharList } from "../components/char/char-list";
 import { CharProjectView } from "../components/char/char-project";
 import { ImportPage } from "../components/char/import-page";
 import { ImportStatus } from "../components/char/import-status";
@@ -58,23 +56,27 @@ export async function CustomizeDeployPage({ params }: { params: Promise<{ id: st
   return <DeployPage productId={id} />;
 }
 
-/** Khuôn in: now a tab of the library (one place for clipart, artwork, phôi, khuôn). */
-export async function CustomizePrintTemplatesPage() {
-  const session = await ctSession();
-  if (!session) redirect(CT_CONFIG.loginPath);
-  return <LibraryManager initialTab="khuon" currentUserId={session.user.id} admin={await isAdmin(session)} />;
+/** The library is a tab of the dashboard since 2026-11-03 (components/library/library-tab.tsx): the old pages
+ * (/library, /templates, the /v2 list) send there, keeping the sub-tab and the open set. */
+function libraryUrl(lib?: string | null, set?: string | null): string {
+  const q = new URLSearchParams({ tab: "library" });
+  if (lib) q.set("lib", lib);
+  if (set) q.set("set", set);
+  return `${CT_CONFIG.homePath}?${q}`;
 }
 
-export async function CustomizeLibraryPage() {
-  const session = await ctSession();
-  if (!session) redirect(CT_CONFIG.loginPath);
-  return <LibraryManager currentUserId={session.user.id} admin={await isAdmin(session)} />;
+export async function CustomizePrintTemplatesPage() {
+  redirect(libraryUrl("khuon"));
+}
+
+export async function CustomizeLibraryPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const q = await searchParams;
+  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? null;
+  redirect(libraryUrl(one(q.tab), one(q.set)));
 }
 
 export async function CharListPage() {
-  const session = await ctSession();
-  if (!session) redirect(CT_CONFIG.loginPath);
-  return <CharList currentUserId={session.user.id} admin={await isAdmin(session)} />;
+  redirect(libraryUrl());
 }
 
 export async function CharProjectPage({ params }: { params: Promise<{ id: string }> }) {

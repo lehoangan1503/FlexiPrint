@@ -72,7 +72,7 @@ export function LibraryPanel(props: LibraryPanelProps) {
           ))}
         </div>
         <CtTooltip label="Xem, sửa clipart từng bộ — trang Thư viện">
-          <Link href="/library" target="_blank" className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] hover:bg-accent">
+          <Link href="/dashboard?tab=library" target="_blank" className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] hover:bg-accent">
             <Library className="h-3.5 w-3.5" /> Quản lý
           </Link>
         </CtTooltip>

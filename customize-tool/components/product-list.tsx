@@ -14,6 +14,20 @@ import type { CtProductListRow, CtProductStatus } from "../types";
 import { ctApi } from "../lib/api-client";
 import { CHECKER_STYLE, CtInput, cx } from "./ui";
 import { ctConfirm } from "./dialogs";
+import { FilterChips, type CtFilterOption } from "./filter-chips";
+
+/** The list's filters (asked 2026-11-03); a new one = one more entry here + its test in FILTER_TEST. */
+type ProductFilter = "all" | "deployed" | "not-deployed";
+const FILTERS: Array<CtFilterOption<ProductFilter>> = [
+  { value: "all", label: "Tất cả" },
+  { value: "deployed", label: "Đã deploy" },
+  { value: "not-deployed", label: "Chưa deploy" },
+];
+const FILTER_TEST: Record<ProductFilter, (p: CtProductListRow) => boolean> = {
+  all: () => true,
+  deployed: (p) => !!p.shopify,
+  "not-deployed": (p) => !p.shopify,
+};
 
 const STATUS_LABEL: Record<CtProductStatus, string> = { draft: "Nháp", ready: "Sẵn sàng", archived: "Lưu trữ" };
 const STATUS_CLASS: Record<CtProductStatus, string> = {
@@ -27,6 +41,8 @@ export function CustomizeProductList({ tabs, currentUserId, admin = false }: { t
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<ProductFilter>("all");
+  const shown = products.filter(FILTER_TEST[filter]);
 
   const load = useCallback(async (q: string) => {
     setLoading(true);
@@ -58,9 +74,9 @@ export function CustomizeProductList({ tabs, currentUserId, admin = false }: { t
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <h2 className="shrink-0 text-2xl font-bold">Customize 2D</h2>
         {tabs}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-3">
+          <FilterChips value={filter} onChange={setFilter} options={FILTERS} />
           <div className="relative">
             <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <CtInput className="h-9 w-56 pl-8" placeholder="Tìm sản phẩm…" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -81,6 +97,8 @@ export function CustomizeProductList({ tabs, currentUserId, admin = false }: { t
         <div className="flex justify-center py-20">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
+      ) : shown.length === 0 && products.length > 0 ? (
+        <div className="rounded-xl border border-dashed py-20 text-center text-sm text-muted-foreground">Không có sản phẩm nào khớp.</div>
       ) : products.length === 0 ? (
         <div className="rounded-xl border border-dashed py-20 text-center text-sm text-muted-foreground">
           <Layers className="mx-auto mb-3 h-10 w-10 opacity-40" />
@@ -88,7 +106,7 @@ export function CustomizeProductList({ tabs, currentUserId, admin = false }: { t
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {products.map((p) => {
+          {shown.map((p) => {
             const thumb = p.mockup_url ?? p.thumbnail_url ?? p.main_asset?.url ?? null;
             const mine = admin || !currentUserId || p.user_id === currentUserId;
             return (
@@ -105,6 +123,7 @@ export function CustomizeProductList({ tabs, currentUserId, admin = false }: { t
                     <div className="truncate text-sm font-medium">{p.name}</div>
                     <div className="mt-0.5 flex items-center gap-1.5">
                       <span className={cx("rounded px-1.5 py-0.5 text-[10px] font-medium", STATUS_CLASS[p.status])}>{STATUS_LABEL[p.status]}</span>
+                      {p.shopify && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-600">Đã deploy</span>}
                       <span className="text-[10px] text-muted-foreground">{new Date(p.created_at).toLocaleDateString("vi-VN")}</span>
                     </div>
                   </div>

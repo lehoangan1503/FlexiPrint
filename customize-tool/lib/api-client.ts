@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
+import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
   CtAgentStatus,
   CtAgentTask,
@@ -273,7 +273,10 @@ export const ctApi = {
 
 /** v2 bộ nhân vật (server/char/projects.ts). */
 export const charApi = {
-  list: () => call<{ projects: CtCharProject[]; thumbs: Record<string, string> }>("char/projects"),
+  /** `options`: two option pictures per set (its card). */
+  list: () => call<{ projects: CtCharProject[]; thumbs: Record<string, string>; options: Record<string, string[]> }>("char/projects"),
+  /** The fields the customer picks, read from the set's product (an imported set's clipart). */
+  options: (id: string) => call<{ fields: CtSetOptionField[] }>(`char/projects/${id}/options`).then((r) => r.fields),
   create: (body: { name: string; brief?: CtCharBrief }) => call<{ project: CtCharProject }>("char/projects", json("POST", body)).then((r) => r.project),
   get: (id: string) => call<{ project: CtCharProject; images: CtCharImage[] }>(`char/projects/${id}`),
   /** A lineup drawn version by version: each smaller version's own set (server/char/versions.ts). */

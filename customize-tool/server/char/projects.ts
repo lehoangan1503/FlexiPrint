@@ -32,6 +32,7 @@ import { drawImage } from "../pack-images";
 import { ctServiceClient, type CtSession } from "../supabase";
 import { ctRemove } from "../storage";
 import { fetchImage, saveCharFile, saveChatFile } from "./files";
+import { setPreviewOptions } from "./set-options";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_FILE = 30 * 1024 * 1024;
@@ -156,7 +157,14 @@ export async function listCharProjects(s: CtSession): Promise<NextResponse> {
       .returns<Array<Pick<CtAsset, "product_id" | "url" | "name">>>();
     for (const p of bare) thumbs[p.id] = (fronts ?? []).find((f) => f.product_id && p.product_ids.includes(f.product_id))?.url ?? "";
   }
-  return NextResponse.json({ projects, thumbs });
+  // Two option pictures per set: its card shows it is a clipart set (asked 2026-11-03).
+  const options: Record<string, string[]> = {};
+  await Promise.all(
+    projects.map(async (p) => {
+      options[p.id] = await setPreviewOptions(s.supabase, p).catch(() => []);
+    }),
+  );
+  return NextResponse.json({ projects, thumbs, options });
 }
 
 /** POST char/projects */

@@ -8,10 +8,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Check, Loader2 } from "lucide-react";
-import type { CtCharBrief, CtCharImage, CtCharProject } from "../../types";
+import type { CtCharBrief, CtCharImage, CtCharProject, CtCharStatus } from "../../types";
 import { charApi } from "../../lib/api-client";
 import { CtAutoWidthInput, cx } from "../ui";
-import { CHAR_STATUS_LABEL } from "./char-list";
 import { BriefPanel } from "./brief-panel";
 import { MasterPanel } from "./master-panel";
 import { LayersPanel } from "./layers-panel";
@@ -21,6 +20,8 @@ import { ElementsPanel } from "./elements-panel";
 import { ProductStep } from "./product-step";
 import { ImportPanel } from "./import-panel";
 import { ImportStatus } from "./import-status";
+
+const CHAR_STATUS_LABEL: Record<CtCharStatus, string> = { brief: "Brief", master: "Master đã duyệt", layers: "Đã cắt layer", product: "Có sản phẩm" };
 
 type Step = "brief" | "master" | "layers" | "product";
 
@@ -184,7 +185,7 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
     <div className="flex min-h-screen flex-col bg-background">
       <header className="sticky top-0 z-20 border-b bg-card/80 backdrop-blur-sm">
         <div className="flex h-14 items-center gap-3 px-4">
-          <Link href="/v2" className="rounded p-1.5 hover:bg-accent">
+          <Link href="/dashboard?tab=library" className="rounded p-1.5 hover:bg-accent">
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <NameField

@@ -17,6 +17,8 @@
  *   POST char/projects/:id/import/rebuild        the product built again from the saved manifest
  *   POST char/projects/:id/import/deploy         the product to Shopify again as a draft (import-deploy.ts — a build
  *                                                does it by itself)
+ *   POST char/projects/:id/import/rethumb        the option pictures made again from the library clipart, the
+ *                                                product published again (MCP char_import_rethumb sets some by hand)
  *
  * The build (layer rules, server/mcp/layer-rules.ts): every image layer is the whole canvas — files used as they are,
  * never trimmed or scaled; a file of another size is named in `problems` and left empty. One product version per
@@ -50,6 +52,7 @@ import { charFolder, saveCharFile, saveCharRaw } from "./files";
 import { deployImported, deployInfo, saveImportShopify, savedDeployInfo } from "./import-deploy";
 import { refreshSetUsers } from "./set-users";
 import { serviceSession } from "./product";
+import { siteUrl } from "../site-url";
 import { NOT_YOURS, canEditProject, jobDb, jsonError, loadProject, projectRow, type Db } from "./projects";
 
 /** One upload request's files at most (the page sends a few MB at a time). */
@@ -521,16 +524,8 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
       const hit = thumbs.get(look);
       if (hit) return hit;
       const made = (async () => {
-        const trimmed = await sharp(png).trim({ threshold: 0 }).toBuffer({ resolveWithObject: true }).catch(() => null);
-        if (!trimmed) return "";
-        const side = Math.max(trimmed.info.width, trimmed.info.height);
-        const pad = Math.round(side * 0.06);
-        const square = await sharp(trimmed.data)
-          .extend({ top: pad + Math.floor((side - trimmed.info.height) / 2), bottom: pad + Math.ceil((side - trimmed.info.height) / 2), left: pad + Math.floor((side - trimmed.info.width) / 2), right: pad + Math.ceil((side - trimmed.info.width) / 2), background: { r: 0, g: 0, b: 0, alpha: 0 } })
-          .resize(240, 240)
-          .webp({ quality: 86, alphaQuality: 90 })
-          .toBuffer();
-        return (await saveCharRaw(userId, p.id, "thumb", square, "image/webp")).url;
+        const square = await optionPicture(png);
+        return square ? (await saveCharRaw(userId, p.id, "thumb", square, "image/webp")).url : "";
       })().catch(() => "");
       thumbs.set(look, made);
       return made;
@@ -681,7 +676,7 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
               clip: false,
               mainId,
               ...(parent ? { parent } : {}),
-              image: { ...cfg.image, label: layer.label, display: "image", groupLabel: layer.groupLabel, groupDisplay: swatches ? "swatch" : "button" },
+              image: { ...cfg.image, label: layer.label, display: "image", groupLabel: layer.groupLabel, groupDisplay: swatches ? "swatch" : "button", ...(linked.length ? { thumbFollowers: true } : {}) },
             },
             sort_order: 0,
           };
@@ -759,6 +754,152 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     await dropProduct(s, product.id).catch(() => undefined);
     throw e;
   }
+}
+
+/** An option picture (thumb): the file's pixels cropped close, centred on a square with a margin, 240 px — null when empty. */
+async function optionPicture(png: Buffer): Promise<Buffer | null> {
+  const trimmed = await sharp(png).trim({ threshold: 0 }).toBuffer({ resolveWithObject: true }).catch(() => null);
+  if (!trimmed) return null;
+  const { width: w, height: h } = trimmed.info;
+  const side = Math.max(w, h);
+  const pad = Math.round(side * 0.06);
+  // Padded to a square first, then scaled: sharp runs resize before extend in one pipeline, which cropped every
+  // non-square piece to its middle (two eyes → the gap between them, 254×333; flowers lost their heads — 2026-11-02).
+  const padded = await sharp(trimmed.data)
+    .extend({ top: pad + Math.floor((side - h) / 2), bottom: pad + Math.ceil((side - h) / 2), left: pad + Math.floor((side - w) / 2), right: pad + Math.ceil((side - w) / 2), background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png()
+    .toBuffer();
+  return sharp(padded).resize(240, 240).webp({ quality: 86, alphaQuality: 90 }).toBuffer();
+}
+
+/** One option picture set by hand (MCP char_import_rethumb): another picture, and / or a crop of the canvas. */
+export interface CtImportThumbFix {
+  /** The layer's customer label ("Eye color") or its region name. */
+  layer: string;
+  /** The option's name ("Blue") — its group's too when names repeat ("Skin 1 · Blonde"). */
+  option: string;
+  /** A picture of this app (a library clipart / file url) instead of the option's own file — whole canvas or not. */
+  url?: string;
+  /** Only this part of the picture, in its own px. */
+  crop?: { x: number; y: number; w: number; h: number };
+}
+
+/**
+ * The option pictures of an imported set's product made again from its library clipart (asked 2026-11-02: thumbs
+ * were cut wrong by the resize-before-extend slip, and the folder is gone after the build). Every option of a choice
+ * layer gets a fresh picture — with its followers drawn in where the build did that (config.image.thumbFollowers;
+ * older builds: the Teeinblue "… — Hat" layers) — `fixes` set some by hand. Then the products are published again
+ * (the storefront reads the published template). Old picture files stay: products the set was dragged into may still
+ * show them until they are published again.
+ */
+export async function rethumbImport(s: CtSession, p: CtCharProject, fixes: CtImportThumbFix[]): Promise<{ made: number; empty: string[]; unmatched: string[]; published: string[] }> {
+  const db = s.supabase;
+  const productId = p.product_ids[0];
+  if (!productId) throw new Error("The set has no product yet — char_import_build first");
+  const userId = p.user_id ?? s.user.id;
+  const { data: regions } = await db.from(CT_TABLES.regions).select("*").eq("product_id", productId).returns<CtRegion[]>();
+  const images = (regions ?? []).filter((r) => r.kind === "image");
+  const { data: items } = images.length ? await db.from(CT_TABLES.items).select("*").in("region_id", images.map((r) => r.id)).returns<CtRegionItem[]>() : { data: [] as CtRegionItem[] };
+  const subIds = [...new Set((items ?? []).map((i) => i.asset_id))];
+  const assets: CtAsset[] = [];
+  for (let i = 0; i < subIds.length; i += 200) {
+    const ids = subIds.slice(i, i + 200);
+    const { data: subs } = await db.from(CT_TABLES.assets).select("*").in("id", ids).returns<CtAsset[]>();
+    const { data: kids } = await db.from(CT_TABLES.assets).select("*").in("parent_id", ids).returns<CtAsset[]>();
+    assets.push(...(subs ?? []), ...(kids ?? []));
+  }
+  const byId = new Map(assets.map((a) => [a.id, a]));
+  /** A layer's groups, each its options in order (the sub, then its đa sắc). */
+  const groupsOf = (r: CtRegion): CtAsset[][] =>
+    (items ?? [])
+      .filter((i) => i.region_id === r.id)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((i) => {
+        const sub = byId.get(i.asset_id);
+        if (!sub) return [];
+        return [sub, ...assets.filter((a) => a.parent_id === sub.id).sort((a, b) => a.sort_order - b.sort_order)];
+      });
+  const fileCache = new Map<string, Promise<Buffer | null>>();
+  const fileOf = (key: string) => {
+    const hit = fileCache.get(key);
+    if (hit) return hit;
+    const made = readKey(key);
+    fileCache.set(key, made);
+    return made;
+  };
+  const publicRoot = r2PublicUrl("");
+  const keyOfUrl = (url: string) => (url.startsWith(publicRoot) ? url.slice(publicRoot.length).split("/").map(decodeURIComponent).join("/") : null);
+  const optionName = (a: CtAsset) => a.name.split(" · ").slice(1).join(" · ");
+  const lower = (t: string) => t.trim().toLowerCase();
+  const used = new Set<number>();
+  const fixFor = (r: CtRegion, a: CtAsset): CtImportThumbFix | undefined => {
+    const i = fixes.findIndex((f) => {
+      const layer = lower(f.layer);
+      if (layer !== lower(r.config.image.label) && layer !== lower(r.name)) return false;
+      const opt = lower(f.option);
+      const name = lower(optionName(a));
+      return opt === name || name.endsWith(` · ${opt}`) || opt === lower(a.name);
+    });
+    if (i >= 0) used.add(i);
+    return i >= 0 ? fixes[i] : undefined;
+  };
+
+  let made = 0;
+  const empty: string[] = [];
+  for (const r of images) {
+    const groups = groupsOf(r);
+    const isChoice = !r.config.image.follows && groups.some((g) => g.some((a) => a.meta?.thumb));
+    const fixed = groups.flat().filter((a) => fixFor(r, a));
+    if (!isChoice && !fixed.length) continue;
+    const label = r.config.image.label || r.name;
+    const withFollowers = r.config.image.thumbFollowers === true || /— Hat$/.test(label);
+    const followers = withFollowers
+      ? images.filter((f) => f.config.image.follows === r.id).map((f) => ({ groups: groupsOf(f), above: f.sort_order > r.sort_order }))
+      : [];
+    for (const [gi, g] of groups.entries()) {
+      for (const [oi, a] of g.entries()) {
+        const fix = fixFor(r, a);
+        if (!isChoice && !fix) continue;
+        const key = fix?.url ? keyOfUrl(fix.url) : a.storage_path;
+        if (fix?.url && !key) throw new Error(`${label} · ${optionName(a)}: url must be a picture of this app (${publicRoot}…)`);
+        let png = key ? await fileOf(key) : null;
+        if (png && !fix?.url && followers.length) {
+          const parts = await Promise.all(
+            followers.map(async (f) => {
+              const x = f.groups[gi]?.[oi];
+              return { above: f.above, png: x?.storage_path ? await fileOf(x.storage_path) : null };
+            }),
+          );
+          const under = parts.filter((x) => !x.above && x.png).map((x) => ({ input: x.png! }));
+          const over = parts.filter((x) => x.above && x.png).map((x) => ({ input: x.png! }));
+          if (under.length || over.length) png = await sharp(under.length ? under[0].input : png).composite([...under.slice(1), ...(under.length ? [{ input: png }] : []), ...over]).png().toBuffer();
+        }
+        if (png && fix?.crop) {
+          const c = fix.crop;
+          png = await sharp(png).extract({ left: Math.max(0, Math.round(c.x)), top: Math.max(0, Math.round(c.y)), width: Math.max(1, Math.round(c.w)), height: Math.max(1, Math.round(c.h)) }).png().toBuffer().catch(() => {
+            throw new Error(`${label} · ${optionName(a)}: crop is outside the picture`);
+          });
+        }
+        const square = png ? await optionPicture(png) : null;
+        if (!square) {
+          empty.push(`${label} · ${optionName(a)}`);
+          continue;
+        }
+        const thumb = (await saveCharRaw(userId, p.id, "thumb", square, "image/webp")).url;
+        await db.from(CT_TABLES.assets).update({ meta: { ...(a.meta ?? {}), thumb } }).eq("id", a.id);
+        made++;
+      }
+    }
+  }
+  // The storefront shows the published template: every product of the set that was published takes the new pictures.
+  const published: string[] = [];
+  const { data: products } = await db.from(CT_TABLES.products).select("id, published_version").in("id", p.product_ids).returns<Array<{ id: string; published_version: number | null }>>();
+  for (const x of products ?? []) {
+    if (!x.published_version) continue;
+    const res = await h.publish(s, x.id, siteUrl());
+    if (res.ok) published.push(x.id);
+  }
+  return { made, empty, unmatched: fixes.filter((_, i) => !used.has(i)).map((f) => `${f.layer} · ${f.option}`), published };
 }
 
 /**
@@ -866,5 +1007,6 @@ export async function importRoute(req: Request, s: CtSession, id: string, sub: s
   if (sub === "start") return startImport(s, p, await req.json().catch(() => null));
   if (sub === "rebuild") return rebuildImport(s, p);
   if (sub === "deploy") return redeployImport(s, p);
+  if (sub === "rethumb") return NextResponse.json(await rethumbImport(s, p, []));
   return jsonError("Not found", 404);
 }

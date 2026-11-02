@@ -336,6 +336,8 @@ export interface CtImageConfig {
    * Its groups must mirror the leader's: same names, same counts, same order.
    */
   follows?: string;
+  /** Its option pictures show the layers that follow it drawn in (an imported hair × hat — the file is a sliver). */
+  thumbFollowers?: boolean;
 }
 
 export interface CtRegionConfig {

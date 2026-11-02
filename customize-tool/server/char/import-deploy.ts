@@ -23,8 +23,21 @@ const MAX_MEDIA = 10;
 const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const inline = (t: string) => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\*([^*]+)\*/g, "<em>$1</em>");
 
-/** The folder's description (plain text with **bold**, "- " lists, "### " heads) as the HTML a product page takes. */
+/** A description already written as HTML (@flexiprint's manifest, 2026-11-02 — it showed as raw tags on the store). */
+const HTML_DESCRIPTION = /<\/?(p|h[1-6]|ul|ol|li|strong|em|b|i|br|div|span|a)\b[^>]*>/i;
+
+/** HTML kept as written, minus what a product page must never run. */
+const safeHtml = (html: string) =>
+  html
+    .replace(/<(script|style|iframe|object|embed)\b[\s\S]*?<\/\1\s*>/gi, "")
+    .replace(/<(script|style|iframe|object|embed)\b[^>]*\/?>/gi, "")
+    .replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/(href|src)\s*=\s*(["']?)\s*javascript:[^"'\s>]*\2/gi, "")
+    .trim();
+
+/** The folder's description (plain text with **bold**, "- " lists, "### " heads, or HTML) as the HTML a product page takes. */
 export function descriptionHtml(text: string): string {
+  if (HTML_DESCRIPTION.test(text)) return safeHtml(text);
   const out: string[] = [];
   let list: string[] = [];
   const flush = () => {

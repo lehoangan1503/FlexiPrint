@@ -17,7 +17,7 @@ import { CT_CONFIG, CT_TABLES } from "../../config";
 import type { CtPrintTemplate } from "../../types/print";
 import { templateRow } from "../print-templates";
 import { addSetProduct } from "../char/set-users";
-import { buildFromAgent, importFiles, importText } from "../char/import";
+import { buildFromAgent, importFiles, importText, rethumbImport, type CtImportThumbFix } from "../char/import";
 import { siteUrl } from "../site-url";
 import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharPhotoStyle, CtCharProject, CtCharRefUse, CtCharTaskResult, CtProduct } from "../../types";
 import { REF_USES, REF_USE_INFO, masterPrompt, parseCharBrief, shownByDefault } from "../../lib/char-brief";
@@ -128,7 +128,7 @@ const SHORT_REQUESTS =
   "SHORT REQUESTS (asked 2026-10-28): editors write a few loose lines (\"4 style: siêu nhân, khăn len…; 4 khung giáng sinh; tên trên trái; slogan trắng dưới; khuôn tròn; phôi kính\") and attach a sample. Never ask them for the details — fill them in from the sample picture and these defaults: decorations follow the khuôn's outline (a round khuôn → a wreath / garland curving with the circle, a U hugging the bottom and sides of the subject — never straight bars or a square frame on a round piece), every option of an element the same size, place and curve; the photo zone in the middle, the frame over its cut-off bottom; a customer name in a script font where they said; a fixed slogan curved along the edge when the sample does so; everything clear of the hanging hole and inside the safe area; a khuôn of that shape already in list_print_templates is reused, never a duplicate; a material they name (glass_clear…) is the khuôn's blank for the mockups (a khuôn with no phôi of that material yet → char_make_blank before the mockups); the texts' colour readable on that material. Then, in your first summary, write back in short Vietnamese what you decided (each style, each element and its options, the texts, khuôn, phôi, which attached picture went where) so the editor reviews it there and corrects only what is off.";
 
 const IMPORTED =
-  "AN IMPORTED SET (set.brief.imported — someone's own finished files, a Teeinblue export…, asked 2026-10-29): no master, no 3a/3b/3c, nothing drawn by AI. A known layout is read by the server; any other folder is yours: char_import_files (the folder: paths, sizes, small text files) → char_import_read (a json / csv / md / txt) and view_image a few layer files (url) → understand it: the canvas size (every layer file is the WHOLE canvas, same size — layer rules), the versions the customer picks first (number of people…) and inside one the variants (layout), each layer bottom → top — static (always there), choice (the customer picks: groups = a first row like skin tone / hair colour, options = the files), linked (follows another layer's choice: a head with the body's skin + outfit, the hair under the hat — its groups and options mirror the leader's, same counts and order) — and the texts the customer types (centre, width, letter height px, angle, colour, Google font + weight). Then char_import_build {task_id, manifest} (files by their path in the folder); set.brief.imported shows the build (status building → done, problems). Afterwards the set works like any other: render_artwork its product, make_product_mockups, char_add_product. Once built, the uploaded folder is deleted (only the library clipart stays): a layout change after the build = the folder uploaded again, then char_import_build. A finished build goes to Shopify by itself as a DRAFT (the folder's title + description, the price table named after the material, the mockups) — set.brief.imported.shopify has the preview link (draft theme) or why not; char_import_deploy sends it again (after a price table was added, or for a fresh preview link). Give the editor that link. Never draw, trim or scale a file.";
+  "AN IMPORTED SET (set.brief.imported — someone's own finished files, a Teeinblue export…, asked 2026-10-29): no master, no 3a/3b/3c, nothing drawn by AI. A known layout is read by the server; any other folder is yours: char_import_files (the folder: paths, sizes, small text files) → char_import_read (a json / csv / md / txt) and view_image a few layer files (url) → understand it: the canvas size (every layer file is the WHOLE canvas, same size — layer rules), the versions the customer picks first (number of people…) and inside one the variants (layout), each layer bottom → top — static (always there), choice (the customer picks: groups = a first row like skin tone / hair colour, options = the files), linked (follows another layer's choice: a head with the body's skin + outfit, the hair under the hat — its groups and options mirror the leader's, same counts and order) — and the texts the customer types (centre, width, letter height px, angle, colour, Google font + weight). Names the customer reads (asked 2026-11-02 — “Eye color · Eye color · Gray”, “Skin tone · Skin 1 · Skin 1”): a layer with ONE group gives that group name \"\" (never the layer label again); a colour pick like skin tone is ONE group whose options are the tones (swatch on the layer's groups only when the groups ARE the colours of a first row, e.g. hair colour over hairstyles) — never one group per option. The description may be HTML (<p>, <h3>, <ul><li>, <strong>) or plain text with **bold** / \"- \" lists — it goes to the product page as such. Then char_import_build {task_id, manifest} (files by their path in the folder); set.brief.imported shows the build (status building → done, problems). Afterwards the set works like any other: render_artwork its product, make_product_mockups, char_add_product. Once built, the uploaded folder is deleted (only the library clipart stays): a layout change after the build = the folder uploaded again, then char_import_build. A finished build goes to Shopify by itself as a DRAFT (the folder's title + description, the price table named after the material, the mockups) — set.brief.imported.shopify has the preview link (draft theme) or why not; char_import_deploy sends it again (after a price table was added, or for a fresh preview link). Give the editor that link. Option pictures (thumbs: the file cropped close to its pixels) are made by the build; char_import_rethumb makes them again from the library clipart (no re-upload) and sets one by hand — an option with no file (the default eyes drawn in the skin) gets a crop of another layer's file (view_image it, give the box in canvas px). Never draw, trim or scale a file.";
 
 const CHAT_INSTRUCTIONS = [
   ...COMMON,
@@ -1387,6 +1387,37 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const shopify = data?.brief.imported?.shopify ?? null;
       await progress(db, task.id, "Đã đưa sản phẩm của bộ import lên Shopify (bản nháp)");
       return json({ shopify, next: "Give the editor previewUrl (and adminUrl); on an error, say what is missing (a price table for the material…)." });
+    },
+  },
+  {
+    name: "char_import_rethumb",
+    description:
+      "Bộ import: the option pictures (thumbs) of the set's product made again from its library clipart — every option of every choice layer, cropped close to its pixels on a square (with its followers drawn in where the build did that: hair × hat) — then the product is published again so the store shows them. fixes = options set by hand: {layer (customer label, e.g. \"Eye color\"), option (\"Blue\"; \"Skin 1 · Blonde\" when names repeat), url? (another picture of this app — a clipart url from list_product_options / the library, whole canvas), crop? {x, y, w, h} in that picture's px (e.g. the eyes of the skin file)}. → made, empty (options with no pixels and no fix: give them one), unmatched fixes, published. view_image a few thumbs after (list_product_options shows them).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        fixes: { type: "array", items: { type: "object" }, description: "Options set by hand (optional): [{layer, option, url?, crop?: {x, y, w, h}}]." },
+      },
+      required: ["task_id"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task, project } = await openCharTask(ctx, args.task_id);
+      if (!project.brief.imported) throw new Error("This set is not an imported one");
+      const fixes: CtImportThumbFix[] = (Array.isArray(args.fixes) ? args.fixes : []).map((raw: unknown) => {
+        const f = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+        const c = f.crop && typeof f.crop === "object" ? (f.crop as Record<string, unknown>) : null;
+        return {
+          layer: str(f.layer),
+          option: str(f.option),
+          ...(str(f.url) ? { url: str(f.url) } : {}),
+          ...(c ? { crop: { x: Number(c.x) || 0, y: Number(c.y) || 0, w: Number(c.w) || 0, h: Number(c.h) || 0 } } : {}),
+        };
+      });
+      const out = await rethumbImport(await serviceSession(db, project.user_id ?? task.user_id!), project, fixes.filter((f) => f.layer && f.option));
+      await progress(db, task.id, `Đã làm lại ${out.made} ảnh lựa chọn (thumb) của bộ import`);
+      return json({ ...out, next: out.empty.length ? "Give the empty options a picture: fixes with url + crop." : "view_image a few thumbs (list_product_options) to check." });
     },
   },
   {

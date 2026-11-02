@@ -477,6 +477,16 @@ export interface CtCharImportShopify {
   material: string;
 }
 
+/** An import as the import page and the header list it (GET char/projects/imports). */
+export interface CtCharImportRow {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  product_ids: string[];
+  imported: CtCharImported;
+}
+
 /** One uploaded file of an import: its path in the folder, where it is. */
 export interface CtCharImportFile {
   path: string;

@@ -3,6 +3,8 @@
  * nhân vật with its product, as a set drawn by AI ends):
  *
  *   POST char/projects/import {name}            → { project } a set waiting for its files (brief.imported)
+ *   GET  char/projects/imports                   → { imports: CtCharImportRow[] } the user's imports (import page, header)
+ *   GET  char/projects/:id/import/files          → { files } already uploaded (an upload cut off goes on from there)
  *   POST char/projects/:id/import/files          multipart file[] + path[] (the folder, a few files a request)
  *                                                → { files: CtCharImportFile[] } saved under <set folder>/import/<path>
  *   POST char/projects/:id/import/start {files}  the whole list once uploaded: a known format (lib/char-import.ts) is
@@ -22,7 +24,7 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_FONTS, CT_TABLES } from "../../config";
-import type { CtAsset, CtCharImported, CtCharImportFile, CtCharImportLayer, CtCharImportManifest, CtCharImportText, CtCharProject, CtProduct, CtRegion, CtRegionItem } from "../../types";
+import type { CtAsset, CtCharImported, CtCharImportFile, CtCharImportRow, CtCharImportLayer, CtCharImportManifest, CtCharImportText, CtCharProject, CtProduct, CtRegion, CtRegionItem } from "../../types";
 import { defaultCharBrief, parseCharBrief } from "../../lib/char-brief";
 import { manifestFiles, parseManifest, readTeeinblue, type CtImportTexts } from "../../lib/char-import";
 import { defaultProductConfig, defaultRegionConfig } from "../../lib/design";
@@ -32,7 +34,7 @@ import { findProductFolder, productFolder } from "../artworks";
 import * as h from "../handlers";
 import { readImageInfo } from "../image-size";
 import { insertClipart } from "../library";
-import { r2Get, r2Keys, r2PublicUrl } from "../r2";
+import { r2Get, r2Keys, r2Objects, r2PublicUrl } from "../r2";
 import { ctLibraryPath, ctRemove, ctUpload } from "../storage";
 import type { CtSession } from "../supabase";
 import { charFolder, saveCharFile, saveCharRaw } from "./files";
@@ -111,6 +113,34 @@ export async function createImport(s: CtSession, body: unknown): Promise<NextRes
   const { data, error } = await s.supabase.from(CT_TABLES.charProjects).insert({ user_id: s.user.id, name, brief }).select("*").single<CtCharProject>();
   if (error || !data) return jsonError(error?.message ?? "Không tạo được", 500);
   return NextResponse.json({ project: projectRow(data) }, { status: 201 });
+}
+
+/** GET char/projects/imports — the user's imports, newest first (the import page and the header's status). */
+export async function listImports(s: CtSession): Promise<NextResponse> {
+  const { data, error } = await s.supabase
+    .from(CT_TABLES.charProjects)
+    .select("id, name, created_at, updated_at, product_ids, brief")
+    .eq("user_id", s.user.id)
+    .not("brief->imported", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(60)
+    .returns<Array<Pick<CtCharProject, "id" | "name" | "created_at" | "updated_at" | "product_ids"> & { brief: unknown }>>();
+  if (error) return jsonError(error.message, 500);
+  const imports: CtCharImportRow[] = [];
+  for (const r of data ?? []) {
+    const imported = parseCharBrief(r.brief).imported;
+    if (imported) imports.push({ id: r.id, name: r.name, created_at: r.created_at, updated_at: r.updated_at, product_ids: r.product_ids ?? [], imported });
+  }
+  return NextResponse.json({ imports });
+}
+
+/** GET char/projects/:id/import/files — what is on the bucket already (a cut-off upload sends only the rest). */
+async function uploadedFiles(s: CtSession, p: CtCharProject): Promise<NextResponse> {
+  const root = importRoot(p, s.user.id);
+  const files: CtCharImportFile[] = (await r2Objects(root))
+    .map((o) => ({ path: o.key.slice(root.length + 1), url: r2PublicUrl(o.key), size: o.size }))
+    .filter((f) => f.path && !f.path.startsWith("_"));
+  return NextResponse.json({ files });
 }
 
 /** POST char/projects/:id/import/files */
@@ -640,6 +670,8 @@ async function body<T>(res: NextResponse): Promise<T> {
 export async function importRoute(req: Request, s: CtSession, id: string, sub: string): Promise<NextResponse> {
   const p = await importProject(s, id);
   if (p instanceof NextResponse) return p;
+  if (sub === "files" && req.method === "GET") return uploadedFiles(s, p);
+  if (req.method !== "POST") return jsonError("Not found", 404);
   if (sub === "files") return uploadFiles(s, p, await req.formData());
   if (sub === "start") return startImport(s, p, await req.json().catch(() => null));
   if (sub === "rebuild") return rebuildImport(s, p);

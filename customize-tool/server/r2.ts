@@ -79,6 +79,18 @@ export async function r2Keys(prefix: string): Promise<string[]> {
   return out;
 }
 
+/** Every object under `prefix` with its size. */
+export async function r2Objects(prefix: string): Promise<Array<{ key: string; size: number }>> {
+  const out: Array<{ key: string; size: number }> = [];
+  let token: string | undefined;
+  do {
+    const page = await s3().send(new ListObjectsV2Command({ Bucket: bucket(), Prefix: `${full(prefix)}/`, ContinuationToken: token }));
+    for (const o of page.Contents ?? []) if (o.Key) out.push({ key: bare(o.Key), size: o.Size ?? 0 });
+    token = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (token);
+  return out;
+}
+
 /** Keys under `prefix` last modified before `cutoff`, oldest first, at most `limit`. */
 export async function r2ListOlderThan(prefix: string, cutoff: Date, limit: number): Promise<string[]> {
   const out: Array<{ key: string; at: number }> = [];

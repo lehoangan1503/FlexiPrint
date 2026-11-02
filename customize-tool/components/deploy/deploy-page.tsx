@@ -36,6 +36,7 @@ import { formatUsd, priceCell, priceCells, priceTableFor, priceTableProblems, us
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtSelect, CtTextarea, cx } from "../ui";
 import { PriceTableEditor } from "./price-table-editor";
 import { ContentAgent } from "./content-agent";
+import { ImportStatus } from "../char/import-status";
 
 const STATUS_OPTIONS: Array<{ value: CtShopifyStatus; label: string }> = [
   { value: "ACTIVE", label: "Active — bán ngay" },
@@ -205,7 +206,9 @@ export function DeployPage({ productId }: { productId: string }) {
               {link && ` · Shopify: ${link.status.toLowerCase()} · deploy lần cuối ${new Date(link.deployedAt).toLocaleString()}`}
             </div>
           </div>
-          <CtButton variant="primary" className="ml-auto" onClick={() => void deploy()} disabled={!canDeploy || running}>
+          <span className="ml-auto" />
+          <ImportStatus />
+          <CtButton variant="primary" onClick={() => void deploy()} disabled={!canDeploy || running}>
             {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
             {link || target ? "Deploy cập nhật" : "Deploy lên Shopify"}
           </CtButton>

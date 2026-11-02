@@ -9,6 +9,7 @@ import { FirstLoginDialog } from "@/components/first-login-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { CustomizeProductList } from "../../../customize-tool/components/product-list";
+import { ImportStatus } from "../../../customize-tool/components/char/import-status";
 
 export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfile; isSuperAdmin: boolean }) {
   const [askNickname, setAskNickname] = useState(!profile.nickname);
@@ -31,6 +32,7 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
                 <Library className="h-4 w-4" /> Thư viện
               </Link>
             </Button>
+            <ImportStatus />
             <ThemeToggle />
             <UserDropdown key={current.nickname ?? ""} profile={current} isSuperAdmin={isSuperAdmin} />
           </div>

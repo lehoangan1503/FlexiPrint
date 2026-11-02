@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtCharImportFile, CtProductCharSet, CtCharVersionCard,
+import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
   CtAgentStatus,
   CtAgentTask,
@@ -289,6 +289,10 @@ export const charApi = {
     }
     return call<{ files: CtCharImportFile[] }>(`char/projects/${id}/import/files`, { method: "POST", body: form }).then((r) => r.files);
   },
+  /** The user's imports (import page, header status). */
+  listImports: () => call<{ imports: CtCharImportRow[] }>("char/projects/imports").then((r) => r.imports),
+  /** Files of an import already on the server (a cut-off upload sends only the rest). */
+  importUploaded: (id: string) => call<{ files: CtCharImportFile[] }>(`char/projects/${id}/import/files`).then((r) => r.files),
   importStart: (id: string, files: CtCharImportFile[]) => call<{ status: string }>(`char/projects/${id}/import/start`, json("POST", { files })),
   importRebuild: (id: string) => call<{ status: string }>(`char/projects/${id}/import/rebuild`, json("POST", {})),
   /** The imported set's product to Shopify again (a draft, the link on brief.imported.shopify). */

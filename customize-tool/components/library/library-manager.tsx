@@ -19,6 +19,7 @@ import { finishedSets } from "../editor/library-panel";
 import { CharSetFiles } from "../char/set-files";
 import { KhuonTab } from "../print/khuon-tab";
 import { PhoiTab } from "../print/phoi-tab";
+import { ImportStatus } from "../char/import-status";
 
 /** The library's sections: one place for everything a product is made from (asked 2026-10-10; Artwork dropped
  * 2026-10-29 — every design starts from a bộ nhân vật). */
@@ -51,6 +52,7 @@ export function LibraryManager({ initialTab = "clipart", currentUserId, admin }:
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <h1 className="text-sm font-semibold">Thư viện</h1>
+          <ImportStatus />
           <div className="ml-3 flex rounded-md border p-0.5">
             {TABS.map(([k, label]) => (
               <button key={k} onClick={() => open(k)} className={cx("rounded px-3 py-1 text-xs font-medium", tab === k ? "bg-foreground text-background" : "hover:bg-accent")}>

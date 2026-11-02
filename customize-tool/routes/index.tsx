@@ -19,6 +19,8 @@ import { DeployPage } from "../components/deploy/deploy-page";
 import { LibraryManager } from "../components/library/library-manager";
 import { CharList } from "../components/char/char-list";
 import { CharProjectView } from "../components/char/char-project";
+import { ImportPage } from "../components/char/import-page";
+import { ImportStatus } from "../components/char/import-status";
 import { isAdmin } from "../server/ai-styles";
 
 export async function CustomizeListPage() {
@@ -32,6 +34,7 @@ export async function CustomizeListPage() {
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <h1 className="text-lg font-semibold">Customize Tool</h1>
+          <ImportStatus />
         </div>
       </header>
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -79,4 +82,11 @@ export async function CharProjectPage({ params }: { params: Promise<{ id: string
   if (!session) redirect(CT_CONFIG.loginPath);
   const { id } = await params;
   return <CharProjectView projectId={id} currentUserId={session.user.id} admin={await isAdmin(session)} />;
+}
+
+/** Import bộ: folders uploading, imports the server builds (asked 2026-11-02). */
+export async function CharImportPage() {
+  const session = await ctSession();
+  if (!session) redirect(CT_CONFIG.loginPath);
+  return <ImportPage />;
 }

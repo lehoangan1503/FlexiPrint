@@ -66,6 +66,7 @@ import { claimSharedLayers, cloneLayers, fitMainFrame, mainFrameFor, versionLaye
 import { charSetDrop } from "../../lib/char-set-layers";
 import { useArtworkSaver } from "./artwork-saver";
 import { frameRegionFor } from "../../lib/material-frame";
+import { ImportStatus } from "../char/import-status";
 
 /**
  * Thiết kế = edit, flat (what is printed — no phôi) · File in = the flat print file · Xem trước = the real storefront
@@ -1053,6 +1054,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           </CtTooltip>
         ))}
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          <ImportStatus />
           {notice && <span className="max-w-60 truncate text-xs text-muted-foreground">{notice}</span>}
           <CtTooltip label="Hoàn tác" shortcut={["⌘", "Z"]}>
             <span>

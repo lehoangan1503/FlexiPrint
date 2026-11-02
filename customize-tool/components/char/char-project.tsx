@@ -20,6 +20,7 @@ import { CharChat } from "./char-chat";
 import { ElementsPanel } from "./elements-panel";
 import { ProductStep } from "./product-step";
 import { ImportPanel } from "./import-panel";
+import { ImportStatus } from "./import-status";
 
 type Step = "brief" | "master" | "layers" | "product";
 
@@ -211,7 +212,9 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
               </button>
             ))}
           </nav>
-          <span className="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+          <span className="ml-auto" />
+          <ImportStatus />
+          <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
             {!editable ? "Chỉ xem (bộ của người khác)" : saving === "pending" ? "Đang lưu…" : saving === "saved" ? "Đã lưu" : ""}
           </span>
         </div>

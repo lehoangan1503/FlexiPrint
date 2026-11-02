@@ -19,7 +19,7 @@ import { photoStylesRoute } from "./photo-styles";
 import { charKhuonRoute } from "./khuon";
 import { listVersionSets, runVersionChain, startVersionSets } from "./versions";
 import { productSets, setProducts } from "./set-users";
-import { createImport, importRoute } from "./import";
+import { createImport, importRoute, listImports } from "./import";
 import { adoptMaster, approveMaster, createCharProject, deleteCharProject, generateMasters, getCharProject, jobDb, jsonError, listCharProjects, loadProject, refineMaster, updateCharProject, uploadCharFile, uploadChatFile } from "./projects";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -108,8 +108,9 @@ async function route(req: NextRequest, s: CtSession, path: string[]): Promise<Ne
   }
   // A finished bộ imported from its files (server/char/import.ts).
   if (id === "import" && !action && method === "POST") return createImport(s, await json(req));
+  if (id === "imports" && !action && method === "GET") return listImports(s);
   if (!UUID.test(id)) return jsonError("id không hợp lệ", 400);
-  if (action === "import" && sub && !subAction && method === "POST") return importRoute(req, s, id, sub);
+  if (action === "import" && sub && !subAction) return importRoute(req, s, id, sub);
   if (action === "versions" && !sub && method === "GET") return listVersionSets(s, id);
   if (action === "used-by" && !sub && method === "GET") return setProducts(s, id);
   if (!action) {

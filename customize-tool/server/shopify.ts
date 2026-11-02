@@ -27,7 +27,8 @@ import { priceCells, shopifyPricing, usesPacks, usesSizes } from "../lib/pricing
 
 const API_VERSION = () => process.env.SHOPIFY_API_VERSION || "2026-07";
 const DOMAIN = () => process.env.SHOPIFY_STORE_DOMAIN ?? "";
-/** The draft theme carrying the FlexiPrint section — product links open in it, never the live theme. */
+/** Optional: a theme the product links open in (preview_theme_id). Unset since 2026-11-03 — links open the live theme,
+ * which carries the flexi2 template. */
 const PREVIEW_THEME = () => process.env.SHOPIFY_PREVIEW_THEME_ID ?? "";
 
 /** The theme template the deployed product uses (templates/product.flexi2.json → section flexi2-product, on the live theme — scripts/push-theme.mjs). */

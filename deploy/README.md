@@ -93,6 +93,6 @@ giftself-2 is no longer used. flexi2 (deploy/flexi2/README.md) deploys every pro
   `node --env-file=.env.local scripts/push-theme.mjs` (Admin API themeFilesUpsert) writes `sections/flexi2-product.liquid`,
   `assets/flexi2-customizer.{js,css}` and `templates/product.flexi2.json` and refuses any other filename, so the theme's own
   code and templates are never touched. Deployed products carry template suffix `flexi2`. `THEME=<name or id>` pushes to
-  another theme (the draft **Copy of Cherivia Ornament (nháp)** #189900521626 for tests); `SHOPIFY_PREVIEW_THEME_ID`
-  makes the store link open in that draft theme.
+  another theme (the draft **Copy of Cherivia Ornament (nháp)** #189900521626 for tests). Store links open the live
+  theme (`SHOPIFY_PREVIEW_THEME_ID` removed from flexi2 2026-11-03; set it again only to send links to a draft theme).
 - A personalized product: metafield `customize_tool.product_id` = FlexiPrint id.

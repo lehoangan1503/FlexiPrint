@@ -26,7 +26,6 @@ import {
   UserSquare,
   Users,
   X,
-  HelpCircle,
 } from "lucide-react";
 import { CT_FONTS } from "../../config";
 import type { CtProductPrint } from "../../types/print";
@@ -54,7 +53,6 @@ import { bandShape, fitZoneToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, o
 import { useImageSize } from "./use-image-size";
 import { defaultRegionSelection, formOrder, hasTestPhoto, isLinkedLayer, isValidDate, normalizeRegion, textMode, variantsOf, zoneSubtree } from "../../lib/design";
 import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
-import { PhotoGuideDialog } from "./photo-guide-dialog";
 import { AiStyleDialog } from "./ai-style-dialog";
 import { useAiStyles } from "./ai-styles-store";
 import { processPhoto } from "../../lib/photo-process";
@@ -702,8 +700,8 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
   // What customers get (CtPhotoConfig.mode / styles) vs the tab open here. The tab last picked is saved as the
   // zone's `mode` and opens again next time; a zone never given a tab opens with none (pick one first).
   const configured = photoMode(cfg.photo);
-  const [tab, setTab] = useState<CtPhotoMode | null>(cfg.photo.mode ?? null);
-  const [guide, setGuide] = useState(false);
+  // No "Free" tab since 2026-11-04 (asked): only AI tạo ảnh and Face are offered; an older free zone opens with none.
+  const [tab, setTab] = useState<CtPhotoMode | null>(cfg.photo.mode && cfg.photo.mode !== "free" ? cfg.photo.mode : null);
   const [dialog, setDialog] = useState<CtAiStyle | "new" | null>(null);
   const ai = useAiStyles();
   /** `${sourceUrl}|${style}|${cutout}|${fadeCrop}|${version}` → rendered blob URL, so flipping styles doesn't re-bill the AI. */
@@ -843,14 +841,9 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
 
       {/* Subject cut-out + cropped-edge fade are always applied (lib/design.ts normalizePhotoConfig). */}
       <div className="space-y-2.5 rounded-md border p-2.5">
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Style cho khách chọn</span>
-          <button type="button" className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-sky-600 hover:bg-sky-500/10" onClick={() => setGuide(true)}>
-            <HelpCircle className="h-3.5 w-3.5" /> Hướng dẫn
-          </button>
-        </div>
-        <div className="grid grid-cols-3 rounded-md bg-muted p-0.5 text-xs">
-          {(["free", "ai", "face"] as const).map((t) => {
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Style cho khách chọn</span>
+        <div className="grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs">
+          {(["ai", "face"] as const).map((t) => {
             // The badge marks the family customers get, even while no tab is open.
             const n = configured === t ? styles.length : 0;
             return (
@@ -860,14 +853,14 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
                 onClick={() => switchTab(t)}
                 className={cx("rounded px-2 py-1 font-medium", tab === t ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground")}
               >
-                {t === "free" ? "Free" : t === "ai" ? "AI tạo ảnh" : "Face"}
+                {t === "ai" ? "AI tạo ảnh" : "Face"}
                 {n > 0 && <span className="ml-1 rounded-full bg-sky-500/15 px-1.5 text-[10px] text-sky-600">{n}</span>}
               </button>
             );
           })}
         </div>
 
-        {tab === null ? (
+        {tab === null || tab === "free" ? (
           <p className="rounded border border-dashed p-2 text-center text-[11px] text-muted-foreground">
             Khách đang thấy: {configured ? styles.map(label).join(", ") : "ảnh gốc"}
           </p>
@@ -880,12 +873,6 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
                 </span>
               ))}
             </div>
-          </div>
-        ) : tab === "free" ? (
-          <div className="space-y-1.5">
-            {CT_FREE_STYLES.map((s) => (
-              <CtCheckbox key={s.id} checked={styles.includes(s.id)} onChange={(v) => toggleStyle(s.id, v)} label={s.label} hint={s.hint} />
-            ))}
           </div>
         ) : (
           <div className="space-y-1.5">
@@ -933,7 +920,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
           </div>
         )}
 
-        {(tab === "free" || tab === "face") && styles.length > 1 && !styles.some(isAiStyleRef) && (
+        {tab === "face" && styles.length > 1 && !styles.some(isAiStyleRef) && (
           <div className="grid grid-cols-2 gap-2">
             <CtField label="Nhãn dropdown">
               <CtInput value={cfg.photo.styleLabel} placeholder="Choose style" onChange={(e) => set({ styleLabel: e.target.value })} />
@@ -951,15 +938,6 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
           <p key={w} className="rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">{w}</p>
         ))}
       </div>
-      <PhotoGuideDialog
-        open={guide}
-        onClose={() => setGuide(false)}
-        productId={region.product_id}
-        aiStyle={(() => {
-          const ref = selectedAi ?? defaultAi();
-          return ref ? { ref, name: label(ref) } : null;
-        })()}
-      />
       <AiStyleDialog key={dialog === null ? "closed" : dialog === "new" ? "new" : dialog.id} target={dialog} onClose={() => setDialog(null)} onSaved={(st) => !styles.includes(aiStyleRef(st.id)) && dialog === "new" && toggleStyle(aiStyleRef(st.id), true)} />
 
       <div className="space-y-2 rounded-md border p-2.5">

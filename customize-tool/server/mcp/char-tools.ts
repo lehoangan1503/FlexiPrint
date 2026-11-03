@@ -1206,7 +1206,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
         style_id: { type: "string", description: "A style of this set (get_task set.photoStyles) to change; empty = a new one." },
         name: { type: "string", description: "Customer-facing style name (English)." },
         prompt: { type: "string", description: "Short plain English prompt (PHOTO_STYLES)." },
-        ref_urls: { type: "array", items: { type: "string" }, description: "≤ 3 picture urls sent after the customer's photo." },
+        ref_urls: { type: "array", items: { type: "string" }, description: "≤ 4 picture urls sent after the customer's photo." },
         zone_id: { type: "string", description: "Photo zone (default: the first)." },
       },
       required: ["task_id", "name", "prompt"],

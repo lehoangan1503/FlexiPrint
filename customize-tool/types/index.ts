@@ -191,7 +191,7 @@ export interface CtAiStyleParams {
   demoUrl: string;
   /** The sample photo that demo was made from. */
   demoSourceUrl: string;
-  /** Style reference pictures sent after the customer's photo (image 2, 3…; ≤ 3) — like a studio prompt "Image 1 is
+  /** Style reference pictures sent after the customer's photo (image 2, 3…; ≤ 4) — like a studio prompt "Image 1 is
    * the customer's photo, image 2 is the style reference". */
   refUrls: string[];
   /** The bộ ảnh khách the style was made for ("" = a library style): listed with that set, run like any other. */

@@ -9,6 +9,9 @@ import { CT_IMAGE_MODEL } from "./image-models";
 
 export const CT_AI_STYLE_MODEL: CtAiStyleModelId = CT_IMAGE_MODEL;
 
+/** Style reference pictures sent with every customer photo (asked 2026-11-04: up to 4). */
+export const CT_AI_STYLE_MAX_REFS = 4;
+
 export const CT_AI_STYLE_DEFAULT_PARAMS: CtAiStyleParams = {
   aspect: "1:1",
   removeBackground: true,
@@ -27,7 +30,7 @@ export function normalizeAiStyleParams(raw: Partial<CtAiStyleParams> | null | un
     removeBackground: p.removeBackground !== false,
     demoUrl: url(p.demoUrl),
     demoSourceUrl: url(p.demoSourceUrl),
-    refUrls: (Array.isArray(p.refUrls) ? p.refUrls : []).map(url).filter(Boolean).slice(0, 3),
+    refUrls: (Array.isArray(p.refUrls) ? p.refUrls : []).map(url).filter(Boolean).slice(0, CT_AI_STYLE_MAX_REFS),
     setId: typeof p.setId === "string" && /^[0-9a-f-]{36}$/i.test(p.setId) ? p.setId : "",
   };
 }

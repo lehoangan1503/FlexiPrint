@@ -67,6 +67,7 @@
  *   POST   ai-styles                     CtAiStyleBody
  *   PATCH  ai-styles/:id                 CtAiStyleBody
  *   DELETE ai-styles/:id                 → 204
+ *   POST   ai-styles/refs                [form: file…] → { urls } style reference pictures (≤ 4)
  *   POST   ai-styles/:id/demo            [form: sample] → { style } with params.demoUrl (the style on a sample photo)
  *
  * Clipart library (global, migration 006; see server/library.ts):
@@ -230,6 +231,10 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     if (!id && method === "POST") return prices.createPriceTable(session, await readJson<unknown>(req));
     if (id && method === "PATCH") return prices.updatePriceTable(session, id, await readJson<unknown>(req));
     if (id && method === "DELETE") return prices.deletePriceTable(session, id);
+  }
+  if (head === "ai-styles" && id === "refs" && !sub && method === "POST") {
+    const form = await req.formData().catch(() => null);
+    return st.uploadAiStyleRefs(session, form);
   }
   if (head === "ai-styles" && id && sub === "demo" && method === "POST") {
     const form = await req.formData().catch(() => null);

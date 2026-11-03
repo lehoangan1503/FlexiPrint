@@ -430,7 +430,7 @@ function StyleForm(props: {
         onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
       />
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] text-muted-foreground">Ảnh mẫu cho style này (không bắt buộc, tối đa 3):</span>
+        <span className="text-[11px] text-muted-foreground">Ảnh mẫu cho style này (không bắt buộc, tối đa 4):</span>
         {draft.refUrls.map((u) => (
           <div key={u} className="group relative h-12 w-12 overflow-hidden rounded border" style={CHECKER_STYLE}>
             <Thumb url={u} />
@@ -447,7 +447,7 @@ function StyleForm(props: {
             </button>
           </div>
         ))}
-        {draft.refUrls.length < 3 && (
+        {draft.refUrls.length < 4 && (
           <button
             className="flex h-12 w-12 items-center justify-center rounded border border-dashed text-muted-foreground hover:bg-accent"
             onClick={() => refFile.current?.click()}
@@ -469,7 +469,7 @@ function StyleForm(props: {
               .then((urls) =>
                 setDraft({
                   ...draft,
-                  refUrls: [...draft.refUrls, ...urls].slice(0, 3),
+                  refUrls: [...draft.refUrls, ...urls].slice(0, 4),
                 }),
               )
               .finally(() => setAdding(false));

@@ -2,19 +2,21 @@
 
 /**
  * Create / edit one AI photo style of the global library. The prompt is the
- * main thing; every style runs on GPT Image 2.5 (no model picker). "Ảnh demo"
+ * main thing, with up to 4 style reference pictures sent after the customer's photo on every run (asked
+ * 2026-11-04); every style runs on GPT Image 2.5 (no model picker). Frame / background stay on their defaults
+ * (square, cut out — the "Nâng cao" section was removed 2026-11-04). "Ảnh demo"
  * runs the saved style on a sample photo — the picture editors and customers
  * pick the style by. Read-only unless the user owns the style or is an admin
  * (the server enforces the same).
  */
 
 import { useRef, useState } from "react";
-import { ChevronDown, ChevronRight, ImagePlus, Loader2, Sparkles, Trash2 } from "lucide-react";
+import { ImagePlus, Loader2, Sparkles, Trash2, X } from "lucide-react";
 import type { CtAiStyle, CtAiStyleBody, CtAiStyleParams } from "../../types";
-import { CT_AI_STYLE_DEFAULT_PARAMS, CT_AI_STYLE_MODEL } from "../../lib/ai-style-models";
+import { CT_AI_STYLE_DEFAULT_PARAMS, CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL } from "../../lib/ai-style-models";
 import { imageModelLabel } from "../../lib/image-models";
 import { ctApi } from "../../lib/api-client";
-import { CtButton, CtCheckbox, CtField, CtInput, CtModal, CtSelect, CtTextarea } from "../ui";
+import { CtButton, CtField, CtInput, CtModal, CtTextarea } from "../ui";
 import { dropAiStyle, putAiStyle } from "./ai-styles-store";
 import { ctConfirm } from "../dialogs";
 
@@ -32,7 +34,8 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
   const [body, setBody] = useState<CtAiStyleBody>(() =>
     target && target !== "new" ? { name: target.name, prompt: target.prompt, model: target.model, params: { ...target.params } } : { ...EMPTY, params: { ...CT_AI_STYLE_DEFAULT_PARAMS } },
   );
-  const [advanced, setAdvanced] = useState(false);
+  const [refBusy, setRefBusy] = useState(false);
+  const refInput = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [demoBusy, setDemoBusy] = useState(false);
@@ -48,7 +51,7 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
     setDemoBusy(true);
     setError(null);
     try {
-      const dirty = body.name !== editing.name || body.prompt !== editing.prompt || body.params.aspect !== editing.params.aspect || body.params.removeBackground !== editing.params.removeBackground;
+      const dirty = body.name !== editing.name || body.prompt !== editing.prompt || body.params.refUrls.join("|") !== editing.params.refUrls.join("|");
       if (dirty) putAiStyle(await ctApi.updateAiStyle(editing.id, body));
       const style = await ctApi.makeAiStyleDemo(editing.id, sample);
       putAiStyle(style);
@@ -58,6 +61,22 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
       setError(e instanceof Error ? e.message : "Không tạo được ảnh demo");
     } finally {
       setDemoBusy(false);
+    }
+  };
+
+  const addRefs = async (list: FileList | null) => {
+    const room = CT_AI_STYLE_MAX_REFS - body.params.refUrls.length;
+    const files = [...(list ?? [])].filter((f) => f.type.startsWith("image/")).slice(0, room);
+    if (!files.length) return;
+    setRefBusy(true);
+    setError(null);
+    try {
+      const urls = await ctApi.uploadAiStyleRefs(files);
+      setBody((b) => ({ ...b, params: { ...b.params, refUrls: [...b.params.refUrls, ...urls].slice(0, CT_AI_STYLE_MAX_REFS) } }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không tải được ảnh tham chiếu");
+    } finally {
+      setRefBusy(false);
     }
   };
 
@@ -104,8 +123,52 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
         <CtField label="Tên hiển thị cho khách">
           <CtInput value={body.name} disabled={readOnly} maxLength={80} placeholder="Watercolor + Ink" onChange={(e) => setBody({ ...body, name: e.target.value })} />
         </CtField>
-        <CtField label="Prompt" hint="Gửi kèm ảnh khách làm ảnh tham chiếu. Chỉ server đọc prompt — khách và storefront không bao giờ thấy.">
-          <CtTextarea value={body.prompt} disabled={readOnly} rows={9} maxLength={4000} className="font-mono text-xs leading-relaxed" onChange={(e) => setBody({ ...body, prompt: e.target.value })} />
+        <CtField label="Prompt" hint="Khi khách upload ảnh, AI nhận: ảnh khách + ảnh tham chiếu bên dưới + prompt này. Khách không thấy prompt.">
+          <CtTextarea value={body.prompt} disabled={readOnly} rows={8} maxLength={4000} className="font-mono text-xs leading-relaxed" onChange={(e) => setBody({ ...body, prompt: e.target.value })} />
+        </CtField>
+        <CtField label={`Ảnh tham chiếu (tối đa ${CT_AI_STYLE_MAX_REFS})`}>
+          <div className="flex flex-wrap gap-2">
+            {body.params.refUrls.map((u) => (
+              <div key={u} className="group relative h-16 w-16 overflow-hidden rounded border bg-[repeating-conic-gradient(#f1f1f1_0_25%,#fff_0_50%)] bg-[length:12px_12px]">
+                <img src={u} alt="" className="h-full w-full object-contain" />
+                {!readOnly && (
+                  <button
+                    type="button"
+                    title="Bỏ ảnh này"
+                    className="absolute right-0.5 top-0.5 hidden rounded-full bg-black/60 p-0.5 text-white group-hover:block"
+                    onClick={() => setParams({ refUrls: body.params.refUrls.filter((x) => x !== u) })}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+            {!readOnly && body.params.refUrls.length < CT_AI_STYLE_MAX_REFS && (
+              <button
+                type="button"
+                title="Thêm ảnh tham chiếu"
+                disabled={refBusy}
+                className="flex h-16 w-16 items-center justify-center rounded border border-dashed text-muted-foreground hover:bg-accent"
+                onClick={() => refInput.current?.click()}
+              >
+                {refBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+              </button>
+            )}
+            {readOnly && body.params.refUrls.length === 0 && <span className="text-[11px] text-muted-foreground">Không có</span>}
+            <input
+              ref={refInput}
+              type="file"
+              multiple
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const list = e.target.files;
+                void addRefs(list).finally(() => {
+                  if (refInput.current) refInput.current.value = "";
+                });
+              }}
+            />
+          </div>
         </CtField>
 
         <div className="space-y-1.5 rounded-md border p-2">
@@ -153,31 +216,6 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
           )}
         </div>
 
-        <button type="button" className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground" onClick={() => setAdvanced((v) => !v)}>
-          {advanced ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />} Nâng cao — khung ảnh, nền
-        </button>
-        {advanced && (
-          <div className="space-y-3 rounded-md border p-3">
-            <CtField label="Khung ảnh">
-              <CtSelect<CtAiStyleParams["aspect"]>
-                value={body.params.aspect}
-                disabled={readOnly}
-                onChange={(aspect) => setParams({ aspect })}
-                options={[
-                  { value: "1:1", label: "Vuông 1:1" },
-                  { value: "auto", label: "Theo ảnh khách" },
-                ]}
-              />
-            </CtField>
-            <CtCheckbox
-              checked={body.params.removeBackground}
-              onChange={(v) => !readOnly && setParams({ removeBackground: v })}
-              label="Tách nền kết quả AI"
-              hint="Model vẽ thẳng trên nền trong suốt; nếu nó vẽ nền thì bg-remover tách — kể cả khi vùng không bật tách nền."
-            />
-          </div>
-        )}
-
         {error && <p className="text-xs text-destructive">{error}</p>}
         <div className="flex items-center justify-between pt-1">
           <div>
@@ -192,7 +230,7 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
               {readOnly ? "Đóng" : "Huỷ"}
             </CtButton>
             {!readOnly && (
-              <CtButton size="sm" variant="primary" disabled={saving || !body.name.trim() || !body.prompt.trim()} onClick={save}>
+              <CtButton size="sm" variant="primary" disabled={saving || refBusy || !body.name.trim() || !body.prompt.trim()} onClick={save}>
                 {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />} {editing ? "Lưu" : "Tạo style"}
               </CtButton>
             )}

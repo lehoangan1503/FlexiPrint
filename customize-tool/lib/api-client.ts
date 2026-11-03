@@ -137,6 +137,11 @@ export const ctApi = {
   createAiStyle: (body: CtAiStyleBody) => call<{ style: CtAiStyle }>("ai-styles", json("POST", body)).then((r) => r.style),
   updateAiStyle: (id: string, body: CtAiStyleBody) => call<{ style: CtAiStyle }>(`ai-styles/${id}`, json("PATCH", body)).then((r) => r.style),
   deleteAiStyle: (id: string) => call<void>(`ai-styles/${id}`, { method: "DELETE" }),
+  uploadAiStyleRefs: (files: File[]) => {
+    const form = new FormData();
+    for (const f of files) form.append("file", f);
+    return call<{ urls: string[] }>("ai-styles/refs", { method: "POST", body: form }).then((r) => r.urls);
+  },
   makeAiStyleDemo: (id: string, sample?: File) => {
     const form = new FormData();
     if (sample) form.set("sample", sample);

@@ -24,7 +24,7 @@ import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_TABLES } from "../../config";
 import type { CtAiStyle, CtAiStyleParams, CtCharImage, CtCharPhotoStyle, CtCharPhotoZone, CtCharProject } from "../../types";
-import { CT_AI_STYLE_MODEL, normalizeAiStyleParams } from "../../lib/ai-style-models";
+import { CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL, normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { aiStyleId, aiStyleRef, isAiStyleRef } from "../../lib/photo-styles";
 import { AI_STYLE_SAMPLE_URL } from "../ai-styles";
 import { processPhoto } from "../ai/photo";
@@ -93,7 +93,7 @@ export async function savePhotoStyle(db: Db, userId: string, p: CtCharProject, a
   const prompt = a.prompt.trim();
   if (!name) throw new Error("Style cần tên (khách thấy tên này)");
   if (!prompt || prompt.length > 4000) throw new Error("Prompt 1–4000 ký tự");
-  const refUrls = a.refUrls?.filter(httpUrl).slice(0, 3);
+  const refUrls = a.refUrls?.filter(httpUrl).slice(0, CT_AI_STYLE_MAX_REFS);
   let row: StyleRow | null;
   if (a.id) {
     const { data: cur } = await db.from(CT_TABLES.aiStyles).select(COLUMNS).eq("id", a.id).maybeSingle<StyleRow>();

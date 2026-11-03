@@ -26,7 +26,7 @@ import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_CONFIG, CT_TABLES } from "../config";
 import type { CtAiStyle, CtAiStyleBody, CtAiStyleRef, CtPublicAiStyle } from "../types";
-import { CT_AI_STYLE_MODEL, normalizeAiStyleParams } from "../lib/ai-style-models";
+import { CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL, normalizeAiStyleParams } from "../lib/ai-style-models";
 import { aiStyleId, aiStyleRef } from "../lib/photo-styles";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctDownload, ctUpload } from "./storage";
@@ -173,6 +173,24 @@ export async function publicAiStyles(db: Reader, refs: CtAiStyleRef[]): Promise<
 /** The stock sample every demo is made from unless the editor uploads their own (a pet photo, made once with
  * GPT Image 2.5 — scripts in .scratch-e2e, 2026-10-15). */
 export const AI_STYLE_SAMPLE_URL = "https://flexiprint.next.lc/files/shared/customize-tool/ai-styles/sample-pet.jpg";
+
+/** POST ai-styles/refs [files] — store style reference pictures (≤ 4 per style, saved later in params.refUrls) → { urls }. */
+export async function uploadAiStyleRefs(s: CtSession, form: FormData | null): Promise<NextResponse> {
+  const files = (form?.getAll("file") ?? []).filter((f): f is File => f instanceof Blob && f.size > 0).slice(0, CT_AI_STYLE_MAX_REFS);
+  if (!files.length) return jsonError("Chưa có ảnh", 400);
+  const urls: string[] = [];
+  try {
+    for (const file of files) {
+      if (file.size > 12 * 1024 * 1024) return jsonError("Ảnh tham chiếu tối đa 12 MB", 400);
+      // ~1600 px like a customer photo; PNG keeps transparency.
+      const data = await sharp(Buffer.from(await file.arrayBuffer())).rotate().resize(1600, 1600, { fit: "inside", withoutEnlargement: true }).png().toBuffer();
+      urls.push(await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/ai-styles/refs/${crypto.randomUUID()}.png`, data, "image/png"));
+    }
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không đọc được ảnh", 400);
+  }
+  return NextResponse.json({ urls });
+}
 
 /** POST ai-styles/:id/demo [file sample] — run the style on the sample photo, store the result as params.demoUrl. */
 export async function makeAiStyleDemo(s: CtSession, id: string, form: FormData | null): Promise<NextResponse> {

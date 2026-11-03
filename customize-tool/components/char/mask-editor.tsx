@@ -262,7 +262,21 @@ export function MaskEditor(props: MaskEditorProps) {
         const committed = canvas(W, H);
         ctx2d(committed).drawImage(mask, 0, 0);
         const paint = canvas(W, H);
-        ctx2d(paint).drawImage(colour, 0, 0, W, H);
+        const pg = ctx2d(paint);
+        pg.drawImage(colour, 0, 0, W, H);
+        if (props.colourFix) {
+          // A clipart file keeps its own colours where it has pixels ("Cân màu" changed them; the plate has the
+          // picture's): shown from the file, the plate only where the file is empty (as the server adds pixels).
+          const pd = pg.getImageData(0, 0, W, H);
+          const fd = ctx2d(mask).getImageData(0, 0, W, H).data;
+          for (let i = 0; i < W * H * 4; i += 4)
+            if (fd[i + 3] > 0) {
+              pd.data[i] = fd[i];
+              pd.data[i + 1] = fd[i + 1];
+              pd.data[i + 2] = fd[i + 2];
+            }
+          pg.putImageData(pd, 0, 0);
+        }
         store.current = { colour, subject, others, context, mask, committed, tmp: canvas(W, H), pixels: null, smooth: null, paint, cover: canvas(W, H), coverStroke: canvas(W, H), painted: false };
         setReady(true);
       } catch (e) {
@@ -1195,7 +1209,7 @@ export function MaskEditor(props: MaskEditorProps) {
                   <span className="flex">
                     Dung sai màu <span className="ml-auto tabular-nums">{fix.tol}</span>
                   </span>
-                  <input type="range" min={5} max={60} value={fix.tol} onChange={(e) => setFix((f) => ({ ...f, tol: Number(e.target.value) }))} />
+                  <input type="range" min={3} max={60} value={fix.tol} onChange={(e) => setFix((f) => ({ ...f, tol: Number(e.target.value) }))} />
                 </label>
                 <div className="px-0.5 text-[10px] text-muted-foreground">Vệt đổi sang màu clipart, vẫn che lớp dưới. Lưu = mọi màu của kiểu này (mỗi màu theo màu của nó).</div>
               </div>

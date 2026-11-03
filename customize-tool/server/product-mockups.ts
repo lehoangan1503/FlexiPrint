@@ -238,7 +238,7 @@ export function isGlass(material: string | undefined, label = ""): boolean {
   return material === "glass_clear" || /\b(glass|crystal)\b|kính|thuỷ tinh|thủy tinh|pha lê/i.test(label);
 }
 
-export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: string, looks = 0, first = 1): string {
+export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: string, looks = 0, first = 1, extra = ""): string {
   const glass = isGlass(material, label);
   const nums = Array.from({ length: looks }, (_, i) => first + i).join(", ");
   const size = spec?.widthMm && spec.heightMm ? ` (${Math.round(spec.widthMm)} × ${Math.round(spec.heightMm)} mm)` : "";
@@ -246,14 +246,18 @@ export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: 
   return [
     `Studio product photo of ONE blank, unprinted ${label || "product"}${size}, completely plain: no print, no picture, no text, no pattern, no logo.`,
     spec ? `The piece has EXACTLY the outline of the reference drawing${hole} (its filled area is the piece) — the same shape and proportions.` : "",
-    "Shot straight on from the front (no perspective, no tilt), centred, the piece filling about 70% of the picture's width.",
+    "Shot exactly front-on, camera square to the piece's face (orthographic: no perspective, no tilt, no angle from above or below), centred, the piece filling about 70% of the picture's width.",
+    // The print is laid flat on the box found around the piece (2026-11-04: a tilted ceramic disc showed its bottom
+    // thickness as a white band and the round print left it bare): only the front face may show.
+    "Only the FRONT FACE of the piece is visible: its side, rim depth and thickness are NOT seen anywhere (no band below or beside it), so its silhouette is exactly the outline.",
     "Plain flat medium-grey seamless backdrop (#9a9a9a), soft even studio light, a faint natural shadow.",
     "Nothing attached or around it: no ribbon, no string, no hook, no hanger, no props, no hands.",
     glass ? `The piece is ${GLASS_LOOK}; the grey backdrop shows through it.` : "",
     looks
-      ? `Reference picture${looks > 1 ? "s" : ""} ${nums} show${looks > 1 ? "" : "s"} the REAL piece the editor sells (a photo of the blank, or of the finished product with a print on it): copy its material, colour, finish, edge, thickness and the hole's look exactly — but leave out every print, picture, text, ribbon and prop on it, and keep the outline${spec ? " of the drawing" : " they show"}. A reference that shows no physical piece is ignored.`
+      ? `Reference picture${looks > 1 ? "s" : ""} ${nums} show${looks > 1 ? "" : "s"} the REAL piece the editor sells (a photo of the blank, or of the finished product with a print on it): copy its material, colour, finish and the hole's look exactly — but leave out every print, picture, text, ribbon and prop on it, keep the outline${spec ? " of the drawing" : " they show"}, and never copy its camera angle: a tilted or perspective reference is still shot front-on here. A reference that shows no physical piece is ignored.`
       : "",
-    "Photorealistic, the real material's surface and edge thickness.",
+    "Photorealistic surface of the real material.",
+    extra.trim(),
   ]
     .filter(Boolean)
     .join(" ");
@@ -386,7 +390,8 @@ export async function sceneForBlank(photo: Buffer, url: string, spec: Pick<CtPri
  * null = a product without a khuôn in: its name alone). Throws a message for the editor.
  */
 /** looks = photos of the real piece (the editor's sample / product pictures, asked 2026-10-29), sent after the outline. */
-export async function makeBlank(userId: string, label: string, spec: CtPrintSpec | null, material?: string, looks: string[] = []): Promise<Buffer> {
+/** extra = one more English sentence of the agent's / editor's own ("front-on, flat, no thickness"). */
+export async function makeBlank(userId: string, label: string, spec: CtPrintSpec | null, material?: string, looks: string[] = [], extra = ""): Promise<Buffer> {
   const refs: string[] = [];
   let guide: string | null = null;
   if (spec?.faces[0]?.imageUrl && !spec.outline) refs.push(spec.faces[0].imageUrl);
@@ -399,7 +404,7 @@ export async function makeBlank(userId: string, label: string, spec: CtPrintSpec
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const out = await drawImage(model, blankPrompt(label, spec, material, looks.length, refs.length + 1), [...refs, ...looks], "1:1", "crop");
+        const out = await drawImage(model, blankPrompt(label, spec, material, looks.length, refs.length + 1, extra), [...refs, ...looks], "1:1", "crop");
         return out.data;
       } catch (e) {
         last = e instanceof Error ? e.message : String(e);

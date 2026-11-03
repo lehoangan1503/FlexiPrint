@@ -15,7 +15,7 @@ import { layoutHint } from "../../lib/print-template";
 import type { CtPrintTemplate } from "../../types/print";
 import { makeBlank } from "../product-mockups";
 import { templateRow } from "../print-templates";
-import { addTemplateBlank } from "../print-blanks";
+import { addTemplateBlank, setDefaultBlank } from "../print-blanks";
 import type { CtSession } from "../supabase";
 import { saveCharFile } from "./files";
 import { jobDb, jsonError, loadProject, type Db, canEditProject, NOT_YOURS } from "./projects";
@@ -67,25 +67,37 @@ export async function blankLooks(db: Db, p: CtCharProject): Promise<string[]> {
   return ids.map((id) => data?.find((im) => im.id === id && im.status === "done")?.url).filter((u): u is string => !!u);
 }
 
+/** What the agent adds to a phôi drawing (char_make_blank). */
+export interface CtCharBlankOptions {
+  /** One more English sentence for the image model. */
+  extra?: string;
+  /** The new phôi becomes the khuôn's first one (the one every product gets). */
+  makeDefault?: boolean;
+}
+
 /** Start drawing an AI phôi (a running row now, done / failed later). Never throws. looks = photos of the real piece
  * (default: the set's product / sample references). */
-export async function startCharBlank(db: Db, userId: string, p: CtCharProject, looks?: string[]): Promise<CtCharImage | null> {
+export async function startCharBlank(db: Db, userId: string, p: CtCharProject, looks?: string[], opts: CtCharBlankOptions = {}): Promise<CtCharImage | null> {
   const template = await briefTemplate(db, p);
   const refs = (looks ?? (await blankLooks(db, p))).slice(0, 4);
   const label = p.brief.product.label || template?.name || "product";
   const { data: row } = await db
     .from(CT_TABLES.charImages)
-    .insert({ project_id: p.id, user_id: userId, kind: "blank", role: AI_BLANK_ROLE, status: "running", note: `Phôi trơn AI — ${label}`, prompt: "" })
+    .insert({ project_id: p.id, user_id: userId, kind: "blank", role: AI_BLANK_ROLE, status: "running", note: `Phôi trơn AI — ${label}`, prompt: opts.extra ?? "" })
     .select("*")
     .single<CtCharImage>();
   if (!row) return null;
   void (async () => {
     try {
-      const photo = await makeBlank(userId, label, template?.spec ?? null, p.brief.product.material, refs);
+      const photo = await makeBlank(userId, label, template?.spec ?? null, p.brief.product.material, refs, opts.extra ?? "");
       const saved = await saveCharFile(userId, p.id, "blank", photo);
       await db.from(CT_TABLES.charImages).update({ ...saved, status: "done", error: "" }).eq("id", row.id);
       // Kept with the khuôn too: the next brief / product on the same piece reuses it.
-      if (template) await addTemplateBlank(db, userId, template, photo, "Phôi AI", true).catch(() => undefined);
+      if (template) {
+        const t = await addTemplateBlank(db, userId, template, photo, "Phôi AI", true).catch(() => null);
+        const added = t?.spec.blanks[t.spec.blanks.length - 1];
+        if (t && added && opts.makeDefault) await setDefaultBlank(db, t, added.id).catch(() => undefined);
+      }
     } catch (e) {
       await db.from(CT_TABLES.charImages).update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 1000) }).eq("id", row.id);
     }

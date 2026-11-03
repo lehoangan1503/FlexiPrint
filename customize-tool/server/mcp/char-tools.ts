@@ -118,7 +118,7 @@ const EDITS_INSTRUCTIONS = [
 ].join("\n");
 
 /** The material ids a brief's product can name (asked 2026-10-28: a clear glass ornament with a diamond-cut edge). */
-const MATERIALS = `brief.product.material = what the piece is made of, one of: ${CT_MATERIALS.filter((m) => m.id !== "none").map((m) => `"${m.id}" (${m.label})`).join(", ")} — the phôi and the mockups are drawn in it (a glass ornament: "glass_clear" and a khuôn named after it, e.g. "Ornament kính tròn cạnh vát kim cương"). A khuôn with no phôi (get_task blankProduct null) or one of another material → char_make_blank, char_wait, view_image, then char_remake_product before make_product_mockups — never leave it for the editor.`;
+const MATERIALS = `brief.product.material = what the piece is made of, one of: ${CT_MATERIALS.filter((m) => m.id !== "none").map((m) => `"${m.id}" (${m.label})`).join(", ")} — the phôi and the mockups are drawn in it (a glass ornament: "glass_clear" and a khuôn named after it, e.g. "Ornament kính tròn cạnh vát kim cương"). A khuôn with no phôi (get_task blankProduct null) or one of another material → char_make_blank, char_wait, view_image, then char_remake_product before make_product_mockups — never leave it for the editor. A phôi that does not fit the print (tilted, its thickness showing, the cut line off the edge): the khuôn's phôi are yours too (2026-11-04) — get_print_template blanks, set_template_blank (default / box / detect / remove), add_template_blank (a photo the editor attached), char_make_blank {default: true, prompt, ref_urls: []}; view_image the preview they return (red cut line on the piece's edge). A khuôn made by mistake in this task → delete_print_template.`;
 
 /** A bộ ảnh khách's own AI styles — chat and auto. */
 const PHOTO_STYLES =
@@ -1160,12 +1160,14 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   {
     name: "char_make_blank",
     description:
-      "Bộ nhân vật / bộ ảnh khách (chat / auto, step 4): draw the phôi trơn (the blank piece, no print) of brief.product with the team's image model — from the khuôn's outline / hole / size and brief.product.material (glass_clear…), copying the real piece from the editor's pictures (ref_urls, default the set's product / sample references: a photo of the blank or of a finished ornament — its print left out), ~1 min in the background. view_image the attachments first: a picture of the plain piece or a product photo goes in ref_urls. Use it when the khuôn has no phôi (get_task blankProduct null, the first mockup shows the print on white) or the phôi is of the wrong material. It is kept with the khuôn too (the next product on that khuôn reuses it). An uploaded phôi (brief.product.blankId) still wins over it. → image id for char_wait; view_image it; then char_remake_product and make_product_mockups again.",
+      "Bộ nhân vật / bộ ảnh khách (chat / auto, step 4): draw the phôi trơn (the blank piece, no print) of brief.product with the team's image model — from the khuôn's outline / hole / size and brief.product.material (glass_clear…), copying the real piece from the editor's pictures (ref_urls, default the set's product / sample references: a photo of the blank or of a finished ornament — its print left out), ~1 min in the background. view_image the attachments first: a picture of the plain piece or a product photo goes in ref_urls. Use it when the khuôn has no phôi (get_task blankProduct null, the first mockup shows the print on white) or the phôi is of the wrong material. It is kept with the khuôn too (the next product on that khuôn reuses it). An uploaded phôi (brief.product.blankId) still wins over it. It is always asked front-on with only the front face showing (no thickness band) — a tilted product photo in ref_urls tends to tilt it anyway: pass ref_urls [] when the first try came out tilted, and say more in prompt. default true = it replaces the khuôn's first phôi (else a khuôn that already has one keeps it). → image id for char_wait; view_image it; then char_remake_product (or set_template_blank / add_template_blank to fix the khuôn's phôi and box) and make_product_mockups again.",
     inputSchema: {
       type: "object",
       properties: {
         ...TASK_ARG,
         ref_urls: { type: "array", items: { type: "string" }, description: "Photos of the real piece to copy its material / edge / finish from (≤ 4): the editor's attachments showing the blank or the finished product. Omit = the set's references used as \"product\" or \"sample\"; [] = none." },
+        prompt: { type: "string", description: "One or two more English sentences for the image model, e.g. \"Perfectly front-on, flat disc, the rim not visible, no shadow band under it.\"" },
+        default: { type: "boolean", description: "true = the new phôi becomes the khuôn's first one (the one every product gets) when it is done." },
       },
       required: ["task_id"],
     },
@@ -1176,13 +1178,15 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const looks = Array.isArray(args.ref_urls) ? args.ref_urls.map(str).filter((u) => /^https?:\/\//.test(u)) : undefined;
       if (!project.brief.product.templateId) throw new Error("brief.product has no khuôn (templateId) — list_print_templates / create_print_template, char_update_brief first");
       const template = await briefTemplate(db, project);
-      const row = await startCharBlank(db, task.user_id!, project, looks);
+      const extra = str(args.prompt).slice(0, 600);
+      const makeDefault = args.default === true;
+      const row = await startCharBlank(db, task.user_id!, project, looks, { extra, makeDefault });
       if (!row) throw new Error("Không tạo được phôi");
       await progress(db, task.id, `Đang vẽ phôi trơn: ${row.note.replace(/^Phôi trơn AI — /, "")}`);
       const warning = project.brief.product.blankId
         ? "brief.product.blankId (an uploaded phôi) is set and wins — clear it with char_update_brief to use this one."
-        : template?.spec.blanks.length
-          ? `The khuôn already has ${template.spec.blanks.length} phôi and its first one wins over this one — tell the editor to remove it in Thư viện → Phôi, or make a new khuôn of this material (create_print_template).`
+        : template?.spec.blanks.length && !makeDefault
+          ? `The khuôn already has ${template.spec.blanks.length} phôi and its first one wins over this one — call char_make_blank with default true, or set_template_blank {default: true} on the new one when it is done (get_print_template blanks).`
           : undefined;
       return json({
         image_id: row.id,

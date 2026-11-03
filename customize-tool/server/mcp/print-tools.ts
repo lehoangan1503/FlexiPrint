@@ -18,9 +18,10 @@
  * keeps each clipart's box: pass those boxes and the product matches the generated picture.
  */
 
+import sharp from "sharp";
 import { CT_CONFIG, CT_FONTS, CT_TABLES } from "../../config";
-import type { CtAiStyleParams, CtAsset, CtRegion, CtRegionItem, CtShape } from "../../types";
-import type { CtPrintSpec, CtPrintTemplate } from "../../types/print";
+import type { CtAiStyleParams, CtAsset, CtBounds, CtRegion, CtRegionItem, CtShape } from "../../types";
+import type { CtPrintBlank, CtPrintSpec, CtPrintTemplate } from "../../types/print";
 import { defaultRegionConfig } from "../../lib/design";
 import { newId, shapeBounds } from "../../lib/geometry";
 import { safeShapes, sizedTemplateSpec } from "../../lib/print-template";
@@ -37,6 +38,8 @@ import { serviceSession } from "../char/product";
 import type { CtPackImage } from "../../types";
 import type { CtSession } from "../supabase";
 import { templateRow } from "../print-templates";
+import { addTemplateBlank, saveTemplateBlanks, setDefaultBlank } from "../print-blanks";
+import { fetchImage } from "../char/files";
 import { json } from "./task-common";
 import type { CtMcpContext, CtMcpTool } from "./tools";
 
@@ -117,7 +120,55 @@ function templateSummary(t: CtPrintTemplate) {
     sizes: t.spec.sizes.map((s) => ({ name: s.name, width: s.width, height: s.height })),
     guideSheet: t.spec.frameUrl,
     notes: t.spec.notes,
+    // First = the phôi every product on the khuôn gets (Xem trước, mockups); box = where the sheet sits on its photo.
+    blanks: t.spec.blanks.map((x, i) => ({ id: x.id, name: x.name, url: x.url, width: x.width, height: x.height, box: x.box, ai: x.ai, ...(i === 0 ? { default: true } : {}) })),
   };
+}
+
+/** A box the agent gave ({x, y, w, h} in photo px), checked against the photo. */
+function boxArg(raw: unknown, blank: Pick<CtPrintBlank, "width" | "height">): CtBounds | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const [x, y, w, h] = [r.x, r.y, r.w, r.h].map(Number);
+  if (![x, y, w, h].every(Number.isFinite) || w < 8 || h < 8) throw new Error("box: {x, y, w, h} in the phôi photo's px (w, h ≥ 8)");
+  if (x < -w || y < -h || x > blank.width || y > blank.height) throw new Error(`box is off the photo (${blank.width} × ${blank.height} px)`);
+  return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
+}
+
+/** The phôi photo with the khuôn's cut line (red) and hole drawn where its box puts the sheet — to check the box. */
+async function blankPreview(t: CtPrintTemplate, b: CtPrintBlank): Promise<Buffer> {
+  const k = b.box.w / Math.max(1, t.spec.width);
+  const ky = b.box.h / Math.max(1, t.spec.height);
+  const svgShape = (sh: CtShape, stroke: string) => {
+    const X = (v: number) => (b.box.x + v * k).toFixed(1);
+    const Y = (v: number) => (b.box.y + v * ky).toFixed(1);
+    if (sh.type === "rect") return `<rect x="${X(sh.x)}" y="${Y(sh.y)}" width="${(sh.w * k).toFixed(1)}" height="${(sh.h * ky).toFixed(1)}" rx="${((sh.radius ?? 0) * k).toFixed(1)}" fill="none" stroke="${stroke}" stroke-width="3"/>`;
+    if (sh.type === "ellipse") return `<ellipse cx="${X(sh.cx)}" cy="${Y(sh.cy)}" rx="${(sh.rx * k).toFixed(1)}" ry="${(sh.ry * ky).toFixed(1)}" fill="none" stroke="${stroke}" stroke-width="3"/>`;
+    return `<polygon points="${sh.points.map((p) => `${X(p.x)},${Y(p.y)}`).join(" ")}" fill="none" stroke="${stroke}" stroke-width="3"/>`;
+  };
+  const shapes = [
+    `<rect x="${b.box.x}" y="${b.box.y}" width="${b.box.w}" height="${b.box.h}" fill="none" stroke="#00a0ff" stroke-width="2" stroke-dasharray="10 8"/>`,
+    ...(t.spec.outline ? [svgShape(t.spec.outline, "#ff2020")] : []),
+    ...t.spec.cuts.map((c) => svgShape(c, "#ff2020")),
+  ];
+  const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${b.width}" height="${b.height}">${shapes.join("")}</svg>`);
+  const photo = await sharp(await fetchImage(b.url)).resize(b.width, b.height, { fit: "fill" }).toBuffer();
+  return sharp(photo).composite([{ input: svg }]).resize({ width: 1024, height: 1024, fit: "inside" }).png().toBuffer();
+}
+
+/** The tool's answer for a phôi change: the khuôn's phôi, the products moved to the new default and a picture of it. */
+async function blankAnswer(t: CtPrintTemplate, products: string[], note: string) {
+  const first = t.spec.blanks[0];
+  const png = first ? await blankPreview(t, first).catch(() => null) : null;
+  const preview = png ? await ctUpload(ctLibraryPath(t.user_id ?? "shared", null, "blank-preview", "image/png"), png, "image/png").catch(() => null) : null;
+  return json({
+    template_id: t.id,
+    name: t.name,
+    blanks: templateSummary(t).blanks,
+    productsUpdated: products,
+    ...(preview ? { preview } : {}),
+    next: `${note} view_image preview: the default phôi with the khuôn's cut line (red) where its box (blue dashed) puts the sheet — the red line must sit exactly on the piece's edge, else set_template_blank with a corrected box. Then make_product_mockups again (productsUpdated already show this phôi; a product kept on its own phôi needs char_remake_product).`,
+  });
 }
 
 /** The agent's layers → regions + items (throws a message the agent can act on). */
@@ -297,6 +348,100 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       const { data, error } = await ctx.db.from(CT_TABLES.printTemplates).insert({ user_id: owner, name: str(args.name).slice(0, 120) || `Khuôn ${w}×${h} mm`, kind, spec, sort_order: 100 }).select("*").single<CtPrintTemplate>();
       if (error || !data) throw new Error(error?.message ?? "Không lưu được khuôn");
       return json({ ...templateSummary(templateRow(data)), next: "brief.product.templateId = this id (char_update_brief)." });
+    },
+  },
+  {
+    name: "add_template_blank",
+    description:
+      "Khuôn in: add a phôi (a photo of the blank piece, nothing printed) to a khuôn from a picture url — a picture the editor attached in the chat, a photo of the real blank. It must be shot straight on (front face only, no thickness / side visible, plain even backdrop). The box (where the sheet sits on the photo) is found on it; pass box to set it yourself. default (true) = it becomes the first phôi, the one every product on the khuôn gets (Xem trước, mockups). → the khuôn's phôi + a picture with the cut line drawn on it: view it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        template_id: { type: "string", description: "From list_print_templates." },
+        url: { type: "string", description: "The picture (https)." },
+        name: { type: "string", description: "Vietnamese name, e.g. \"Phôi sứ trắng chụp thẳng\"." },
+        default: { type: "boolean", description: "Make it the khuôn's first phôi (default true)." },
+        box: { type: "object", description: "{x, y, w, h} — the sheet on the photo, photo px (omit = found on the photo)." },
+        task_id: { type: "string", description: "Agent: the task it is for (its user stores the photo)." },
+      },
+      required: ["template_id", "url"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const t = await templateOf(ctx.db, args.template_id);
+      const url = str(args.url);
+      if (!/^https?:\/\//.test(url)) throw new Error("url: an https picture url");
+      const owner = await ownerOf(ctx, args, t.user_id);
+      const added = await addTemplateBlank(ctx.db, owner, t, await fetchImage(url), str(args.name).slice(0, 120) || "Phôi", false);
+      let blank = added.spec.blanks[added.spec.blanks.length - 1];
+      let current = added;
+      const box = boxArg(args.box, blank);
+      if (box) {
+        blank = { ...blank, box };
+        current = (await saveTemplateBlanks(ctx.db, current, current.spec.blanks.map((b) => (b.id === blank.id ? blank : b)))).template;
+      }
+      if (args.default === false) return blankAnswer(current, [], `Added phôi ${blank.id} (not the default).`);
+      const r = await setDefaultBlank(ctx.db, current, blank.id);
+      return blankAnswer(r.template, r.products, `Phôi ${blank.id} is now the default.`);
+    },
+  },
+  {
+    name: "set_template_blank",
+    description:
+      "Khuôn in: change one phôi of a khuôn (get_print_template → blanks[].id): default true = make it the first one (every product on the khuôn gets it), box = where the sheet sits on its photo ({x, y, w, h} photo px — fix it when the cut line misses the piece's edge), detect true = find the box on the photo again, name, remove true = delete it from the khuôn. Products on the khuôn that showed one of its phôi move to the new default by themselves. → the khuôn's phôi + a picture of the default one with the cut line drawn: view it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        template_id: { type: "string", description: "From list_print_templates." },
+        blank_id: { type: "string", description: "get_print_template blanks[].id" },
+        default: { type: "boolean", description: "true = make it the first phôi." },
+        box: { type: "object", description: "{x, y, w, h} in the phôi photo's px." },
+        detect: { type: "boolean", description: "true = find the box on the photo again." },
+        name: { type: "string", description: "A new name." },
+        remove: { type: "boolean", description: "true = delete this phôi from the khuôn." },
+      },
+      required: ["template_id", "blank_id"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const t = await templateOf(ctx.db, args.template_id);
+      const id = str(args.blank_id);
+      const old = t.spec.blanks.find((b) => b.id === id);
+      if (!old) throw new Error(`No phôi ${id} on this khuôn — get_print_template blanks: ${t.spec.blanks.map((b) => b.id).join(", ") || "none"}`);
+      if (args.remove === true) {
+        const r = await saveTemplateBlanks(ctx.db, t, t.spec.blanks.filter((b) => b.id !== id));
+        return blankAnswer(r.template, r.products, `Removed phôi ${id}.`);
+      }
+      let next: CtPrintBlank = { ...old, ...(str(args.name) ? { name: str(args.name).slice(0, 120) } : {}) };
+      if (args.detect === true) {
+        const { sceneForBlank } = await import("../product-mockups");
+        const scene = await sceneForBlank(await fetchImage(old.url), old.url, t.spec);
+        next = { ...next, box: scene.box };
+      }
+      const box = boxArg(args.box, old);
+      if (box) next = { ...next, box };
+      const list = t.spec.blanks.map((b) => (b.id === id ? next : b));
+      const r = await saveTemplateBlanks(ctx.db, t, args.default === true ? [next, ...list.filter((b) => b.id !== id)] : list);
+      return blankAnswer(r.template, r.products, `Saved phôi ${id}.`);
+    },
+  },
+  {
+    name: "delete_print_template",
+    description:
+      "Delete a khuôn in made by mistake (a duplicate, a test). Refused while a product or a bộ uses it (the answer lists them) — move those to another khuôn first. Ask the editor before deleting a khuôn you did not make in this task.",
+    inputSchema: { type: "object", properties: { template_id: { type: "string", description: "From list_print_templates." } }, required: ["template_id"] },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const t = await templateOf(ctx.db, args.template_id);
+      const [{ data: products }, { data: sets }] = await Promise.all([
+        ctx.db.from(CT_TABLES.products).select("id, name").eq("config->print->>templateId", t.id).limit(20).returns<Array<{ id: string; name: string }>>(),
+        ctx.db.from(CT_TABLES.charProjects).select("id, name").eq("brief->product->>templateId", t.id).limit(20).returns<Array<{ id: string; name: string }>>(),
+      ]);
+      if (products?.length || sets?.length) return json({ deleted: false, template_id: t.id, name: t.name, usedBy: { products: products ?? [], sets: sets ?? [] }, message: "In use — not deleted." });
+      const { error, count } = await ctx.db.from(CT_TABLES.printTemplates).delete({ count: "exact" }).eq("id", t.id);
+      if (error) throw new Error(error.message);
+      if (!count) throw new Error("Not deleted (only its maker or an admin may)");
+      return json({ deleted: true, template_id: t.id, name: t.name });
     },
   },
   {

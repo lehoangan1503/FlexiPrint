@@ -39,6 +39,7 @@ import { shapeBounds } from "../../lib/geometry";
 import type { CtPrintSpec } from "../../types/print";
 import { findProductFolder, productFolder } from "../artworks";
 import { ctRemove } from "../storage";
+import { makeVersionThumbs } from "../version-thumbs";
 import { insertClipart } from "../library";
 import { guessedBox, sceneForBlank } from "../product-mockups";
 import { AI_BLANK_ROLE, projectBlank } from "./blank";
@@ -1418,5 +1419,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
   const frames = lineup ? keep.flatMap((r) => mains.map((m, i) => ({ ...r, id: i === 0 ? r.id : crypto.randomUUID(), config: { ...r.config, mainId: m.id } }))) : keep;
   const all = [...frames, ...regions].map((r, i) => ({ ...r, sort_order: i }));
   await body(await h.saveDesign(s, product.id, { regions: all, items, config }));
+  // The versions' tiles: a picture of each (the customer picks "Red Santa", not the word "Red").
+  if (lineup) await makeVersionThumbs(s.supabase, product.id).then((r) => r.failed.length && console.warn("[ct] version thumbs", r.failed.join("; ")), (e: Error) => console.warn("[ct] version thumbs", e.message));
   return product.id;
 }

@@ -130,9 +130,10 @@ function VersionRow({ asset, ...props }: AssetPanelProps & { asset: CtAsset }) {
       className={cx("group flex cursor-pointer items-center gap-2 rounded-md border p-1.5", shown ? "border-sky-500 bg-sky-500/10" : "border-transparent hover:bg-accent")}
     >
       <span className="relative h-11 w-11 shrink-0 overflow-hidden rounded border" style={CHECKER_STYLE}>
-        <img src={asset.url} alt={asset.name} className="h-full w-full object-contain" loading="lazy" draggable={false} />
-        {/* A version of a lineup is often a blank sheet: its name over it says which one. */}
-        {props.versionLabel && <span className="absolute inset-0 flex items-center justify-center text-base font-semibold text-foreground drop-shadow">{asset.name.slice(0, 3)}</span>}
+        {/* The version as drawn (server/version-thumbs.ts) when it has its picture; else its own file. */}
+        <img src={asset.meta?.thumb || asset.url} alt={asset.name} className="h-full w-full object-contain" loading="lazy" draggable={false} />
+        {/* A version of a lineup is often a blank sheet: its name over it says which one (until it has its picture). */}
+        {props.versionLabel && !asset.meta?.thumb && <span className="absolute inset-0 flex items-center justify-center text-base font-semibold text-foreground drop-shadow">{asset.name.slice(0, 3)}</span>}
       </span>
       <div className="min-w-0 flex-1">
         {editing ? (

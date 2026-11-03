@@ -55,6 +55,7 @@ import { deployImported, deployInfo, saveImportShopify, savedDeployInfo } from "
 import { refreshSetUsers } from "./set-users";
 import { serviceSession } from "./product";
 import { siteUrl } from "../site-url";
+import { makeVersionThumbs } from "../version-thumbs";
 import { NOT_YOURS, canEditProject, jobDb, jsonError, loadProject, projectRow, type Db } from "./projects";
 
 /** One upload request's files at most (the page sends a few MB at a time). */
@@ -782,6 +783,11 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     config.material = { ...(material ? applyMaterialPreset(config.material, material) : config.material), widthMm: m.widthMm || config.material.widthMm };
     await body(await h.saveDesign(s, product.id, { regions: regions.map((r, i) => ({ ...r, sort_order: i })), items, config }));
     await db.from(CT_TABLES.products).update({ main_asset_id: mains[0].id }).eq("id", product.id);
+    // The versions' tiles: a picture of each version as built (asked 2026-11-04 — the store showed "Red / Gre / Rei").
+    if (m.versions.length > 1) {
+      const thumbs = await makeVersionThumbs(db, product.id).catch((e: Error) => ({ made: {}, failed: [e.message] }));
+      if (thumbs.failed.length) console.warn("[ct] import version thumbs", thumbs.failed.join("; "));
+    }
 
     // A hand-off often keeps the same sales picture twice (at the top and in anh-ban-hang/): each goes once.
     const seen = new Set<string>();

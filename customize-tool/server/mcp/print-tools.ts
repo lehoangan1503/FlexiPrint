@@ -38,6 +38,8 @@ import { serviceSession } from "../char/product";
 import type { CtPackImage } from "../../types";
 import type { CtSession } from "../supabase";
 import { templateRow } from "../print-templates";
+import * as h from "../handlers";
+import { makeVersionThumbs } from "../version-thumbs";
 import { addTemplateBlank, saveTemplateBlanks, setDefaultBlank } from "../print-blanks";
 import { fetchImage } from "../char/files";
 import { json } from "./task-common";
@@ -529,6 +531,21 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       const png = await renderArtwork(bundle, selection, 1400, str(args.mode) === "print" ? "print" : "guides");
       const url = await ctUpload(ctLibraryPath(bundle.product.user_id, null, "artwork-render", "image/png"), png, "image/png");
       return { images: [{ data: png.toString("base64"), mimeType: "image/png", url }] };
+    },
+  },
+  {
+    name: "make_version_thumbs",
+    description:
+      "The picture on each VERSION tile the customer picks first (\"Choose Design\": Red Santa / Green Elf…): every version drawn as its print with the default options, cropped close on a square, saved as the version's thumb; the version picker then shows pictures, not words. Product builds with versions make them by themselves — call this after the layers were changed by hand (or for a product built before 2026-11-04). A published product is published again so the store shows them. → made {version: url}, failed.",
+    inputSchema: { type: "object", properties: { product_id: { type: "string", description: "The product." } }, required: ["product_id"] },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const productId = str(args.product_id);
+      const out = await makeVersionThumbs(ctx.db, productId);
+      const { data: product } = await ctx.db.from(CT_TABLES.products).select("user_id, published_version").eq("id", productId).maybeSingle<{ user_id: string; published_version: number | null }>();
+      let published = false;
+      if (product?.published_version && Object.keys(out.made).length) published = (await h.publish(await serviceSession(ctx.db, product.user_id), productId, siteUrl())).ok;
+      return json({ ...out, published, next: Object.keys(out.made).length ? "view_image a few of the urls." : "No versions to picture (one version, or versions off)." });
     },
   },
   {

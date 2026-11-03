@@ -63,6 +63,8 @@ const MAX_IMPORT_FILE = 60 * 1024 * 1024;
 const MAX_TEXT = 2 * 1024 * 1024;
 /** Files fetched, checked and stored at once while building. */
 const POOL = 12;
+/** How often a running build says it is alive (the page calls it cut off after 3 min without one). */
+const BEAT_MS = 30_000;
 
 const MIME: Record<string, string> = {
   png: "image/png",
@@ -100,7 +102,17 @@ async function readKey(key: string): Promise<Buffer | null> {
 }
 
 /** brief.imported changed in place (the rest of the brief as it is now). */
-async function setImported(db: Db, id: string, patch: Partial<CtCharImported>, project: Partial<Pick<CtCharProject, "product_ids" | "status" | "master_id">> = {}): Promise<void> {
+/** Each set's import writes in turn: they read and write the whole brief, and the build's heartbeat runs beside them. */
+const importWrites = new Map<string, Promise<void>>();
+
+function setImported(db: Db, id: string, patch: Partial<CtCharImported>, project: Partial<Pick<CtCharProject, "product_ids" | "status" | "master_id">> = {}): Promise<void> {
+  const run = (importWrites.get(id) ?? Promise.resolve()).catch(() => undefined).then(() => writeImported(db, id, patch, project));
+  importWrites.set(id, run);
+  void run.finally(() => importWrites.get(id) === run && importWrites.delete(id)).catch(() => undefined);
+  return run;
+}
+
+async function writeImported(db: Db, id: string, patch: Partial<CtCharImported>, project: Partial<Pick<CtCharProject, "product_ids" | "status" | "master_id">>): Promise<void> {
   const { data } = await db.from(CT_TABLES.charProjects).select("brief").eq("id", id).maybeSingle<{ brief: unknown }>();
   const brief = parseCharBrief(data?.brief);
   const cur = brief.imported ?? emptyImported();
@@ -494,7 +506,15 @@ function buildImport(db: Db, userId: string, projectId: string, m: CtCharImportM
     .catch(() => "")
     .then(() => buildNow(db, userId, projectId, m));
   building.set(projectId, run);
-  void run.finally(() => building.get(projectId) === run && building.delete(projectId)).catch(() => undefined);
+  // A heartbeat for as long as this process builds (2026-11-04: after the files, the design / mockups / Shopify steps
+  // wrote no beat for minutes, so the page said "bị ngắt" while the server still answered "Đang dựng").
+  const pulse = setInterval(() => {
+    void setImported(db, projectId, { beat: new Date().toISOString() }).catch(() => undefined);
+  }, BEAT_MS);
+  void run.finally(() => {
+    clearInterval(pulse);
+    if (building.get(projectId) === run) building.delete(projectId);
+  }).catch(() => undefined);
   return run;
 }
 

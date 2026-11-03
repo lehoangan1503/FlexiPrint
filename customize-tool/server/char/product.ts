@@ -583,7 +583,9 @@ function posedSet(set: CtCharLayerSet, poseSubject: CtCharSubject, target: CtCha
   return {
     ...set,
     slots: set.slots.map((sl) => ({ ...sl, key: key(sl.key), label: sl.key === "body" ? sl.label : `${name} — ${sl.label.replace(/^Người \d+ — /, "")}`, follows: sl.follows ? key(sl.follows) : sl.follows, files: sl.files.map(file) })),
-    zones: [],
+    // The pose's photo zones (a face hole on a Santa body) come with it — mirrored with the files. They were dropped
+    // here (zones: []) and a posed kiểu-3 set lost its "Upload photo" layers (product 8ddc14a1, 2026-11-04).
+    zones: set.zones.map((z) => (flip ? { ...z, polygon: z.polygon.map(([x, y]) => [set.width - x, y]) } : z)),
     behindUrl: m(set.behindUrl),
   };
 }

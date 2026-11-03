@@ -29,12 +29,13 @@ type Tool = "brush" | "lasso" | "wand" | "island" | "smooth" | "move" | "hand";
 type Op = "add" | "remove";
 type View = "result" | "overlay";
 
-interface Patch {
-  x: number;
-  y: number;
-  before: ImageData;
-  after: ImageData;
+interface Shift {
+  dx: number;
+  dy: number;
 }
+
+/** One undo step: a changed rectangle of the mask, or a move of the whole clipart (Di chuyển, asked 2026-11-04). */
+type Patch = { kind: "mask"; x: number; y: number; before: ImageData; after: ImageData } | { kind: "move"; before: Shift; after: Shift; at: number };
 
 interface Box {
   x0: number;
@@ -173,7 +174,7 @@ export function MaskEditor(props: MaskEditorProps) {
   /** The Vùng tool's polygon being placed: its points and the pointer (the next segment's end). */
   const poly = useRef<{ pts: Array<[number, number]>; hover: [number, number] | null; at: number } | null>(null);
   const pan = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
-  const drag = useRef<{ sx: number; sy: number; dx: number; dy: number } | null>(null);
+  const drag = useRef<{ sx: number; sy: number; dx: number; dy: number; to: Shift } | null>(null);
   const frame = useRef(0);
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -192,10 +193,11 @@ export function MaskEditor(props: MaskEditorProps) {
   const [z, setZ] = useState({ s: 0.2, ox: 0, oy: 0 });
   const [changes, setChanges] = useState(0);
   const [canRedo, setCanRedo] = useState(false);
+  const [canUndo, setCanUndo] = useState(false);
   const [busy, setBusy] = useState<"save" | "revert" | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   // Where the clipart was dragged to (whole px on the canvas).
-  const [off, setOff] = useState({ dx: 0, dy: 0 });
+  const [off, setOff] = useState<Shift>({ dx: 0, dy: 0 });
   // The preview's own zoom: scale, and its shift in css px of the preview box.
   // The preview's own zoom: scale (500 % to start) and the canvas point at its centre — it follows the pointer over
   // the editing area (asked 2026-10-14); at 100 % the whole canvas fits.
@@ -435,11 +437,34 @@ export function MaskEditor(props: MaskEditorProps) {
     const before = ctx2d(st.committed).getImageData(x, y, w, h);
     const after = ctx2d(st.mask).getImageData(x, y, w, h);
     ctx2d(st.committed).putImageData(after, x, y);
-    undo.current.push({ x, y, before, after });
+    push({ kind: "mask", x, y, before, after });
+    setChanges((n) => n + 1);
+  };
+
+  const push = (p: Patch) => {
+    undo.current.push(p);
     if (undo.current.length > 60) undo.current.shift();
     redo.current = [];
     setCanRedo(false);
-    setChanges((n) => n + 1);
+    setCanUndo(true);
+  };
+
+  /** A move from `before` to `after` is one undo step; arrow presses close together (< 0.8 s) join the last one. */
+  const pushMove = (before: Shift, after: Shift, join: boolean) => {
+    if (before.dx === after.dx && before.dy === after.dy) return;
+    const last = undo.current[undo.current.length - 1];
+    const now = Date.now();
+    if (join && last?.kind === "move" && now - last.at < 800 && redo.current.length === 0) {
+      last.after = after;
+      last.at = now;
+      return;
+    }
+    push({ kind: "move", before, after, at: now });
+  };
+
+  const moveTo = (next: Shift, join: boolean) => {
+    pushMove(off, next, join);
+    setOff(next);
   };
 
   const step = (back: boolean) => {
@@ -447,11 +472,16 @@ export function MaskEditor(props: MaskEditorProps) {
     const from = back ? undo.current : redo.current;
     const p = from.pop();
     if (!st || !p) return;
+    (back ? redo.current : undo.current).push(p);
+    setCanRedo(redo.current.length > 0);
+    setCanUndo(undo.current.length > 0);
+    if (p.kind === "move") {
+      setOff(back ? p.before : p.after);
+      return;
+    }
     const data = back ? p.before : p.after;
     ctx2d(st.mask).putImageData(data, p.x, p.y);
     ctx2d(st.committed).putImageData(data, p.x, p.y);
-    (back ? redo.current : undo.current).push(p);
-    setCanRedo(redo.current.length > 0);
     setChanges((n) => n + (back ? -1 : 1));
     schedule();
   };
@@ -684,7 +714,7 @@ export function MaskEditor(props: MaskEditorProps) {
     }
     if (e.button !== 0) return;
     if (effTool === "move") {
-      drag.current = { sx: e.clientX, sy: e.clientY, dx: off.dx, dy: off.dy };
+      drag.current = { sx: e.clientX, sy: e.clientY, dx: off.dx, dy: off.dy, to: off };
       return;
     }
     const p = at(e);
@@ -731,7 +761,8 @@ export function MaskEditor(props: MaskEditorProps) {
     }
     if (drag.current) {
       const d = drag.current;
-      setOff({ dx: Math.round(d.dx + (e.clientX - d.sx) / z.s), dy: Math.round(d.dy + (e.clientY - d.sy) / z.s) });
+      d.to = { dx: Math.round(d.dx + (e.clientX - d.sx) / z.s), dy: Math.round(d.dy + (e.clientY - d.sy) / z.s) };
+      setOff(d.to);
       return;
     }
     if (poly.current) {
@@ -751,6 +782,8 @@ export function MaskEditor(props: MaskEditorProps) {
 
   const up = () => {
     if (pan.current || drag.current) {
+      // A finished drag is one undo step (from where it started).
+      if (drag.current) pushMove({ dx: drag.current.dx, dy: drag.current.dy }, drag.current.to, false);
       pan.current = null;
       drag.current = null;
       return;
@@ -879,7 +912,7 @@ export function MaskEditor(props: MaskEditorProps) {
       if (props.movable && tool === "move" && e.key.startsWith("Arrow")) {
         e.preventDefault();
         const k = e.shiftKey ? 10 : 1;
-        setOff((o) => ({ dx: o.dx + (e.key === "ArrowLeft" ? -k : e.key === "ArrowRight" ? k : 0), dy: o.dy + (e.key === "ArrowUp" ? -k : e.key === "ArrowDown" ? k : 0) }));
+        moveTo({ dx: off.dx + (e.key === "ArrowLeft" ? -k : e.key === "ArrowRight" ? k : 0), dy: off.dy + (e.key === "ArrowUp" ? -k : e.key === "ArrowDown" ? k : 0) }, true);
         return;
       }
       const t = tools.find((x) => x.key.toLowerCase() === e.key.toLowerCase());
@@ -1030,11 +1063,11 @@ export function MaskEditor(props: MaskEditorProps) {
                 <div className="px-2 tabular-nums">
                   Lệch: {off.dx} px, {off.dy} px
                 </div>
-                <button onClick={() => setOff({ dx: 0, dy: 0 })} disabled={!moved} className={cx(side(false), "disabled:opacity-30")}>
+                <button onClick={() => moveTo({ dx: 0, dy: 0 }, false)} disabled={!moved} className={cx(side(false), "disabled:opacity-30")}>
                   <RotateCcw className="h-4 w-4 shrink-0" />
                   Về chỗ cũ
                 </button>
-                <div className="px-2 text-[10px] text-muted-foreground">Kéo trên ảnh · mũi tên = 1 px, Shift = 10 px. Lưu = mọi màu của kiểu này, lớp trước + sau, mọi sản phẩm.</div>
+                <div className="px-2 text-[10px] text-muted-foreground">Kéo trên ảnh · mũi tên = 1 px, Shift = 10 px · ⌘Z / ⌘⇧Z lùi / tới từng lần dời. Lưu = mọi màu của kiểu này, lớp trước + sau, mọi sản phẩm.</div>
               </div>
             )}
             {effTool !== "hand" && effTool !== "smooth" && effTool !== "move" && (
@@ -1097,7 +1130,7 @@ export function MaskEditor(props: MaskEditorProps) {
               </button>
             </div>
             <div className="flex flex-col gap-0.5 border-t pt-2">
-              <button className={cx(side(false), "disabled:opacity-30")} disabled={changes <= 0 && undo.current.length === 0} onClick={() => step(true)}>
+              <button className={cx(side(false), "disabled:opacity-30")} disabled={!canUndo} onClick={() => step(true)}>
                 <Undo2 className="h-4 w-4 shrink-0" />
                 Lùi
                 {keyTag(`${MOD}Z`)}

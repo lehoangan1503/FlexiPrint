@@ -95,10 +95,22 @@ function keyOf(root: string, url: string): string | null {
   return `${root}/${url.slice(prefix.length).split("/").map(decodeURIComponent).join("/")}`;
 }
 
+/**
+ * A file of the import, read again when the transfer breaks (2026-11-04: flexi2 → R2 is lossy; one body cut off
+ * mid-way, "aborted", failed a 10-minute build at its mockups — the SDK retries the request, not the body).
+ */
 async function readKey(key: string): Promise<Buffer | null> {
-  const obj = await r2Get(key);
-  if (!obj?.Body) return null;
-  return Buffer.from(await obj.Body.transformToByteArray());
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const obj = await r2Get(key);
+      if (!obj?.Body) return null;
+      return Buffer.from(await obj.Body.transformToByteArray());
+    } catch (e) {
+      if (attempt >= 4) throw e;
+      console.warn("[ct] import read again", key, e instanceof Error ? e.message : String(e));
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
+    }
+  }
 }
 
 /** brief.imported changed in place (the rest of the brief as it is now). */
@@ -775,21 +787,26 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     const seen = new Set<string>();
     for (const [i, url] of m.mockupUrls.entries()) {
       const key = keyOf(root, url);
-      const png = key ? await readKey(key) : null;
-      if (!png) continue;
-      const hash = createHash("sha1").update(png).digest("hex");
-      if (seen.has(hash)) continue;
-      seen.add(hash);
-      const jpeg = await sharp(png).flatten({ background: "#ffffff" }).jpeg({ quality: 90 }).toBuffer();
-      const a = await upload(jpeg, "mockup", `mockup_${i + 1}`, "image/jpeg");
-      const meta = await sharp(jpeg).metadata();
-      await db.from(CT_TABLES.packImages).insert({ user_id: userId, name: `mockup:${product.id}`, source: "upload", status: "done", listed: false, url: a.url, storage_path: null, mime: "image/jpeg", width: meta.width ?? null, height: meta.height ?? null, description: `Ảnh bán hàng ${i + 1} (từ bộ import)`, prompt: "", refs: [], aspect: "", model: "" });
+      // A sales picture that will not come is named, not a failed build (the product is already made).
+      try {
+        const png = key ? await readKey(key) : null;
+        if (!png) continue;
+        const hash = createHash("sha1").update(png).digest("hex");
+        if (seen.has(hash)) continue;
+        seen.add(hash);
+        const jpeg = await sharp(png).flatten({ background: "#ffffff" }).jpeg({ quality: 90 }).toBuffer();
+        const a = await upload(jpeg, "mockup", `mockup_${i + 1}`, "image/jpeg");
+        const meta = await sharp(jpeg).metadata();
+        await db.from(CT_TABLES.packImages).insert({ user_id: userId, name: `mockup:${product.id}`, source: "upload", status: "done", listed: false, url: a.url, storage_path: null, mime: "image/jpeg", width: meta.width ?? null, height: meta.height ?? null, description: `Ảnh bán hàng ${i + 1} (từ bộ import)`, prompt: "", refs: [], aspect: "", model: "" });
+      } catch (e) {
+        problems.push(`${url.split("/").pop()}: không lưu được ảnh bán hàng (${e instanceof Error ? e.message : String(e)}) — bỏ qua`);
+      }
     }
 
     // ---- the set: its sample as the master, the product as its own ----
     let masterId = p.master_id;
     const sampleKey = m.sampleUrl ? keyOf(root, m.sampleUrl) : null;
-    const sample = sampleKey ? await readKey(sampleKey) : null;
+    const sample = sampleKey ? await readKey(sampleKey).catch(() => null) : null;
     if (sample && !masterId) {
       const saved = await saveCharFile(userId, p.id, "master", sample);
       const { data: im } = await db.from(CT_TABLES.charImages).insert({ project_id: p.id, user_id: userId, kind: "master", role: "master", status: "done", ...saved }).select("id").single<{ id: string }>();

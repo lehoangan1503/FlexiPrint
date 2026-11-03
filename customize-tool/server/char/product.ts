@@ -1225,11 +1225,14 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
       const firstBody = regions.findIndex((r, i) => i >= start && isBody(r));
       const photoRegions: CtRegion[] = P.sset.zones.map((z) => {
         const cfg = defaultRegionConfig("photo");
-        const keptZone = keptZones.get(`Ảnh khách — ${z.label}`);
+        // Each version its own zone, named like its other layers (2026-11-04: three versions under one name were kept
+        // as ONE reshaped zone — the sleigh's — and every rebuild copied it onto the piggyback versions).
+        const zoneName = lineup ? `Ảnh khách — ${z.label} [${v.name}]` : `Ảnh khách — ${z.label}`;
+        const keptZone = keptZones.get(zoneName);
         const r: CtRegion = {
           id: crypto.randomUUID(),
           product_id: product.id,
-          name: `Ảnh khách — ${z.label}`,
+          name: zoneName,
           kind: "photo",
           shape: keptZone?.shape ?? { type: "polygon", points: z.polygon.map(([x, y]) => ({ x: box.x + x * k, y: box.y + y * k })) },
           // A face under the body: the body's hole edges it (its hair may show past the hat, like the reference) — not clipped.

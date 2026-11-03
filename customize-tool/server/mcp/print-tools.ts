@@ -534,6 +534,56 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
     },
   },
   {
+    name: "set_photo_zone",
+    description:
+      "Move / reshape ONE customer-photo layer (\"Ảnh khách — …\") of a product — per version: a product with versions (Red Santa / Green Elf / Sleigh) has its own photo layers in each. Without x/y/w/h → the photo layers: id, version, name, shape, box. With them → that layer becomes an ellipse (default) or rect of that box (sheet px, x/y = top-left; render_artwork shows the sheet). A face zone lies UNDER the body: the face shows where the body has no pixels (its hole / the empty head), the hat brim and collar over its edge — draw the box a little bigger than the hole. The other layers, the photo settings (styles, required, fit) and the customer's framing stay. Kept by char_remake_product (reset_zones: true goes back to the set's zones). A published product is published again. Then render_artwork that version (options {\"Choose Design\": \"<version>\"}) and look.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        product_id: { type: "string", description: "The product." },
+        region_id: { type: "string", description: "The photo layer's id (from the listing). Or version + label." },
+        version: { type: "string", description: "The version's name (as listed), with label." },
+        label: { type: "string", description: "The photo layer's customer label or name (\"Upload photo for person 1\"), with version." },
+        shape: { type: "string", description: "\"ellipse\" (default) or \"rect\"." },
+        x: { type: "number", description: "Box left, sheet px." },
+        y: { type: "number", description: "Box top, sheet px." },
+        w: { type: "number", description: "Box width." },
+        h: { type: "number", description: "Box height." },
+      },
+      required: ["product_id"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const bundle = await loadArtwork(ctx.db, str(args.product_id));
+      if (!bundle) throw new Error("No such product");
+      const mains = new Map(bundle.assets.filter((a) => a.role === "main").map((a) => [a.id, a.name]));
+      const versionOf = (r: CtRegion) => (r.config.mainId ? (mains.get(r.config.mainId) ?? "") : "");
+      const photos = bundle.regions.filter((r) => r.kind === "photo");
+      const listing = () =>
+        photos.map((r) => {
+          const b = shapeBounds(r.shape);
+          return { id: r.id, version: versionOf(r), name: r.name, label: r.config.photo.label, shape: r.shape.type, box: { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h) } };
+        });
+      const box = [args.x, args.y, args.w, args.h];
+      if (box.every((v) => v === undefined)) return json({ product_id: bundle.product.id, photoLayers: listing() });
+      if (!box.every((v) => typeof v === "number" && Number.isFinite(v)) || num(args.w, 0) <= 0 || num(args.h, 0) <= 0) throw new Error("x, y, w, h: numbers, w and h > 0");
+      const want = str(args.label).trim().toLowerCase();
+      const version = str(args.version).trim().toLowerCase();
+      const target = args.region_id
+        ? photos.find((r) => r.id === str(args.region_id))
+        : photos.find((r) => versionOf(r).trim().toLowerCase() === version && (r.config.photo.label.toLowerCase() === want || r.name.toLowerCase().includes(want)) && want !== "");
+      if (!target) return json({ error: "No such photo layer — pick one of these (region_id, or version + label).", photoLayers: listing() });
+      const [x, y, w, bh] = box as number[];
+      const shape: CtShape = str(args.shape) === "rect" ? { type: "rect", x, y, w, h: bh, radius: 0 } : { type: "ellipse", cx: x + w / 2, cy: y + bh / 2, rx: w / 2, ry: bh / 2 };
+      const { error } = await ctx.db.from(CT_TABLES.regions).update({ shape }).eq("id", target.id);
+      if (error) throw new Error(error.message);
+      const { data: product } = await ctx.db.from(CT_TABLES.products).select("user_id, published_version").eq("id", bundle.product.id).maybeSingle<{ user_id: string; published_version: number | null }>();
+      let published = false;
+      if (product?.published_version) published = (await h.publish(await serviceSession(ctx.db, product.user_id), bundle.product.id, siteUrl())).ok;
+      return json({ product_id: bundle.product.id, set: { id: target.id, version: versionOf(target), name: target.name, shape }, published, next: `render_artwork {product_id, options: {<the version chooser>: "${versionOf(target)}"}} and look at the zone.` });
+    },
+  },
+  {
     name: "make_version_thumbs",
     description:
       "The picture on each VERSION tile the customer picks first (\"Choose Design\": Red Santa / Green Elf…): every version drawn as its print with the default options, cropped close on a square, saved as the version's thumb; the version picker then shows pictures, not words. Product builds with versions make them by themselves — call this after the layers were changed by hand (or for a product built before 2026-11-04). A published product is published again so the store shows them. → made {version: url}, failed.",

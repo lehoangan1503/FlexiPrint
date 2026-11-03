@@ -71,7 +71,12 @@ async function copyRefs(db: Db, userId: string, parent: CtCharProject, child: Ct
 
 /** The pose prompt: the brief's, with how the character must sit in its square (the same head size in every pose). */
 export function poseMasterPrompt(brief: CtCharBrief): string {
-  return `${masterPrompt(brief)}\nThe character fills the square: its head and hat about a third of the picture's height, centred, a small even margin around — every pose of this set is drawn at this same size.`;
+  // A face zone: the grey oval even when the pose's words or the sample say "no heads, floating hats" (2026-11-04: the
+  // elf / sleigh poses were drawn with nothing between hat and collar, and the face zone was painted on the collar).
+  const faces = brief.photoZones.some((z) => z.treat === "face")
+    ? "\nEvery head where a customer's face goes is drawn as a plain light-grey oval the size of a head between the hat brim and the collar — never an empty space, even if a reference shows the hat floating over an empty collar."
+    : "";
+  return `${masterPrompt(brief)}\nThe character fills the square: its head and hat about a third of the picture's height, centred, a small even margin around — every pose of this set is drawn at this same size.${faces}`;
 }
 
 /**

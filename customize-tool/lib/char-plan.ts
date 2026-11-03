@@ -24,7 +24,7 @@
  * garment drawn over it differs clearly (a cream cardigan over a white tank top left holes, tested 2026-10-14).
  */
 
-import type { CtCharBrief, CtCharSlot } from "../types";
+import type { CtCharBrief, CtCharPhotoZone, CtCharSlot } from "../types";
 import { shownByDefault, subjectRef } from "./char-brief";
 import { agentEdits, agentOptionPictures } from "./char-pictures";
 
@@ -310,8 +310,20 @@ export function planEdits(brief: CtCharBrief): CtCharEditPlan[] {
     });
   }
   for (const z of brief.photoZones)
-    out.push({ role: `zone:${z.id}`, label: `Vùng ảnh khách: ${z.label}`, source: "base", prompt: `Paint ONLY ${z.where} solid flat pure magenta #FF00FF, no shading, no texture, no outline change.${KEEP}` });
+    out.push({ role: `zone:${z.id}`, label: `Vùng ảnh khách: ${z.label}`, source: "base", prompt: zonePrompt(z) });
   return out;
+}
+
+/**
+ * A customer-photo zone painted magenta on the doll. A face zone where the doll has NO head drawn (a floating hat over
+ * an empty collar — 2026-11-04 elf / sleigh poses) is painted as a head-sized oval in that empty space: the model
+ * otherwise painted the inside of the fur collar, and the customer's face landed on the neck.
+ */
+export const FACE_ZONE_LINE =
+  "It is the shape of a whole face: a filled oval the size of that character's head, in the place the head belongs (under the hat brim, above the collar). Where no head is drawn there (an empty space, a floating hat over an empty collar), paint that oval in the empty space all the same. Never paint the collar, the clothes, the hat or the hair; they stay exactly as they are and may lie over the oval's edge.";
+
+export function zonePrompt(z: CtCharPhotoZone): string {
+  return `Paint ONLY ${z.where} solid flat pure magenta #FF00FF, no shading, no texture, no outline change.${z.treat === "face" ? ` ${FACE_ZONE_LINE}` : ""}${KEEP}`;
 }
 
 /** The 3b picture to draw again when a piece ("<slot>#<i>") is wrong. */

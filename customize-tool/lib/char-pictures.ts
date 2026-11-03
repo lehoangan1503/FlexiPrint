@@ -11,7 +11,7 @@
 
 import type { CtCharBrief, CtCharPlanPicture, CtCharPictureCover, CtCharPictureLine } from "../types";
 import { subjectRef } from "./char-brief";
-import { tailOf, type CtCharEditPlan, type CtCharOptionPicture } from "./char-plan";
+import { FACE_ZONE_LINE, tailOf, type CtCharEditPlan, type CtCharOptionPicture } from "./char-plan";
 
 /** A plan picture's role: the server's own names (base, zone:, thumb:) or the agent's. */
 const ROLE = /^[a-z0-9][a-z0-9:._-]{0,79}$/i;
@@ -104,7 +104,10 @@ export function picturePrompt(brief: CtCharBrief, p: CtCharPlanPicture): string 
     if (slot?.cutColor) cutColours.set(slot.part.replace(/\s*\(.*?\)/g, ""), slot.cutColor);
   }
   const cut = [...cutColours].map(([part, hex]) => `Draw the ${part} in solid ${hex} (a cut colour, recoloured later — not its real colour), with all its shading, highlights and strand detail; nothing else in the picture takes that colour.`);
-  const body = [p.prompt.replaceAll("{who}", "the character"), ...lines, ...cut].filter(Boolean).join("\n");
+  // A face zone: always the whole head-sized oval, even where the doll has no head (said by the server — 2026-11-04).
+  const zone = p.role.startsWith("zone:") ? brief.photoZones.find((z) => `zone:${z.id}` === p.role) : undefined;
+  const face = zone?.treat === "face" && !p.prompt.includes(FACE_ZONE_LINE) ? [FACE_ZONE_LINE] : [];
+  const body = [p.prompt.replaceAll("{who}", "the character"), ...lines, ...cut, ...face].filter(Boolean).join("\n");
   const tail = tailOf(p.role);
   return body.includes(tail.trim()) ? body : body.replace(/\.?\s*$/, ".") + tail;
 }
@@ -228,7 +231,7 @@ export const PICTURE_PLAN_RULES = [
   "- prompt: English, the change said once (\"Give each listed character the hairstyle written for them, drawn UNDER their hat …\"); lines: [{subject: subject id, text}] — one per character (\"{who}: long wavy hair\"; {who} is filled with how the image model is told which character it is). Lines of a character a version does not have are dropped automatically, so ALWAYS put per-character wording in lines, never in the prompt. Do not write the keep-everything ending: the server adds it (transparent background, nothing else moves).",
   "- cut colour: a slot with cutColor (its real colours too close to what it lies on) is drawn in that colour — the server adds the sentence to every picture that covers it; do not name its real colour in that prompt (\"short curly hair\", not \"silver-grey curly hair\"). Its files are recoloured to every colour the customer picks.",
   "- fine: true for thin features on a blank face (eyes, brows, mouth): small pieces kept.",
-  "- zone:<photo zone id> (one per brief.photoZones, required): drawn from base, \"Paint ONLY <where> solid flat pure magenta #FF00FF …\" (drawn on white).",
+  "- zone:<photo zone id> (one per brief.photoZones, required): drawn from base, \"Paint ONLY <where> solid flat pure magenta #FF00FF …\" (drawn on white); a face zone gets the server's head-sized-oval sentence (painted in the empty space where a pose has no head).",
   "- thumb:<slot id>:<option id> (optional): a held item drawn ALONE and complete from the picture that covers it (source = that picture) — only the option's thumbnail in the shop, never cut.",
   "- any other role you like for a picture that is only a source / against (covers [] allowed).",
   "Check yourself: does every option's picture ADD it to what it is drawn on without moving the doll? Would two options of one picture touch on the same character? Is a part that hides another (a hat over hair, a jacket over a top) drawn so the hidden part is cut against the right picture? A lineup drawn version by version: plan the biggest set; each version set uses that plan (its missing characters' covers / lines dropped) — plan BEFORE approving the version masters.",

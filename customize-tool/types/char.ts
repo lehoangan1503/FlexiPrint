@@ -509,8 +509,10 @@ export interface CtCharImportFile {
 }
 
 /**
- * What an imported set is made of — every source format comes to this. Every image file is a whole-canvas PNG of
- * `canvas` size (layer rules: pixel-registered, never trimmed or scaled).
+ * What an imported set is made of — every source format comes to this. An image file is a whole-canvas PNG of
+ * `canvas` size (layer rules: pixel-registered, never trimmed or scaled), or a small piece the source places itself
+ * (a character of 328×418 sat in each seat of each version, asked 2026-11-04): its `box` says where — the build puts it
+ * there on a whole canvas, so every clipart is whole-canvas again.
  */
 export interface CtCharImportManifest {
   name: string;
@@ -562,6 +564,18 @@ export interface CtCharImportLayer {
   /** Its option pictures show the layers that follow it drawn in (the hair under a hat: the choice is the hat, the
    * file only a sliver of hair). */
   thumbWithFollowers?: boolean;
+  /** Where its files go when they are smaller pieces than the canvas (every option the same spot — one seat). */
+  box?: CtCharImportBox;
+}
+
+/** A small piece's place on the canvas: its whole picture (transparent margin included) stretched to w × h at x, y,
+ * then turned `angle` degrees clockwise about its centre. */
+export interface CtCharImportBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  angle: number;
 }
 
 export interface CtCharImportGroup {
@@ -576,6 +590,8 @@ export interface CtCharImportOption {
   url: string;
   /** The option the customer starts on. */
   default: boolean;
+  /** Its own place when it differs from the layer's box. */
+  box?: CtCharImportBox;
 }
 
 export interface CtCharImportText {
@@ -583,9 +599,11 @@ export interface CtCharImportText {
   label: string;
   sample: string;
   maxChars: number;
-  /** Google font family + weight ("Baloo 2", 800). */
+  /** Google font family + weight ("Baloo 2", 800) — or the family of `fontFile`. */
   font: string;
   weight: number;
+  /** A font file of the folder (TTF / OTF url) when the source brings its own font: the product keeps a copy. */
+  fontFile?: string;
   /** Letter height px, the text's centre and max width on the canvas, turned `angle` degrees clockwise. */
   size: number;
   cx: number;

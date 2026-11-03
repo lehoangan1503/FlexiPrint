@@ -33,14 +33,16 @@ import os from "node:os";
 import path from "node:path";
 import yauzl from "yauzl";
 import { NextResponse } from "next/server";
-import sharp from "sharp";
+import sharp, { type OverlayOptions } from "sharp";
 import { CT_FONTS, CT_TABLES } from "../../config";
-import type { CtAsset, CtCharImported, CtCharImportFile, CtCharImportRow, CtCharImportLayer, CtCharImportManifest, CtCharImportText, CtCharProject, CtProduct, CtRegion, CtRegionItem } from "../../types";
+import type { CtAsset, CtCharImportBox, CtCharImported, CtCharImportFile, CtCharImportRow, CtCharImportLayer, CtCharImportManifest, CtCharImportText, CtCharProject, CtProduct, CtRegion, CtRegionItem } from "../../types";
 import { defaultCharBrief, parseCharBrief } from "../../lib/char-brief";
-import { importKeep, manifestFiles, parseManifest, readTeeinblue, type CtImportTexts } from "../../lib/char-import";
+import { importKeep, manifestFiles, manifestPlacements, parseManifest, readTeeinblue, type CtImportTexts } from "../../lib/char-import";
 import { defaultProductConfig, defaultRegionConfig } from "../../lib/design";
 import { applyMaterialPreset, isMaterialId } from "../../lib/materials";
 import { createAgentTask, setAgentChats } from "../agent/tasks";
+import { loadFont, textSvg } from "../print-text";
+import { placePiece } from "./import-place";
 import { findProductFolder, productFolder } from "../artworks";
 import * as h from "../handlers";
 import { readImageInfo } from "../image-size";
@@ -209,7 +211,7 @@ async function startFrom(s: CtSession, p: CtCharProject, files: CtCharImportFile
   // Another layout: @flexiprint reads the folder and writes the manifest.
   await setImported(db, p.id, { status: "agent", format: "agent", summary: [`${files.length} file — không phải định dạng đã biết, @flexiprint đang phân tích folder`] });
   const request =
-    "Bộ import: người dùng vừa tải lên folder bộ clipart đã làm sẵn (file layer, phôi, mockup…). Đọc folder bằng char_import_files / char_import_read (view_image vài file), hiểu cấu trúc (lớp nào cố định, lớp nào khách chọn, lớp nào đi theo lớp khác, phiên bản, chữ khách gõ), rồi char_import_build với manifest để dựng bộ + sản phẩm. Không vẽ gì bằng AI.";
+    "Bộ import: người dùng vừa tải lên folder bộ clipart đã làm sẵn (file layer, phôi, mockup…) — định dạng chưa quen. Đọc folder bằng char_import_files / char_import_read (view_image vài file), hiểu cấu trúc (lớp nào cố định, lớp nào khách chọn, lớp nào đi theo lớp khác, phiên bản, chữ khách gõ). Phân tích và kết hợp TẤT CẢ những gì có trong folder để ra sản phẩm cuối giống file in / preview của folder: mảnh nhỏ hơn khung → char_import_locate trong file in từng phiên bản để lấy box; chữ → char_import_diff (bản có tên vs không tên); font riêng của folder → fontFile. Kiểm từng phiên bản bằng char_import_preview (so với file in) rồi mới char_import_build. Không dừng giữa chừng chỉ vì định dạng lạ; không vẽ gì bằng AI.";
   const res = await createAgentTask(s, { kind: "char", input: { char: { projectId: p.id, step: "chat", request, roles: [], tab: "brief", section: "" } } });
   if (!res.ok) {
     const err = ((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`;
@@ -439,7 +441,7 @@ async function startBuild(db: Db, userId: string, projectId: string, manifest: C
   if (!p) throw new Error("Không tìm thấy bộ nhân vật");
   const owner = p.user_id ?? userId;
   const manifestUrl = await ctUpload(`${importRoot(p, owner)}/_manifest.json`, Buffer.from(JSON.stringify(manifest)), "application/json");
-  const total = manifestFiles(manifest).length;
+  const total = manifestPlacements(manifest);
   await setImported(db, projectId, { status: "building", format, manifestUrl, summary, problems, done: 0, total, error: "", beat: new Date().toISOString() });
   void buildImport(db, owner, projectId, manifest).catch(async (e: Error) => {
     console.warn("[ct] import build", projectId, e.message);
@@ -539,13 +541,16 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     // ---- cliparts: one per file of a group (its first the gốc), made as their files come ----
     type Made = { sub: CtAsset; byUrl: Map<string, CtAsset> };
     let order = 0;
-    const fileOf = async (url: string): Promise<Buffer> => {
+    const fileOf = async (url: string, box?: CtCharImportBox): Promise<Buffer> => {
       const key = keyOf(root, url);
       let png = key ? await readKey(key) : null;
       const info = png ? readImageInfo(png) : null;
       if (!png || !info) {
         problems.push(`${url.split("/").slice(-3).join("/")}: không đọc được ảnh — để trống`);
         png = sheet;
+      } else if (box) {
+        // A small piece the source places itself: put where the manifest says, on a whole canvas.
+        png = await placePiece(png, box, W, H);
       } else if (info.width !== W || info.height !== H) {
         // Layer rules: never scaled to fit — the wrong file is named and left empty.
         problems.push(`${url.split("/").slice(-3).join("/")}: ${info.width}×${info.height}, khung là ${W}×${H} — để trống`);
@@ -563,10 +568,10 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
      * An option's picture with the files of the layers that follow it (2026-10-30: the hair under a hat is a sliver
      * around the hat — alone, the "Hat" choices showed four scraps of hair; with the hat drawn in they show the hat).
      */
-    const optionThumb = async (url: string, png: Buffer, linked: Array<{ url: string; above: boolean }>): Promise<string> => {
+    const optionThumb = async (url: string, png: Buffer, linked: Array<{ url: string; above: boolean; box?: CtCharImportBox }>): Promise<string> => {
       const parts = linked.filter((l) => l.url);
       if (!parts.length) return thumbOf(url.split("/").pop() ?? url, png);
-      const files = await Promise.all(parts.map(async (l) => ({ ...l, png: await fileOf(l.url) })));
+      const files = await Promise.all(parts.map(async (l) => ({ ...l, png: await fileOf(l.url, l.box) })));
       const under = files.filter((f) => !f.above && f.png !== sheet).map((f) => ({ input: f.png }));
       const over = files.filter((f) => f.above && f.png !== sheet).map((f) => ({ input: f.png }));
       const base = under.length ? await sharp(under[0].input).composite([...under.slice(1), { input: png }, ...over]).png().toBuffer() : await sharp(png).composite(over).png().toBuffer();
@@ -582,8 +587,18 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
       const gocId = crypto.randomUUID();
       const rows = await Promise.all(
         g.options.map(async (o, oi) => {
-          const png = await fileOf(o.url);
-          const thumb = withThumbs && png !== sheet ? await optionThumb(o.url, png, linked.map((l) => ({ url: l.layer.groups[gi]?.options[oi]?.url ?? "", above: l.above }))) : "";
+          const png = await fileOf(o.url, o.box ?? layer.box);
+          const thumb =
+            withThumbs && png !== sheet
+              ? await optionThumb(
+                  o.url,
+                  png,
+                  linked.map((l) => {
+                    const lo = l.layer.groups[gi]?.options[oi];
+                    return { url: lo?.url ?? "", above: l.above, box: lo?.box ?? l.layer.box };
+                  }),
+                )
+              : "";
           const role = oi === 0 ? "sub" : "variant";
           const path = ctLibraryPath(userId, folder.id, role, "image/png");
           const url = await ctUpload(path, png, "image/png");
@@ -647,6 +662,19 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     const items: CtRegionItem[] = [];
     const full = { type: "rect" as const, x: 0, y: 0, w: W, h: H, radius: 0 };
     const fonts = new Set(CT_FONTS.map((f) => f.family));
+    // The folder's own fonts: a copy kept with the set (the uploaded folder goes after the build).
+    const fontUrls = new Map<string, string>();
+    for (const file of new Set(m.versions.flatMap((v) => v.variants.flatMap((x) => x.texts.map((t) => t.fontFile ?? "")))).values()) {
+      if (!file) continue;
+      const key = keyOf(root, file);
+      const buf = key ? await readKey(key) : null;
+      const ext = (file.split(".").pop() ?? "ttf").toLowerCase();
+      if (!buf || !["ttf", "otf"].includes(ext)) {
+        problems.push(`${file.split("/").pop()}: không đọc được font (chỉ nhận .ttf / .otf) — chữ dùng Poppins`);
+        continue;
+      }
+      fontUrls.set(file, await ctUpload(`${charFolder(userId, p.id)}/font/${createHash("sha1").update(buf).digest("hex").slice(0, 16)}.${ext}`, buf, ext === "otf" ? "font/otf" : "font/ttf"));
+    }
     for (const [vi, v] of m.versions.entries()) {
       const mainId = mains[vi].id;
       const tag = m.versions.length > 1 ? ` [${v.name}]` : "";
@@ -663,7 +691,7 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
         const xtag = pick ? `${tag.slice(0, -1)} · ${x.name}]` : tag;
         const byKey = new Map<string, CtRegion>();
         const textsAbove = (key: string) => x.texts.filter((t) => t.above === key);
-        const addText = (t: CtCharImportText) => regions.push(textRegion(product.id, mainId, t, xtag, parent, fonts, problems));
+        const addText = (t: CtCharImportText) => regions.push(textRegion(product.id, mainId, t, xtag, parent, fonts, problems, t.fontFile ? fontUrls.get(t.fontFile) : undefined));
         for (const layer of x.layers) {
           const cfg = defaultRegionConfig("image");
           const choice = layer.kind === "choice";
@@ -985,11 +1013,12 @@ async function dropProduct(s: CtSession, productId: string): Promise<void> {
  * A name on the piece: its centre, max width and letter height from the source, turned `angle` degrees (a flat arc
  * turned — the way a name on a tilted hat brim is drawn, server/char/product.ts).
  */
-function textRegion(productId: string, mainId: string, t: CtCharImportText, tag: string, parent: CtRegion["config"]["parent"], fonts: Set<string>, problems: string[]): CtRegion {
+export function textRegion(productId: string, mainId: string, t: CtCharImportText, tag: string, parent: CtRegion["config"]["parent"], fonts: Set<string>, problems: string[], fontUrl?: string): CtRegion {
   const cfg = defaultRegionConfig("text");
-  const family = fonts.has(t.font) ? t.font : "Poppins";
+  // The folder's own font file: its family as named, loaded from our copy.
+  const family = fontUrl ? t.font : fonts.has(t.font) ? t.font : "Poppins";
   if (family !== t.font) problems.push(`Font "${t.font}" chưa có trong danh sách font — tạm dùng Poppins`);
-  const weights = CT_FONTS.find((f) => f.family === family)?.weights ?? [400];
+  const weights = fontUrl ? [t.weight || 400] : (CT_FONTS.find((f) => f.family === family)?.weights ?? [400]);
   const weight = weights.reduce((best, w) => (Math.abs(w - t.weight) < Math.abs(best - t.weight) ? w : best), weights[0]);
   // The source gives the letters' height; a font's size is about 1.4 × its capital height.
   const fontSize = Math.max(8, Math.round(t.size * 1.4 * 10) / 10);
@@ -1014,6 +1043,7 @@ function textRegion(productId: string, mainId: string, t: CtCharImportText, tag:
         maxChars: t.maxChars,
         fontFamily: family,
         fontWeight: weight,
+        ...(fontUrl ? { fontUrl } : {}),
         fontSize,
         color: t.color,
         align: "center",
@@ -1046,4 +1076,146 @@ export async function importRoute(req: Request, s: CtSession, id: string, sub: s
   if (sub === "deploy") return redeployImport(s, p);
   if (sub === "rethumb") return NextResponse.json(await rethumbImport(s, p, parseThumbFixes(((await req.json().catch(() => null)) as { fixes?: unknown } | null)?.fixes)));
   return jsonError("Not found", 404);
+}
+
+// ---------------------------------------------------------------- checks before a build (asked 2026-11-04)
+//
+// A folder of another layout is put together by @flexiprint from everything in it (pieces, the finished prints, the
+// previews, the fonts): it measures where pieces sit (char_import_locate), where the names are (char_import_diff),
+// then draws one version of its manifest beside the folder's own print (char_import_preview) — before the build,
+// which deletes the folder.
+
+export interface CtImportPreviewOptions {
+  /** Version by name or 1-based number (default the first); variant likewise. */
+  version: string;
+  variant: string;
+  /** Layer key → option name the customer would pick (default: each layer's default, else its first). */
+  choices: Record<string, string>;
+  /** A picture of the folder to set beside it (the finished print), and the canvas inside it (x, y, w, h). */
+  compare: string;
+  region: number[] | null;
+}
+
+/** The url of a file of the upload (by path or url). */
+export async function importFileUrl(p: CtCharProject, pathOrUrl: string): Promise<string | null> {
+  const files = await importFiles(p);
+  return files.find((f) => f.path === pathOrUrl || f.url === pathOrUrl)?.url ?? null;
+}
+
+/**
+ * One version of a manifest drawn as the build would put it together — the default (or chosen) option of every layer,
+ * the texts with their samples — on its canvas; beside the folder's own picture when `compare` is given, with how far
+ * apart they are (mean colour difference, 0–255, where either has ink).
+ */
+export async function previewImport(p: CtCharProject, raw: unknown, o: CtImportPreviewOptions): Promise<{ url: string; version: string; variant: string; problems: string[]; difference: number | null }> {
+  const files = await importFiles(p);
+  if (!files.length) throw new Error("The set has no uploaded files (the folder is gone after a build — upload it again)");
+  const { manifest: m, problems } = parseManifest(raw, files);
+  const W = m.canvas.width;
+  const H = m.canvas.height;
+  if (W < 8 || H < 8) throw new Error("manifest.canvas width / height missing");
+  const root = importRoot(p, "");
+  const pickOf = <T extends { name: string }>(list: T[], want: string): T | undefined => (want ? (list.find((x) => x.name === want) ?? list[Number(want) - 1]) : list[0]);
+  const v = pickOf(m.versions, o.version);
+  if (!v) throw new Error(`No version "${o.version}" (${m.versions.map((x) => x.name).join(", ")})`);
+  const x = pickOf(v.variants, o.variant);
+  if (!x) throw new Error(`No variant "${o.variant}" in version ${v.name}`);
+
+  const read = async (url: string, box?: CtCharImportBox): Promise<Buffer | null> => {
+    const key = keyOf(root, url);
+    const png = key ? await readKey(key) : null;
+    const info = png ? readImageInfo(png) : null;
+    if (!png || !info) {
+      problems.push(`${url.split("/").pop()}: không đọc được ảnh`);
+      return null;
+    }
+    if (box) return placePiece(png, box, W, H);
+    if (info.width !== W || info.height !== H) {
+      problems.push(`${url.split("/").pop()}: ${info.width}×${info.height}, khung ${W}×${H} — cần box (char_import_locate) hoặc file đủ khung`);
+      return null;
+    }
+    return png;
+  };
+
+  // Which group / option each layer shows: the pick, else the default, else the first; a linked layer the leader's.
+  const at = new Map<string, { gi: number; oi: number }>();
+  for (const l of x.layers) {
+    if (l.kind === "linked" && at.has(l.follows)) {
+      at.set(l.key, at.get(l.follows)!);
+      continue;
+    }
+    const want = o.choices[l.key] ?? o.choices[l.label];
+    let pos = { gi: 0, oi: 0 };
+    l.groups.forEach((g, gi) =>
+      g.options.forEach((op, oi) => {
+        if (want ? op.name === want || `${g.name} · ${op.name}` === want : op.default) pos = { gi, oi };
+      }),
+    );
+    if (want && !l.groups.some((g) => g.options.some((op) => op.name === want || `${g.name} · ${op.name}` === want))) problems.push(`${l.key}: không có lựa chọn "${want}"`);
+    at.set(l.key, pos);
+  }
+
+  const fonts = new Set(CT_FONTS.map((f) => f.family));
+  const overlays: OverlayOptions[] = [];
+  const textOf = async (t: CtCharImportText) => {
+    const r = textRegion("preview", "preview", t, "", undefined, fonts, problems, t.fontFile || undefined);
+    const font = await loadFont(r.config.text.fontFamily, r.config.text.fontWeight, r.config.text.fontUrl);
+    if (!font) {
+      problems.push(`${t.key}: không nạp được font ${t.font}`);
+      return;
+    }
+    const s = r.shape.type === "rect" ? r.shape : { x: 0, y: 0, w: W, h: H };
+    const svg = textSvg(font, t.sample || t.label, r.config.text, { x: s.x, y: s.y, w: s.w, h: s.h });
+    if (svg) overlays.push({ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${svg}</svg>`), left: 0, top: 0 });
+  };
+  const keys = new Set(x.layers.map((l) => l.key));
+  for (const l of x.layers) {
+    const pos = at.get(l.key)!;
+    const op = l.groups[pos.gi]?.options[pos.oi];
+    const png = op?.url ? await read(op.url, op.box ?? l.box) : null;
+    if (png) overlays.push({ input: png, left: 0, top: 0 });
+    for (const t of x.texts.filter((t) => t.above === l.key)) await textOf(t);
+  }
+  for (const t of x.texts.filter((t) => !t.above || !keys.has(t.above))) await textOf(t);
+  const drawn = await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(overlays).png().toBuffer();
+
+  let out = drawn;
+  let difference: number | null = null;
+  if (o.compare) {
+    const url = files.find((f) => f.path === o.compare || f.url === o.compare)?.url;
+    const key = url ? keyOf(root, url) : null;
+    const buf = key ? await readKey(key) : null;
+    if (!buf) problems.push(`compare: không có file "${o.compare}"`);
+    else {
+      const [rx, ry, rw, rh] = o.region && o.region.length === 4 ? o.region.map((n) => Math.round(n)) : [0, 0, 0, 0];
+      let ref = sharp(buf).ensureAlpha();
+      if (rw > 0 && rh > 0) ref = ref.extract({ left: rx, top: ry, width: rw, height: rh });
+      const refPng = await ref.resize(W, H, { fit: "fill" }).png().toBuffer();
+      // How far apart, on the same grey (a print saved without transparency has its own background — compared as is).
+      const flat = async (b: Buffer) => sharp(b).flatten({ background: "#e8e8e8" }).raw().toBuffer();
+      const [a, b] = await Promise.all([flat(drawn), flat(refPng)]);
+      let sum = 0;
+      let n = 0;
+      for (let i = 0; i < a.length; i += 3) {
+        const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2]));
+        const ink = Math.max(Math.abs(a[i] - 232), Math.abs(b[i] - 232), Math.abs(a[i + 1] - 232), Math.abs(b[i + 1] - 232)) > 12;
+        if (ink) {
+          sum += d;
+          n++;
+        }
+      }
+      difference = n ? Math.round((sum / n) * 10) / 10 : 0;
+      // Side by side on a light grey: what the build makes | the folder's own.
+      const gap = 16;
+      out = await sharp({ create: { width: W * 2 + gap, height: H, channels: 4, background: "#e8e8e8" } })
+        .composite([
+          { input: drawn, left: 0, top: 0 },
+          { input: refPng, left: W + gap, top: 0 },
+        ])
+        .png()
+        .toBuffer();
+    }
+  }
+  const saved = await ctUpload(`${root}/_check/${crypto.randomUUID()}.png`, out, "image/png");
+  return { url: saved, version: v.name, variant: x.name, problems: [...new Set(problems)], difference };
 }

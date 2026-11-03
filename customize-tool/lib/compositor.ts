@@ -270,7 +270,10 @@ export async function drawComposite(ctx: CanvasRenderingContext2D, input: Compos
   await Promise.all(
     regions
       .filter((r) => r.kind === "text")
-      .map((r) => document.fonts.load(`${r.config.text.fontWeight} 32px "${r.config.text.fontFamily}"`).catch(() => [])),
+      .map(async (r) => {
+        if (r.config.text.fontUrl) await addFontFile(r.config.text.fontFamily, r.config.text.fontUrl);
+        await document.fonts.load(`${r.config.text.fontWeight} 32px "${r.config.text.fontFamily}"`).catch(() => []);
+      }),
   );
 
   // A sub-option of the version ("Thêm option") swaps the picture only; layers and layout stay the version's.
@@ -537,4 +540,25 @@ export function mirrorSheet(half: HTMLCanvasElement): HTMLCanvasElement {
   ctx.drawImage(half, 0, 0);
   ctx.restore();
   return out;
+}
+
+const fontFiles = new Map<string, Promise<void>>();
+
+/** A font that is not a Google font (an imported set's own TTF, CtTextConfig.fontUrl): added to the page once under
+ * its family name, so drawing and measuring use it like any other font. */
+export function addFontFile(family: string, url: string): Promise<void> {
+  const key = `${family}|${url}`;
+  let hit = fontFiles.get(key);
+  if (!hit) {
+    hit = new FontFace(family, `url(${JSON.stringify(url)})`)
+      .load()
+      .then((face) => {
+        document.fonts.add(face);
+      })
+      .catch(() => {
+        fontFiles.delete(key);
+      });
+    fontFiles.set(key, hit);
+  }
+  return hit;
 }

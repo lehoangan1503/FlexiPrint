@@ -17,7 +17,8 @@ import { CT_CONFIG, CT_TABLES } from "../../config";
 import type { CtPrintTemplate } from "../../types/print";
 import { templateRow } from "../print-templates";
 import { addSetProduct } from "../char/set-users";
-import { buildFromAgent, importFiles, importText, parseThumbFixes, rethumbImport } from "../char/import";
+import { buildFromAgent, importFileUrl, importFiles, importText, parseThumbFixes, previewImport, rethumbImport } from "../char/import";
+import { kitPost } from "../char/kit";
 import { siteUrl } from "../site-url";
 import type { CtAgentTask, CtAgentTaskProgress, CtCharBrief, CtCharImage, CtCharPhotoStyle, CtCharProject, CtCharRefUse, CtCharTaskResult, CtProduct } from "../../types";
 import { REF_USES, REF_USE_INFO, masterPrompt, parseCharBrief, shownByDefault } from "../../lib/char-brief";
@@ -129,7 +130,7 @@ const SHORT_REQUESTS =
   "SHORT REQUESTS (asked 2026-10-28): editors write a few loose lines (\"4 style: siêu nhân, khăn len…; 4 khung giáng sinh; tên trên trái; slogan trắng dưới; khuôn tròn; phôi kính\") and attach a sample. Never ask them for the details — fill them in from the sample picture and these defaults: decorations follow the khuôn's outline (a round khuôn → a wreath / garland curving with the circle, a U hugging the bottom and sides of the subject — never straight bars or a square frame on a round piece), every option of an element the same size, place and curve; the photo zone in the middle, the frame over its cut-off bottom; a customer name in a script font where they said; a fixed slogan curved along the edge when the sample does so; everything clear of the hanging hole and inside the safe area; a khuôn of that shape already in list_print_templates is reused, never a duplicate; a material they name (glass_clear…) is the khuôn's blank for the mockups (a khuôn with no phôi of that material yet → char_make_blank before the mockups); the texts' colour readable on that material. Then, in your first summary, write back in short Vietnamese what you decided (each style, each element and its options, the texts, khuôn, phôi, which attached picture went where) so the editor reviews it there and corrects only what is off.";
 
 const IMPORTED =
-  "AN IMPORTED SET (set.brief.imported — someone's own finished files, a Teeinblue export…, asked 2026-10-29): no master, no 3a/3b/3c, nothing drawn by AI. A known layout is read by the server; any other folder is yours: char_import_files (the folder: paths, sizes, small text files) → char_import_read (a json / csv / md / txt) and view_image a few layer files (url) → understand it: the canvas size (every layer file is the WHOLE canvas, same size — layer rules), the versions the customer picks first (number of people…) and inside one the variants (layout), each layer bottom → top — static (always there), choice (the customer picks: groups = a first row like skin tone / hair colour, options = the files), linked (follows another layer's choice: a head with the body's skin + outfit, the hair under the hat — its groups and options mirror the leader's, same counts and order) — and the texts the customer types (centre, width, letter height px, angle, colour, Google font + weight). Names the customer reads (asked 2026-11-02 — “Eye color · Eye color · Gray”, “Skin tone · Skin 1 · Skin 1”): a layer with ONE group gives that group name \"\" (never the layer label again); a colour pick like skin tone is ONE group whose options are the tones (swatch on the layer's groups only when the groups ARE the colours of a first row, e.g. hair colour over hairstyles) — never one group per option. The description may be HTML (<p>, <h3>, <ul><li>, <strong>) or plain text with **bold** / \"- \" lists — it goes to the product page as such. Then char_import_build {task_id, manifest} (files by their path in the folder); set.brief.imported shows the build (status building → done, problems). Afterwards the set works like any other: render_artwork its product, make_product_mockups, char_add_product. Once built, the uploaded folder is deleted (only the library clipart stays): a layout change after the build = the folder uploaded again, then char_import_build. A finished build goes to Shopify by itself as a DRAFT (the folder's title + description, the price table named after the material, the mockups) — set.brief.imported.shopify has the preview link (draft theme) or why not; char_import_deploy sends it again (after a price table was added, or for a fresh preview link). Give the editor that link. Option pictures (thumbs: the file cropped close to its pixels) are made by the build; char_import_rethumb makes them again from the library clipart (no re-upload) and sets one by hand — an option with no file (the default eyes drawn in the skin) gets a crop of another layer's file (view_image it, give the box in canvas px). Never draw, trim or scale a file.";
+  "AN IMPORTED SET (set.brief.imported — someone's own finished files, a Teeinblue export…, asked 2026-10-29): no master, no 3a/3b/3c, nothing drawn by AI. A known layout is read by the server; any other folder is yours: char_import_files (the folder: paths, sizes, small text files) → char_import_read (a json / csv / md / txt) and view_image a few layer files (url) → understand it: the canvas size (usually the layer files that are the WHOLE canvas, same size — layer rules), the versions the customer picks first (number of people…) and inside one the variants (layout), each layer bottom → top — static (always there), choice (the customer picks: groups = a first row like skin tone / hair colour, options = the files), linked (follows another layer's choice: a head with the body's skin + outfit, the hair under the hat — its groups and options mirror the leader's, same counts and order) — and the texts the customer types (centre, width, letter height px, angle, colour, Google font + weight). Names the customer reads (asked 2026-11-02 — “Eye color · Eye color · Gray”, “Skin tone · Skin 1 · Skin 1”): a layer with ONE group gives that group name \"\" (never the layer label again); a colour pick like skin tone is ONE group whose options are the tones (swatch on the layer's groups only when the groups ARE the colours of a first row, e.g. hair colour over hairstyles) — never one group per option. The description may be HTML (<p>, <h3>, <ul><li>, <strong>) or plain text with **bold** / \"- \" lists — it goes to the product page as such. A FOLDER OF ANOTHER LAYOUT (asked 2026-11-04: “format lạ thì cũng phải phân tích và kết hợp tất cả những gì có trong folder để ra được sản phẩm cuối cùng”): use EVERYTHING in it — never stop because a file is not whole-canvas or a font is not Google. Its finished pictures (print files per version, with and without names; previews; mockups; a sample) are the answer key: the product must come out like them. Small pieces (characters, stickers smaller than the canvas): char_import_locate them in each version's print → each seat's box → the layer's box (every option of the layer = the same seat; option.box only when one option sits differently); the build places them on whole canvases. Stacking comes from the print: a piece hidden behind something (a character in a mug, in a window) is a layer UNDER that file. Texts: char_import_diff (print with names vs without) → each name's box; the folder's own font files go in the text's fontFile (its family as font). Title / description / material from its text files. Then char_import_preview each version against its print (compare + region) until it matches, and only then char_import_build. Only when something truly cannot be made from the folder, say so — with what you tried. Then char_import_build {task_id, manifest} (files by their path in the folder); set.brief.imported shows the build (status building → done, problems). Afterwards the set works like any other: render_artwork its product, make_product_mockups, char_add_product. Once built, the uploaded folder is deleted (only the library clipart stays): a layout change after the build = the folder uploaded again, then char_import_build. A finished build goes to Shopify by itself as a DRAFT (the folder's title + description, the price table named after the material, the mockups) — set.brief.imported.shopify has the preview link (draft theme) or why not; char_import_deploy sends it again (after a price table was added, or for a fresh preview link). Give the editor that link. Option pictures (thumbs: the file cropped close to its pixels) are made by the build; char_import_rethumb makes them again from the library clipart (no re-upload) and sets one by hand — an option with no file (the default eyes drawn in the skin) gets a crop of another layer's file (view_image it, give the box in canvas px). Never draw, trim or scale a file.";
 
 const CHAT_INSTRUCTIONS = [
   ...COMMON,
@@ -1359,9 +1360,108 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     },
   },
   {
+    name: "char_import_locate",
+    description:
+      "Bộ import: where small pieces (a character 328×418, a sticker — files smaller than the canvas) sit in a finished picture of the folder (the print file of one version, a preview). Each piece is searched at every scale; spots = its whole box (transparent margin included) {x, y, w, h} in the picture's px — after `region`: give the canvas inside a bigger sheet (a 1000×2000 print file whose lower half is the 1000×1000 print → region [0, 1000, 1000, 1000]) and the boxes come in canvas px, ready for the manifest's layer box. seen = share of the piece's pixels that match there, seen_top = the same over its upper half (a piece half hidden behind something in front still matches on top): a real spot has seen_top ≳ 0.55 and the same scale as its neighbours; lower ones are look-alikes. One piece can show in several seats (several spots). ≤ 16 pieces a call (~2 s each) — one version's print a call.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        reference: { type: "string", description: "Path (in the folder) of the finished picture to search." },
+        pieces: { type: "array", items: { type: "string" }, description: "Paths of the pieces to find." },
+        region: { type: "array", items: { type: "number" }, description: "[x, y, w, h] of the canvas inside the reference (optional)." },
+        scale_min: { type: "number", description: "Smallest scale tried (default 0.2)." },
+        scale_max: { type: "number", description: "Largest scale tried (default 1.6)." },
+      },
+      required: ["task_id", "reference", "pieces"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { project } = await openCharTask(ctx, args.task_id);
+      if (!project.brief.imported) throw new Error("This set is not an imported one");
+      const ref = await importFileUrl(project, str(args.reference));
+      if (!ref) throw new Error(`No file "${str(args.reference)}" in the folder`);
+      const paths = (Array.isArray(args.pieces) ? args.pieces : []).map((x) => str(x)).filter(Boolean).slice(0, 16);
+      if (!paths.length) throw new Error("pieces: give the paths of the pieces to find");
+      const urls: string[] = [];
+      for (const path of paths) {
+        const u = await importFileUrl(project, path);
+        if (!u) throw new Error(`No file "${path}" in the folder`);
+        urls.push(u);
+      }
+      const region = Array.isArray(args.region) && args.region.length === 4 ? args.region.map((n) => Math.round(Number(n) || 0)) : null;
+      const out = await kitPost<{ results: Array<{ piece: string; w: number; h: number; spots: unknown[] }> }>(
+        "/locate",
+        { ref, pieces: urls, region, scale_min: Number(args.scale_min) || 0.2, scale_max: Number(args.scale_max) || 1.6 },
+        58_000,
+      );
+      return json({ results: out.results.map((r, i) => ({ piece: paths[i], size: `${r.w}x${r.h}`, spots: r.spots })), next: "Put each seat's box on its layer (layer.box, or option.box), then char_import_preview against this picture." });
+    },
+  },
+  {
+    name: "char_import_diff",
+    description:
+      "Bộ import: where two pictures of the folder differ — the print WITH names against the same print WITHOUT names → one box per name / line of text {x, y, w, h, pixels} (in canvas px after `region`, like char_import_locate). Use it for the manifest's texts: cx = x + w/2, cy = y + h/2, width ≈ the room the name may take (wider than this sample), size = the letters' height (capital height ≈ h of a name without descenders). A box the size of the whole canvas is a guide frame drawn on one of them — skip it. A print saved on a grey background (no transparency) is compared on that grey.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        a: { type: "string", description: "Path of the first picture (with names)." },
+        b: { type: "string", description: "Path of the second picture (without names) — same size." },
+        region: { type: "array", items: { type: "number" }, description: "[x, y, w, h] of the canvas inside both (optional)." },
+        join: { type: "number", description: "Pixels closer than this are one box (default 12: the letters of a word)." },
+      },
+      required: ["task_id", "a", "b"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { project } = await openCharTask(ctx, args.task_id);
+      if (!project.brief.imported) throw new Error("This set is not an imported one");
+      const a = await importFileUrl(project, str(args.a));
+      const b = await importFileUrl(project, str(args.b));
+      if (!a || !b) throw new Error(`No file "${!a ? str(args.a) : str(args.b)}" in the folder`);
+      const region = Array.isArray(args.region) && args.region.length === 4 ? args.region.map((n) => Math.round(Number(n) || 0)) : null;
+      const out = await kitPost<{ boxes: unknown[] }>("/diff", { a, b, region, join: Math.round(Number(args.join) || 12) }, 58_000);
+      return json(out);
+    },
+  },
+  {
+    name: "char_import_preview",
+    description:
+      "Bộ import: one version of your manifest drawn the way char_import_build will put it together (each layer's default option — or `choices` {layer key: option name} — placed by its box, the texts with their samples in their fonts, the folder's own font files too), beside the folder's own picture when `compare` is given (left = yours, right = the folder's; region = the canvas inside it as for char_import_locate), and difference = mean colour difference where either has ink (0 = the same; a few units = resampling only). → url: view_image it. Check EVERY version this way before char_import_build (the build deletes the folder): pieces in the right seats and stacking (a character behind the mug's front = its layer under the background), names on their hats, nothing missing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        manifest: { type: "object", description: "The manifest, as for char_import_build." },
+        version: { type: "string", description: "Version name or number (default the first)." },
+        variant: { type: "string", description: "Variant name or number (default the first)." },
+        choices: { type: "object", description: "{layer key: option name} to show other picks (default the defaults)." },
+        compare: { type: "string", description: "Path of the folder's picture to set beside it (the version's print)." },
+        region: { type: "array", items: { type: "number" }, description: "[x, y, w, h] of the canvas inside `compare`." },
+      },
+      required: ["task_id", "manifest"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { project } = await openCharTask(ctx, args.task_id);
+      if (!project.brief.imported) throw new Error("This set is not an imported one");
+      const choices: Record<string, string> = {};
+      if (args.choices && typeof args.choices === "object" && !Array.isArray(args.choices)) for (const [k, v] of Object.entries(args.choices)) choices[k] = str(v);
+      const out = await previewImport(project, args.manifest, {
+        version: str(args.version),
+        variant: str(args.variant),
+        choices,
+        compare: str(args.compare),
+        region: Array.isArray(args.region) && args.region.length === 4 ? args.region.map((n) => Number(n) || 0) : null,
+      });
+      return json({ ...out, next: "view_image url; fix boxes / stacking / texts until it matches, then the next version." });
+    },
+  },
+  {
     name: "char_import_build",
     description:
-      'Bộ import: build the set and its product from a manifest of the uploaded folder (background, minutes for thousands of files — set.brief.imported shows done / total, problems; get_task again to see it). manifest = {name, canvas: {width, height} px, dpi, widthMm, material (CT material id or ""), cut: "alpha" (die-cut along the artwork) | "rect", title, description, versionLabel ("Number of grandkids"), variantLabel ("Layout", "" when a version has one variant), versions: [{name, variants: [{name, layers: [{key, label (customer-facing English), kind: "static" | "choice" | "linked", follows (linked: the leader\'s key), groupLabel ("Skin tone"), groups: [{name, swatch (#hex or ""), options: [{name, file (path in the folder), default (bool)}]}]}] bottom first, texts: [{key, label, sample, maxChars, font (Google family), weight, size (letter height px), cx, cy, width, angle (deg clockwise), color, above (layer key it lies on, "" = top)}]}]}], sample (path of the finished look), mockups: [paths]}. Every layer file must be the whole canvas size.',
+      'Bộ import: build the set and its product from a manifest of the uploaded folder (background, minutes for thousands of files — set.brief.imported shows done / total, problems; get_task again to see it). manifest = {name, canvas: {width, height} px, dpi, widthMm, material (CT material id or ""), cut: "alpha" (die-cut along the artwork) | "rect", title, description, versionLabel ("Number of grandkids"), variantLabel ("Layout", "" when a version has one variant), versions: [{name, variants: [{name, layers: [{key, label (customer-facing English), kind: "static" | "choice" | "linked", follows (linked: the leader\'s key), groupLabel ("Skin tone"), groups: [{name, swatch (#hex or ""), options: [{name, file (path in the folder), default (bool)}]}]}] bottom first, texts: [{key, label, sample, maxChars, font (Google family — or the family of fontFile), fontFile (path of a .ttf / .otf of the folder, optional), weight, size (letter height px), cx, cy, width, angle (deg clockwise), color, above (layer key it lies on, "" = top)}]}]}], sample (path of the finished look), mockups: [paths]}. A layer file is the whole canvas — or a smaller piece with a box {x, y, w, h, angle?} (canvas px, its whole picture incl. transparent margin, from char_import_locate) on the layer (all its options) or on one option: the build places it on a whole canvas. char_import_preview every version first.',
     inputSchema: { type: "object", properties: { ...TASK_ARG, manifest: { type: "object", description: "See the description." } }, required: ["task_id", "manifest"] },
     callers: ["agent"],
     run: async (ctx, args) => {

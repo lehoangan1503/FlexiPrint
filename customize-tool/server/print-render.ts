@@ -129,7 +129,7 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
     } else if (r.kind === "text") {
       const t = r.config.text;
       const raw = sel.kind === "text" && sel.text ? sel.text : t.defaultText;
-      const font = await loadFont(t.fontFamily, t.fontWeight);
+      const font = await loadFont(t.fontFamily, t.fontWeight, t.fontUrl);
       if (font) {
         // A zone drawn along a slanted band (or turned in the editor) writes along it, like lib/compositor.
         const band = textBand(r.shape);

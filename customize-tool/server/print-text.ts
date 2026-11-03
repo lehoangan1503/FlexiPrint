@@ -24,12 +24,25 @@ async function fetchFont(family: string, weight: number): Promise<opentype.Font 
   return buf ? opentype.parse(buf) : null;
 }
 
-/** The zone's font (the nearest weight Google has), or null when it cannot be read. */
-export function loadFont(family: string, weight: number): Promise<opentype.Font | null> {
-  const key = `${family}|${weight}`;
+/** A font file of ours (CtTextConfig.fontUrl — an imported set's own TTF / OTF). */
+async function fetchFontFile(url: string): Promise<opentype.Font | null> {
+  const buf = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+    .then((r) => (r.ok ? r.arrayBuffer() : null))
+    .catch(() => null);
+  if (!buf) return null;
+  try {
+    return opentype.parse(buf);
+  } catch {
+    return null;
+  }
+}
+
+/** The zone's font (its own file when it has one, else the nearest weight Google has), or null when it cannot be read. */
+export function loadFont(family: string, weight: number, url?: string): Promise<opentype.Font | null> {
+  const key = url ? `file|${url}` : `${family}|${weight}`;
   let hit = fonts.get(key);
   if (!hit) {
-    hit = fetchFont(family, weight).then((f) => f ?? (weight !== 400 ? fetchFont(family, 400) : null));
+    hit = url ? fetchFontFile(url) : fetchFont(family, weight).then((f) => f ?? (weight !== 400 ? fetchFont(family, 400) : null));
     fonts.set(key, hit);
     // A failed load is tried again next time.
     void hit.then((f) => {

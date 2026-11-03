@@ -119,6 +119,9 @@ export interface CtTextConfig {
   maxChars: number;
   fontFamily: string;
   fontWeight: number;
+  /** A font file (TTF / OTF on our storage) for a family that is not a Google font — an imported set's own font. The
+   * editor, the store and the print load it under `fontFamily`. */
+  fontUrl?: string;
   /** Font size in main-asset px; auto-shrinks to fit the region width. */
   fontSize: number;
   color: string;

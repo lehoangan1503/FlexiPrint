@@ -15,7 +15,7 @@
  * leader's groups mirrored, never a second customer choice.
  */
 
-import type { CtCharImportFile, CtCharImportGroup, CtCharImportLayer, CtCharImportManifest, CtCharImportText, CtCharImportVariant, CtCharImportVersion } from "../types";
+import type { CtCharImportBox, CtCharImportFile, CtCharImportGroup, CtCharImportLayer, CtCharImportManifest, CtCharImportText, CtCharImportVariant, CtCharImportVersion } from "../types";
 import { CT_MATERIALS } from "./materials";
 
 type Obj = Record<string, unknown>;
@@ -491,6 +491,17 @@ export function parseManifest(raw: unknown, files: CtCharImportFile[]): { manife
     return u;
   };
   const c = rec(o.canvas);
+  // A small piece's place: {x, y, w, h, angle?} in canvas px (none when absent or not a real box).
+  const boxOf = (v: unknown, where: string): CtCharImportBox | null => {
+    if (v === undefined || v === null) return null;
+    const b = rec(v);
+    const box = { x: num(b.x), y: num(b.y), w: num(b.w ?? b.width), h: num(b.h ?? b.height), angle: num(b.angle ?? b.rotation) };
+    if (box.w < 1 || box.h < 1) {
+      problems.push(`${where}: hộp vị trí phải có w, h > 0`);
+      return null;
+    }
+    return box;
+  };
   const versions: CtCharImportVersion[] = arr(o.versions).map((rv, vi) => {
     const v = rec(rv);
     return {
@@ -510,6 +521,7 @@ export function parseManifest(raw: unknown, files: CtCharImportFile[]): { manife
               follows: kind === "linked" ? txt(l.follows, 120) : "",
               groupLabel: txt(l.groupLabel, 120),
               ...(l.thumbWithFollowers === true ? { thumbWithFollowers: true } : {}),
+              ...(boxOf(l.box, `${key}: box`) ? { box: boxOf(l.box, `${key}: box`)! } : {}),
               groups: arr(l.groups).map((rg) => {
                 const g = rec(rg);
                 return {
@@ -517,7 +529,8 @@ export function parseManifest(raw: unknown, files: CtCharImportFile[]): { manife
                   swatch: /^#[0-9a-f]{6}$/i.test(txt(g.swatch)) ? txt(g.swatch).toLowerCase() : "",
                   options: arr(g.options).map((ro) => {
                     const op = rec(ro);
-                    return { name: txt(op.name, 120), url: url(op.file ?? op.url, `${key}`), default: op.default === true };
+                    const box = boxOf(op.box, `${key} / ${txt(op.name, 120)}: box`);
+                    return { name: txt(op.name, 120), url: url(op.file ?? op.url, `${key}`), default: op.default === true, ...(box ? { box } : {}) };
                   }),
                 };
               }),
@@ -525,8 +538,11 @@ export function parseManifest(raw: unknown, files: CtCharImportFile[]): { manife
           }),
           texts: arr(x.texts).map((rt, ti) => {
             const t = rec(rt);
-            const f = fontOf(txt(t.font, 120) || "Poppins");
+            const fontFile = t.fontFile ? url(t.fontFile, `${txt(t.key, 60) || `text-${ti + 1}`}: fontFile`) : "";
+            // The folder's own font keeps the family as written ("Lastik Bold" is a family of its own, not Lastik 700).
+            const f = fontFile ? { family: txt(t.font, 120) || base(txt(t.fontFile, 400)).replace(/\.[^.]+$/, ""), weight: 400 } : fontOf(txt(t.font, 120) || "Poppins");
             return {
+              ...(fontFile ? { fontFile } : {}),
               key: txt(t.key, 60) || `text-${ti + 1}`,
               label: txt(t.label, 120) || `Name ${ti + 1}`,
               sample: txt(t.sample, 120),
@@ -580,6 +596,11 @@ export function parseManifest(raw: unknown, files: CtCharImportFile[]): { manife
 }
 
 /** Every layer file of a manifest (url) — what the build fetches, checks and stores. */
+/** Option files a build stores (a piece placed in several seats counts once per seat). */
+export function manifestPlacements(m: CtCharImportManifest): number {
+  return m.versions.reduce((n, v) => n + v.variants.reduce((k, x) => k + x.layers.reduce((j, l) => j + l.groups.reduce((i, g) => i + g.options.length, 0), 0), 0), 0);
+}
+
 export function manifestFiles(m: CtCharImportManifest): string[] {
   return [...new Set(m.versions.flatMap((v) => v.variants.flatMap((x) => x.layers.flatMap((l) => l.groups.flatMap((g) => g.options.map((o) => o.url))))).filter(Boolean))];
 }

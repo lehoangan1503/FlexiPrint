@@ -604,3 +604,59 @@ def _cut(body: CutBody, out_dir: str) -> dict:
 async def start_cut(body: CutBody, authorization: str | None = Header(default=None)) -> dict:
     auth(authorization)
     return _start(_cut, body)
+
+
+# ---- import of hand-off folders (2026-11-04): where small pieces sit in the finished print, where the names are ----
+
+class LocateBody(BaseModel):
+    ref: str
+    pieces: list[str]
+    # The print inside a bigger sheet (x, y, w, h): positions come back in its coordinates.
+    region: list[int] | None = None
+    scale_min: float = 0.2
+    scale_max: float = 1.6
+    max_spots: int = 12
+    min_seen: float = 0.3
+
+
+def _rgba_cv(img: Image.Image) -> np.ndarray:
+    return cv2.cvtColor(np.asarray(img.convert("RGBA")), cv2.COLOR_RGBA2BGRA)
+
+
+@app.post("/locate")
+def locate_pieces(body: LocateBody, authorization: str | None = Header(default=None)) -> dict:
+    from locate import locate
+
+    auth(authorization)
+    region = tuple(body.region) if body.region and len(body.region) == 4 else None
+    with _quick:
+        ref = _rgba_cv(fetch(body.ref))
+        out = []
+        for url in body.pieces[:16]:
+            piece = _rgba_cv(fetch(url))
+            spots = locate(ref, piece, region, body.scale_min, body.scale_max, body.max_spots, body.min_seen)
+            out.append({"piece": url, "w": piece.shape[1], "h": piece.shape[0], "spots": [s.__dict__ for s in spots]})
+    return {"results": out}
+
+
+class DiffBody(BaseModel):
+    a: str
+    b: str
+    region: list[int] | None = None
+    tol: int = 40
+    join: int = 12
+    min_pixels: int = 30
+
+
+@app.post("/diff")
+def diff_pictures(body: DiffBody, authorization: str | None = Header(default=None)) -> dict:
+    from locate import diff_boxes
+
+    auth(authorization)
+    region = tuple(body.region) if body.region and len(body.region) == 4 else None
+    with _quick:
+        try:
+            boxes = diff_boxes(_rgba_cv(fetch(body.a)), _rgba_cv(fetch(body.b)), region, body.tol, body.join, body.min_pixels)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    return {"boxes": [d.__dict__ for d in boxes[:200]]}

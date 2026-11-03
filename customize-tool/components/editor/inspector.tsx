@@ -612,7 +612,15 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
             </>
           )}
           <CtField label="Font">
-            <CtSelect value={cfg.text.fontFamily} onChange={(fontFamily) => setText({ fontFamily })} options={CT_FONTS.map((f) => ({ value: f.family, label: f.label }))} />
+            <CtSelect
+              value={cfg.text.fontFamily}
+              onChange={(fontFamily) => setText(cfg.text.fontUrl && fontFamily === cfg.text.fontFamily ? { fontFamily } : { fontFamily, fontUrl: undefined })}
+              options={[
+                // An imported set's own font file (not a Google font): listed while the zone uses it.
+                ...(cfg.text.fontUrl ? [{ value: cfg.text.fontFamily, label: `${cfg.text.fontFamily} (font của bộ)` }] : []),
+                ...CT_FONTS.map((f) => ({ value: f.family, label: f.label })),
+              ]}
+            />
           </CtField>
           <div className="grid grid-cols-2 gap-2">
             <CtField label="Độ đậm">

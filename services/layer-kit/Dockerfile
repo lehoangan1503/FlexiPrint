@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN mkdir -p weights && curl -fsSL -o weights/realesr-general-x4v3.pth \
       https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth \
     && echo "8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292  weights/realesr-general-x4v3.pth" | sha256sum -c -
-COPY app.py layers.py upscale.py ./
+COPY app.py layers.py upscale.py locate.py ./
 EXPOSE 7005
 HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7005/health')"
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7005", "--workers", "1"]

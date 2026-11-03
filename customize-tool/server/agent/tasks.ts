@@ -508,8 +508,15 @@ export async function setAgentChats(s: CtSession, projectIds: string[]): Promise
         sessionId = str(job?.sessionId);
         if (sessionId) await s.supabase.from(CT_TABLES.agentTasks).update({ agent_session_id: sessionId }).eq("id", t.id);
       }
+      // Still working: what the agent says it is on now (its job's last words in agent_ide).
+      let now = "";
+      if (cfg && t.agent_job_id && (t.status === "pending" || t.status === "running")) {
+        const job = await kernel<KernelJob>(cfg, `/jobs/${encodeURIComponent(t.agent_job_id)}`, { timeoutMs: 5_000 }).catch(() => null);
+        now = clip(str(job?.text).trim().split("\n").filter(Boolean).pop() ?? "", 300);
+      }
       const result = record(t.result);
       out.set(t.projectId, {
+        now,
         taskId: t.id,
         status: t.status,
         url: sessionId ? `${base}/s/${encodeURIComponent(sessionId)}` : "",

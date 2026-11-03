@@ -1366,7 +1366,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   {
     name: "char_import_locate",
     description:
-      "Bộ import: where small pieces (a character 328×418, a sticker — files smaller than the canvas) sit in a finished picture of the folder (the print file of one version, a preview). Each piece is searched at every scale; spots = its whole box (transparent margin included) {x, y, w, h} in the picture's px — after `region`: give the canvas inside a bigger sheet (a 1000×2000 print file whose lower half is the 1000×1000 print → region [0, 1000, 1000, 1000]) and the boxes come in canvas px, ready for the manifest's layer box. seen = share of the piece's pixels that match there, seen_top = the same over its upper half (a piece half hidden behind something in front still matches on top): a real spot has seen_top ≳ 0.55 and the same scale as its neighbours; lower ones are look-alikes. One piece can show in several seats (several spots). ≤ 16 pieces a call (~2 s each) — one version's print a call.",
+      "Bộ import: where small pieces (a character 328×418, a sticker — files smaller than the canvas) sit in a finished picture of the folder (the print file of one version, a preview). Each piece is searched at every scale; spots = its whole box (transparent margin included) {x, y, w, h} in the picture's px — after `region`: give the canvas inside a bigger sheet (a 1000×2000 print file whose lower half is the 1000×1000 print → region [0, 1000, 1000, 1000]) and the boxes come in canvas px, ready for the manifest's layer box. seen = share of the piece's pixels that match there, seen_top = the same over its upper half (a piece half hidden behind something in front still matches on top): a real spot has seen_top ≳ 0.55 and the same scale as its neighbours; lower ones are look-alikes. One piece can show in several seats (several spots). ≤ 10 pieces a call (searched side by side) — one version's print a call; narrow scale_min / scale_max once you know the scale.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1385,7 +1385,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       if (!project.brief.imported) throw new Error("This set is not an imported one");
       const ref = await importFileUrl(project, str(args.reference));
       if (!ref) throw new Error(`No file "${str(args.reference)}" in the folder`);
-      const paths = (Array.isArray(args.pieces) ? args.pieces : []).map((x) => str(x)).filter(Boolean).slice(0, 16);
+      const paths = (Array.isArray(args.pieces) ? args.pieces : []).map((x) => str(x)).filter(Boolean).slice(0, 10);
       if (!paths.length) throw new Error("pieces: give the paths of the pieces to find");
       const urls: string[] = [];
       for (const path of paths) {

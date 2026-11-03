@@ -629,13 +629,19 @@ def locate_pieces(body: LocateBody, authorization: str | None = Header(default=N
 
     auth(authorization)
     region = tuple(body.region) if body.region and len(body.region) == 4 else None
+    from concurrent.futures import ThreadPoolExecutor
+
     with _quick:
         ref = _rgba_cv(fetch(body.ref))
-        out = []
-        for url in body.pieces[:16]:
+
+        def one(url: str) -> dict:
             piece = _rgba_cv(fetch(url))
             spots = locate(ref, piece, region, body.scale_min, body.scale_max, body.max_spots, body.min_seen)
-            out.append({"piece": url, "w": piece.shape[1], "h": piece.shape[0], "spots": [s.__dict__ for s in spots]})
+            return {"piece": url, "w": piece.shape[1], "h": piece.shape[0], "spots": [s.__dict__ for s in spots]}
+
+        # OpenCV lets go of the GIL: the pieces are searched side by side (8 in ~1 piece's time on 8 cores).
+        with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as pool:
+            out = list(pool.map(one, body.pieces[:10]))
     return {"results": out}
 
 

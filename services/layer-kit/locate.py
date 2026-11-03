@@ -168,8 +168,9 @@ def diff_boxes(a_rgba: np.ndarray, b_rgba: np.ndarray, region: tuple[int, int, i
         b_rgba = b_rgba[ry : ry + rh, rx : rx + rw]
     if a_rgba.shape[:2] != b_rgba.shape[:2]:
         raise ValueError(f"sizes differ: {a_rgba.shape[1]}x{a_rgba.shape[0]} vs {b_rgba.shape[1]}x{b_rgba.shape[0]}")
-    a_flat = a_rgba.ndim == 3 and a_rgba.shape[2] == 3
-    b_flat = b_rgba.ndim == 3 and b_rgba.shape[2] == 3
+    # No transparency at all (saved as RGB, or read as RGBA with alpha 255 everywhere) = flattened on a colour.
+    a_flat = a_rgba.ndim == 3 and (a_rgba.shape[2] == 3 or int(a_rgba[:, :, 3].min()) == 255)
+    b_flat = b_rgba.ndim == 3 and (b_rgba.shape[2] == 3 or int(b_rgba[:, :, 3].min()) == 255)
     a, aa = _bgr_alpha(a_rgba)
     b, ba = _bgr_alpha(b_rgba)
     a = a.astype(np.float32)

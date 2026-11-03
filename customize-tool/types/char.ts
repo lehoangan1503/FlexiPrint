@@ -499,6 +499,8 @@ export interface CtSetAgentChat {
   url: string;
   /** What the agent said when it finished (why it stopped, what it needs). */
   summary: string;
+  /** While it works: what it says it is on now. */
+  now: string;
 }
 
 /** One uploaded file of an import: its path in the folder, where it is. */

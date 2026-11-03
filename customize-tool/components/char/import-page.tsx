@@ -335,6 +335,7 @@ function RowCard({ row, onResume, onRemove }: { row: CtCharImportRow; onResume: 
       </div>
       <Steps at={at} failed={bad} done={stage === "done"} />
       <div className="text-xs">{STAGE_TEXT[stage]}</div>
+      {stage === "agent" && chat?.now && <div className="text-xs text-muted-foreground">↳ {chat.now}</div>}
       {(stage === "building" || stage === "unpacking") && imp.total > 0 && (
         <div className="space-y-1">
           <Bar value={(imp.done / imp.total) * 100} />

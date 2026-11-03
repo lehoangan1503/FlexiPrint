@@ -40,7 +40,7 @@ import { defaultCharBrief, parseCharBrief } from "../../lib/char-brief";
 import { importKeep, manifestFiles, parseManifest, readTeeinblue, type CtImportTexts } from "../../lib/char-import";
 import { defaultProductConfig, defaultRegionConfig } from "../../lib/design";
 import { applyMaterialPreset, isMaterialId } from "../../lib/materials";
-import { createAgentTask } from "../agent/tasks";
+import { createAgentTask, setAgentChats } from "../agent/tasks";
 import { findProductFolder, productFolder } from "../artworks";
 import * as h from "../handlers";
 import { readImageInfo } from "../image-size";
@@ -142,6 +142,11 @@ export async function listImports(s: CtSession): Promise<NextResponse> {
   for (const r of data ?? []) {
     const imported = parseCharBrief(r.brief).imported;
     if (imported) imports.push({ id: r.id, name: r.name, created_at: r.created_at, updated_at: r.updated_at, product_ids: r.product_ids ?? [], imported });
+  }
+  const chats = await setAgentChats(s, imports.map((r) => r.id));
+  for (const r of imports) {
+    const chat = chats.get(r.id);
+    if (chat) r.agent = chat;
   }
   return NextResponse.json({ imports });
 }

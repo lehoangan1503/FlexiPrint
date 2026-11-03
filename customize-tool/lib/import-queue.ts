@@ -120,7 +120,7 @@ export function useImports(): State {
 
 // ---------------------------------------------------------------- what an import is doing
 
-export type CtImportStage = "uploading" | "interrupted" | "unpacking" | "reading" | "agent" | "building" | "stale" | "deploying" | "done" | "deploy-failed" | "failed";
+export type CtImportStage = "uploading" | "interrupted" | "unpacking" | "reading" | "agent" | "agent-stopped" | "building" | "stale" | "deploying" | "done" | "deploy-failed" | "failed";
 
 /** The stage of a server row, in words a person reads. */
 export function importStage(row: CtCharImportRow, uploadingHere: boolean): CtImportStage {
@@ -129,7 +129,8 @@ export function importStage(row: CtCharImportRow, uploadingHere: boolean): CtImp
   // Unpacking cut off (the app restarted): the zip is sent again — chunks still on the server are not.
   if (imp.status === "unpacking") return !imp.beat || Date.now() - Date.parse(imp.beat) > STALE_MS ? "interrupted" : "unpacking";
   if (imp.status === "analyzing") return "reading";
-  if (imp.status === "agent") return "agent";
+  // The agent's task ended without char_import_build (it stopped to ask, or needs a tool): not "working" any more.
+  if (imp.status === "agent") return row.agent && (row.agent.status === "done" || row.agent.status === "failed" || row.agent.status === "cancelled" || row.agent.status === "waiting") ? "agent-stopped" : "agent";
   if (imp.status === "building") return !imp.beat || Date.now() - Date.parse(imp.beat) > STALE_MS ? "stale" : "building";
   if (imp.status === "failed") return "failed";
   if (imp.shopify?.status === "deploying") return "deploying";
@@ -143,6 +144,7 @@ export const STAGE_TEXT: Record<CtImportStage, string> = {
   unpacking: "Đang giải nén file zip trên server",
   reading: "Đang đọc folder",
   agent: "@flexiprint đang phân tích folder (định dạng lạ)",
+  "agent-stopped": "@flexiprint đã dừng, chưa dựng bộ — đọc lời nhắn bên dưới hoặc mở chat",
   building: "Đang dựng bộ + sản phẩm",
   stale: "Lần dựng bị ngắt (app khởi động lại) — mở bộ, bấm Dựng lại",
   deploying: "Đang đưa lên Shopify (nháp)",
@@ -491,6 +493,7 @@ export async function refreshImports(): Promise<void> {
     if (stage === "done") toast({ kind: "success", title: `Import xong “${r.name}”`, body: "Bộ + sản phẩm đã dựng và lên Shopify (nháp). Mở để kiểm tra.", href });
     else if (stage === "deploy-failed") toast({ kind: "error", title: `“${r.name}” dựng xong, Shopify lỗi`, body: r.imported.shopify?.error || "Mở bộ để đưa lên Shopify lại.", href });
     else if (stage === "failed") toast({ kind: "error", title: `Import lỗi “${r.name}”`, body: r.imported.error || "Mở bộ để xem.", href });
+    else if (stage === "agent-stopped") toast({ kind: "error", title: `@flexiprint dừng ở “${r.name}”`, body: "Chưa dựng bộ — mở để xem agent cần gì.", href: "/v2/import" });
     else if (stage === "stale") toast({ kind: "error", title: `“${r.name}” bị ngắt khi đang dựng`, body: "Mở bộ, bấm Dựng lại.", href });
   }
   set({ rows, fresh });

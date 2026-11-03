@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, FileArchive, FolderUp, Loader2, RefreshCw, Trash2, Upload, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, FileArchive, FolderUp, Loader2, MessageSquare, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import type { CtCharImportRow } from "../../types";
 import { charApi, ctApi } from "../../lib/api-client";
 import {
@@ -315,12 +315,13 @@ function JobCard({ job, onCancel }: { job: CtImportJob; onCancel: () => void }) 
   );
 }
 
-const STEP_OF: Record<CtImportStage, number> = { uploading: 0, interrupted: 0, unpacking: 1, reading: 1, agent: 1, building: 2, stale: 2, deploying: 3, "deploy-failed": 3, done: 4, failed: 1 };
+const STEP_OF: Record<CtImportStage, number> = { uploading: 0, interrupted: 0, unpacking: 1, reading: 1, agent: 1, "agent-stopped": 1, building: 2, stale: 2, deploying: 3, "deploy-failed": 3, done: 4, failed: 1 };
 
 function RowCard({ row, onResume, onRemove }: { row: CtCharImportRow; onResume: (zip: boolean) => void; onRemove: () => void }) {
   const imp = row.imported;
   const stage = importStage(row, uploadingHere(row.id));
-  const bad = stage === "failed" || stage === "stale" || stage === "deploy-failed" || stage === "interrupted";
+  const bad = stage === "failed" || stage === "stale" || stage === "deploy-failed" || stage === "interrupted" || stage === "agent-stopped";
+  const chat = row.agent;
   const at = stage === "failed" && imp.total > 0 ? 2 : STEP_OF[stage];
   const shop = imp.shopify;
   return (
@@ -343,11 +344,28 @@ function RowCard({ row, onResume, onRemove }: { row: CtCharImportRow; onResume: 
         </div>
       )}
       {imp.error && <p className="whitespace-pre-wrap rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">{imp.error}</p>}
+      {stage === "agent-stopped" && chat?.summary && (
+        <details className="rounded-md border bg-background/60 p-2 text-xs">
+          <summary className="cursor-pointer select-none font-medium">Lời nhắn của @flexiprint</summary>
+          <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{chat.summary}</p>
+        </details>
+      )}
       {shop?.status === "failed" && shop.error && <p className="whitespace-pre-wrap text-xs text-destructive">{shop.error}</p>}
       <div className="flex flex-wrap items-center gap-2 pt-1">
         <Link href={`/v2/${row.id}`} className="inline-flex items-center gap-1 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-accent">
           Mở bộ
         </Link>
+        {chat?.url && (
+          <a
+            href={chat.url}
+            target="_blank"
+            rel="noreferrer"
+            title="Mở phiên chat của @flexiprint trên agent_ide (cửa sổ mới)"
+            className="inline-flex items-center gap-1 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-accent"
+          >
+            <MessageSquare className="h-3.5 w-3.5" /> Chat @flexiprint
+          </a>
+        )}
         {shop?.status === "done" && shop.previewUrl && (
           <a href={imp.productId ? ctApi.shopifyOpenUrl(imp.productId) : shop.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">
             <ExternalLink className="h-3.5 w-3.5" /> Xem thử trên store

@@ -3,6 +3,8 @@
  * Rules: flexiprint://guide/layer-rules (server/mcp/layer-rules.ts).
  */
 
+import type { CtAgentTaskStatus } from "./index";
+
 /** What the print goes on, and how its edge is made. */
 export type CtCharCut = "rect" | "alpha" | "frame";
 
@@ -486,6 +488,17 @@ export interface CtCharImportRow {
   updated_at: string;
   product_ids: string[];
   imported: CtCharImported;
+  /** The set's latest @flexiprint task and its agent_ide chat (none when no agent worked on it). */
+  agent?: CtSetAgentChat;
+}
+
+/** A set's latest @flexiprint task: its agent_ide chat link (empty while the session is not known yet). */
+export interface CtSetAgentChat {
+  taskId: string;
+  status: CtAgentTaskStatus;
+  url: string;
+  /** What the agent said when it finished (why it stopped, what it needs). */
+  summary: string;
 }
 
 /** One uploaded file of an import: its path in the folder, where it is. */

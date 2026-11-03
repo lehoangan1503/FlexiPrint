@@ -24,7 +24,7 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
 import { defaultCategoryRules } from "../../lib/library";
-import type { CtAgentQuestion, CtAgentStatus, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress, CtCharChatAttachment, CtCharChatTab, CtCharTaskStep } from "../../types";
+import type { CtAgentQuestion, CtAgentStatus, CtSetAgentChat, CtAgentTask, CtAgentTaskInput, CtAgentTaskKind, CtAgentTaskProgress, CtCharChatAttachment, CtCharChatTab, CtCharTaskStep } from "../../types";
 import { isOwnUploadUrl } from "../library";
 import type { CtSession } from "../supabase";
 import { clip, jsonError, record, str } from "../ai/llm";
@@ -479,4 +479,43 @@ export async function answerAgentTask(s: CtSession, id: string, body: unknown): 
   };
   await s.supabase.from(CT_TABLES.agentTasks).update(patch).eq("id", id);
   return NextResponse.json({ ...task, ...patch });
+}
+
+/**
+ * The agent_ide chat of each set's latest @flexiprint task (asked 2026-11-04: a button on every import to watch what
+ * the agent is doing). `${AGENT_IDE_URL}/s/<sessionId>` is agent_ide's own session route. A task that ended before
+ * its session was known gets it from its job once (stored, like getAgentTask does).
+ */
+export async function setAgentChats(s: CtSession, projectIds: string[]): Promise<Map<string, CtSetAgentChat>> {
+  const out = new Map<string, CtSetAgentChat>();
+  const base = (process.env.AGENT_IDE_URL ?? "").trim().replace(/\/$/, "");
+  if (!base || !projectIds.length) return out;
+  const cfg = kernelConfig();
+  for (let i = 0; i < projectIds.length; i += 60) {
+    const ids = projectIds.slice(i, i + 60);
+    const { data } = await s.supabase
+      .from(CT_TABLES.agentTasks)
+      .select("id, status, agent_job_id, agent_session_id, result, input->char->>projectId")
+      .eq("kind", "char")
+      .in("input->char->>projectId", ids)
+      .order("created_at", { ascending: false })
+      .returns<Array<Pick<CtAgentTask, "id" | "status" | "agent_job_id" | "agent_session_id" | "result"> & { projectId: string }>>();
+    for (const t of data ?? []) {
+      if (out.has(t.projectId)) continue;
+      let sessionId = t.agent_session_id;
+      if (!sessionId && cfg && t.agent_job_id) {
+        const job = await kernel<KernelJob>(cfg, `/jobs/${encodeURIComponent(t.agent_job_id)}`, { timeoutMs: 5_000 }).catch(() => null);
+        sessionId = str(job?.sessionId);
+        if (sessionId) await s.supabase.from(CT_TABLES.agentTasks).update({ agent_session_id: sessionId }).eq("id", t.id);
+      }
+      const result = record(t.result);
+      out.set(t.projectId, {
+        taskId: t.id,
+        status: t.status,
+        url: sessionId ? `${base}/s/${encodeURIComponent(sessionId)}` : "",
+        summary: clip(str(result.summary), 1200),
+      });
+    }
+  }
+  return out;
 }

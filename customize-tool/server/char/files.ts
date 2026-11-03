@@ -48,10 +48,25 @@ export async function saveCharRaw(userId: string, projectId: string, folder: str
   return { url: await ctUpload(path, data, mime), path };
 }
 
+/**
+ * A picture by URL, fetched again (up to 4 times) when the transfer breaks: 2026-11-04 flexi2 → its own files is
+ * lossy, one body cut off mid-way ("terminated") failed a whole set's product build after the files were cut.
+ * A 4xx answer is final; a broken connection, a timeout or a 5xx is tried again.
+ */
 export async function fetchImage(url: string): Promise<Buffer> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
-  if (!res.ok) throw new Error(`Không tải được ảnh (${res.status})`);
-  return Buffer.from(await res.arrayBuffer());
+  for (let attempt = 1; ; attempt++) {
+    let status = 0;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+      status = res.status;
+      if (!res.ok) throw new Error(`Không tải được ảnh (${res.status})`);
+      return Buffer.from(await res.arrayBuffer());
+    } catch (e) {
+      if (attempt >= 4 || (status >= 400 && status < 500)) throw e;
+      console.warn("[ct] fetch image again", url.split("/").pop(), e instanceof Error ? e.message : String(e));
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
+    }
+  }
 }
 
 /** A picture sent with a sticky-chat request (screenshot / file): `<folder>/chat/<uuid>.png`, no image row — the

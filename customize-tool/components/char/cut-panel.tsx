@@ -188,7 +188,8 @@ export function CustomSection(ctx: CharCtx & { onEdit: (e: CutEdit) => void; rea
         </div>
         {!ctx.ready && <p className="mt-2 text-xs text-muted-foreground">{ctx.missing}</p>}
         {plan?.status === "failed" && <p className="mt-2 rounded bg-destructive/10 p-2 text-xs text-destructive">{plan.error}</p>}
-        {project.layers?.status === "done" && project.layers.error && <p className="mt-2 rounded bg-destructive/10 p-2 text-xs text-destructive">{project.layers.error}</p>}
+        {/* A run again (planning / building) replaces the last run's error: it was shown under the spinner as if current. */}
+        {!planning && !building && project.layers?.status === "done" && project.layers.error && <p className="mt-2 rounded bg-destructive/10 p-2 text-xs text-destructive">{project.layers.error}</p>}
         {plan?.status === "done" && plan.error && <p className="mt-2 rounded bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400">{plan.error}</p>}
       </section>
       {hasSet && <FinalSection {...ctx} />}

@@ -38,6 +38,7 @@ import { followParentPlan, remakeDrawnProduct, runVersionChain, startVersionSets
 import { startPoseSets } from "../char/poses";
 import { polygonMask, setBehind } from "../char/behind";
 import { charVersions } from "../../lib/char-lineup";
+import { setKind } from "../../lib/set-kind";
 import { runEditRoles, startBuild } from "../char/layers";
 import { failLostPlan, startMatte, startPlan } from "../char/cut";
 import { SAMPLE_ROLE, elementPictures, latestElementImages, startElements } from "../char/elements";
@@ -704,12 +705,12 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
   {
     name: "char_create_set",
     description:
-      "agent_ide (someone chats with @flexiprint directly, not from the /v2 page): make a NEW bộ (set) — character (characters AI draws, the customer dresses them) or photo (the customer's photo is the hero). Opens a chat task on it for you (task_id: use it with every char_* tool, submit_result when the request is done) and returns the set's page url: PRINT IT for the people following. Then char_add_reference for the pictures they gave you, char_update_brief, char_draw_masters…",
+      "agent_ide (someone chats with @flexiprint directly, not from the /v2 page): make a NEW bộ (set) — character (characters AI draws, the customer dresses them) or photo (the customer's photo is the hero). The company's KIỂU 1 / 2 / 3: kiểu 1 = character (customer picks clipart on a character); kiểu 2 = photo (no clipart to pick: layers / the customer's photo); kiểu 3 = character + brief.photoZones (clipart to pick AND the customer's face/photo). Kind not given and not clear → ask which kiểu first. Opens a chat task on it for you (task_id: use it with every char_* tool, submit_result when the request is done) and returns the set's page url: PRINT IT for the people following. Then char_add_reference for the pictures they gave you, char_update_brief, char_draw_masters…",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "Vietnamese set name: 'Ornament bà + 1–4 cháu — acrylic trong'." },
-        kind: { type: "string", description: "character (default) | photo" },
+        kind: { type: "string", description: "character (default; kiểu 1, and kiểu 3 with brief.photoZones) | photo (kiểu 2)" },
         idea: { type: "string", description: "What they asked for, in their words." },
         owner_email: { type: "string", description: "FlexiPrint account that owns it (default: the admin)." },
       },
@@ -1032,6 +1033,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       }
       if (!p) throw new Error("The bộ nhân vật no longer exists");
       return json({
+        kieu: setKind(p),
         running: busy(p),
         plan: p.cut?.plan ? { status: p.cut.plan.status, error: p.cut.plan.error, failedChecks: p.cut.plan.checks.filter((c) => !c.ok) } : null,
         layers: p.layers

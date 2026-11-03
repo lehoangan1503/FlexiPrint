@@ -35,6 +35,19 @@ this MCP. Everything you read here is live production data.
   check_artwork (a product laid out from library cliparts), render_artwork (guides, or the print file with chosen
   options), list_product_options, make_product_mockups → wait_product_mockups (the print on the phôi + AI photos).
 
+## The 3 kinds of bộ (kiểu 1 / 2 / 3)
+People in the company name a set by its kind ("làm bộ kiểu 1…"); the library's Clipart tab filters by it and the
+"Tạo bộ clipart mới" popup asks them to say it. Same rule as lib/set-kind.ts:
+- KIỂU 1 — the customer picks clipart ON A CHARACTER (hair, outfit, hat, held item…): a drawn bộ nhân vật, or a
+  Teeinblue import. = char_create_set kind "character", brief.photoZones empty.
+- KIỂU 2 — NO clipart to pick: the zones are layers put together, or take the customer's uploaded photo (a bộ ảnh
+  khách: pet memorial, portrait). = char_create_set kind "photo" (brief.photoZones[0] = the customer's photo).
+- KIỂU 3 — BOTH: clipart to pick AND a zone for the customer's photo (an elf / Santa body with the customer's face).
+  = char_create_set kind "character" + brief.photoZones [{treat: "face", where: "the left elf's face"}].
+The request names the kind → build exactly that kind. It does not, and the pictures / words do not settle it (is
+there a customer photo? does the customer pick clipart?) → ask once, briefly, which kind (1, 2 or 3), and end your turn.
+Never turn one kind into another on your own (no photo zone added to a kiểu 1, no clipart choices in a kiểu 2).
+
 ## A bộ nhân vật from idea to Shopify
 1 Brief (idea, product = khuôn in + material, style, references, subjects + slots, photo zones, texts, backdrops,
 mockup scenes) → 2 Master (one picture, approved) → 3 Layer: 3a the master at print size, 3b the pictures the files
@@ -67,8 +80,10 @@ English. Read flexiprint://guide/layer-rules first.
    decides how the piece looks — framing (full / bust behind a sign), pose, who is in the middle, what is in front,
    the decorations, where the names sit — unless their words say otherwise; only what neither says gets the
    defaults (full body, standing side by side). Missing a deciding fact (what product, real size, how many
-   characters, what the customer can change)? Ask once, briefly, and end your turn.
-2. char_create_set {name, idea} → PRINT the set url it returns (this server's own address, https://flexi2.next.lc/v2/<id>). Their pictures →
+   characters, what the customer can change, which KIỂU 1 / 2 / 3 — see flexiprint://guide/overview)? Ask once,
+   briefly, and end your turn.
+2. char_create_set {name, kind, idea} (kiểu 1 and 3 → kind "character", kiểu 3 also gets brief.photoZones; kiểu 2 →
+   kind "photo") → PRINT the set url it returns (this server's own address, https://flexi2.next.lc/v2/<id>). Their pictures →
    char_add_reference (url, or image_base64 of a file in the session; use sample/style/…; note = what to take).
 3. Khuôn in: list_print_templates. None at the real size → create_print_template (a 120×40 cm rug at 150 dpi, a
    die-cut acrylic square…) — never a small khuôn for a big product.

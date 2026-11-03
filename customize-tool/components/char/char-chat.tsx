@@ -18,6 +18,7 @@ import type { CtAgentTask, CtCharChatAttachment, CtCharChatTab, CtCharImage, CtC
 import { charApi, ctApi } from "../../lib/api-client";
 import { FLOAT_BTN, cx } from "../ui";
 import { AgentProgress } from "../library/agent-brain";
+import { AgentReply } from "./agent-reply";
 import type { useCharAgent } from "./char-agent";
 
 const TAB_LABEL: Record<CtCharChatTab, string> = { brief: "1. Mô tả bộ clipart", master: "2. Ảnh master", layers: "3. Cắt clipart", product: "4. Sản phẩm" };
@@ -25,6 +26,8 @@ const SECTION_LABEL: Record<string, string> = { "3a": "3a. Master cỡ in", "3b"
 /** A task that did not come from the box (a step button, the automatic run after the master). */
 const STEP_TEXT: Record<CtCharTaskStep, string> = { brainstorm: "Brainstorm 3 hướng brief", master: "Vẽ master", edits: "Vẽ ảnh để cắt clipart (3b)", chat: "", auto: "Tự làm bước 3 – 4 (sau khi duyệt master)" };
 const FOLD_KEY = "ct-char-chat-folded";
+/** How long a finished answer waits for the agent's whole message (it keeps writing after submit_result). */
+const REPLY_WAIT_MS = 30 * 60_000;
 /** A picture dragged from the page carries this (set on dragstart below). */
 const PAGE_PICTURE = "application/x-flexiprint-picture";
 
@@ -129,6 +132,14 @@ export function CharChat(props: {
   useEffect(() => {
     void loadHistory();
   }, [loadHistory, task?.id, kit.agent.last?.id]);
+  // The agent's whole message is read from agent_ide once its turn is over — often a little after submit_result: ask
+  // again until the latest answers have it (reply undefined = not read yet).
+  useEffect(() => {
+    const pending = history.some((t) => t.status === "done" && t.agent_job_id && t.result && t.result.reply === undefined && Date.now() - Date.parse(t.finished_at ?? t.updated_at) < REPLY_WAIT_MS);
+    if (!pending) return;
+    const timer = setTimeout(() => void loadHistory(), 6_000);
+    return () => clearTimeout(timer);
+  }, [history, loadHistory]);
 
   // Any picture of the page dragged anywhere: it says what it is (the drop below reads it).
   useEffect(() => {
@@ -349,6 +360,7 @@ function ChatTurn({ task, live, kit }: { task: CtAgentTask; live: CtAgentTask | 
   const c = task.input.char;
   const t = live ?? task;
   const summary = t.result && "summary" in t.result ? String(t.result.summary) : "";
+  const reply = t.result?.reply?.trim() ?? "";
   const fromBox = c?.step === "chat";
   // What was sent in while it ran ("Gửi chen"): kept in the task's log.
   const injected = live ? [] : (t.progress ?? []).filter((l) => l.kind === "inject");
@@ -390,9 +402,17 @@ function ChatTurn({ task, live, kit }: { task: CtAgentTask; live: CtAgentTask | 
         {live ? (
           <AgentProgress task={live} onCancel={() => void kit.cancel()} onAnswer={kit.answer} />
         ) : t.status === "done" ? (
-          <p className="whitespace-pre-wrap">{summary || "Xong."}</p>
+          reply || t.result?.proposal ? (
+            <AgentReply text={reply || summary} proposal={t.result?.proposal} />
+          ) : (
+            <p className="whitespace-pre-wrap">{summary || "Xong."}</p>
+          )
+        ) : t.status === "cancelled" ? (
+          <p className="text-destructive">Đã dừng.</p>
         ) : (
-          <p className="text-destructive">{t.status === "cancelled" ? "Đã dừng." : t.error || "Agent không trả kết quả."}</p>
+          <div className="text-destructive">
+            <AgentReply text={t.error || "Agent không trả kết quả."} />
+          </div>
         )}
       </div>
     </div>

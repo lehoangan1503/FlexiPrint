@@ -313,7 +313,40 @@ interface KernelJob {
   sessionId?: string;
   status: "running" | "done" | "error" | "needs_input";
   text?: string;
+  /** The agent's "proposal" block (what it asks the team / dev to do), shown apart from the text on agent_ide. */
+  proposal?: string;
   error?: string;
+}
+
+/** The agent's own words as the chat shows them in full (agent_ide text; the 600-char cut lost the details). */
+const REPLY_MAX = 40_000;
+/** Tasks whose reply is read per list call (each one is a GET on agent_ide). */
+const REPLY_BATCH = 12;
+
+/**
+ * Finished tasks: read the agent's whole last message (and proposal) from its agent_ide job into result.reply, once
+ * (asked 2026-11-04 "trả lời full những gì trên agent"). The agent often keeps writing after submit_result, so a job still
+ * running is read again later.
+ */
+async function fillReplies(s: CtSession, tasks: CtAgentTask[]): Promise<void> {
+  const cfg = kernelConfig();
+  if (!cfg) return;
+  const todo = tasks.filter((t) => t.status === "done" && t.agent_job_id && t.result && t.result.reply === undefined).slice(0, REPLY_BATCH);
+  await Promise.all(
+    todo.map(async (t) => {
+      let job: KernelJob | null = null;
+      try {
+        job = await kernel<KernelJob>(cfg, `/jobs/${encodeURIComponent(t.agent_job_id)}`, { timeoutMs: 5_000 });
+      } catch (e) {
+        // Gone from agent_ide: nothing more to show. Unreachable for a moment: read it next time.
+        if (!(e instanceof KernelError && e.status === 404)) return;
+      }
+      if (job?.status === "running") return;
+      const result = { ...t.result!, reply: clip(str(job?.text).trim(), REPLY_MAX), proposal: clip(str(job?.proposal).trim(), REPLY_MAX) };
+      const { error } = await s.supabase.from(CT_TABLES.agentTasks).update({ result }).eq("id", t.id);
+      if (!error) t.result = result;
+    }),
+  );
 }
 
 /** GET ai/agent-tasks?kind= — the editor's own latest tasks of a kind. */
@@ -335,6 +368,7 @@ export async function listAgentTasks(s: CtSession, kind: string | null, collecti
     await s.supabase.from(CT_TABLES.agentTasks).update(patch).in("id", idle.map((t) => t.id));
     for (const t of idle) Object.assign(t, patch);
   }
+  await fillReplies(s, data ?? []);
   return NextResponse.json({ tasks: data ?? [] });
 }
 
@@ -364,6 +398,7 @@ export async function getAgentTask(s: CtSession, id: string): Promise<NextRespon
         await s.supabase.from(CT_TABLES.agentTasks).update({ agent_session_id: task.agent_session_id }).eq("id", id);
       }
     }
+    await fillReplies(s, [task]);
     return NextResponse.json(task);
   }
 
@@ -381,13 +416,13 @@ export async function getAgentTask(s: CtSession, id: string): Promise<NextRespon
         task.agent_session_id = str(job.sessionId);
         await s.supabase.from(CT_TABLES.agentTasks).update({ agent_session_id: task.agent_session_id }).eq("id", id);
       }
-      if (job.status === "error") fail = `Agent lỗi: ${clip(str(job.error) || str(job.text), 600)}`;
-      else if (job.status === "needs_input") fail = `Agent cần thêm thông tin: ${clip(str(job.text), 600)}`;
+      if (job.status === "error") fail = `Agent lỗi: ${clip(str(job.error) || str(job.text), REPLY_MAX)}`;
+      else if (job.status === "needs_input") fail = `Agent cần thêm thông tin: ${clip([str(job.text), str(job.proposal)].filter(Boolean).join("\n\n"), REPLY_MAX)}`;
       else if (job.status === "done") {
         // submit_result may land a moment after the turn ends: read the row once more before failing it.
         const { data: again } = await s.supabase.from(CT_TABLES.agentTasks).select("*").eq("id", id).maybeSingle<CtAgentTask>();
         if (again && (again.status === "waiting" || !isOpen(again))) return NextResponse.json(again);
-        if (Date.now() - Date.parse(task.updated_at) > 20_000) fail = `Agent đã xong lượt nhưng không nộp kết quả${str(job.text) ? `: ${clip(str(job.text), 600)}` : ""}`;
+        if (Date.now() - Date.parse(task.updated_at) > 20_000) fail = `Agent đã xong lượt nhưng không nộp kết quả${str(job.text) ? `: ${clip(str(job.text), REPLY_MAX)}` : ""}`;
       }
     } catch {
       // agent_ide unreachable for a moment: keep waiting (the timeout above still applies).

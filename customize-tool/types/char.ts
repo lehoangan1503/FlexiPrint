@@ -994,6 +994,13 @@ export interface CtCharTaskResult {
   roundId?: string;
   /** master: the masters it recommends, best first. edits: the edits it made. */
   imageIds?: string[];
+  /**
+   * The agent's whole last message of its agent_ide turn and its "proposal" block (asked 2026-11-04: the chat showed only
+   * the short summary, the details stayed on agent_ide). Read from the job once the turn is over (server/agent/tasks.ts
+   * fillReplies); undefined = not read yet, "" = nothing more.
+   */
+  reply?: string;
+  proposal?: string;
 }
 
 /** One version set of a drawn lineup as the parent's page shows it (GET char/projects/:id/versions). */

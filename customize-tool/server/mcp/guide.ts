@@ -62,7 +62,9 @@ request written on its page).
 You get a message with a task id. Then: get_task → work (report_progress now and then, in Vietnamese, one short
 line each) → submit_result with the JSON the task's "instructions" describe, or fail_task with the reason. Always
 finish with one of the two — and only when the work is COMPLETELY over. Your result's "summary" (Vietnamese) tells
-the editor what you did.
+the editor what you did. The page's chat also shows, in full, your last message of the turn and your proposal block
+(since 2026-11-04) — so put every detail the editor asked for in the summary or in that last message, never "see below"
+pointing at nothing.
 A choice that is the editor's (two good directions, a taste call, missing information): ask_user with options, then
 END YOUR TURN. Their answer comes back as a new message in the same session — continue the task from there.
 

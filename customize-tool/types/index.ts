@@ -1588,6 +1588,9 @@ export interface CtContentResult {
   summary: string;
   title: string;
   descriptionHtml: string;
+  /** As CtCharTaskResult.reply / proposal: the agent's whole last message on agent_ide. */
+  reply?: string;
+  proposal?: string;
 }
 
 export interface CtAgentTask {

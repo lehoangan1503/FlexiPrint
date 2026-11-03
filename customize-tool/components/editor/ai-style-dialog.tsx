@@ -5,7 +5,7 @@
  * main thing, with up to 4 style reference pictures sent after the customer's photo on every run (asked
  * 2026-11-04); every style runs on GPT Image 2.5 (no model picker). Frame / background stay on their defaults
  * (square, cut out — the "Nâng cao" section was removed 2026-11-04). "Ảnh demo"
- * runs the saved style on a sample photo — the picture editors and customers
+ * (only when editing — hidden when adding a new style, 2026-11-04) runs the saved style on a sample photo — the picture editors and customers
  * pick the style by. Read-only unless the user owns the style or is an admin
  * (the server enforces the same).
  */
@@ -171,6 +171,7 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
           </div>
         </CtField>
 
+        {editing && (
         <div className="space-y-1.5 rounded-md border p-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium">Ảnh demo</span>
@@ -189,8 +190,7 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
               </div>
             ))}
           </div>
-          {editing ? (
-            !readOnly && (
+          {!readOnly && (
               <div className="flex flex-wrap gap-1">
                 <CtButton size="sm" variant="primary" disabled={demoBusy || saving || !body.prompt.trim()} onClick={() => makeDemo()}>
                   {demoBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} Tạo ảnh demo
@@ -210,11 +210,9 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
                   }}
                 />
               </div>
-            )
-          ) : (
-            <p className="text-[11px] text-muted-foreground">Tạo style xong, mở lại để tạo ảnh demo (khách chọn style theo ảnh này).</p>
           )}
         </div>
+        )}
 
         {error && <p className="text-xs text-destructive">{error}</p>}
         <div className="flex items-center justify-between pt-1">

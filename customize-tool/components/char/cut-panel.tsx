@@ -531,7 +531,7 @@ function FileEditor(ctx: CharCtx & { onClose: () => void; imageId: string; picks
     <MaskEditor
       key={main.imageId}
       title={`Sửa clipart: ${slot.label.replace(/\s+—\s+lớp sau$/i, " — lớp trước")} — ${[file.option, file.color].filter(Boolean).join(" · ")}`}
-      hint="Clipart đang sửa sáng, cả bộ đồ tối phía sau; khung bên phải = nhân vật như ở 3c, đổi ngay khi sửa. Bớt = xoá phần thừa, Thêm = tô lại chỗ thiếu, Làm mịn = mép bớt sắc — áp cho mọi màu của kiểu này (mỗi màu tô bằng màu của nó), Di chuyển = kéo cả bộ clipart (trước + sau, mọi màu). Lưu là file, thumbnail và mọi sản phẩm đổi ngay."
+      hint="Clipart đang sửa sáng, cả bộ đồ tối phía sau; khung bên phải = nhân vật như ở 3c, đổi ngay khi sửa. Bớt = xoá phần thừa, Thêm = tô lại chỗ thiếu, Làm mịn = mép bớt sắc, Cân màu = vệt màu lạ ở mép đổi sang màu clipart — áp cho mọi màu của kiểu này (mỗi màu tô bằng màu của nó), Di chuyển = kéo cả bộ clipart (trước + sau, mọi màu). Lưu là file, thumbnail và mọi sản phẩm đổi ngay."
       width={set.width}
       height={set.height}
       colourUrl={main.plateUrl ?? main.url}
@@ -574,7 +574,8 @@ function FileEditor(ctx: CharCtx & { onClose: () => void; imageId: string; picks
             ))}
         </div>
       )}
-      onSave={async (png, move) => ctx.setProject(await charApi.editFile(project.id, main.imageId, png, move))}
+      colourFix
+      onSave={async (png, move, fix) => ctx.setProject(await charApi.editFile(project.id, main.imageId, png, move, fix))}
       onRevert={async () => ctx.setProject(await charApi.revertFile(project.id, main.imageId))}
       onClose={ctx.onClose}
     />

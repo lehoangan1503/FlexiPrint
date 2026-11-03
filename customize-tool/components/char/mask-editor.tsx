@@ -12,6 +12,10 @@
  *   Làm mịn  softens the cut edge under the brush (a hard, stair-stepped edge looked sharp against the next clipart —
  *            asked 2026-10-12); "Làm mịn cả viền" does the whole edge. It only fades the edge inwards, never adds
  *            pixels (added pixels take the plate's colours, white outside the figure).
+ *   Cân màu  (file editor only, asked 2026-11-04) the edge pixels under the brush whose colour is not the clipart's
+ *            (thigh skin along a sweater's hem, over the jeans) take the clipart's colour from just inside; their
+ *            alpha stays, so the clipart still covers what is under it (lib/edge-colour.ts — the server does the same
+ *            on every colour of the option)
  *   Tay      pan (also: hold Space, or the middle button); wheel / pinch = zoom (the browser's own zoom is held off
  *            while the editor is open)
  * Thêm / Bớt switches what a tool does (hold Alt for the other one); Bớt first. Undo / redo (Ctrl+Z / Ctrl+Shift+Z)
@@ -22,10 +26,11 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Brush, Droplets, Hand, History, Lasso, Loader2, Minus, Move, Plus, Redo2, RotateCcw, Save, Sparkles, Undo2, Wand2, X } from "lucide-react";
+import { Brush, Droplets, Hand, History, Lasso, Loader2, Minus, Move, Palette, Plus, Redo2, RotateCcw, Save, Sparkles, Undo2, Wand2, X } from "lucide-react";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
+import { EDGE_FIX_DEFAULT, fixEdgeColours, type EdgeFix } from "../../lib/edge-colour";
 
-type Tool = "brush" | "lasso" | "wand" | "island" | "smooth" | "move" | "hand";
+type Tool = "brush" | "lasso" | "wand" | "island" | "smooth" | "recolor" | "move" | "hand";
 type Op = "add" | "remove";
 type View = "result" | "overlay";
 
@@ -34,8 +39,12 @@ interface Shift {
   dy: number;
 }
 
-/** One undo step: a changed rectangle of the mask, or a move of the whole clipart (Di chuyển, asked 2026-11-04). */
-type Patch = { kind: "mask"; x: number; y: number; before: ImageData; after: ImageData } | { kind: "move"; before: Shift; after: Shift; at: number };
+/** One undo step: a changed rectangle of the mask, a move of the whole clipart (Di chuyển, asked 2026-11-04), or a
+ * "Cân màu" stroke (the colours and the brush's cover in its rectangle). */
+type Patch =
+  | { kind: "mask"; x: number; y: number; before: ImageData; after: ImageData }
+  | { kind: "move"; before: Shift; after: Shift; at: number }
+  | { kind: "paint"; x: number; y: number; before: ImageData; after: ImageData; coverBefore: ImageData; coverAfter: ImageData };
 
 interface Box {
   x0: number;
@@ -61,8 +70,9 @@ export interface MaskEditorProps {
   others?: Array<{ url: string; color: string; label: string }>;
   canRevert: boolean;
   readOnly?: boolean;
-  /** `png`: the new mask (null when only moved); `move`: whole px the clipart was dragged (null when not moved). */
-  onSave: (png: string | null, move: { dx: number; dy: number } | null) => Promise<void>;
+  /** `png`: the new mask (null when only moved); `move`: whole px the clipart was dragged (null when not moved);
+   * `fix`: where "Cân màu" went (PNG, alpha = the brush) and its settings — null when it was not used. */
+  onSave: (png: string | null, move: { dx: number; dy: number } | null, fix: { png: string; band: number; tol: number } | null) => Promise<void>;
   onRevert: () => Promise<void>;
   onClose: () => void;
   /** Opened from one clipart: show the clipart itself ("Kết quả" — region × picture on the checker, the picture
@@ -75,6 +85,8 @@ export interface MaskEditorProps {
   selfAt?: number;
   /** The "Di chuyển" tool: the clipart (and its other half) can be dragged to a new place. */
   movable?: boolean;
+  /** The "Cân màu" tool (a clipart file: its colours can be changed, not only its mask). */
+  colourFix?: boolean;
   /** Below the tools (the set's cliparts): `leave(go)` runs `go` once what is unsaved here is saved (or there is none). */
   sidebar?: (leave: (go: () => void) => void) => ReactNode;
 }
@@ -112,6 +124,7 @@ const TOOLS: Array<{ id: Tool; label: string; key: string; icon: typeof Brush; t
   { id: "wand", label: "Đũa thần", key: "W", icon: Wand2, tip: "Bấm vào 1 màu — chọn cả mảng cùng màu (như Photoshop)" },
   { id: "island", label: "Mảng", key: "I", icon: Sparkles, tip: "Bớt: bấm vào 1 mảnh rời → xoá cả mảnh. Thêm: bấm vào 1 lỗ thủng → lấp cả lỗ" },
   { id: "smooth", label: "Làm mịn", key: "S", icon: Droplets, tip: "Tô lên mép cắt — mép bớt sắc, bớt răng cưa (chỉ làm mờ vào trong, không thêm màu)" },
+  { id: "recolor", label: "Cân màu", key: "C", icon: Palette, tip: "Tô lên mép có vệt màu lạ (da, hồng…) — vệt đổi sang màu của chính clipart ngay bên trong, vẫn giữ độ phủ nên vẫn che lớp dưới. Chỉ sửa vệt mỏng ở mép; lệch to thì cắt lại bộ" },
   { id: "move", label: "Di chuyển", key: "V", icon: Move, tip: "Kéo cả bộ clipart (trước + sau) tới chỗ mới — phím mũi tên = 1 px, Shift = 10 px" },
   { id: "hand", label: "Tay", key: "H", icon: Hand, tip: "Kéo khung nhìn (hoặc giữ Space)" },
 ];
@@ -146,6 +159,16 @@ function smoothedAlpha(alpha: Float32Array, w: number, h: number, r: number): Fl
   return b;
 }
 
+/** A blob as a data URL. */
+function dataUrl(blob: Blob): Promise<string> {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result));
+    fr.onerror = () => rej(new Error("Không đọc được ảnh"));
+    fr.readAsDataURL(blob);
+  });
+}
+
 /** Ctrl / ⌘ as the platform writes it. */
 const MOD = typeof navigator !== "undefined" && /Mac|iP(hone|ad)/.test(navigator.platform) ? "⌘" : "Ctrl+";
 
@@ -167,6 +190,12 @@ export function MaskEditor(props: MaskEditorProps) {
     pixels: Uint8ClampedArray | null;
     /** The smoothing brush's stroke: the mask's alpha when it began, the same smoothed, and the brush's cover. */
     smooth: { alpha: Float32Array; soft: Float32Array; cover: Float32Array } | null;
+    /** The clipart's colours as edited ("Cân màu" repaints them): drawn in place of `colour`. */
+    paint: HTMLCanvasElement;
+    /** Where "Cân màu" went (alpha), sent with the save; `stroke` = the stroke being drawn. */
+    cover: HTMLCanvasElement;
+    coverStroke: HTMLCanvasElement;
+    painted: boolean;
   } | null>(null);
   const undo = useRef<Patch[]>([]);
   const redo = useRef<Patch[]>([]);
@@ -187,6 +216,7 @@ export function MaskEditor(props: MaskEditorProps) {
   const [hard, setHard] = useState(0.8);
   const [tol, setTol] = useState(18);
   const [soften, setSoften] = useState(2);
+  const [fix, setFix] = useState<EdgeFix>(EDGE_FIX_DEFAULT);
   const [contiguous, setContiguous] = useState(true);
   const [viewMode, setViewMode] = useState<View>(props.focusPiece ? "result" : "overlay");
   const [showOthers, setShowOthers] = useState(true);
@@ -231,7 +261,9 @@ export function MaskEditor(props: MaskEditorProps) {
         ctx2d(mask).drawImage(maskImg, 0, 0, W, H);
         const committed = canvas(W, H);
         ctx2d(committed).drawImage(mask, 0, 0);
-        store.current = { colour, subject, others, context, mask, committed, tmp: canvas(W, H), pixels: null, smooth: null };
+        const paint = canvas(W, H);
+        ctx2d(paint).drawImage(colour, 0, 0, W, H);
+        store.current = { colour, subject, others, context, mask, committed, tmp: canvas(W, H), pixels: null, smooth: null, paint, cover: canvas(W, H), coverStroke: canvas(W, H), painted: false };
         setReady(true);
       } catch (e) {
         if (live) setLoadError(e instanceof Error ? e.message : "Không tải được ảnh");
@@ -300,7 +332,7 @@ export function MaskEditor(props: MaskEditorProps) {
       const k = m.width / W;
       t.globalCompositeOperation = "source-over";
       t.clearRect(0, 0, W, H);
-      t.drawImage(st.colour, 0, 0, W, H);
+      t.drawImage(st.paint, 0, 0);
       t.globalCompositeOperation = "destination-in";
       t.drawImage(st.mask, 0, 0);
       if (st.subject) t.drawImage(st.subject, 0, 0, W, H);
@@ -356,7 +388,7 @@ export function MaskEditor(props: MaskEditorProps) {
       }
       t.globalCompositeOperation = "source-over";
       t.clearRect(0, 0, W, H);
-      t.drawImage(st.colour, 0, 0, W, H);
+      t.drawImage(st.paint, 0, 0);
       t.globalCompositeOperation = "destination-in";
       t.drawImage(st.mask, 0, 0);
       if (st.subject) t.drawImage(st.subject, 0, 0, W, H);
@@ -367,10 +399,12 @@ export function MaskEditor(props: MaskEditorProps) {
     } else {
       g.save();
       g.translate(off.dx, off.dy);
-      g.drawImage(st.colour, 0, 0, W, H);
+      g.drawImage(st.paint, 0, 0);
       if (showOthers) for (const o of st.others) tinted(o.img, o.color, 0.28);
       tinted(st.mask, tint, 0.55);
     }
+    // The "Cân màu" stroke being drawn: where the brush has gone, tinted.
+    if (stroke.current && effTool === "recolor") tinted(st.coverStroke, "#38bdf8", 0.35);
     const pg = poly.current;
     if (pg && pg.pts.length) {
       const colour = effOp === "add" ? "#22c55e" : "#ef4444";
@@ -405,7 +439,7 @@ export function MaskEditor(props: MaskEditorProps) {
     }
     g.restore();
     renderMini();
-  }, [W, H, viewMode, showOthers, tint, z.s, effOp, off, renderMini]);
+  }, [W, H, viewMode, showOthers, tint, z.s, effOp, effTool, off, renderMini]);
 
   const schedule = useCallback(() => {
     if (frame.current) return;
@@ -479,6 +513,14 @@ export function MaskEditor(props: MaskEditorProps) {
       setOff(back ? p.before : p.after);
       return;
     }
+    if (p.kind === "paint") {
+      ctx2d(st.paint).putImageData(back ? p.before : p.after, p.x, p.y);
+      ctx2d(st.cover).putImageData(back ? p.coverBefore : p.coverAfter, p.x, p.y);
+      st.pixels = null;
+      setChanges((n) => n + (back ? -1 : 1));
+      schedule();
+      return;
+    }
     const data = back ? p.before : p.after;
     ctx2d(st.mask).putImageData(data, p.x, p.y);
     ctx2d(st.committed).putImageData(data, p.x, p.y);
@@ -488,9 +530,10 @@ export function MaskEditor(props: MaskEditorProps) {
 
   const stamp = (x: number, y: number) => {
     const st = store.current!;
-    const g = ctx2d(st.mask);
+    const recolor = effTool === "recolor";
+    const g = ctx2d(recolor ? st.coverStroke : st.mask);
     const r = size / 2;
-    g.globalCompositeOperation = effOp === "add" ? "source-over" : "destination-out";
+    g.globalCompositeOperation = recolor || effOp === "add" ? "source-over" : "destination-out";
     if (hard >= 0.98) {
       g.fillStyle = "#fff";
       g.beginPath();
@@ -557,6 +600,43 @@ export function MaskEditor(props: MaskEditorProps) {
       }
     putAlpha({ x0: bx0, y0: by0, x1: bx1 + 1, y1: by1 + 1 }, (i) => sm.alpha[i] + (sm.soft[i] - sm.alpha[i]) * sm.cover[i]);
     stroke.current!.box = grow(stroke.current!.box, bx0, by0, bx1 + 1, by1 + 1);
+  };
+
+  /** The "Cân màu" stroke done: the stray edge colours under it repainted (lib/edge-colour.ts), its cover added to
+   * what the save sends. One undo step. */
+  const recolorStroke = (b: Box | null) => {
+    const st = store.current;
+    if (!st || !b) return;
+    const pad = fix.band + 6;
+    const x = Math.max(0, Math.floor(b.x0) - pad);
+    const y = Math.max(0, Math.floor(b.y0) - pad);
+    const w = Math.min(W, Math.ceil(b.x1) + pad) - x;
+    const h = Math.min(H, Math.ceil(b.y1) + pad) - y;
+    const sg = ctx2d(st.coverStroke);
+    if (w > 0 && h > 0) {
+      const before = ctx2d(st.paint).getImageData(x, y, w, h);
+      const coverBefore = ctx2d(st.cover).getImageData(x, y, w, h);
+      const m = ctx2d(st.mask).getImageData(x, y, w, h).data;
+      const c = sg.getImageData(x, y, w, h).data;
+      const alpha = new Uint8Array(w * h);
+      const cover = new Uint8Array(w * h);
+      for (let i = 0; i < w * h; i++) {
+        alpha[i] = m[i * 4 + 3];
+        cover[i] = c[i * 4 + 3];
+      }
+      const after = new ImageData(new Uint8ClampedArray(before.data), w, h);
+      const n = fixEdgeColours(after.data, alpha, cover, w, h, fix);
+      ctx2d(st.paint).putImageData(after, x, y);
+      const cg = ctx2d(st.cover);
+      cg.drawImage(st.coverStroke, x, y, w, h, x, y, w, h);
+      const coverAfter = cg.getImageData(x, y, w, h);
+      st.pixels = null;
+      st.painted = true;
+      push({ kind: "paint", x, y, before, after, coverBefore, coverAfter });
+      setChanges((k) => k + 1);
+      setMsg(n ? null : "Không thấy vệt màu lạ ở mép dưới cọ (tăng Độ rộng mép hoặc giảm Dung sai)");
+    }
+    sg.clearRect(0, 0, W, H);
   };
 
   /** "Làm mịn cả viền": the whole mask's edge at once. */
@@ -660,7 +740,7 @@ export function MaskEditor(props: MaskEditorProps) {
     if (!st.pixels) {
       const c = canvas(W, H);
       const g = ctx2d(c);
-      g.drawImage(st.colour, 0, 0, W, H);
+      g.drawImage(st.paint, 0, 0);
       st.pixels = g.getImageData(0, 0, W, H).data;
     }
     const px = st.pixels;
@@ -738,7 +818,7 @@ export function MaskEditor(props: MaskEditorProps) {
       return schedule();
     }
     stroke.current = { last: p, box: null };
-    if (effTool === "brush") stamp(p.x, p.y);
+    if (effTool === "brush" || effTool === "recolor") stamp(p.x, p.y);
     if (effTool === "smooth") {
       const a = alphaOf();
       store.current!.smooth = { alpha: a, soft: smoothedAlpha(a, W, H, soften), cover: new Float32Array(W * H) };
@@ -773,7 +853,7 @@ export function MaskEditor(props: MaskEditorProps) {
     const s = stroke.current;
     if (!s) return;
     const p = at(e);
-    if ((effTool === "brush" || effTool === "smooth") && s.last) {
+    if ((effTool === "brush" || effTool === "smooth" || effTool === "recolor") && s.last) {
       line(s.last, p);
       s.last = p;
     }
@@ -793,7 +873,8 @@ export function MaskEditor(props: MaskEditorProps) {
     const box = s.box;
     stroke.current = null;
     if (store.current) store.current.smooth = null;
-    commit(box);
+    if (effTool === "recolor") recolorStroke(box);
+    else commit(box);
     schedule();
   };
 
@@ -943,13 +1024,13 @@ export function MaskEditor(props: MaskEditorProps) {
     try {
       const blob = await new Promise<Blob | null>((res) => st.mask.toBlob(res, "image/png"));
       if (!blob) throw new Error("Không xuất được mặt nạ");
-      const url = await new Promise<string>((res, rej) => {
-        const fr = new FileReader();
-        fr.onload = () => res(String(fr.result));
-        fr.onerror = () => rej(new Error("Không đọc được mặt nạ"));
-        fr.readAsDataURL(blob);
-      });
-      await props.onSave(changes > 0 ? url : null, moved ? off : null);
+      let painted: { png: string; band: number; tol: number } | null = null;
+      if (st.painted) {
+        const cb = await new Promise<Blob | null>((res) => st.cover.toBlob(res, "image/png"));
+        if (!cb) throw new Error("Không xuất được vùng cân màu");
+        painted = { png: await dataUrl(cb), ...fix };
+      }
+      await props.onSave(changes > 0 ? await dataUrl(blob) : null, moved ? off : null, painted);
       if (close) props.onClose();
       return true;
     } catch (e) {
@@ -986,13 +1067,13 @@ export function MaskEditor(props: MaskEditorProps) {
     props.onClose();
   };
 
-  const cursor = effTool === "hand" ? (pan.current ? "grabbing" : "grab") : effTool === "move" ? "move" : effTool === "brush" || effTool === "smooth" ? "none" : "crosshair";
-  const tools = TOOLS.filter((t) => t.id !== "move" || props.movable);
+  const cursor = effTool === "hand" ? (pan.current ? "grabbing" : "grab") : effTool === "move" ? "move" : effTool === "brush" || effTool === "smooth" || effTool === "recolor" ? "none" : "crosshair";
+  const tools = TOOLS.filter((t) => (t.id !== "move" || props.movable) && (t.id !== "recolor" || props.colourFix));
 
   const side = (on: boolean, extra?: string) =>
     cx("flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs", on ? extra ?? "bg-foreground text-background" : "hover:bg-accent");
   const keyTag = (k: string) => <span className="ml-auto pl-1 text-[10px] opacity-60">({k})</span>;
-  const brushy = effTool === "brush" || effTool === "smooth";
+  const brushy = effTool === "brush" || effTool === "smooth" || effTool === "recolor";
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background">
@@ -1070,7 +1151,7 @@ export function MaskEditor(props: MaskEditorProps) {
                 <div className="px-2 text-[10px] text-muted-foreground">Kéo trên ảnh · mũi tên = 1 px, Shift = 10 px · ⌘Z / ⌘⇧Z lùi / tới từng lần dời. Lưu = mọi màu của kiểu này, lớp trước + sau, mọi sản phẩm.</div>
               </div>
             )}
-            {effTool !== "hand" && effTool !== "smooth" && effTool !== "move" && (
+            {effTool !== "hand" && effTool !== "smooth" && effTool !== "recolor" && effTool !== "move" && (
               <div className="flex flex-col gap-0.5 border-t pt-2" title="X để đổi, giữ Alt để dùng tạm cái kia">
                 <button onClick={() => setOp("remove")} className={side(effOp === "remove", "bg-red-600 text-white")}>
                   <Minus className="h-4 w-4 shrink-0" />
@@ -1100,6 +1181,23 @@ export function MaskEditor(props: MaskEditorProps) {
                   </span>
                   <input type="range" min={0} max={100} value={Math.round(hard * 100)} onChange={(e) => setHard(Number(e.target.value) / 100)} />
                 </label>
+              </div>
+            )}
+            {effTool === "recolor" && (
+              <div className="flex flex-col gap-1.5 border-t pt-2 text-xs">
+                <label className="flex flex-col gap-0.5" title="Chỉ sửa trong dải mép này (px của file in; 6 px ≈ 1–2 px trên màn hình). Vệt rộng hơn = cắt lại bộ, không sửa tay">
+                  <span className="flex">
+                    Độ rộng mép <span className="ml-auto tabular-nums">{fix.band} px</span>
+                  </span>
+                  <input type="range" min={1} max={10} value={fix.band} onChange={(e) => setFix((f) => ({ ...f, band: Number(e.target.value) }))} />
+                </label>
+                <label className="flex flex-col gap-0.5" title="Màu lệch hơn mức này so với màu clipart ngay bên trong thì bị đổi; thấp = đổi nhiều hơn">
+                  <span className="flex">
+                    Dung sai màu <span className="ml-auto tabular-nums">{fix.tol}</span>
+                  </span>
+                  <input type="range" min={5} max={60} value={fix.tol} onChange={(e) => setFix((f) => ({ ...f, tol: Number(e.target.value) }))} />
+                </label>
+                <div className="px-0.5 text-[10px] text-muted-foreground">Vệt đổi sang màu clipart, vẫn che lớp dưới. Lưu = mọi màu của kiểu này (mỗi màu theo màu của nó).</div>
               </div>
             )}
             {effTool === "wand" && (

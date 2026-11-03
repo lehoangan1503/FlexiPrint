@@ -16,10 +16,14 @@
  * kept on the file and applied again when the
  * set is cut again (runBuild → reapplyEdits) — as a difference: what the editor erased from / added to the plain cut it
  * started from (editBaseUrl) is erased from / added to the new cut, so everything else takes the new cut's edges.
+ * "Cân màu" (asked 2026-11-04, lib/edge-colour.ts): `fix` = where the brush went + its settings; on every colour of
+ * the option the stray edge colours there take that file's own colour from just inside (alpha kept). The brush is kept
+ * on the file (`editFix`, added up over saves) and run again after a new cut.
  */
 
 import sharp from "sharp";
 import { CT_TABLES } from "../../config";
+import { edgeFixOf, fixEdgeColours, type EdgeFix } from "../../lib/edge-colour";
 import type { CtCharCrop, CtCharFileVersion, CtCharImage, CtCharLayerFile, CtCharLayerSet, CtCharProject } from "../../types";
 import { fetchImage, saveCharFile, saveCharRaw } from "./files";
 import { projectRow, type Db } from "./projects";
@@ -38,6 +42,7 @@ async function rgba(src: Buffer, w?: number, h?: number): Promise<Raw> {
 }
 
 const png = (r: Raw) => sharp(r.data, { raw: { width: r.w, height: r.h, channels: 4 } }).png({ compressionLevel: 9 }).toBuffer();
+const toPng = png;
 
 /** A data URL / base64 PNG → its bytes. */
 export function pngBytes(v: unknown): Buffer | null {
@@ -141,22 +146,27 @@ async function rowsOf(db: Db, ids: string[]): Promise<Map<string, CtCharImage>> 
   return new Map((data ?? []).map((r) => [r.id, r]));
 }
 
+/** "Cân màu" for one save: the brush on the set's canvas (PNG) and its settings. */
+interface Fix extends EdgeFix {
+  png: Buffer;
+}
+
 /**
- * Apply a mask to a file on `set` (in memory): the new file stored, the set's entry replaced. Returns the old and new
- * image rows (for the products) and the R2 paths it added.
+ * Apply a mask (null = the file's own alpha, kept) and / or a "Cân màu" brush to a file on `set` (in memory): the new
+ * file stored, the set's entry replaced. Returns the old and new image rows (for the products) and the R2 paths it added.
  */
-async function applyMask(db: Db, userId: string, p: CtCharProject, set: CtCharLayerSet, g: { slot: string; file: CtCharLayerFile }, maskPng: Buffer, history: boolean): Promise<{ olds: CtCharImage[]; news: CtCharImage[]; paths: string[] }> {
+async function applyMask(db: Db, userId: string, p: CtCharProject, set: CtCharLayerSet, g: { slot: string; file: CtCharLayerFile }, maskPng: Buffer | null, history: boolean, fix: Fix | null = null): Promise<{ olds: CtCharImage[]; news: CtCharImage[]; paths: string[] }> {
   const W = set.width;
   const H = set.height;
   const f = g.file;
   // The plain cut the edits are made on: kept from the first edit on.
   const base = f.editBaseUrl ?? f.url;
-  const mask = await rgba(maskPng, W, H);
   // Added pixels take the file's own colours (its plate); kept pixels keep theirs.
   const plate = f.plateUrl ? await rgba(await fetchImage(f.plateUrl), W, H) : null;
   const old = (await rowsOf(db, [f.imageId])).get(f.imageId);
   if (!old) throw new Error("Không thấy file");
   const src = await rgba(await fetchImage(f.url), W, H);
+  const mask = maskPng ? await rgba(maskPng, W, H) : src;
   const out: Raw = { data: Buffer.alloc(W * H * 4), w: W, h: H };
   for (let i = 0; i < W * H * 4; i += 4) {
     const from = src.data[i + 3] > 0 || !plate ? src : plate;
@@ -167,14 +177,47 @@ async function applyMask(db: Db, userId: string, p: CtCharProject, set: CtCharLa
     out.data[i + 2] = alpha ? from.data[i + 2] : 0;
     out.data[i + 3] = alpha;
   }
+  let cover: Raw | null = null;
+  if (fix) {
+    // The stray edge colours under the brush take this file's own colour (each colour of the option its own).
+    cover = await rgba(fix.png, W, H);
+    const a = new Uint8Array(W * H);
+    const c = new Uint8Array(W * H);
+    for (let i = 0; i < W * H; i++) {
+      a[i] = out.data[i * 4 + 3];
+      c[i] = cover.data[i * 4 + 3];
+    }
+    fixEdgeColours(out.data, a, c, W, H, fix);
+  }
   const { history: _h, ...was } = f;
   const now: CtCharFileVersion = { at: new Date().toISOString(), files: [{ slot: g.slot, file: was }] };
   const s = await store(db, userId, p, old, out);
-  // The mask stays with the file (applied again after a new cut), and the version before it for "Hoàn tác".
-  const m = await saveCharRaw(userId, p.id, "cut", maskPng, "image/png");
-  const patch: Partial<CtCharLayerFile> = { ...s.entry, editMaskUrl: m.url, editCrop: set.crop, editBaseUrl: base, history: history ? [...(f.history ?? []), now].slice(-8) : f.history };
+  // The mask and the brush stay with the file (applied again after a new cut), and the version before it for "Hoàn tác".
+  const paths: string[] = [];
+  const patch: Partial<CtCharLayerFile> = { ...s.entry, editCrop: set.crop, editBaseUrl: base, history: history ? [...(f.history ?? []), now].slice(-8) : f.history };
+  if (maskPng) {
+    const m = await saveCharRaw(userId, p.id, "cut", maskPng, "image/png");
+    patch.editMaskUrl = m.url;
+    paths.push(m.path);
+  }
+  if (fix) {
+    const m = await saveCharRaw(userId, p.id, "cut", fix.png, "image/png");
+    patch.editFix = { url: m.url, band: fix.band, tol: fix.tol };
+    paths.push(m.path);
+  }
   set.slots = set.slots.map((sl) => (sl.key !== g.slot ? sl : { ...sl, files: sl.files.map((x) => (x.imageId === f.imageId ? { ...x, ...patch } : x)) }));
-  return { olds: [old], news: [s.row], paths: [m.path] };
+  return { olds: [old], news: [s.row], paths };
+}
+
+/** This save's "Cân màu" brush added to the one the file already keeps (both on the set's canvas now). */
+async function fixWithKept(f: CtCharLayerFile, set: CtCharLayerSet, png: Buffer, settings: EdgeFix): Promise<Fix> {
+  if (!f.editFix) return { png, ...settings };
+  const W = set.width;
+  const H = set.height;
+  const kept = moveMask(await rgba(await fetchImage(f.editFix.url)), f.editCrop, set.crop, W, H);
+  const now = await rgba(png, W, H);
+  for (let i = 3; i < W * H * 4; i += 4) now.data[i] = Math.max(now.data[i], kept.data[i]);
+  return { png: await toPng(now), ...settings };
 }
 
 /** A picture on the set's canvas moved by whole px (what leaves the canvas goes, what comes in is empty). */
@@ -246,6 +289,7 @@ async function moveFiles(db: Db, userId: string, p: CtCharProject, set: CtCharLa
     // A hand edit is kept where the file now is (applied again after a new cut, once that is moved the same).
     if (f.editMaskUrl) patch.editMaskUrl = await once(f.editMaskUrl, () => raw(f.editMaskUrl!, "image/png"));
     if (f.editBaseUrl) patch.editBaseUrl = await once(f.editBaseUrl, () => raw(f.editBaseUrl!, "image/png"));
+    if (f.editFix) patch.editFix = { ...f.editFix, url: await once(f.editFix.url, () => raw(f.editFix!.url, "image/png")) };
     set.slots = set.slots.map((sl) => (sl.key !== slot ? sl : { ...sl, files: sl.files.map((x) => (x.imageId === f.imageId ? { ...x, ...patch } : x)) }));
   }
   if (main) {
@@ -262,26 +306,29 @@ async function relink(db: Db, p: CtCharProject, olds: CtCharImage[], news: CtCha
 
 /** POST …/layers/file {imageId, mask?, move?: {dx, dy}} — the mask first (drawn where the file is), then the move. */
 export async function editLayerFile(db: Db, userId: string, p: CtCharProject, body: unknown): Promise<CtCharProject> {
-  const b = (body ?? {}) as { imageId?: unknown; mask?: unknown; move?: { dx?: unknown; dy?: unknown } | null };
+  const b = (body ?? {}) as { imageId?: unknown; mask?: unknown; move?: { dx?: unknown; dy?: unknown } | null; fix?: { png?: unknown; band?: unknown; tol?: unknown } | null };
   const set = p.layers;
   if (!set || set.status !== "done") throw new Error("Chưa có bộ file");
   const g = fileOf(set, String(b.imageId ?? ""));
   if (!g) throw new Error("Không thấy file này trong bộ");
   const mask = b.mask == null ? null : pngBytes(b.mask);
   if (b.mask != null && !mask) throw new Error("Mặt nạ không hợp lệ (PNG)");
+  const fixPng = b.fix ? pngBytes(b.fix.png) : null;
+  if (b.fix && !fixPng) throw new Error("Vùng cân màu không hợp lệ (PNG)");
+  const fixSettings = edgeFixOf(b.fix);
   const dx = Math.round(Number(b.move?.dx) || 0);
   const dy = Math.round(Number(b.move?.dy) || 0);
-  if (!mask && !dx && !dy) throw new Error("Không có thay đổi");
+  if (!mask && !fixPng && !dx && !dy) throw new Error("Không có thay đổi");
   const next: CtCharLayerSet = { ...set, slots: set.slots.map((s) => ({ ...s, files: [...s.files] })) };
   const r = { olds: [] as CtCharImage[], news: [] as CtCharImage[], paths: [] as string[] };
   const add = (x: typeof r) => (r.olds.push(...x.olds), r.news.push(...x.news), r.paths.push(...x.paths));
-  if (mask) {
+  if (mask || fixPng) {
     // Every colour of the option is the same cut-out recoloured (layer-kit): the edit goes to each, in its own colours
     // (asked 2026-10-20: "sửa 1 màu, tất cả các màu còn lại cũng update theo"). One version on the opened file holds
     // them all for "Hoàn tác".
     const colours = next.slots.find((sl) => sl.key === g.slot)!.files.filter((f) => f.option === g.file.option);
     const version: CtCharFileVersion = { at: new Date().toISOString(), files: colours.map(({ history: _h, ...was }) => ({ slot: g.slot, file: was })) };
-    for (const file of colours) add(await applyMask(db, userId, p, next, { slot: g.slot, file }, mask, false));
+    for (const file of colours) add(await applyMask(db, userId, p, next, { slot: g.slot, file }, mask, false, fixPng ? await fixWithKept(file, next, fixPng, fixSettings) : null));
     next.slots = next.slots.map((sl) => (sl.key !== g.slot ? sl : { ...sl, files: sl.files.map((x) => (x.option === g.file.option && x.color === g.file.color ? { ...x, history: [...(g.file.history ?? []), version].slice(-8) } : x)) }));
   }
   if (dx || dy) {
@@ -366,7 +413,7 @@ export async function reapplyEdits(db: Db, userId: string, p: CtCharProject, old
   }
   for (const sl of oldSet.slots)
     for (const f of sl.files) {
-      if (!f.editMaskUrl) continue;
+      if (!f.editMaskUrl && !f.editFix) continue;
       const g = (() => {
         const cur = set.slots.find((x) => x.key === sl.key)?.files.find((x) => x.option === f.option && x.color === f.color);
         return cur ? fileOf(set, cur.imageId) : null;
@@ -375,11 +422,11 @@ export async function reapplyEdits(db: Db, userId: string, p: CtCharProject, old
       try {
         const W = set.width;
         const H = set.height;
-        let moved = moveMask(await rgba(await fetchImage(f.editMaskUrl)), f.editCrop, set.crop, W, H);
+        let moved = f.editMaskUrl ? moveMask(await rgba(await fetchImage(f.editMaskUrl)), f.editCrop, set.crop, W, H) : null;
         // An edit saved before editBaseUrl existed: its oldest version is the plain cut it was made on.
         const first = f.history?.[0]?.files.find((x) => x.slot === sl.key)?.file;
         const baseUrl = f.editBaseUrl ?? first?.url;
-        if (baseUrl) {
+        if (moved && baseUrl) {
           // new = the new cut + (the edit − what it was made on)
           const was = moveMask(await rgba(await fetchImage(baseUrl)), f.editCrop, set.crop, W, H);
           const now = await rgba(await fetchImage(g.file.url), W, H);
@@ -399,8 +446,10 @@ export async function reapplyEdits(db: Db, userId: string, p: CtCharProject, old
           for (let i = 0; i < W * H; i++) out[i * 4 + 3] = Math.max(0, Math.min(255, now.data[i * 4 + 3] + added[i] - erased[i]));
           moved = { data: out, w: W, h: H };
         }
+        // The "Cân màu" brush, where the file now lies on the master.
+        const fix: Fix | null = f.editFix ? { png: await png(moveMask(await rgba(await fetchImage(f.editFix.url)), f.editCrop, set.crop, W, H)), ...edgeFixOf(f.editFix) } : null;
         // History = the plain cut of the file: "Hoàn tác" drops the edit.
-        const r = await applyMask(db, userId, p, set, g, await png(moved), true);
+        const r = await applyMask(db, userId, p, set, g, moved ? await png(moved) : null, true, fix);
         paths.push(...r.paths);
       } catch (e) {
         console.warn("[ct] char reapply edit", e instanceof Error ? e.message : String(e));

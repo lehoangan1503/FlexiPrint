@@ -315,6 +315,9 @@ function cutInput(p: CtCharProject): Record<string, unknown> {
       ...(slot.mode === "shape" && slot.wraps && figureOf(slot.id) ? { figure: figureOf(slot.id) } : {}),
       // Drawn in a cut colour: every colour is a recolour, the first one too.
       cut_colour: !!slot.cutColor,
+      // Worn in every version (never optional, never theme-only): the doll's lines beside it that none of its
+      // pictures shows are taken off the body (narrower jeans left a skin line, 2026-11-04).
+      always: !slot.optional && !slot.shownWhen,
     })),
   );
   const zones = plan.pieces.filter((x) => x.kind === "zone").map((x) => ({ id: x.key.slice(5), region: x.region.url }));

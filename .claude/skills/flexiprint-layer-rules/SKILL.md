@@ -29,6 +29,10 @@ Read it before touching layered-art code. Code consequences:
    hue), kept on its own subject's side of the doll, near its main piece. Doll + file = exactly that 3b picture.
 4. Hair: back = the whole hair of its picture, front = the same pixels over the doll's figure (front ⊂ back).
 5. A layer can only ADD to the doll: a picture that erased / moved doll pixels (check "lost") is drawn again.
+   Exception, exact by the pictures (2026-11-04): beside a part every version wears (not optional, no shownWhen —
+   the pants) the body loses the doll's thin lines that NONE of that slot's pictures shows (layer-kit `body_under`;
+   narrower jeans left a skin line). Optional / theme-only parts: cut check "Thân lòi ra" red → redraw. Auto cut
+   (after the plan, MCP char_cut build) refuses while a plan check is red.
 6. Each picture adds exactly ONE part (no stole on the gown picture, no gown on the stole picture, pants never
    recolour the top). Thin parts on small figures (glasses on a family of five) are drawn bolder, never cut with a
    lower threshold.

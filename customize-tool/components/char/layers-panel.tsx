@@ -151,7 +151,7 @@ function EditsSection(ctx: CharCtx) {
                     <span className="text-muted-foreground">{im?.width ? `${im.width}×${im.height}` : ""}</span>
                   ) : im?.meta.align?.residual !== undefined ? (
                     <span
-                      className={cx("rounded px-1 font-medium", im.meta.align.residual <= 0.5 && (d ?? 0) <= 4 ? "bg-emerald-500/15 text-emerald-600" : "bg-destructive/15 text-destructive")}
+                      className={cx("rounded px-1 font-medium", im.meta.align.residual <= 0.6 && (d ?? 0) <= 4 ? "bg-emerald-500/15 text-emerald-600" : "bg-destructive/15 text-destructive")}
                       title={`Model xê dịch phần giữ nguyên một chút khi sửa; lúc cắt layer ảnh được kéo về đúng chỗ (không vẽ lại). Còn lệch: ${im.meta.align.residual.toFixed(2)} px, chỗ tệ nhất ${(im.meta.align.max ?? im.meta.align.residual).toFixed(2)} px`}
                     >
                       {(d ?? 0).toFixed(2)} → {im.meta.align.residual.toFixed(2)} px

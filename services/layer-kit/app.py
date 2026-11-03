@@ -525,6 +525,8 @@ class CutSlot(BaseModel):
                                  # sweaters of an outfit picture); default the doll
     cut_colour: bool = False     # drawn in a cut colour (the slot's cutColor, 2026-10-30): EVERY colour the customer
                                  # picks is a recolour, the first one too
+    always: bool = False         # every version wears it (never optional, never theme-only): the body beside it
+                                 # shows only where one of its pictures shows the doll
 
 
 class CutZone(BaseModel):
@@ -569,7 +571,7 @@ def _cut(body: CutBody, out_dir: str) -> dict:
 
     slots: list[Slot] = []
     for s in body.slots:
-        slot = Slot(s.key, s.label, s.mode, wraps=s.wraps, colors=[(c.name, c.hex) for c in s.colors], hexes=[o.hex for o in s.options], cut_colour=s.cut_colour)
+        slot = Slot(s.key, s.label, s.mode, wraps=s.wraps, colors=[(c.name, c.hex) for c in s.colors], hexes=[o.hex for o in s.options], cut_colour=s.cut_colour, always=s.always)
         if s.figure:
             slot.figure = pic(s.figure)[1]
             slot.ref_piece = next((f"{h.key}#{i}" for h in body.slots for i, ho in enumerate(h.options) if ho.picture == s.figure), None)

@@ -268,7 +268,10 @@ async function runPlan(db: Db, userId: string, projectId: string, body: Record<s
     // plan done and unapproved, with the reason — the editor cuts from the page.
     let next: CtCharProject | null = null;
     let note = "";
-    if (thenCut) {
+    // A red check is fixed by its 3b picture first (CLEAN_SET): the cut never starts on its own over one.
+    const red = plan.checks.filter((c) => !c.ok).map((c) => c.name);
+    if (thenCut && red.length) note = `Chưa tự cắt: còn ô đỏ — ${red.join("; ")}. Vẽ lại các ảnh đó rồi phác thảo lại (hoặc người duyệt cắt tay).`.slice(0, 1000);
+    else if (thenCut) {
       try {
         const cut = { ...cutState(p), plan: { ...plan, approved: true } };
         next = await startBuild(db, userId, { ...p, cut }, cut, true);

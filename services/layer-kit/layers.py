@@ -6,7 +6,8 @@ gpt-image draws the paper doll (every part the customer changes taken off) and t
 doll, in place, on a transparent background. Every option picture is registered onto the doll (affine + smoothed local
 flow, ≤ 0.5 px). Then:
 
-  body file    = the doll, pixel for pixel
+  body file    = the doll, pixel for pixel — less the thin lines of it beside a part every version wears where none
+                 of that part's pictures shows the doll (body_under: narrower jeans, 2026-11-04)
   option file  = the option picture's pixels where it differs from the doll (its colour, or new figure past the doll's
                  outline) — nothing else, so stacked on the doll it IS the option picture there, and the doll's own
                  pixels are never touched (what the AI re-drew a little elsewhere is dropped)
@@ -641,6 +642,40 @@ def recolor(colour: np.ndarray, alpha: np.ndarray, target_hex: str | None, tint:
     return colour * (1 - w[..., None]) + from_lab(out) * w[..., None]
 
 
+def body_under(body_a: np.ndarray, opts: list[tuple[np.ndarray, np.ndarray]], aa: float) -> np.ndarray:
+    """The body's alpha under a part EVERY version wears (a slot never optional, never theme-only: the pants). opts:
+    (file alpha, picture alpha) of each of its options, on one canvas. Where the doll has its figure but NO 3b picture of
+    the slot shows it (every picture there has its background, or its file covers it), the body is taken away — the
+    AI draws the jeans a little narrower than the doll's legs and the skin showed as a 1–3 px line round them
+    (2026-11-04). Only right beside the files, only where some picture has its background: under the files the doll
+    stays. Exact by the pictures, never grown: doll + file = each 3b picture there."""
+    if not opts:
+        return body_a
+    shown = np.zeros_like(body_a, dtype=np.float32)
+    bare = np.zeros(body_a.shape, bool)
+    near = np.zeros(body_a.shape, np.uint8)
+    for a, pa in opts:
+        a = a.astype(np.float32)
+        pa = pa.astype(np.float32)
+        # The doll shows in this 3b picture where it has its figure and the file does not cover it.
+        shown = np.maximum(shown, pa * (1 - a))
+        bare |= pa < 0.5
+        near |= (a > 0.5).astype(np.uint8)
+    near = cv2.dilate(near, kernel(max(3, round(4 * aa) + 1))).astype(bool)
+    zone = near & bare & (body_a > 0.02)
+    out = body_a.copy()
+    out[zone] = np.minimum(body_a[zone], shown[zone])
+    return out
+
+
+def body_showing(body_a: np.ndarray, a: np.ndarray, pa: np.ndarray, aa: float) -> int:
+    """Doll pixels seen round an option file where its 3b picture has its background (the doll's legs past narrower
+    jeans): a real line, 2+ px wide, beside the file. 0 for a part every version wears (body_under took them away)."""
+    near = cv2.dilate((a > 0.5).astype(np.uint8), kernel(max(3, round(4 * aa) + 1))).astype(bool)
+    seen = near & (body_a * (1 - a) > 0.5) & (pa < 0.3)
+    return int(clean(seen, open_r=max(1, round(aa / 2)), close_r=0, min_px=round(20 * aa * aa)).sum())
+
+
 def unit(x: np.ndarray) -> np.ndarray:
     """0..1 floats of a picture kept as 8-bit (cut inputs are, 2026-10-19: 60+ float pictures took 11 GB)."""
     return x.astype(np.float32) / 255 if x.dtype == np.uint8 else x
@@ -667,6 +702,8 @@ class Slot:
     ref_piece: str | None = None             # the option (piece key) whose picture it is cut against; None = the doll
     cut_colour: bool = False                 # drawn in a cut colour that stands out from what it lies on (white hair
                                              # under a white fur brim drawn blue): every colour is a recolour of it
+    always: bool = False                     # every version wears it (never optional, never theme-only): the body
+                                             # beside it shows only where one of its pictures shows it (body_under)
 
 
 @dataclass
@@ -731,6 +768,16 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
     # the outline of the bald head showed half through the hair (a grey arc across the bangs, 2026-10-15).
     aa = max(1.0, max(H, W) / 1024)
     fig = soft((body_a[c] > 0.02), grow=max(2, round(2 * aa)), blur=0.8 * aa)
+    # The body file: the doll, less the lines of it beside a part every version wears that none of its pictures shows.
+    body_ac = np.clip(body_a[c], 0, 1).astype(np.float32)
+    for s in slots:
+        if not s.always or s.wraps:
+            continue
+        keys = [f"{s.key}#{i}" for i, o in enumerate(s.options) if o.region is not None]
+        if not keys or any(k not in alphas for k in keys):
+            continue
+        pas = [np.clip(unit(o.alpha[c]), 0, 1) for o in s.options if o.region is not None]
+        body_ac = body_under(body_ac, [(alphas[k][c], pa) for k, pa in zip(keys, pas)], aa)
 
     files: list[Out] = []
     views: list[Out] = []
@@ -769,7 +816,11 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
             a = alphas.pop(piece)[c].astype(np.float32)
             col0 = unit(o.col[c])
             pa = np.clip(unit(o.alpha[c]), 0, 1)
-            ref_c, ref_a = body[c], np.clip(body_a[c], 0, 1)
+            ref_c, ref_a = body[c], body_ac
+            if not s.wraps:
+                seen = body_showing(body_ac, a, pa, aa)
+                if seen > 150 * aa * aa:
+                    checks.append({"name": f"Thân lòi ra: {s.label}: {o.name}", "ok": False, "detail": f"{seen:,} px thân búp bê lộ ra quanh phần này (ảnh 3b vẽ phần hẹp hơn búp bê) — vẽ lại ảnh 3b này" + ("" if s.always else " (phần có thể bỏ / theo theme: thân không được xoá)"), "piece": piece})
             if s.ref_piece in hosts:
                 ha = hosts[s.ref_piece][c].astype(np.float32)
                 ra = ha + ref_a * (1 - ha)
@@ -805,9 +856,10 @@ def cut(body: np.ndarray, body_a: np.ndarray, slots: list[Slot], zones: list[Zon
             fronts.append({"key": f"{s.key}:front", "label": f"{s.label} — lớp trước", "follows": None})
         else:
             parts.append({"key": s.key, "label": s.label, "follows": None})
-    files.append(Out("body", "Thân", "Body", "", *px(body[c], body_a[c]), "body", plate_of(body[c], body_a[c])))
+    # Its plate keeps the whole doll: a hand edit can add back what body_under took away.
+    files.append(Out("body", "Thân", "Body", "", *px(body[c], body_ac), "body", plate_of(body[c], np.clip(body_a[c], 0, 1))))
     order = backs + [{"key": "body", "label": "Thân", "follows": None}] + parts + fronts
-    checks.append({"name": "Cắt theo phần khác búp bê", "ok": True, "detail": f"{len(files)} file — mỗi file là đúng pixel ảnh 3b của nó, thân là búp bê nguyên vẹn"})
+    checks.append({"name": "Cắt theo phần khác búp bê", "ok": True, "detail": f"{len(files)} file — mỗi file là đúng pixel ảnh 3b của nó, thân là búp bê (trừ viền búp bê không ảnh 3b nào của phần luôn mặc còn thấy)"})
     h, w = y1 - y0, x1 - x0
     return {
         "width": w,

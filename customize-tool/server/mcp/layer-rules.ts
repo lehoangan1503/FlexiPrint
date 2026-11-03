@@ -89,6 +89,12 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
   pixels). Colours: the file recoloured where it has the part's own hue.
 - A layer can only ADD to the doll: a picture that erased or moved doll pixels (checks "Khớp", "xoá / dời … px của
   búp bê") is drawn again — never patched in the cut.
+- A part EVERY version wears (never optional, never theme-only — the pants): the doll's thin lines beside it that NONE
+  of its pictures shows are taken off the body file (layer-kit body_under, 2026-11-04: jeans drawn 1–3 px narrower
+  than the doll's legs left a skin line round them). Exact by the pictures, never grown; under the files the doll stays.
+  An optional / theme-only part cannot take the body away: check "Thân lòi ra" (cut) is red → redraw that picture.
+- The cut never starts on its own (auto after the plan, MCP char_cut build) while a plan check is red: redraw those
+  pictures and plan again; a person can still cut from the page.
 - Prompts: garments in SOLID opaque fabric ("knit" alone gave openwork mesh), covering the magenta wherever worn; a
   garment under a jacket is sleeveless; an item goes in the doll's empty hand; nothing else of the doll moves.
 - NEVER again (all tried until 2026-10-14, all gave seams and clipart unlike 3b): a segmentation model choosing edges

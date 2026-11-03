@@ -1007,6 +1007,8 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_cut is for chat requests");
       if (str(args.what) !== "plan" && str(args.what) !== "build") throw new Error('char_cut: "what" must be "plan" or "build"');
+      const red = (project.cut?.plan?.checks ?? []).filter((c) => !c.ok).map((c) => c.name);
+      if (str(args.what) === "build" && red.length) throw new Error(`char_cut build: the 3c plan still has red checks (${red.join("; ")}) — redraw those 3b pictures (char_run_edits), then char_cut "plan". A person can still cut from the page.`);
       if (str(args.what) === "plan") await startPlan(db, task.user_id!, project, true);
       else await startBuild(db, task.user_id!, project, project.cut?.plan ? { ...project.cut, plan: { ...project.cut.plan, approved: true } } : undefined, true);
       await progress(db, task.id, str(args.what) === "plan" ? "Đang tìm lại vùng 3c và cắt file" : "Đang cắt lại file layer");

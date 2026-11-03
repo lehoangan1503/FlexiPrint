@@ -1250,21 +1250,19 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
           name: zoneName,
           kind: "photo",
           shape: keptZone?.shape ?? { type: "polygon", points: z.polygon.map(([x, y]) => ({ x: box.x + x * k, y: box.y + y * k })) },
-          // A face under the body: the body's hole edges it (its hair may show past the hat, like the reference) — not clipped.
-          config: { ...cfg, clip: sb.photoZones.find((x) => x.id === z.id)?.treat !== "face", mainId, photo: { ...cfg.photo, ...zonePhoto(sb, z.id), label: z.label, required: true, ...(keptFrame(keptZone, sb.photoZones.find((x) => x.id === z.id)?.treat) ?? {}) } },
+          // Every photo zone clipped to its outline: what the zone covers in "Thiết kế" is exactly where the photo shows.
+          config: { ...cfg, clip: true, mainId, photo: { ...cfg.photo, ...zonePhoto(sb, z.id), label: z.label, required: true, ...(keptFrame(keptZone, sb.photoZones.find((x) => x.id === z.id)?.treat) ?? {}) } },
           sort_order: order++,
         };
         return r;
       });
-      // Photo zones right above the bodies — a face zone right UNDER them, seen through the hole cut in the body (the
-      // hat brim, the hair edge and the collar lie over the customer's face).
+      // Photo zones right above the bodies — face zones too (2026-11-04 user: a face zone drawn bigger than the hole,
+      // over the hat brim and the collar, must show the face over them, the preview / store exactly like "Thiết kế";
+      // under the body the hat and collar hid it and the face stayed hole-sized).
       if (photoRegions.length) {
         const at = firstBody >= 0 ? firstBody : regions.length;
-        const under = photoRegions.filter((r) => r.config.photo.mode === "face");
-        const over = photoRegions.filter((r) => r.config.photo.mode !== "face");
         const lastBody = regions.reduce((n, r, i) => (i >= start && isBody(r) ? i : n), at - 1);
-        regions.splice(lastBody + 1, 0, ...over);
-        regions.splice(at, 0, ...under);
+        regions.splice(lastBody + 1, 0, ...photoRegions);
       }
       // In the set's own order (every part is a layer drawn on the doll: a cardigan that only changes colour lies over
       // the dress like any garment — 2026-10-14); the hats of headwear outfits over everything of the character.

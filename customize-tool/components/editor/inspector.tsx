@@ -834,7 +834,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
           onChange={(frame) => set({ frame })}
         />
       ) : (
-        <CtButton size="sm" variant="outline" className="w-full" onClick={() => set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true } })}>
+        <CtButton size="sm" variant="outline" className="w-full" onClick={() => set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true, ...(cfg.photo.frame?.head ? { head: true, tilt: cfg.photo.frame.tilt } : {}) } })}>
           <Frame className="h-3.5 w-3.5" /> Thêm khung ảnh
         </CtButton>
       )}
@@ -954,7 +954,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
           {(sel.url || sel.sourceUrl) && (
             <CtButton size="sm" variant="ghost" disabled={working !== null} onClick={() => {
                 // The frame goes with the photo; the next upload works out a new one. Customers get the auto frame.
-                if (!cfg.photo.frame.auto || !cfg.photo.frame.enabled) set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true, tilt: cfg.photo.frame.tilt } });
+                if (!cfg.photo.frame.auto || !cfg.photo.frame.enabled) set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true, tilt: cfg.photo.frame.tilt, ...(cfg.photo.frame.head ? { head: true } : {}) } });
                 onPhotoSelection(region.id, { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM } });
               }}>
               <X className="h-3.5 w-3.5" /> Bỏ
@@ -974,7 +974,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
             // A new photo always gets a fresh child frame — also after the frame was deleted: worked out again from the
             // zone (its outline, tilt) and this photo. The zone's tilt is the zone's: it stays.
             const fr = cfg.photo.frame;
-            if (!fr.enabled || !fr.auto) set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true, tilt: fr.tilt } });
+            if (!fr.enabled || !fr.auto) set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true, tilt: fr.tilt, ...(fr.head ? { head: true } : {}) } });
             // The raw upload never goes into the frame: the zone stays empty (with a spinner) until the processed photo is ready.
             const base: CtPhotoSelection = { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM }, style: cfg.photo.defaultStyle, sourceUrl };
             onPhotoSelection(region.id, base);
@@ -1023,7 +1023,7 @@ function PhotoFrameFields({ frame, auto, onChange }: { frame: CtPhotoFrame; auto
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Khung ảnh</span>
         {!auto && moved && (
-          <button type="button" className="text-[11px] text-sky-600 hover:underline" onClick={() => onChange({ ...IDENTITY_PHOTO_FRAME, auto: true, tilt: frame.tilt })}>
+          <button type="button" className="text-[11px] text-sky-600 hover:underline" onClick={() => onChange({ ...IDENTITY_PHOTO_FRAME, auto: true, tilt: frame.tilt, ...(frame.head ? { head: true } : {}) })}>
             Đặt lại
           </button>
         )}

@@ -19,7 +19,7 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_FONTS, CT_TABLES } from "../../config";
-import type { CtAsset, CtCharBrief, CtCharComposePerson, CtCharElement, CtCharFileFx, CtCharShownWhen, CtCharImage, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject, CtCharSubject, CtCharTextField, CtCharTextPlace, CtPhotoStyleRef, CtProduct, CtRegion, CtRegionItem, CtShape } from "../../types";
+import type { CtAsset, CtCharBrief, CtCharComposePerson, CtCharElement, CtCharFileFx, CtCharShownWhen, CtCharImage, CtCharLayerFile, CtCharLayerSet, CtCharLayerSlot, CtCharProject, CtCharSubject, CtCharTextField, CtCharTextPlace, CtPhotoFrame, CtPhotoStyleRef, CtProduct, CtRegion, CtRegionItem, CtShape } from "../../types";
 import { defaultProductConfig, defaultRegionConfig } from "../../lib/design";
 import { applyMaterialPreset, isMaterialId } from "../../lib/materials";
 import { charLayout, type CtCharLayoutText, type CtLayoutBox } from "../../lib/char-layout";
@@ -35,7 +35,7 @@ import { NOT_YOURS, canEditProject, jobDb, jsonError, loadImages, loadProject, p
 import { getTemplate } from "../print-templates";
 import { makeTemplateProduct, productPrintOf } from "../print-products";
 import { safeShapes } from "../../lib/print-template";
-import { shapeBounds } from "../../lib/geometry";
+import { IDENTITY_PHOTO_FRAME, sameFrame, shapeBounds } from "../../lib/geometry";
 import type { CtPrintSpec } from "../../types/print";
 import { findProductFolder, productFolder } from "../artworks";
 import { ctRemove } from "../storage";
@@ -94,12 +94,27 @@ export function textRegion(productId: string, mainId: string, t: CtCharTextField
  * head only, cut out, fitted to the zone (asked 2026-10-15 — the die-cut elf ornament with the customers' faces);
  * an AI zone offers its styles; a framed photo fills its frame as uploaded.
  */
+const FACE_HOLE_FRAME: CtPhotoFrame = { ...IDENTITY_PHOTO_FRAME, auto: true, tilt: 0, head: true };
+
 function zonePhoto(brief: CtCharBrief, zoneId: string): Partial<CtRegion["config"]["photo"]> {
   const z = brief.photoZones.find((x) => x.id === zoneId);
   const treat = z?.treat ?? "photo";
-  if (treat === "face") return { mode: "face", styles: CT_FACE_STYLES.map((x) => x.id), defaultStyle: CT_FACE_STYLES[0].id, styleLabel: "Filter", fit: "contain", cutout: true, fadeCrop: false };
+  // The head fitted to its hole (lib/geometry.ts headPhotoFrame): as wide as the hole, chin on its bottom, upright.
+  if (treat === "face")
+    return { mode: "face", styles: CT_FACE_STYLES.map((x) => x.id), defaultStyle: CT_FACE_STYLES[0].id, styleLabel: "Filter", fit: "contain", cutout: true, fadeCrop: false, frame: FACE_HOLE_FRAME };
   if (treat === "ai" && z?.styles?.length) return { mode: "ai", styles: z.styles as CtPhotoStyleRef[], defaultStyle: z.styles[0] as CtPhotoStyleRef, styleLabel: "Choose Style", fit: "contain", cutout: true, fadeCrop: true };
   return { fit: "cover", cutout: false, fadeCrop: false };
+}
+
+/**
+ * A rebuilt zone keeps the frame the editor gave it — except a face zone still on the plain zone box (built before
+ * FACE_HOLE_FRAME, 2026-11-04), which takes the head fit.
+ */
+function keptFrame(kept: KeptZone | undefined, treat: string | undefined): { frame: CtPhotoFrame } | null {
+  if (!kept) return null;
+  const f = kept.frame;
+  if (treat === "face" && (!f || (!f.auto && sameFrame({ ...f, tilt: null }, IDENTITY_PHOTO_FRAME)))) return null;
+  return { frame: f };
 }
 
 /** A layer file with polygons (its own canvas px) cut out of it — the hole a face zone is seen through. */
@@ -1236,7 +1251,7 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
           kind: "photo",
           shape: keptZone?.shape ?? { type: "polygon", points: z.polygon.map(([x, y]) => ({ x: box.x + x * k, y: box.y + y * k })) },
           // A face under the body: the body's hole edges it (its hair may show past the hat, like the reference) — not clipped.
-          config: { ...cfg, clip: sb.photoZones.find((x) => x.id === z.id)?.treat !== "face", mainId, photo: { ...cfg.photo, ...zonePhoto(sb, z.id), label: z.label, required: true, ...(keptZone ? { frame: keptZone.frame } : {}) } },
+          config: { ...cfg, clip: sb.photoZones.find((x) => x.id === z.id)?.treat !== "face", mainId, photo: { ...cfg.photo, ...zonePhoto(sb, z.id), label: z.label, required: true, ...(keptFrame(keptZone, sb.photoZones.find((x) => x.id === z.id)?.treat) ?? {}) } },
           sort_order: order++,
         };
         return r;

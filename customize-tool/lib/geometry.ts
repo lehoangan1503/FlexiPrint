@@ -238,12 +238,59 @@ export function autoPhotoFrame(shape: CtShape, aspect: number, tilt?: number | n
   };
 }
 
+/** Head fit: how much wider than the hole the cut head is, per side (its hair edge reaches past the hole's rim). */
+export const HEAD_FRAME_GROW = 0.04;
+/** Head fit: the chin sits this far (fraction of the hole's height) below the hole's bottom, under the collar. */
+export const HEAD_FRAME_CHIN = 0.04;
+
+/**
+ * The auto frame of a face HOLE (CtPhotoFrame.head): the cut head (services/face-detect — hair kept, chin at the
+ * bottom) as wide as the hole plus HEAD_FRAME_GROW a side, its chin HEAD_FRAME_CHIN under the hole's bottom; the
+ * rest of the head goes up under the hat. Measured in the zone's tilted axes, like autoPhotoFrame.
+ */
+export function headPhotoFrame(shape: CtShape, aspect: number, tilt?: number | null): CtPhotoFrame {
+  const b = shapeBounds(shape);
+  const deg = typeof tilt === "number" && Number.isFinite(tilt) ? tilt : orientedBox(shape).rotation;
+  const t = (deg * Math.PI) / 180;
+  const cos = Math.cos(t);
+  const sin = Math.sin(t);
+  const local = outlinePoints(shape).map((p) => ({ x: p.x * cos + p.y * sin, y: -p.x * sin + p.y * cos }));
+  const xs = local.map((p) => p.x);
+  const ys = local.map((p) => p.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const a = aspect > 0 && Number.isFinite(aspect) ? aspect : 1;
+  const w = Math.max(1, maxX - minX) * (1 + 2 * HEAD_FRAME_GROW);
+  const h = w / a;
+  const lx = (minX + maxX) / 2;
+  const ly = maxY + HEAD_FRAME_CHIN * Math.max(1, maxY - minY) - h / 2;
+  const cx = lx * cos - ly * sin;
+  const cy = lx * sin + ly * cos;
+  const bw = Math.max(1, b.w);
+  const bh = Math.max(1, b.h);
+  return {
+    offsetX: (cx - (b.x + b.w / 2)) / bw,
+    offsetY: (cy - (b.y + b.h / 2)) / bh,
+    scaleX: w / bw,
+    scaleY: h / bh,
+    rotation: Math.round(deg * 10) / 10,
+    auto: true,
+    tilt: typeof tilt === "number" && Number.isFinite(tilt) ? tilt : null,
+    padding: 0,
+    enabled: true,
+    head: true,
+  };
+}
+
 /** The frame a photo zone actually uses: the stored one, worked out for this photo when `auto`, the zone's box when there is none. */
 export function resolvePhotoFrame(photo: CtPhotoConfig, shape: CtShape, photoSize?: { width: number; height: number } | null): CtPhotoFrame {
   const f = photo.frame ?? IDENTITY_PHOTO_FRAME;
   if (f.enabled === false) return { ...IDENTITY_PHOTO_FRAME, enabled: false };
   if (!f.auto) return f;
-  return autoPhotoFrame(shape, photoSize && photoSize.height > 0 ? photoSize.width / photoSize.height : 1, f.tilt);
+  const aspect = photoSize && photoSize.height > 0 ? photoSize.width / photoSize.height : 1;
+  return f.head ? headPhotoFrame(shape, aspect, f.tilt) : autoPhotoFrame(shape, aspect, f.tilt);
 }
 
 /** Two frames that place the photo identically (frames are rebuilt on every normalize, so compare values). */
@@ -258,6 +305,7 @@ export function sameFrame(a: CtPhotoFrame | undefined, b: CtPhotoFrame | undefin
     a.auto === b.auto &&
     (a.tilt ?? null) === (b.tilt ?? null) &&
     (a.padding ?? 0) === (b.padding ?? 0) &&
+    !!a.head === !!b.head &&
     a.enabled === b.enabled
   );
 }

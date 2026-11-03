@@ -266,6 +266,12 @@ export interface CtPhotoFrame {
   /** Empty margin inside the frame around the photo, as a fraction of the frame's shorter side (0 = the photo touches the frame). */
   padding: number;
   /**
+   * Auto frame for a face hole (a face zone UNDER the body, from a bộ nhân vật): the cut head as wide as the hole,
+   * its chin on the hole's bottom, the hair going up under the hat (lib/geometry.ts headPhotoFrame) — instead of the
+   * whole photo contained in the zone's circle, which left a tall head ~60 % of the hole's width.
+   */
+  head?: boolean;
+  /**
    * The zone has a child frame (a sub-layer under it in Layers). Off — deleted
    * from there — the photo simply fits the zone's box, upright; the zone stays.
    */

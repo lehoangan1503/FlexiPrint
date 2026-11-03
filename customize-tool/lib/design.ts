@@ -251,6 +251,7 @@ function normalizePhotoConfig(p: CtPhotoConfig): CtPhotoConfig {
     tilt: typeof f.tilt === "number" && Number.isFinite(f.tilt) ? Math.min(180, Math.max(-180, f.tilt)) : null,
     padding: num(f.padding, 0, 0, 0.45),
     enabled: f.enabled !== false,
+    ...(f.head === true ? { head: true } : {}),
   };
   // Face zones saved before `auto` existed fit the head automatically unless their frame was moved by hand.
   const untouched = frame.offsetX === 0 && frame.offsetY === 0 && frame.scaleX === 1 && frame.scaleY === 1 && frame.rotation === 0 && frame.padding === 0;

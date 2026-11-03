@@ -17,7 +17,7 @@ import type { CtPrintSpec } from "../types/print";
 import { activeRegions, defaultRegionSelection, normalizeProductConfig, normalizeRegion, resolveLinked, selectedMainId, textMode } from "../lib/design";
 import { onVersion } from "../lib/layout";
 import { loadFont, textSvg } from "./print-text";
-import { itemPlacement, shapeBounds, shapeToSvgPath, textBand, translateShape } from "../lib/geometry";
+import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, textBand, translateShape } from "../lib/geometry";
 import { boundsInSafe, safeShapes } from "../lib/print-template";
 import type { PrintDb } from "./print-products";
 
@@ -152,11 +152,20 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
       const buf = await fetchBuffer(sel.url ?? r.config.photo.sampleUrl!);
       if (!buf) continue;
       const m0 = await sharp(buf).metadata();
-      const p = itemPlacement(bounds, m0.width ?? 1, m0.height ?? 1, sel.transform, r.config.photo.fit);
+      // In the zone's child frame (auto: fitted to this photo — a face hole's head fit), like lib/compositor.ts.
+      const f = photoFrameBox(bounds, resolvePhotoFrame(r.config.photo, r.shape, { width: m0.width ?? 1, height: m0.height ?? 1 }));
+      const inner = { x: -f.w / 2 + f.margin, y: -f.h / 2 + f.margin, w: Math.max(1, f.w - 2 * f.margin), h: Math.max(1, f.h - 2 * f.margin) };
+      const p0 = itemPlacement(inner, m0.width ?? 1, m0.height ?? 1, sel.transform, r.config.photo.fit);
+      const fr = (f.rotation * Math.PI) / 180;
+      const p = { cx: f.cx + p0.cx * Math.cos(fr) - p0.cy * Math.sin(fr), cy: f.cy + p0.cx * Math.sin(fr) + p0.cy * Math.cos(fr), w: p0.w, h: p0.h, rotation: f.rotation + p0.rotation };
       let pic = await sharp(buf).resize(Math.max(1, Math.round(p.w)), Math.max(1, Math.round(p.h)), { fit: "fill" }).png().toBuffer();
-      const left = Math.round(p.cx - p.w / 2);
-      const top = Math.round(p.cy - p.h / 2);
-      if (r.config.clip) pic = await sharp(pic).composite([{ input: maskSvg(Math.round(p.w), Math.round(p.h), translateShape(r.shape, -left, -top)), blend: "dest-in" }]).png().toBuffer();
+      if (Math.abs(p.rotation) > 0.05) pic = await sharp(pic).rotate(p.rotation, { background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+      const pm = await sharp(pic).metadata();
+      const pw = pm.width ?? Math.round(p.w);
+      const ph = pm.height ?? Math.round(p.h);
+      const left = Math.round(p.cx - pw / 2);
+      const top = Math.round(p.cy - ph / 2);
+      if (r.config.clip) pic = await sharp(pic).composite([{ input: maskSvg(pw, ph, translateShape(r.shape, -left, -top)), blend: "dest-in" }]).png().toBuffer();
       layers.push({ input: pic, left, top });
     } else if (r.kind === "photo" && guides) {
       svgs.push(

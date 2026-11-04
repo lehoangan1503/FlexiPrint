@@ -488,6 +488,20 @@ export function Stage(props: StageProps) {
       setGesture({ kind: "marquee", start: w, current: w, add: e.shiftKey || e.metaKey || e.ctrlKey });
       return;
     }
+    // The selected layer / layers win inside their own frame (asked 2026-11-04): a press there moves them, whatever
+    // is under the pointer. A selection box is drawn after clicking outside to let go of them.
+    const within = (b: CtBounds | null) => !!b && w.x >= b.x && w.x <= b.x + b.w && w.y >= b.y && w.y <= b.y + b.h;
+    if (activeRegion && within(shapeBounds(activeRegion.shape))) {
+      onRegionPointerDown(e, activeRegion);
+      return;
+    }
+    if (props.selectedSet?.length && !activeRegion) {
+      const box = charSetBounds(regions.filter((r) => props.selectedSet?.includes(r.id)));
+      if (within(box) && !(e.shiftKey || e.metaKey || e.ctrlKey)) {
+        startSetMove(e, props.selectedSet);
+        return;
+      }
+    }
     // select tool: on a layer's pixels → that layer; on the version's picture → its frame (and drag it); else deselect
     const hit = pickLayer(w);
     const hitRegion = hit ? regions.find((r) => r.id === hit) : undefined;
@@ -873,9 +887,8 @@ export function Stage(props: StageProps) {
   const onRegionPointerDown = (e: React.PointerEvent, picked: CtRegion) => {
     if (effectiveTool !== "select") return;
     e.stopPropagation();
-    // Inside the selected layer's frame, another layer's pixels on top win (its frame often covers the whole artwork).
-    const hit = picked.id === selectedRegionId ? pickLayer(toWorld(e.clientX, e.clientY)) : undefined;
-    const region = (typeof hit === "string" && regions.find((r) => r.id === hit)) || picked;
+    // The selected layer's frame is its own: a press inside it moves it, never another layer under the pointer.
+    const region = picked;
     props.onSelectMain(false);
     viewportRef.current?.setPointerCapture(e.pointerId);
     const press = (add: boolean, click: () => void) => setGesture({ kind: "press", start: toWorld(e.clientX, e.clientY), sx: e.clientX, sy: e.clientY, add, click });

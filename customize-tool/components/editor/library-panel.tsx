@@ -82,6 +82,9 @@ export function LibraryPanel(props: LibraryPanelProps) {
   );
 }
 
+/** Sent on `window` when a bộ was made here: the set shelf loads again. */
+export const SETS_CHANGED = "ct:sets-changed";
+
 /** Finished bộ nhân vật v2 — the ones with a product (its layers are what a drop copies). */
 export function finishedSets(projects: CtCharProject[]): CtCharProject[] {
   return projects.filter((p) => p.product_ids.length > 0).sort((a, b) => a.name.localeCompare(b.name, "vi"));
@@ -107,7 +110,12 @@ function CharSetShelf(props: LibraryPanelProps) {
   // Back from /v2 or /library: show what changed there.
   useEffect(() => {
     window.addEventListener("focus", load);
-    return () => window.removeEventListener("focus", load);
+    // A bộ saved from picked layers in this editor (Lưu thành bộ clipart).
+    window.addEventListener(SETS_CHANGED, load);
+    return () => {
+      window.removeEventListener("focus", load);
+      window.removeEventListener(SETS_CHANGED, load);
+    };
   }, [load]);
   const shown = (sets ?? []).filter((p) => !q.trim() || p.name.toLowerCase().includes(q.trim().toLowerCase()));
   return (
@@ -160,10 +168,16 @@ function CharSetCard({ project, thumb, used }: { project: CtCharProject; thumb: 
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="line-clamp-2 text-xs font-medium">{project.name}</span>
         <span className="text-[11px] text-muted-foreground">
-          {slots.length ? `${slots.filter((s) => !s.follows).length} hạng mục · ${files} clipart` : project.brief.kind === "photo" ? "bộ ảnh khách" : "bộ nhiều dáng"}
+          {project.brief.extracted
+            ? `cụm clipart · ${project.brief.extracted.layers} layer`
+            : slots.length
+              ? `${slots.filter((s) => !s.follows).length} hạng mục · ${files} clipart`
+              : project.brief.kind === "photo"
+                ? "bộ ảnh khách"
+                : "bộ nhiều dáng"}
           {used && <span className="ml-1 text-emerald-600">· đang dùng</span>}
         </span>
-        <Link href={`/v2/${project.id}`} target="_blank" onClick={(e) => e.stopPropagation()} className="inline-flex w-fit items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:underline">
+        <Link href={project.brief.extracted ? `/dashboard?tab=library&set=${project.id}` : `/v2/${project.id}`} target="_blank" onClick={(e) => e.stopPropagation()} className="inline-flex w-fit items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:underline">
           <ExternalLink className="h-2.5 w-2.5" /> Mở bộ
         </Link>
       </div>

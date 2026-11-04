@@ -21,6 +21,7 @@ import { charKhuonRoute } from "./khuon";
 import { listVersionSets, runVersionChain, startVersionSets } from "./versions";
 import { productSets, setProducts } from "./set-users";
 import { createImport, importRoute, listImports } from "./import";
+import { extractCharSet } from "./extract-set";
 import { adoptMaster, approveMaster, createCharProject, deleteCharProject, generateMasters, getCharProject, jobDb, jsonError, listCharProjects, loadProject, refineMaster, updateCharProject, uploadCharFile, uploadChatFile } from "./projects";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -110,6 +111,8 @@ async function route(req: NextRequest, s: CtSession, path: string[]): Promise<Ne
   // A finished bộ imported from its files (server/char/import.ts).
   if (id === "import" && !action && method === "POST") return createImport(s, await json(req));
   if (id === "imports" && !action && method === "GET") return listImports(s);
+  // Layers picked in a product saved as a bộ of their own (server/char/extract-set.ts).
+  if (id === "extract" && !action && method === "POST") return extractCharSet(s, await json(req));
   if (!UUID.test(id)) return jsonError("id không hợp lệ", 400);
   if (action === "import" && sub && !subAction) return importRoute(req, s, id, sub);
   if (action === "versions" && !sub && method === "GET") return listVersionSets(s, id);

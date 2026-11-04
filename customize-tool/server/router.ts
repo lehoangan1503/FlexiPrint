@@ -70,6 +70,12 @@
  *   POST   ai-styles/refs                [form: file…] → { urls } style reference pictures (≤ 4)
  *   POST   ai-styles/:id/demo            [form: sample] → { style } with params.demoUrl (the style on a sample photo)
  *
+ * Font library (ct_settings 'fonts'; server/fonts.ts) · artworks of every product (server/artworks.ts):
+ *   GET    fonts                         → { fonts, admin }
+ *   POST   fonts                         multipart file (.ttf/.otf/.woff), name? → { font }
+ *   DELETE fonts/:id
+ *   GET    artworks?product=             → { artworks: CtArtworkRow[] }
+ *
  * Clipart library (global, migration 006; see server/library.ts):
  *   GET    library/categories            → { categories, uncategorized, admin }
  *   POST   library/categories            CtCategoryBody
@@ -121,6 +127,7 @@ import { khuonAi } from "./print-khuon";
 import { aiTemplateBlank, uploadTemplateBlank } from "./print-blanks";
 import { createProductFromTemplate } from "./print-products";
 import * as artworks from "./artworks";
+import * as fonts from "./fonts";
 import * as productMockups from "./product-mockups";
 import * as packs from "./mockup-packs";
 import { dispatchChar } from "./char/router";
@@ -205,6 +212,14 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     return h.jsonError("Not found", 404);
   }
   if (head === "library") return dispatchLibrary(req, session, path);
+  // The team's font library (server/fonts.ts) and every product's artworks (server/artworks.ts).
+  if (head === "fonts" && !id && method === "GET") return fonts.listFonts(session);
+  if (head === "fonts" && !id && method === "POST") return fonts.uploadFont(session, await req.formData().catch(() => null));
+  if (head === "fonts" && id && UUID.test(id) && !sub && method === "DELETE") return fonts.deleteFont(session, id);
+  if (head === "artworks" && !id && method === "GET") {
+    const product = req.nextUrl.searchParams.get("product");
+    return artworks.listAllArtworks(session, product && UUID.test(product) ? product : null);
+  }
   if (head === "char") return dispatchChar(req, session, path);
   if (head === "shopify" && id === "products" && !sub && method === "GET") return h.shopifySearch(req.nextUrl.searchParams.get("q")?.trim() ?? "");
   if (head === "shopify" && id === "collections" && !sub && method === "GET") return h.shopifyCollections();

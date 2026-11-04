@@ -97,6 +97,8 @@ export interface CtSelectOption<T extends string> {
   value: T;
   label: string;
   disabled?: boolean;
+  /** Draw the item's label in this font (a font list previews each font). */
+  fontFamily?: string;
 }
 
 /** shadcn Select. Radix forbids "" as an item value, so an empty value shows the placeholder. */
@@ -151,7 +153,9 @@ export function CtSelect<T extends string>({
                   "focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
                 )}
               >
-                <SelectPrimitive.ItemText>{o.label}</SelectPrimitive.ItemText>
+                <SelectPrimitive.ItemText>
+                  <span style={o.fontFamily ? { fontFamily: `"${o.fontFamily}", sans-serif` } : undefined}>{o.label}</span>
+                </SelectPrimitive.ItemText>
                 <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">
                   <SelectPrimitive.ItemIndicator>
                     <Check className="h-3.5 w-3.5" />

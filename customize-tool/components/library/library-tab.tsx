@@ -29,13 +29,15 @@ import { ImportButton } from "../char/import-button";
 import { KhuonTab } from "../print/khuon-tab";
 import { PhoiTab } from "../print/phoi-tab";
 import { FilterChips } from "../filter-chips";
+import { FontsTab } from "./fonts-tab";
 
-export type CtLibraryTab = "clipart" | "phoi" | "khuon";
+export type CtLibraryTab = "clipart" | "phoi" | "khuon" | "fonts";
 
 const TABS: Array<[CtLibraryTab, string]> = [
   ["clipart", "Clipart"],
-  ["phoi", "Phôi"],
+  ["phoi", "Template phôi"],
   ["khuon", "Khuôn in"],
+  ["fonts", "Font chữ"],
 ];
 
 function setParam(key: string, value: string | null) {
@@ -108,7 +110,9 @@ export function LibraryTab({ currentUserId, admin }: { currentUserId: string; ad
           </div>
         </div>
         {error && <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
-        {tab === "khuon" ? (
+        {tab === "fonts" ? (
+          <FontsTab currentUserId={currentUserId} admin={admin} />
+        ) : tab === "khuon" ? (
           <div className="flex h-[calc(100vh-13rem)] min-h-[480px] flex-col overflow-hidden rounded-xl border">
             <KhuonTab />
           </div>
@@ -135,12 +139,21 @@ export function LibraryTab({ currentUserId, admin }: { currentUserId: string; ad
 
 type KindFilter = "all" | CtSetKind;
 
+/**
+ * Bộ = a whole set (drawn, imported) · Cụm = layers picked in a product and saved together (asked 2026-11-04: one
+ * character with every hair / outfit of his pose, to reuse beside something else). Clipart cannot be kept one by one:
+ * a cut file only fits the doll it was cut on, so the smallest reusable piece is such a cụm.
+ */
+type GroupFilter = "all" | "set" | "cum";
+const isCum = (p: CtCharProject) => !!p.brief.extracted;
+
 function SetGrid({ currentUserId, admin, onOpen, onError }: { currentUserId: string; admin: boolean; onOpen: (id: string) => void; onError: (e: string) => void }) {
   const [projects, setProjects] = useState<CtCharProject[] | null>(null);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [options, setOptions] = useState<Record<string, string[]>>({});
   const [q, setQ] = useState("");
   const [kind, setKindFilter] = useState<KindFilter>("all");
+  const [group, setGroup] = useState<GroupFilter>("all");
 
   const load = useCallback(async () => {
     try {
@@ -160,8 +173,10 @@ function SetGrid({ currentUserId, admin, onOpen, onError }: { currentUserId: str
 
   const shown = useMemo(() => {
     const words = q.trim().toLowerCase();
-    return (projects ?? []).filter((p) => (kind === "all" || setKind(p) === kind) && (!words || p.name.toLowerCase().includes(words)));
-  }, [projects, q, kind]);
+    return (projects ?? []).filter(
+      (p) => (group === "all" || (group === "cum") === isCum(p)) && (kind === "all" || setKind(p) === kind) && (!words || p.name.toLowerCase().includes(words)),
+    );
+  }, [projects, q, kind, group]);
 
   const remove = async (p: CtCharProject) => {
     if (!(await ctConfirm({ title: `Xoá “${p.name}”?`, message: "Xoá brief, master, ảnh cắt clipart và layer của bộ. Sản phẩm đã tạo từ bộ vẫn giữ.", tone: "danger", confirmLabel: "Xoá" }))) return;
@@ -176,6 +191,16 @@ function SetGrid({ currentUserId, admin, onOpen, onError }: { currentUserId: str
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
+        <FilterChips<GroupFilter>
+          value={group}
+          onChange={setGroup}
+          options={[
+            { value: "all", label: "Tất cả" },
+            { value: "set", label: "Bộ clipart", title: "Bộ đầy đủ: người + tóc, quần áo, mắt… đúng vị trí, không nền" },
+            { value: "cum", label: `Cụm clipart (${(projects ?? []).filter(isCum).length})`, title: "Các layer chọn trong 1 sản phẩm rồi “Lưu thành bộ clipart” (một nhân vật với mọi kiểu tóc / quần áo đúng dáng)" },
+          ]}
+        />
+        <span className="h-5 w-px bg-border" />
         <FilterChips<KindFilter>
           value={kind}
           onChange={setKindFilter}
@@ -248,6 +273,7 @@ function SetCard({ project: p, thumb, options, mine, onOpen, onRemove }: { proje
           <span className="rounded bg-orange-500/15 px-1.5 py-0.5 font-medium text-orange-600" title={SET_KIND_INFO[k].short}>
             {SET_KIND_INFO[k].label}
           </span>
+          {isCum(p) && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 font-medium text-sky-600" title={`Tách từ “${p.brief.extracted?.productName ?? ""}”`}>Cụm</span>}
           {!ready && <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">Đang làm</span>}
           <span className="text-muted-foreground">{new Date(p.updated_at).toLocaleDateString("vi-VN")}</span>
         </div>

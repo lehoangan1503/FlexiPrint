@@ -24,6 +24,7 @@
  * is exactly what the storefront and exports render.
  */
 
+import { Rulers } from "./rulers";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CtAsset, CtBounds, CtMainFrame, CtProductScene, CtPhotoFrame, CtPoint, CtRegion, CtRegionItem, CtRegionKind, CtSelection, CtShape, CtTransform } from "../../types";
 import { bandShape, clamp, fitZoneToBounds, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, SNAP_FRACTIONS, snapAxis, textBand, translateShape } from "../../lib/geometry";
@@ -128,6 +129,10 @@ export interface StageProps {
   /** The set selected: one frame around it, dragged / scaled with every layer in it. */
   selectedSet?: string[] | null;
   onSelectSet?: (ids: string[]) => void;
+  /** Shift / ⌘-click on a layer: it (or its whole bộ) joins the picked layers, or leaves them. */
+  onToggleMany?: (ids: string[]) => void;
+  /** mm per artboard px when the real size is known: the rulers can count in mm. */
+  mmPerPx?: number;
 }
 
 const MIN_ZOOM = 0.02;
@@ -797,6 +802,27 @@ export function Stage(props: StageProps) {
     const region = (typeof hit === "string" && regions.find((r) => r.id === hit)) || picked;
     props.onSelectMain(false);
     viewportRef.current?.setPointerCapture(e.pointerId);
+    // Shift / ⌘-click: add the layer (a bộ's layer: the whole bộ) to the picked layers, or take it out.
+    if ((e.shiftKey || e.metaKey || e.ctrlKey) && props.onToggleMany) {
+      const ids = props.setOf?.(region.id) ?? [region.id];
+      const cur = props.selectedSet ?? (selectedRegionId ? [selectedRegionId] : []);
+      const leaving = ids.every((id) => cur.includes(id));
+      props.onToggleMany(ids);
+      const next = leaving ? cur.filter((id) => !ids.includes(id)) : [...new Set([...cur, ...ids])];
+      if (!leaving && next.length > 1) {
+        // Dragging on from here moves them all (after the short hold every new pick has).
+        moveHeldUntil.current = performance.now() + SELECT_HOLD_MS;
+        const list = regions.filter((r) => next.includes(r.id));
+        const bounds = charSetBounds(list);
+        if (bounds) setGesture({ kind: "move-set", start: toWorld(e.clientX, e.clientY), regions: list, bounds });
+      }
+      return;
+    }
+    // Inside the picked layers' frame: a press on any of them drags them all.
+    if (props.selectedSet?.includes(region.id)) {
+      startSetMove(e, props.selectedSet);
+      return;
+    }
     // A layer of a bộ nhân vật: the whole set (one picked in Layers stays itself).
     const members = region.id !== selectedRegionId ? props.setOf?.(region.id) : null;
     if (members?.length) {
@@ -984,6 +1010,7 @@ export function Stage(props: StageProps) {
       }}
     >
       {dropping && <div className="pointer-events-none absolute inset-2 z-20 rounded-lg border-2 border-dashed border-sky-500 bg-sky-500/5" />}
+      <Rulers zoom={zoom} pan={pan} width={main.width} height={main.height} mmPerUnit={props.mmPerPx} />
       {sceneRect && props.scene?.url && (
         // The background in main px: the design box of the scene maps onto (0, 0, main.width, main.height).
         <img
@@ -1144,8 +1171,19 @@ export function Stage(props: StageProps) {
           )}
 
           {props.showOverlay && setBox && !selected && effectiveTool === "select" && (
-            // The selected bộ nhân vật: one frame around all its layers — its edge drags the set, a corner scales it.
+            // The selected bộ nhân vật (or layers picked together): one frame around all of them — its edge drags them,
+            // a corner scales them; each picked layer's own box dashed inside it.
             <g>
+              {(props.selectedSet?.length ?? 0) > 1 &&
+                regions
+                  .filter((r) => props.selectedSet?.includes(r.id))
+                  .slice(0, 60)
+                  .map((r) => {
+                    const b = shapeBounds(r.shape);
+                    return b.w > 1 || b.h > 1 ? (
+                      <rect key={`pick-${r.id}`} x={b.x} y={b.y} width={b.w} height={b.h} fill="none" stroke={FRAME_COLOR} strokeOpacity={0.55} strokeWidth={1} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" pointerEvents="none" />
+                    ) : null;
+                  })}
               <rect
                 x={setBox.x}
                 y={setBox.y}

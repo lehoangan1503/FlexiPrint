@@ -9,6 +9,7 @@ import type {
   CtCharBox,
   CtCharBrief,
   CtCharImported,
+  CtCharExtracted,
   CtCharChooser,
   CtCharShownWhen,
   CtCharElement,
@@ -362,6 +363,14 @@ function parseImported(raw: unknown): CtCharImported | null {
   };
 }
 
+/** An extracted bộ's origin (types/char.ts CtCharExtracted); null = not one. */
+function parseExtracted(raw: unknown): CtCharExtracted | null {
+  const o = rec(raw);
+  const productId = s(o.productId, 60);
+  if (!productId) return null;
+  return { productId, productName: s(o.productName, 200), layers: typeof o.layers === "number" && Number.isFinite(o.layers) ? Math.max(0, Math.round(o.layers)) : 0, at: s(o.at, 40) };
+}
+
 function parseImportShopify(o: Record<string, unknown>): NonNullable<CtCharImported["shopify"]> {
   return {
     status: o.status === "deploying" || o.status === "done" ? o.status : "failed",
@@ -414,6 +423,7 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
     versionOf: parseVersionOf(o.versionOf),
     poses: parsePoses(o.poses),
     imported: parseImported(o.imported),
+    extracted: parseExtracted(o.extracted),
     compose: parseCompose(o.compose),
     framing: o.framing === "bust" ? "bust" : "full",
     choosers: arr(o.choosers).map(parseChooser).filter((x): x is CtCharChooser => x !== null).slice(0, 24),

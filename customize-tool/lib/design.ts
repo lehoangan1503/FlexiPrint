@@ -15,6 +15,7 @@ import type {
   CtPhotoMode,
   CtPhotoStyleRef,
   CtProductConfig,
+  CtPrintGuide,
   CtProductPrint,
   CtProductScene,
   CtRegion,
@@ -272,6 +273,7 @@ export function defaultProductConfig(): CtProductConfig {
     print: null,
     mockupsByOption: {},
     zoneMockups: [],
+    printGuide: null,
   };
 }
 
@@ -315,7 +317,16 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     print: normalizeProductPrint(raw?.print),
     mockupsByOption: normalizeMockupsByOption(raw?.mockupsByOption),
     zoneMockups: normalizeZoneMockups(raw?.zoneMockups),
+    printGuide: normalizePrintGuide(raw?.printGuide),
   };
+}
+
+function normalizePrintGuide(raw: unknown): CtPrintGuide | null {
+  if (!raw || typeof raw !== "object") return null;
+  const g = raw as Partial<CtPrintGuide>;
+  if (typeof g.url !== "string" || !/^(https?:\/\/|\/)/.test(g.url)) return null;
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
+  return { url: g.url, width: n(g.width), height: n(g.height), name: typeof g.name === "string" ? g.name.slice(0, 200) : "" };
 }
 
 function normalizeProductPrint(raw: unknown): CtProductPrint | null {

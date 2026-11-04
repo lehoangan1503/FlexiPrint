@@ -98,7 +98,7 @@ export async function productOptionFields(db: Db, productId: string, maxZones = 
 export async function setPreviewOptions(db: Db, p: CtCharProject): Promise<string[]> {
   const slot = p.layers?.slots.find((s) => s.files.length >= 2);
   if (slot) return slot.files.slice(0, 2).map((f) => f.viewThumbUrl || f.thumbUrl || f.url);
-  if (!p.brief.imported || !p.product_ids[0]) return [];
+  if ((!p.brief.imported && !p.brief.extracted) || !p.product_ids[0]) return [];
   const fields = await productOptionFields(db, p.product_ids[0], 40, 2);
   return fields[0]?.options.slice(0, 2).map((o) => o.thumb) ?? [];
 }

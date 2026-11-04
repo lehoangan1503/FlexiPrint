@@ -428,6 +428,17 @@ export interface CtCharBrief {
   /** A set imported from finished files (Teeinblue export…, asked 2026-10-29) — no master, no cut: its product is built
    * from the uploaded layer files (server/char/import.ts). Absent = a set drawn by AI. */
   imported?: CtCharImported | null;
+  /** A bộ made from layers picked in a product (asked 2026-11-04: "chọn các layer … xuất thành 1 bộ") — no master
+   * drawn, no cut: its product holds those layers on the same canvas (server/char/extract-set.ts). */
+  extracted?: CtCharExtracted | null;
+}
+
+/** Where an extracted bộ came from (CtCharBrief.extracted). */
+export interface CtCharExtracted {
+  productId: string;
+  productName: string;
+  layers: number;
+  at: string;
 }
 
 /**

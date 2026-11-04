@@ -117,7 +117,16 @@ export function CharSetFiles({ projectId, currentUserId, admin }: { projectId: s
         )}
       </div>
       {error && <p className="rounded bg-destructive/10 p-2 text-xs text-destructive">{error}</p>}
-      {project.brief.imported ? (
+      {project.brief.extracted && (
+        <p className="text-xs text-muted-foreground">
+          Cụm clipart tách từ sản phẩm{" "}
+          <Link href={`${CT_CONFIG.basePath}/${project.brief.extracted.productId}`} target="_blank" className="underline">
+            {project.brief.extracted.productName || "gốc"}
+          </Link>{" "}
+          · {project.brief.extracted.layers} layer, giữ nguyên vị trí và mọi lựa chọn — kéo vào sản phẩm khác từ tab Thư viện của editor.
+        </p>
+      )}
+      {project.brief.imported || project.brief.extracted ? (
         <ImportedOptions project={project} images={images} />
       ) : project.brief.poses?.length ? (
         <VersionsPanel {...ctx} show="files" />

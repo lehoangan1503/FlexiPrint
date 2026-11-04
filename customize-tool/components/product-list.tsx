@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Layers, Loader2, Search, Trash2 } from "lucide-react";
+import { Images, Layers, Loader2, Search, Trash2 } from "lucide-react";
 import { CT_CONFIG } from "../config";
 import type { CtProductListRow, CtProductStatus } from "../types";
 import { ctApi } from "../lib/api-client";
@@ -36,7 +36,18 @@ const STATUS_CLASS: Record<CtProductStatus, string> = {
   archived: "bg-neutral-500/15 text-neutral-500",
 };
 
-export function CustomizeProductList({ tabs, currentUserId, admin = false }: { tabs?: React.ReactNode; currentUserId?: string; admin?: boolean }) {
+export function CustomizeProductList({
+  tabs,
+  currentUserId,
+  admin = false,
+  onShowArtworks,
+}: {
+  tabs?: React.ReactNode;
+  currentUserId?: string;
+  admin?: boolean;
+  /** The product's artworks (preview + print files) on the dashboard's Artwork tab. */
+  onShowArtworks?: (productId: string) => void;
+}) {
   const [products, setProducts] = useState<CtProductListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,6 +138,11 @@ export function CustomizeProductList({ tabs, currentUserId, admin = false }: { t
                       <span className="text-[10px] text-muted-foreground">{new Date(p.created_at).toLocaleDateString("vi-VN")}</span>
                     </div>
                   </div>
+                  {onShowArtworks && (
+                    <button className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onShowArtworks(p.id)} title="Artwork của sản phẩm: preview trên phôi + file in từng version">
+                      <Images className="h-4 w-4" />
+                    </button>
+                  )}
                   {mine && (
                     <button className="rounded p-1 text-destructive opacity-0 hover:bg-accent group-hover:opacity-100" onClick={() => remove(p)} title="Xoá">
                       <Trash2 className="h-4 w-4" />

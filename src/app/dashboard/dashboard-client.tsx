@@ -8,31 +8,45 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { CustomizeProductList } from "../../../customize-tool/components/product-list";
 import { ImportStatus } from "../../../customize-tool/components/char/import-status";
 import { LibraryTab } from "../../../customize-tool/components/library/library-tab";
+import { ArtworksTab } from "../../../customize-tool/components/library/artworks-tab";
 
-/** The dashboard's two tabs (asked 2026-11-03): the finished products, and the library they are made from (clipart
- * sets, phôi, khuôn in). The tab is in the address (?tab=library). */
-type DashboardTab = "products" | "library";
+/**
+ * The dashboard's tabs (asked 2026-11-03, Artwork added 2026-11-04): Product (what is sold: photos, info, its
+ * artworks) · Artwork (every product's artworks built on the phôi: preview + print file) · Thư viện (what products are
+ * made from: clipart sets, template phôi, khuôn in, fonts). The tab is in the address (?tab=artwork&product=…).
+ */
+type DashboardTab = "products" | "artwork" | "library";
 const TABS: Array<[DashboardTab, string]> = [
-  ["products", "Sản phẩm"],
+  ["products", "Product"],
+  ["artwork", "Artwork"],
   ["library", "Thư viện"],
 ];
+const isTab = (v: string | null): v is DashboardTab => TABS.some(([k]) => k === v);
+
 export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfile; isSuperAdmin: boolean }) {
   const [askNickname, setAskNickname] = useState(!profile.nickname);
   const [current, setCurrent] = useState(profile);
   const [tab, setTab] = useState<DashboardTab>("products");
+  /** The Artwork tab narrowed to one product (its card's "Artwork" link). */
+  const [artworkProduct, setArtworkProduct] = useState<string | null>(null);
   // After the first paint: the address is only known in the browser.
   useEffect(() => {
     const id = setTimeout(() => {
-      if (new URLSearchParams(window.location.search).get("tab") === "library") setTab("library");
+      const q = new URLSearchParams(window.location.search);
+      const t = q.get("tab");
+      if (isTab(t)) setTab(t);
+      setArtworkProduct(q.get("product"));
     }, 0);
     return () => clearTimeout(id);
   }, []);
-  const pick = (t: DashboardTab) => {
+  const pick = (t: DashboardTab, product: string | null = null) => {
     setTab(t);
+    setArtworkProduct(product);
     const url = new URL(window.location.href);
-    url.search = t === "library" ? "?tab=library" : "";
+    url.search = t === "products" ? "" : `?tab=${t}${product ? `&product=${product}` : ""}`;
     window.history.replaceState(null, "", url);
   };
+  const admin = isSuperAdmin || profile.role === "admin";
 
   return (
     <div className="min-h-screen bg-background">
@@ -61,9 +75,11 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
           ))}
         </nav>
         {tab === "products" ? (
-          <CustomizeProductList currentUserId={profile.user_id} admin={isSuperAdmin || profile.role === "admin"} />
+          <CustomizeProductList currentUserId={profile.user_id} admin={admin} onShowArtworks={(id) => pick("artwork", id)} />
+        ) : tab === "artwork" ? (
+          <ArtworksTab key={artworkProduct ?? "all"} productId={artworkProduct} onClearProduct={() => pick("artwork")} />
         ) : (
-          <LibraryTab currentUserId={profile.user_id} admin={isSuperAdmin || profile.role === "admin"} />
+          <LibraryTab currentUserId={profile.user_id} admin={admin} />
         )}
       </main>
       <FirstLoginDialog

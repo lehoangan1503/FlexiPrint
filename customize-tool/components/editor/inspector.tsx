@@ -51,6 +51,8 @@ import type {
 import { CT_BASE_OPTION } from "../../types";
 import { bandShape, fitZoneToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, orientedBox, resolvePhotoFrame, shapeBounds, textBand } from "../../lib/geometry";
 import { useImageSize } from "./use-image-size";
+import { useLibraryFonts } from "../font-library";
+import { charSetBounds, placeCharSet } from "../../lib/char-set-layers";
 import { defaultRegionSelection, formOrder, hasTestPhoto, isLinkedLayer, isValidDate, normalizeRegion, textMode, variantsOf, zoneSubtree } from "../../lib/design";
 import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
 import { AiStyleDialog } from "./ai-style-dialog";
@@ -108,6 +110,12 @@ export interface InspectorProps {
   /** The bộ nhân vật picked as a whole (its layers' ids) — its row in Layers selects it. */
   selectedSet: string[] | null;
   onSelectSet: (ids: string[]) => void;
+  /** ⌘ / Ctrl-click: these layers join the picked ones, or leave them (all in already). */
+  onToggleMany: (ids: string[]) => void;
+  /** Shift-click: exactly these layers picked (a range of the list). */
+  onPickMany: (ids: string[]) => void;
+  /** Save the picked layers as a bộ clipart of their own (absent: no version to take them from). */
+  onExtractSet?: (ids: string[]) => void;
 }
 
 /** "Choose state: Texas" — the option a child zone belongs to. */
@@ -163,6 +171,29 @@ export function Inspector(props: InspectorProps) {
       else next.add(head);
       return next;
     });
+  /** The last layer clicked without Shift: a Shift-click picks everything from it to the clicked one. */
+  const anchor = useRef<string | null>(null);
+  const picked = new Set(props.selectedSet ?? []);
+  /** A click on a row: alone, ⌘/Ctrl toggles it in the picked layers, Shift picks the range from the last click. */
+  const clickRow = (e: React.MouseEvent, ids: string[], single: () => void) => {
+    if (e.metaKey || e.ctrlKey) {
+      props.onToggleMany(ids);
+      anchor.current = ids[0] ?? null;
+      return;
+    }
+    if (e.shiftKey && anchor.current) {
+      const from = ordered.findIndex((x) => x.id === anchor.current);
+      const ends = ids.map((id) => ordered.findIndex((x) => x.id === id)).filter((i) => i >= 0);
+      if (from >= 0 && ends.length) {
+        const lo = Math.min(from, ...ends);
+        const hi = Math.max(from, ...ends);
+        props.onPickMany(ordered.slice(lo, hi + 1).map((x) => x.id));
+        return;
+      }
+    }
+    anchor.current = ids[0] ?? null;
+    single();
+  };
   const removeMany = (ids: string[]) => {
     const gone = new Set(ids.flatMap((id) => [...zoneSubtree(regions, id)]));
     design.commit((s) => ({ ...s, regions: s.regions.filter((r) => !gone.has(r.id)), items: s.items.filter((i) => !gone.has(i.region_id)) }));
@@ -206,7 +237,9 @@ export function Inspector(props: InspectorProps) {
   return (
     <div className="flex h-full flex-col text-sm">
       <div className="flex items-center justify-between border-b px-3 py-2">
-        <span className="font-semibold">Layers</span>
+        <span className="font-semibold" title="⌘ / Ctrl-click: chọn thêm layer · Shift-click: chọn liền một dải · Shift-click trên canvas: thêm / bớt">
+          Layers
+        </span>
         <CtTooltip label={props.showOverlay ? "Ẩn khung vùng" : "Hiện khung vùng"} side="left">
           <button className="rounded p-1 hover:bg-accent" onClick={props.onToggleOverlay}>
             {props.showOverlay ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
@@ -228,13 +261,13 @@ export function Inspector(props: InspectorProps) {
             <Fragment key={r.id}>
             {group === r.id && (
               <div
-                onClick={() => props.onSelectSet(groupList.map((x) => x.id))}
+                onClick={(e) => clickRow(e, groupList.map((x) => x.id), () => props.onSelectSet(groupList.map((x) => x.id)))}
                 onMouseEnter={() => props.onHoverRegion(null)}
                 className={cx(
                   "group flex cursor-pointer items-center gap-2 px-3 py-1.5",
                   props.selectedSet && !selectedRegionId && selectedGroup === group ? "bg-sky-500/15" : selectedGroup === group ? "bg-sky-500/5" : "hover:bg-accent",
                 )}
-                title="Bộ nhân vật v2 — bấm để chọn cả bộ (kéo / co giãn cả bộ trên canvas); mũi tên để mở / đóng các layer bên trong"
+                title="Bộ nhân vật v2 — bấm để chọn cả bộ (kéo / co giãn cả bộ trên canvas); ⌘-click thêm vào các layer đang chọn; mũi tên để mở / đóng các layer bên trong"
               >
                 <button
                   className="-ml-2 rounded p-0.5 hover:bg-background"
@@ -280,11 +313,11 @@ export function Inspector(props: InspectorProps) {
               onDragEnd={endDrag}
               onMouseEnter={() => props.onHoverRegion(r.id)}
               onMouseLeave={() => props.onHoverRegion(null)}
-              onClick={() => props.onSelectRegion(r.id)}
+              onClick={(e) => clickRow(e, [r.id], () => props.onSelectRegion(r.id))}
               className={cx(
                 "group relative flex cursor-pointer items-center gap-2 py-1.5 pr-3",
                 group ? "pl-7" : "pl-3",
-                r.id === selectedRegionId && !frameActive ? "bg-sky-500/15" : "hover:bg-accent",
+                (r.id === selectedRegionId && !frameActive) || (!selectedRegionId && picked.has(r.id)) ? "bg-sky-500/15" : "hover:bg-accent",
                 r.id === dragId && "opacity-40",
               )}
             >
@@ -375,8 +408,180 @@ export function Inspector(props: InspectorProps) {
         ) : props.mainSelected && props.mainLayer ? (
           <MainFrameProps layer={props.mainLayer} onChange={props.onMainFrame} />
         ) : (
-          <ArtworkOptions {...props} />
+          <>
+            {props.selectedSet && props.selectedSet.length > 0 && <MultiProps {...props} ids={props.selectedSet} />}
+            <ArtworkOptions {...props} />
+          </>
         )}
+      </div>
+    </div>
+  );
+}
+
+type CtTextCfg = CtRegion["config"]["text"];
+
+/**
+ * A text layer's font: the tool's Google fonts + the team's font library (Thư viện → Font chữ). A library font is
+ * kept with its file's URL (CtTextConfig.fontUrl), so it draws everywhere without the library; an imported set's own
+ * font file stays listed while the layer uses it.
+ */
+function FontSelect({ family, fontUrl, mixed, onChange }: { family: string; fontUrl?: string; mixed?: boolean; onChange: (family: string, fontUrl: string | undefined) => void }) {
+  const library = useLibraryFonts();
+  const LIB = "lib:";
+  const inLibrary = fontUrl ? library.find((f) => f.url === fontUrl) : undefined;
+  const value = mixed ? "" : inLibrary ? `${LIB}${inLibrary.id}` : family;
+  const options = [
+    ...(fontUrl && !inLibrary ? [{ value: family, label: `${family} (font của bộ)`, fontFamily: family }] : []),
+    ...CT_FONTS.map((f) => ({ value: f.family, label: f.label, fontFamily: f.family })),
+    ...library.map((f) => ({ value: `${LIB}${f.id}`, label: `${f.name} · thư viện`, fontFamily: f.family })),
+  ];
+  return (
+    <CtSelect<string>
+      value={value}
+      placeholder={mixed ? "(khác nhau)" : "Chọn font"}
+      options={options}
+      onChange={(v) => {
+        if (v.startsWith(LIB)) {
+          const f = library.find((x) => `${LIB}${x.id}` === v);
+          if (f) onChange(f.family, f.url);
+          return;
+        }
+        // The set's own file keeps its URL; a Google font has none.
+        onChange(v, fontUrl && !inLibrary && v === family ? fontUrl : undefined);
+      }}
+    />
+  );
+}
+
+/**
+ * Several layers picked (⌘ / Shift-click): where they are as one box, one look for every text among them (font,
+ * size, curve, colours…), save them as a bộ clipart, remove them. A field whose texts differ says so.
+ */
+function MultiProps(props: InspectorProps & { ids: string[] }) {
+  const { design, ids } = props;
+  const list = design.state.regions.filter((r) => ids.includes(r.id)).map(normalizeRegion);
+  const texts = list.filter((r) => r.kind === "text");
+  const textIds = new Set(texts.map((r) => r.id));
+  const t0 = texts[0]?.config.text;
+  const same = <K extends keyof CtTextCfg>(k: K): boolean => texts.every((r) => JSON.stringify(r.config.text[k]) === JSON.stringify(t0?.[k]));
+  const mapTexts = (fn: (r: CtRegion) => CtRegion) => (st: { regions: CtRegion[] }) => st.regions.map((r) => (textIds.has(r.id) ? fn(normalizeRegion(r)) : r));
+  const setText = (patch: Partial<CtTextCfg>) => design.commit((st) => ({ ...st, regions: mapTexts((r) => ({ ...r, config: { ...r.config, text: { ...r.config.text, ...patch } } }))(st) }));
+  const setFontSize = (fontSize: number) =>
+    design.commit((st) => ({
+      ...st,
+      regions: mapTexts((r) => {
+        const cur = textBand(r.shape);
+        const shape = fontSize > cur.h ? bandShape({ ...cur, h: Math.ceil(fontSize * 1.15) }) : r.shape;
+        return { ...r, shape, config: { ...r.config, text: { ...r.config.text, fontSize } } };
+      })(st),
+    }));
+  const box = charSetBounds(list);
+  /** The picked layers moved / scaled as one box (aspect kept: clipart of one canvas stay registered). */
+  const placeBox = (to: { x: number; y: number; w: number; h: number }) => {
+    if (!box) return;
+    const moved = new Map(placeCharSet(list, box, to).map((r) => [r.id, r]));
+    design.commit((st) => ({ ...st, regions: st.regions.map((r) => moved.get(r.id) ?? r) }));
+  };
+  const round = (v: number) => Math.round(v);
+  const removeAll = () => {
+    const gone = new Set(ids.flatMap((id) => [...zoneSubtree(design.state.regions, id)]));
+    design.commit((st) => ({ ...st, regions: st.regions.filter((r) => !gone.has(r.id)), items: st.items.filter((i) => !gone.has(i.region_id)) }));
+    props.onSelectRegion(null);
+  };
+  const images = list.filter((r) => r.kind === "image").length;
+  return (
+    <div className="space-y-4 border-b p-3">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-semibold">{list.length} layer đã chọn</span>
+        <span className="text-[11px] text-muted-foreground">
+          {[images && `${images} ảnh`, texts.length && `${texts.length} chữ`, list.length - images - texts.length && `${list.length - images - texts.length} ảnh khách`].filter(Boolean).join(" · ")}
+        </span>
+      </div>
+      {box && (
+        <div className="grid grid-cols-4 gap-1.5">
+          <CtField label="X">
+            <CtNumber value={round(box.x)} onChange={(x) => placeBox({ ...box, x })} />
+          </CtField>
+          <CtField label="Y">
+            <CtNumber value={round(box.y)} onChange={(y) => placeBox({ ...box, y })} />
+          </CtField>
+          <CtField label="W">
+            <CtNumber value={round(box.w)} min={4} onChange={(w) => w > 0 && placeBox({ ...box, w, h: (box.h * w) / Math.max(1, box.w) })} />
+          </CtField>
+          <CtField label="H">
+            <CtNumber value={round(box.h)} min={4} onChange={(h) => h > 0 && placeBox({ ...box, h, w: (box.w * h) / Math.max(1, box.h) })} />
+          </CtField>
+        </div>
+      )}
+
+      {t0 && (
+        <div className="space-y-3 border-t pt-3">
+          <div className="text-xs font-semibold">Chữ — áp cho cả {texts.length} layer chữ</div>
+          <CtField label="Font">
+            <FontSelect family={t0.fontFamily} fontUrl={t0.fontUrl} mixed={!same("fontFamily") || !same("fontUrl")} onChange={(fontFamily, fontUrl) => setText({ fontFamily, fontUrl })} />
+          </CtField>
+          <div className="grid grid-cols-2 gap-2">
+            <CtField label={`Cỡ chữ (px)${same("fontSize") ? "" : " · khác nhau"}`}>
+              <CtNumber value={Math.round(t0.fontSize)} min={4} onChange={(v) => setFontSize(Math.max(4, v))} />
+            </CtField>
+            <CtField label={`Độ đậm${same("fontWeight") ? "" : " · khác"}`}>
+              <CtNumber value={t0.fontWeight} step={100} min={100} max={900} onChange={(v) => setText({ fontWeight: v })} />
+            </CtField>
+            <CtField label={`Giãn chữ %${same("letterSpacing") ? "" : " · khác"}`}>
+              <CtNumber value={t0.letterSpacing} onChange={(v) => setText({ letterSpacing: v })} />
+            </CtField>
+            <CtField label={`Dày viền${same("strokeWidth") ? "" : " · khác"}`}>
+              <CtNumber value={t0.strokeWidth} min={0} onChange={(v) => setText({ strokeWidth: Math.max(0, v) })} />
+            </CtField>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <CtField label={`Màu${same("color") ? "" : " · khác"}`}>
+              <input type="color" className="h-8 w-full rounded border border-input bg-transparent" value={t0.color} onChange={(e) => setText({ color: e.target.value })} />
+            </CtField>
+            <CtField label={`Viền${same("strokeColor") ? "" : " · khác"}`}>
+              <input type="color" className="h-8 w-full rounded border border-input bg-transparent" value={t0.strokeColor} onChange={(e) => setText({ strokeColor: e.target.value })} />
+            </CtField>
+          </div>
+          <CtField label={`Uốn cong: ${same("curve") ? t0.curve : `${t0.curve} (khác nhau)`}`}>
+            <input
+              type="range"
+              min={-100}
+              max={100}
+              className="w-full accent-sky-500"
+              value={t0.curve}
+              onChange={(e) => {
+                const curve = Number(e.target.value);
+                // Bent by hand: a brim's fixed circle (arcRadius, arcTilt) gives way to the slider, as on one layer.
+                design.live((st) => ({ ...st, regions: mapTexts((r) => ({ ...r, config: { ...r.config, text: { ...r.config.text, curve, arcRadius: undefined, arcTilt: undefined } } }))(st) }));
+              }}
+              onPointerUp={() => design.checkpoint()}
+            />
+          </CtField>
+          <div className="grid grid-cols-2 gap-2">
+            <CtField label="Căn lề">
+              <CtSelect<CtTextAlign>
+                value={same("align") ? t0.align : ("" as CtTextAlign)}
+                placeholder="(khác nhau)"
+                onChange={(align) => setText({ align })}
+                options={[{ value: "left", label: "Trái" }, { value: "center", label: "Giữa" }, { value: "right", label: "Phải" }]}
+              />
+            </CtField>
+            <div className="flex items-end pb-1.5">
+              <CtCheckbox checked={t0.uppercase} onChange={(v) => setText({ uppercase: v })} label="IN HOA" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-1.5 border-t pt-3">
+        {props.onExtractSet && (
+          <CtButton size="sm" variant="primary" onClick={() => props.onExtractSet?.(ids)} title="Các layer này (đúng vị trí, mọi lựa chọn của chúng) thành 1 bộ clipart trong Thư viện — kéo vào sản phẩm khác như mọi bộ">
+            <Users className="h-3.5 w-3.5" /> Lưu thành bộ clipart
+          </CtButton>
+        )}
+        <CtButton size="sm" variant="ghost" className="text-destructive" onClick={removeAll}>
+          <Trash2 className="h-3.5 w-3.5" /> Xoá {list.length} layer
+        </CtButton>
       </div>
     </div>
   );
@@ -610,15 +815,7 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
             </>
           )}
           <CtField label="Font">
-            <CtSelect
-              value={cfg.text.fontFamily}
-              onChange={(fontFamily) => setText(cfg.text.fontUrl && fontFamily === cfg.text.fontFamily ? { fontFamily } : { fontFamily, fontUrl: undefined })}
-              options={[
-                // An imported set's own font file (not a Google font): listed while the zone uses it.
-                ...(cfg.text.fontUrl ? [{ value: cfg.text.fontFamily, label: `${cfg.text.fontFamily} (font của bộ)` }] : []),
-                ...CT_FONTS.map((f) => ({ value: f.family, label: f.label })),
-              ]}
-            />
+            <FontSelect family={cfg.text.fontFamily} fontUrl={cfg.text.fontUrl} onChange={(fontFamily, fontUrl) => setText({ fontFamily, fontUrl })} />
           </CtField>
           <div className="grid grid-cols-2 gap-2">
             <CtField label="Độ đậm">

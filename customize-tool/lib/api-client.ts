@@ -51,6 +51,10 @@ import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionFiel
   CtCharImage,
   CtCharProject,
   CtProductArtworks,
+  CtLibraryFont,
+  CtArtworkRow,
+  CtExtractSetBody,
+  CtExtractSetResult,
 } from "../types";
 
 export interface CtUploadClipartOpts {
@@ -254,6 +258,18 @@ export const ctApi = {
   },
   deletePackImage: (id: string) => call<void>(`library/pack-images/${id}`, { method: "DELETE" }),
   /** A background / overlay / slot sample picture for a pack. */
+  /** The team's font library (server/fonts.ts). */
+  listFonts: () => call<{ fonts: CtLibraryFont[]; admin: boolean }>("fonts"),
+  uploadFont: (file: File, name?: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (name) form.append("name", name);
+    return call<{ font: CtLibraryFont; existed?: boolean }>("fonts", { method: "POST", body: form }).then((r) => r.font);
+  },
+  deleteFont: (id: string) => call<void>(`fonts/${id}`, { method: "DELETE" }),
+  /** Every product's artworks, newest first (the dashboard's Artwork tab). */
+  listArtworks: (productId?: string) => call<{ artworks: CtArtworkRow[] }>(`artworks${productId ? `?product=${productId}` : ""}`).then((r) => r.artworks),
+
   uploadPackImage: (file: Blob) => {
     const form = new FormData();
     form.append("file", file);
@@ -282,6 +298,8 @@ export const charApi = {
   list: () => call<{ projects: CtCharProject[]; thumbs: Record<string, string>; options: Record<string, string[]> }>("char/projects"),
   /** The fields the customer picks, read from the set's product (an imported set's clipart). */
   options: (id: string) => call<{ fields: CtSetOptionField[] }>(`char/projects/${id}/options`).then((r) => r.fields),
+  /** Layers picked in a product saved as a bộ of their own (server/char/extract-set.ts). */
+  extract: (body: CtExtractSetBody) => call<CtExtractSetResult>("char/projects/extract", json("POST", body)),
   create: (body: { name: string; brief?: CtCharBrief }) => call<{ project: CtCharProject }>("char/projects", json("POST", body)).then((r) => r.project),
   get: (id: string) => call<{ project: CtCharProject; images: CtCharImage[] }>(`char/projects/${id}`),
   /** A lineup drawn version by version: each smaller version's own set (server/char/versions.ts). */

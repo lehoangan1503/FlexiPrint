@@ -83,7 +83,11 @@ export async function listProducts(s: CtSession, search: string): Promise<NextRe
     : { data: [] };
   const first = new Map<string, string>();
   for (const m of mockups ?? []) if (!first.has(m.product_id)) first.set(m.product_id, m.url);
-  const products: CtProductListRow[] = (data ?? []).map((p) => ({ ...p, mockup_url: first.get(p.id) ?? null }));
+  // A bộ made from picked layers (server/char/extract-set.ts) keeps them on a product of its own: a library item, not
+  // a product to sell — listed in Thư viện, not here.
+  const { data: extracted } = await s.supabase.from(CT_TABLES.charProjects).select("product_ids").not("brief->extracted->>productId", "is", null).returns<Array<{ product_ids: string[] | null }>>();
+  const hidden = new Set((extracted ?? []).flatMap((x) => x.product_ids ?? []));
+  const products: CtProductListRow[] = (data ?? []).filter((p) => !hidden.has(p.id)).map((p) => ({ ...p, mockup_url: first.get(p.id) ?? null }));
   return NextResponse.json({ products });
 }
 

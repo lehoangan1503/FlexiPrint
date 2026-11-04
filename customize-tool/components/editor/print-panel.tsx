@@ -12,9 +12,9 @@
  * its mask PNG is the cut file.
  */
 
-import { useEffect, useState } from "react";
-import { BookmarkPlus, Download, Loader2, Scissors, Settings2 } from "lucide-react";
-import type { CtAsset, CtMainLayout, CtMaterialConfig, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
+import { useEffect, useRef, useState } from "react";
+import { BookmarkPlus, Download, Eye, EyeOff, Loader2, Scissors, Settings2, Upload, X } from "lucide-react";
+import type { CtAsset, CtMainLayout, CtMaterialConfig, CtPrintGuide, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import type { CtProductPrint } from "../../types/print";
 import { displayAssets } from "../../lib/library";
 import { canvasToBlob, mirrorSheet, printFrame, renderComposite } from "../../lib/compositor";
@@ -22,6 +22,8 @@ import { frameSvgPath } from "../../lib/material-frame";
 import { normalizeSamples } from "../../lib/design";
 import { printSize } from "../../lib/print-template";
 import { ctApi } from "../../lib/api-client";
+import { printApi } from "../../lib/print-api";
+import { Rulers } from "./rulers";
 import { CtButton, CtSelect } from "../ui";
 
 /** Preview render: longest side in px (the download is always full resolution). */
@@ -75,6 +77,9 @@ export interface PrintPanelProps {
   onOpenSettings: () => void;
   /** The khuôn in the product is made on: its sizes (a print file per size). */
   print?: CtProductPrint | null;
+  /** The fulfiller's template laid over the print file (CtProductConfig.printGuide). */
+  printGuide: CtPrintGuide | null;
+  onPrintGuide: (g: CtPrintGuide | null) => void;
 }
 
 function shrink(src: HTMLCanvasElement, k: number): HTMLCanvasElement {
@@ -198,6 +203,53 @@ export function PrintPanel(props: PrintPanelProps) {
 
   const mm = material.id !== "none" ? material.widthMm : 0;
   const dpi = shot && mm ? Math.round(shot.w / (mm / 25.4)) : 0;
+  // The real width for the rulers' mm: the khuôn's sheet, else the material's.
+  const sheetMm = props.print?.spec.widthMm || mm;
+
+  // ---- the template over the print file (never in print.png) ----
+  const guideUrl = props.printGuide?.url ?? props.print?.spec.frameUrl ?? null;
+  const guideOwn = !!props.printGuide;
+  const [guideOn, setGuideOn] = useState(true);
+  const [guideOpacity, setGuideOpacity] = useState(0.5);
+  const [guideBusy, setGuideBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const uploadGuide = async (file: File) => {
+    setGuideBusy(true);
+    try {
+      const r = await printApi.uploadImage(file);
+      props.onPrintGuide({ url: r.url, width: r.width, height: r.height, name: file.name });
+      setGuideOn(true);
+      if (shot && r.width && r.height && Math.abs(r.width / r.height - shot.w / shot.h) > 0.02) {
+        setError(null);
+        setNotice(`Template ${r.width}×${r.height}px khác tỉ lệ file in ${shot.w}×${shot.h}px — được kéo giãn cho vừa khung file in`);
+      } else setNotice(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không tải được template");
+    } finally {
+      setGuideBusy(false);
+    }
+  };
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // ---- where the preview sits in its box (for the rulers and the template over it) ----
+  const viewRef = useRef<HTMLDivElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const [place, setPlace] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const measure = () => {
+    const v = viewRef.current;
+    const im = imgRef.current;
+    if (!v || !im || !im.naturalWidth) return;
+    const vr = v.getBoundingClientRect();
+    const ir = im.getBoundingClientRect();
+    setPlace({ x: ir.left - vr.left, y: ir.top - vr.top, w: ir.width, h: ir.height });
+  };
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!v) return;
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(v);
+    return () => ro.disconnect();
+  }, []);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -232,17 +284,73 @@ export function PrintPanel(props: PrintPanelProps) {
           </CtButton>
         </div>
       </div>
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-1.5 text-xs">
+        <span className="font-medium">Template fulfill</span>
+        {guideUrl ? (
+          <>
+            <CtButton size="sm" variant={guideOn ? "primary" : "outline"} onClick={() => setGuideOn((v) => !v)} title="Chỉ để tham chiếu vùng — không bao giờ có trong print.png">
+              {guideOn ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />} {guideOn ? "Đang hiện" : "Đang ẩn"}
+            </CtButton>
+            {guideOn && (
+              <label className="flex items-center gap-1.5 text-muted-foreground">
+                Độ rõ
+                <input type="range" min={10} max={100} value={Math.round(guideOpacity * 100)} onChange={(e) => setGuideOpacity(Number(e.target.value) / 100)} className="w-24 accent-sky-500" />
+              </label>
+            )}
+            <span className="max-w-64 truncate text-muted-foreground" title={props.printGuide?.name}>
+              {guideOwn ? `${props.printGuide?.name || "template"}${props.printGuide?.width ? ` · ${props.printGuide.width}×${props.printGuide.height}px` : ""}` : "Khung hướng dẫn của khuôn in"}
+            </span>
+          </>
+        ) : (
+          <span className="text-muted-foreground">Chưa có — tải ảnh template của bên fulfill (PNG / JPEG / WebP, đúng kích thước file in) để đặt đè lên xem vùng.</span>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) void uploadGuide(f);
+          }}
+        />
+        <CtButton size="sm" variant="outline" onClick={() => fileRef.current?.click()} disabled={guideBusy}>
+          {guideBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} {guideOwn ? "Đổi template" : "Tải template"}
+        </CtButton>
+        {guideOwn && (
+          <CtButton size="sm" variant="ghost" onClick={() => props.onPrintGuide(null)} title="Bỏ template của sản phẩm (nhớ Lưu thiết kế)">
+            <X className="h-3.5 w-3.5" /> Bỏ
+          </CtButton>
+        )}
+        {notice && <span className="text-amber-600">{notice}</span>}
+      </div>
+      <div ref={viewRef} className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-8 pl-10 pt-10">
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
         ) : shot ? (
-          // eslint-disable-next-line @next/next/no-img-element -- a local blob, not an optimizable remote image
-          <img
-            src={shot.url}
-            alt="File in"
-            className="max-h-full max-w-full object-contain shadow-sm"
-            style={{ backgroundColor: "#fff", backgroundImage: "repeating-conic-gradient(#0000000f 0% 25%, transparent 0% 50%)", backgroundSize: "16px 16px" }}
-          />
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element -- a local blob, not an optimizable remote image */}
+            <img
+              ref={imgRef}
+              src={shot.url}
+              alt="File in"
+              onLoad={measure}
+              className="max-h-full max-w-full object-contain shadow-sm"
+              style={{ backgroundColor: "#fff", backgroundImage: "repeating-conic-gradient(#0000000f 0% 25%, transparent 0% 50%)", backgroundSize: "16px 16px" }}
+            />
+            {guideUrl && guideOn && place && (
+              // The template stretched onto the print file's box — a picture over the preview, never drawn into it.
+              // eslint-disable-next-line @next/next/no-img-element -- our R2 file
+              <img
+                src={guideUrl}
+                alt=""
+                className="pointer-events-none absolute max-w-none select-none"
+                style={{ left: place.x, top: place.y, width: place.w, height: place.h, opacity: guideOpacity }}
+              />
+            )}
+            {place && <Rulers zoom={place.w / shot.w} pan={{ x: place.x, y: place.y }} width={shot.w} height={shot.h} mmPerUnit={sheetMm ? sheetMm / (mirror ? shot.w / 2 : shot.w) : undefined} />}
+          </>
         ) : (
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         )}

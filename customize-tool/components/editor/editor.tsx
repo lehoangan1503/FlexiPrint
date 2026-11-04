@@ -59,10 +59,11 @@ import { StorefrontPreview } from "./storefront-preview";
 import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zoneOptionView } from "./use-design";
 import { PrintDialog } from "./print-dialog";
 import { PrintPanel } from "./print-panel";
-import { CLIPART_DRAG, isCharSetDrag, type CtCharSetDrag, type CtClipartDrag, type CtLibraryDrag } from "./library-panel";
-import { ctConfirm } from "../dialogs";
+import { CLIPART_DRAG, SETS_CHANGED, isCharSetDrag, type CtCharSetDrag, type CtClipartDrag, type CtLibraryDrag } from "./library-panel";
+import { ctConfirm, ctPrompt } from "../dialogs";
+import { renderComposite } from "../../lib/compositor";
 import { asLayerClipart, asVersion } from "../../lib/library";
-import { claimSharedLayers, cloneLayers, fitMainFrame, mainFrameFor, versionLayers } from "../../lib/layout";
+import { claimSharedLayers, cloneLayers, fitMainFrame, mainFrameFor, resolveLayout, versionLayers } from "../../lib/layout";
 import { charSetDrop } from "../../lib/char-set-layers";
 import { useArtworkSaver } from "./artwork-saver";
 import { frameRegionFor } from "../../lib/material-frame";
@@ -208,6 +209,33 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     setEditTarget("region");
     setMainSelected(false);
     setSetPick(ids);
+  };
+  /**
+   * Several layers picked at once (asked 2026-11-04: ⌘/Ctrl-click toggles, Shift-click a range in Layers, Shift-click
+   * on the canvas): they move / scale together on the canvas, texts take one font / curve / colour from the right
+   * column, and they can be saved as one bộ clipart. One id = that layer alone, none = nothing.
+   */
+  const pickMany = (ids: string[]) => {
+    const list = [...new Set(ids)].filter((id) => regions.some((r) => r.id === id));
+    if (!list.length) {
+      setSelectedRegionId(null);
+      setSetPick(null);
+      return;
+    }
+    if (list.length === 1) {
+      setSetPick(null);
+      setSelectedRegionId(list[0]);
+      setActiveItemId(items.find((i) => i.region_id === list[0])?.id ?? null);
+      setEditTarget("region");
+      return;
+    }
+    selectSet(list);
+  };
+  /** ⌘-click: `ids` (one layer, or a bộ's layers) join the picked layers, or leave them when all are in already. */
+  const toggleMany = (ids: string[]) => {
+    const cur = selectedSet ?? (selectedRegionId ? [selectedRegionId] : []);
+    const all = ids.every((id) => cur.includes(id));
+    pickMany(all ? cur.filter((id) => !ids.includes(id)) : [...cur, ...ids]);
   };
   // The khuôn vật liệu the shown version is cut to: its own, else the default version's.
   const materialFrame = useMemo(
@@ -819,6 +847,35 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   };
 
   /**
+   * The picked layers saved as a bộ clipart of their own (asked 2026-11-04 — the boy with every hair / outfit of his
+   * pose, to put by a tree later): copies of the layers, where they are on this version's artboard, with every option
+   * they have and the zones hanging under them (server/char/extract-set.ts). Its picture = the layers drawn alone.
+   */
+  const extractSet = async (ids: string[]) => {
+    if (!product || !main || !shownMainId) return;
+    const name = await ctPrompt({ title: "Lưu thành bộ clipart", label: "Tên bộ", defaultValue: `${product.name} — cụm ${ids.length} layer`, confirmLabel: "Lưu bộ" });
+    if (!name?.trim()) return;
+    setNotice("Đang lưu bộ clipart…");
+    try {
+      const shown = resolveLayout(design.state.regions.map(normalizeRegion), design.state.items, config.layouts, shownMainId);
+      const want = new Set(ids.flatMap((id) => [...zoneSubtree(shown.regions, id)]));
+      const picked = shown.regions.filter((r) => want.has(r.id));
+      const pickedItems = shown.items.filter((i) => want.has(i.region_id));
+      // The picture: only these layers, the version's own picture left out (a blank in its place).
+      const blank = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+      const renderAssets = assets.map((a) => (a.role === "main" ? { ...a, url: blank } : a));
+      const k = Math.min(1, 1200 / Math.max(main.width, main.height));
+      const shot = await renderComposite({ main: { ...main, url: blank }, assets: renderAssets, regions: picked, items: pickedItems, selection, scale: k, layouts: config.layouts });
+      const preview = shot.toDataURL("image/png");
+      const r = await charApi.extract({ name: name.trim(), productId: product.id, width: main.width, height: main.height, regions: picked, items: pickedItems, preview });
+      window.dispatchEvent(new Event(SETS_CHANGED));
+      flash(`Đã lưu bộ “${r.project.name}”: ${r.layers} layer${r.skipped ? ` (bỏ ${r.skipped} layer dùng ảnh riêng của sản phẩm)` : ""} — có trong Thư viện, kéo vào sản phẩm khác như mọi bộ`);
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Không lưu được bộ");
+    }
+  };
+
+  /**
    * "+" in the Version column: the shown version copied — its picture (uploaded again: a version is one asset) and
    * its layers — as a new version, shown at once. With `set` the copy gets that bộ nhân vật instead of the one it had.
    */
@@ -1161,6 +1218,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     setOf={setOf}
                     selectedSet={selectedSet}
                     onSelectSet={selectSet}
+                    onToggleMany={toggleMany}
                     activeItemId={activeItemId}
                     showOverlay={showOverlay}
                     hoverRegionId={hoverRegionId}
@@ -1174,6 +1232,13 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     }}
                     materialFrame={materialFrame}
                     printSpec={config.print?.spec ?? null}
+                    mmPerPx={
+                      config.print?.spec.widthMm
+                        ? config.print.spec.widthMm / main.width
+                        : config.material.id !== "none" && config.material.widthMm
+                          ? config.material.widthMm / main.width
+                          : undefined
+                    }
                   />
                 ) : (
                   <div
@@ -1209,6 +1274,11 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               selection={selection}
               onOpenSettings={() => setMaterialOpen(true)}
               print={config.print}
+              printGuide={config.printGuide}
+              onPrintGuide={(printGuide) => {
+                design.commit((st) => ({ ...st, config: { ...st.config, printGuide } }));
+                flash(printGuide ? "Đã đặt template — nhớ Lưu thiết kế" : "Đã bỏ template — nhớ Lưu thiết kế");
+              }}
             />
           ) : view === "preview" ? (
             main ? null : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
@@ -1303,6 +1373,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               selectedRegionId={selectedRegionId}
               selectedSet={selectedSet}
               onSelectSet={selectSet}
+              onToggleMany={toggleMany}
+              onPickMany={pickMany}
+              onExtractSet={product && main ? (ids) => void extractSet(ids) : undefined}
               onSelectRegion={(id) => {
                 setSelectedRegionId(id);
                 setSetPick(null);

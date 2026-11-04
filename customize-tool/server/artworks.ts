@@ -11,7 +11,7 @@
 
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../config";
-import type { CtArtworkMeta, CtAsset, CtClipartCategory, CtProduct, CtProductArtworks, CtSelection } from "../types";
+import type { CtArtworkMeta, CtArtworkRow, CtAsset, CtClipartCategory, CtProduct, CtProductArtworks, CtSelection } from "../types";
 import { defaultCategoryRules, normalizeCategoryRules } from "../lib/library";
 import { normalizeSamples } from "../lib/design";
 import { isAdmin } from "./ai-styles";
@@ -148,4 +148,37 @@ export async function pruneProductArtworks(s: CtSession, productId: string, body
     await ctRemove(gone.map((a) => a.storage_path));
   }
   return NextResponse.json({ removed: gone.length });
+}
+
+/**
+ * GET artworks — every product's finished artworks (the dashboard's Artwork tab, asked 2026-11-04: a product points
+ * at its artworks, each the version built on its phôi: preview + print file). Newest first; `product` narrows it.
+ */
+export async function listAllArtworks(s: CtSession, productId: string | null): Promise<NextResponse> {
+  let q = s.supabase.from(CT_TABLES.assets).select("*").is("product_id", null).is("parent_id", null).not("meta->artwork->>productId", "is", null).order("created_at", { ascending: false }).limit(600);
+  if (productId) q = q.filter("meta->artwork->>productId", "eq", productId);
+  const { data, error } = await q.returns<CtAsset[]>();
+  if (error) return jsonError(error.message, 500);
+  const list = data ?? [];
+  const productIds = [...new Set(list.map((a) => a.meta.artwork?.productId).filter((x): x is string => !!x))];
+  const versionIds = [...new Set(list.map((a) => a.meta.artwork?.versionId).filter((x): x is string => !!x))];
+  const [products, versions] = await Promise.all([
+    productIds.length
+      ? s.supabase.from(CT_TABLES.products).select("id, name, thumbnail_url").in("id", productIds).returns<Array<{ id: string; name: string; thumbnail_url: string | null }>>()
+      : Promise.resolve({ data: [] as Array<{ id: string; name: string; thumbnail_url: string | null }> }),
+    versionIds.length ? s.supabase.from(CT_TABLES.assets).select("id, name").in("id", versionIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
+  ]);
+  const { data: mockups } = productIds.length
+    ? await s.supabase.from(CT_TABLES.assets).select("product_id, url").in("product_id", productIds).eq("role", "mockup").order("created_at").returns<Array<{ product_id: string; url: string }>>()
+    : { data: [] as Array<{ product_id: string; url: string }> };
+  const firstMockup = new Map<string, string>();
+  for (const m of mockups ?? []) if (!firstMockup.has(m.product_id)) firstMockup.set(m.product_id, m.url);
+  const byProduct = new Map((products.data ?? []).map((p) => [p.id, { ...p, mockup_url: firstMockup.get(p.id) ?? null }]));
+  const byVersion = new Map((versions.data ?? []).map((v) => [v.id, v.name]));
+  const artworks: CtArtworkRow[] = list.map((a) => ({
+    artwork: a,
+    product: byProduct.get(a.meta.artwork?.productId ?? "") ?? null,
+    versionName: a.meta.artwork?.versionId ? (byVersion.get(a.meta.artwork.versionId) ?? null) : null,
+  }));
+  return NextResponse.json({ artworks });
 }

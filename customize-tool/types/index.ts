@@ -779,6 +779,70 @@ export interface CtProductConfig {
   mockupsByOption: Record<string, Record<string, CtProductScene>>;
   /** Product photos that recolour named zones (clothes): see CtZoneMockup. */
   zoneMockups: CtZoneMockup[];
+  /**
+   * The fulfiller's template of the product (asked 2026-11-04), uploaded on the File in tab: laid over the print file
+   * at the print file's size to check where things fall — shown / hidden there, never printed. null = none (the khuôn
+   * in's own guide sheet is offered instead when the product has one).
+   */
+  printGuide: CtPrintGuide | null;
+}
+
+/** A reference picture over the print file (CtProductConfig.printGuide): stretched to the print file's box. */
+export interface CtPrintGuide {
+  url: string;
+  width: number;
+  height: number;
+  name: string;
+}
+
+/**
+ * A font uploaded to the team's font library (asked 2026-11-04): every text layer of every product can use it.
+ * Stored as one list in ct_settings 'fonts' (server/fonts.ts); a text layer using it keeps the file's URL
+ * (CtTextConfig.fontUrl) so the canvas, the storefront and the server print draw it without the library.
+ */
+export interface CtLibraryFont {
+  id: string;
+  /** The CSS family name the file is registered under (unique in the library). */
+  family: string;
+  /** Shown in the font list. */
+  name: string;
+  url: string;
+  format: CtLibraryFontFormat;
+  user_id: string | null;
+  created_at: string;
+}
+
+export type CtLibraryFontFormat = "ttf" | "otf" | "woff";
+
+/** GET artworks — every product's finished artworks, for the dashboard's Artwork tab. */
+export interface CtArtworkRow {
+  artwork: CtAsset;
+  /** The product it was built for: its name, and its first mockup (the artwork on the phôi) as the preview. */
+  product: { id: string; name: string; thumbnail_url: string | null; mockup_url: string | null } | null;
+  /** The version (main asset) it is the artwork of, when it still exists. */
+  versionName: string | null;
+}
+
+/** POST char/extract — layers of a product saved as a bộ clipart of their own (server/char/extract-set.ts). */
+export interface CtExtractSetBody {
+  name: string;
+  /** The product the layers come from. */
+  productId: string;
+  /** The canvas they sit on (the version's artboard): the new bộ keeps it, so every layer stays where it was. */
+  width: number;
+  height: number;
+  regions: CtRegion[];
+  items: CtRegionItem[];
+  /** PNG data URL of the layers drawn together (the bộ's picture in the library). */
+  preview: string;
+}
+
+export interface CtExtractSetResult {
+  project: CtCharProject;
+  productId: string;
+  layers: number;
+  /** Layers left out (they use the product's own pictures, not library clipart). */
+  skipped: number;
 }
 
 /**
@@ -820,7 +884,7 @@ export interface CtMockupEdit {
 }
 
 /** What a published template carries (no design samples). */
-export type CtPublicProductConfig = Omit<CtProductConfig, "samples">;
+export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide">;
 
 export interface CtProduct {
   id: string;
@@ -1840,7 +1904,7 @@ export interface CtShopifyInfo {
   error?: string;
 }
 
-import type { CtCharChatAttachment, CtCharTaskInput, CtCharTaskResult } from "./char";
+import type { CtCharChatAttachment, CtCharProject, CtCharTaskInput, CtCharTaskResult } from "./char";
 import type { CtProductPrint } from "./print";
 export * from "./char";
 export * from "./print";

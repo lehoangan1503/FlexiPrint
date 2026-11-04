@@ -96,6 +96,36 @@ function fitAspect(b: { x: number; y: number; w: number; h: number }, w: number,
   return { x: b.x + (b.w - nw) / 2, y: b.y + (b.h - nh) / 2, w: nw, h: nh };
 }
 
+/** A copy of `c` cropped to its visible pixels, with a small margin (the canvas itself when it is empty). */
+function trimCanvas(c: HTMLCanvasElement): HTMLCanvasElement {
+  const ctx = c.getContext("2d");
+  if (!ctx || !c.width || !c.height) return c;
+  const { data } = ctx.getImageData(0, 0, c.width, c.height);
+  let x0 = c.width;
+  let y0 = c.height;
+  let x1 = -1;
+  let y1 = -1;
+  for (let y = 0; y < c.height; y++)
+    for (let x = 0; x < c.width; x++)
+      if (data[(y * c.width + x) * 4 + 3] > 8) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+  if (x1 < 0) return c;
+  const pad = Math.round(Math.max(x1 - x0, y1 - y0) * 0.04);
+  x0 = Math.max(0, x0 - pad);
+  y0 = Math.max(0, y0 - pad);
+  x1 = Math.min(c.width - 1, x1 + pad);
+  y1 = Math.min(c.height - 1, y1 + pad);
+  const out = document.createElement("canvas");
+  out.width = x1 - x0 + 1;
+  out.height = y1 - y0 + 1;
+  out.getContext("2d")?.drawImage(c, x0, y0, out.width, out.height, 0, 0, out.width, out.height);
+  return out;
+}
+
 /**
  * Keys that belong to something else: text fields, and open popups (a Radix
  * select list, a dialog) — Esc there closes the popup and must not also
@@ -868,12 +898,30 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       const renderAssets = assets.map((a) => (a.role === "main" ? { ...a, url: blank } : a));
       const k = Math.min(1, 1200 / Math.max(main.width, main.height));
       const shot = await renderComposite({ main: { ...main, url: blank }, assets: renderAssets, regions: picked, items: pickedItems, selection, scale: k, layouts: config.layouts });
-      const preview = shot.toDataURL("image/png");
+      // The bộ's picture cropped close to its pixels (the whole artboard made the character tiny on its card).
+      const preview = trimCanvas(shot).toDataURL("image/png");
       const r = await charApi.extract({ name: name.trim(), productId: product.id, width: main.width, height: main.height, regions: picked, items: pickedItems, preview });
       window.dispatchEvent(new Event(SETS_CHANGED));
-      flash(`Đã lưu bộ “${r.project.name}”: ${r.layers} layer${r.skipped ? ` (bỏ ${r.skipped} layer dùng ảnh riêng của sản phẩm)` : ""} — có trong Thư viện, kéo vào sản phẩm khác như mọi bộ`);
+      setNotice(null);
+      // Said plainly, with the way to it (asked 2026-11-04: a line in the header went unseen — "không có gì xảy ra").
+      const open = await ctConfirm({
+        title: `Đã tạo bộ clipart “${r.project.name}”`,
+        message: (
+          <div className="space-y-2">
+            {/* eslint-disable-next-line @next/next/no-img-element -- a local data URL */}
+            <img src={preview} alt="" className="mx-auto max-h-48 rounded border object-contain" style={{ backgroundImage: "repeating-conic-gradient(#8881 0% 25%, transparent 0% 50%)", backgroundSize: "12px 12px" }} />
+            <p>
+              {r.layers} layer, giữ nguyên vị trí và mọi lựa chọn{r.skipped ? ` (bỏ ${r.skipped} layer dùng ảnh riêng của sản phẩm)` : ""}. Bộ nằm ở Thư viện → Clipart → Cụm clipart, và ở tab Thư viện bên trái editor này — kéo vào sản phẩm khác như mọi bộ.
+            </p>
+          </div>
+        ),
+        confirmLabel: "Mở bộ",
+        cancelLabel: "Đóng",
+      });
+      if (open) window.open(`/dashboard?tab=library&set=${r.project.id}`, "_blank");
     } catch (e) {
-      flash(e instanceof Error ? e.message : "Không lưu được bộ");
+      setNotice(null);
+      await ctConfirm({ title: "Không lưu được bộ clipart", message: e instanceof Error ? e.message : String(e), confirmLabel: "Đóng", tone: "danger" });
     }
   };
 

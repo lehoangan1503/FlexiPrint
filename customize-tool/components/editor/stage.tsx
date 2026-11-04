@@ -69,6 +69,9 @@ type Gesture =
   | { kind: "draw"; shape: "rect" | "ellipse"; start: CtPoint; current: CtPoint }
   // A selection box dragged over the canvas (asked 2026-11-04, like Photoshop / a desktop): what it holds is picked.
   | { kind: "marquee"; start: CtPoint; current: CtPoint; add: boolean }
+  // A press on something not selected yet (asked 2026-11-04): released where it was = a click (`click` picks it), dragged
+  // = a selection box from there. Moving is done by dragging what is already selected.
+  | { kind: "press"; start: CtPoint; sx: number; sy: number; add: boolean; click: () => void }
   | { kind: "move-region"; id: string; start: CtPoint; shape: CtShape }
   | { kind: "resize-region"; id: string; handle: Handle; bounds: CtBounds; shape: CtShape }
   | { kind: "vertex"; id: string; index: number; shape: CtShape }
@@ -494,8 +497,9 @@ export function Stage(props: StageProps) {
     }
     props.onSelectRegion(null);
     if (hit === null || (hit === undefined && !pickMap.current && insideFrame(w, mainFrame))) {
-      props.onSelectMain(true);
-      setGesture({ kind: "move-main", start: w, f: mainFrame });
+      // The version's picture: dragged once selected; before that a click selects it, a drag draws a selection box.
+      if (props.mainSelected) setGesture({ kind: "move-main", start: w, f: mainFrame });
+      else setGesture({ kind: "press", start: w, sx: e.clientX, sy: e.clientY, add: false, click: () => props.onSelectMain(true) });
     } else {
       // Empty canvas: a drag draws a selection box (a click just deselects).
       props.onSelectMain(false);
@@ -528,6 +532,13 @@ export function Stage(props: StageProps) {
       case "draw":
       case "marquee":
         setGesture({ ...g, current: w });
+        break;
+      case "press":
+        if (Math.hypot(e.clientX - g.sx, e.clientY - g.sy) > 4) {
+          emptyPress.current = null;
+          gestureRef.current = { kind: "marquee", start: g.start, current: w, add: g.add };
+          setGesture(gestureRef.current);
+        }
         break;
       case "move-region": {
         let dx = w.x - g.start.x;
@@ -756,6 +767,10 @@ export function Stage(props: StageProps) {
     setGesture(null);
     setGuides(NO_GUIDES);
     if (!g) return;
+    if (g.kind === "press") {
+      g.click();
+      return;
+    }
     if (g.kind === "marquee") {
       const box = { x: Math.min(g.start.x, g.current.x), y: Math.min(g.start.y, g.current.y), w: Math.abs(g.current.x - g.start.x), h: Math.abs(g.current.y - g.start.y) };
       if (box.w * zoom < 4 || box.h * zoom < 4) {
@@ -863,20 +878,12 @@ export function Stage(props: StageProps) {
     const region = (typeof hit === "string" && regions.find((r) => r.id === hit)) || picked;
     props.onSelectMain(false);
     viewportRef.current?.setPointerCapture(e.pointerId);
-    // Shift / ⌘-click: add the layer (a bộ's layer: the whole bộ) to the picked layers, or take it out.
+    const press = (add: boolean, click: () => void) => setGesture({ kind: "press", start: toWorld(e.clientX, e.clientY), sx: e.clientX, sy: e.clientY, add, click });
+    // Shift / ⌘-click: add the layer (a bộ's layer: the whole bộ) to the picked layers, or take it out; Shift-drag:
+    // a selection box adding to them.
     if ((e.shiftKey || e.metaKey || e.ctrlKey) && props.onToggleMany) {
       const ids = props.setOf?.(region.id) ?? [region.id];
-      const cur = props.selectedSet ?? (selectedRegionId ? [selectedRegionId] : []);
-      const leaving = ids.every((id) => cur.includes(id));
-      props.onToggleMany(ids);
-      const next = leaving ? cur.filter((id) => !ids.includes(id)) : [...new Set([...cur, ...ids])];
-      if (!leaving && next.length > 1) {
-        // Dragging on from here moves them all (after the short hold every new pick has).
-        moveHeldUntil.current = performance.now() + SELECT_HOLD_MS;
-        const list = regions.filter((r) => next.includes(r.id));
-        const bounds = charSetBounds(list);
-        if (bounds) setGesture({ kind: "move-set", start: toWorld(e.clientX, e.clientY), regions: list, bounds });
-      }
+      press(true, () => props.onToggleMany?.(ids));
       return;
     }
     // Inside the picked layers' frame: a press on any of them drags them all.
@@ -887,12 +894,19 @@ export function Stage(props: StageProps) {
     // A layer of a bộ nhân vật: the whole set (one picked in Layers stays itself).
     const members = region.id !== selectedRegionId ? props.setOf?.(region.id) : null;
     if (members?.length) {
-      startSetMove(e, members);
+      press(false, () => props.onSelectSet?.(members));
       return;
     }
-    if (region.id !== selectedRegionId) moveHeldUntil.current = performance.now() + SELECT_HOLD_MS;
-    props.onSelectRegion(region.id);
     emptyPress.current = region.kind === "image" && !items.some((i) => i.region_id === region.id) ? { id: region.id, x: e.clientX, y: e.clientY } : null;
+    // Not selected yet: a click selects it, a drag draws a selection box (it is moved once selected).
+    if (region.id !== selectedRegionId) {
+      press(false, () => {
+        props.onSelectRegion(region.id);
+        if (region.kind === "photo" && editTarget === "object") props.onEditTargetChange("region");
+      });
+      return;
+    }
+    props.onSelectRegion(region.id);
     // A photo zone's body (outside its child frame, which has its own handler) is the zone itself.
     if (region.kind === "photo" && editTarget === "object") props.onEditTargetChange("region");
     if (editTarget === "object" && region.id === selectedRegionId && itemGeom && activeItem) {

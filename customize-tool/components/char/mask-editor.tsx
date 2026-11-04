@@ -290,14 +290,17 @@ export function MaskEditor(props: MaskEditorProps) {
         if (props.colourFix) {
           // A clipart file keeps its own colours where it has pixels ("Cân màu" changed them; the plate has the
           // picture's): shown from the file, the plate only where the file is empty (as the server adds pixels).
+          // Blended by the file's alpha: a canvas keeps colours premultiplied, so a nearly transparent pixel reads back
+          // as a saturated yellow / red / white — copied as is, its soft edge showed as a dotted line (2026-11-04).
           const pd = pg.getImageData(0, 0, W, H);
           const fd = ctx2d(mask).getImageData(0, 0, W, H).data;
-          for (let i = 0; i < W * H * 4; i += 4)
-            if (fd[i + 3] > 0) {
-              pd.data[i] = fd[i];
-              pd.data[i + 1] = fd[i + 1];
-              pd.data[i + 2] = fd[i + 2];
-            }
+          for (let i = 0; i < W * H * 4; i += 4) {
+            const a = fd[i + 3] / 255;
+            if (!a) continue;
+            pd.data[i] = Math.round(fd[i] * a + pd.data[i] * (1 - a));
+            pd.data[i + 1] = Math.round(fd[i + 1] * a + pd.data[i + 1] * (1 - a));
+            pd.data[i + 2] = Math.round(fd[i + 2] * a + pd.data[i + 2] * (1 - a));
+          }
           pg.putImageData(pd, 0, 0);
         }
         store.current = { colour, subject, others, context, mask, committed, tmp: canvas(W, H), pixels: null, smooth: null, paint, cover: canvas(W, H), growCover: canvas(W, H), coverStroke: canvas(W, H), painted: false, grown: false };

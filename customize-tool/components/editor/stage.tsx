@@ -44,7 +44,7 @@ import type { CtPrintSpec } from "../../types/print";
 const isTyping = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
 
-export type StageTool = "select" | "hand" | "rect" | "ellipse" | "polygon";
+export type StageTool = "select" | "hand" | "rect" | "ellipse" | "polygon" | "marquee";
 export type EditTarget = "region" | "object";
 
 type ItemGeom = ReturnType<typeof itemPlacement>;
@@ -66,6 +66,8 @@ const SELECT_HOLD_MS = 500;
 type Gesture =
   | { kind: "pan"; startX: number; startY: number; panX: number; panY: number }
   | { kind: "draw"; shape: "rect" | "ellipse"; start: CtPoint; current: CtPoint }
+  // A selection box dragged over the canvas (asked 2026-11-04, like Photoshop / a desktop): what it holds is picked.
+  | { kind: "marquee"; start: CtPoint; current: CtPoint; add: boolean }
   | { kind: "move-region"; id: string; start: CtPoint; shape: CtShape }
   | { kind: "resize-region"; id: string; handle: Handle; bounds: CtBounds; shape: CtShape }
   | { kind: "vertex"; id: string; index: number; shape: CtShape }
@@ -327,6 +329,34 @@ export function Stage(props: StageProps) {
     // A few screen px of slack: thin strokes stay clickable when zoomed out.
     return m ? pickAt(m, w, 3 / zoomRef.current) : undefined;
   };
+  /**
+   * The layers a selection box holds: those with most of their own visible pixels (≥ 60 %) inside it — the pick map's
+   * pixels, not their frames (a bộ's layers all share the canvas-wide frame), so a background covering the whole
+   * artwork stays out of a box drawn round one character.
+   */
+  const layersInBox = (box: CtBounds): string[] => {
+    const m = pickMap.current;
+    if (!m) return [];
+    const x0 = Math.max(0, Math.floor(box.x * m.scale));
+    const y0 = Math.max(0, Math.floor(box.y * m.scale));
+    const x1 = Math.min(m.w, Math.ceil((box.x + box.w) * m.scale));
+    const y1 = Math.min(m.h, Math.ceil((box.y + box.h) * m.scale));
+    const out: string[] = [];
+    for (const l of m.layers) {
+      if (!l.id) continue;
+      let total = 0;
+      let inside = 0;
+      for (let i = 0; i < l.alpha.length; i++) {
+        if (l.alpha[i] < 24) continue;
+        total++;
+        const x = i % m.w;
+        const y = (i - x) / m.w;
+        if (x >= x0 && x < x1 && y >= y0 && y < y1) inside++;
+      }
+      if (total && inside / total >= 0.6) out.push(l.id);
+    }
+    return out;
+  };
   const sceneRect = useMemo(() => {
     const sc = props.scene;
     if (!sc?.url || !sc.box.w) return null;
@@ -444,6 +474,11 @@ export function Stage(props: StageProps) {
       draftRedo.current = [];
       return;
     }
+    // Selection box tool (M): every press draws a box.
+    if (effectiveTool === "marquee") {
+      setGesture({ kind: "marquee", start: w, current: w, add: e.shiftKey || e.metaKey || e.ctrlKey });
+      return;
+    }
     // select tool: on a layer's pixels → that layer; on the version's picture → its frame (and drag it); else deselect
     const hit = pickLayer(w);
     const hitRegion = hit ? regions.find((r) => r.id === hit) : undefined;
@@ -455,7 +490,11 @@ export function Stage(props: StageProps) {
     if (hit === null || (hit === undefined && !pickMap.current && insideFrame(w, mainFrame))) {
       props.onSelectMain(true);
       setGesture({ kind: "move-main", start: w, f: mainFrame });
-    } else props.onSelectMain(false);
+    } else {
+      // Empty canvas: a drag draws a selection box (a click just deselects).
+      props.onSelectMain(false);
+      setGesture({ kind: "marquee", start: w, current: w, add: false });
+    }
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -481,6 +520,7 @@ export function Stage(props: StageProps) {
         setPan({ x: g.panX + e.clientX - g.startX, y: g.panY + e.clientY - g.startY });
         break;
       case "draw":
+      case "marquee":
         setGesture({ ...g, current: w });
         break;
       case "move-region": {
@@ -710,6 +750,21 @@ export function Stage(props: StageProps) {
     setGesture(null);
     setGuides(NO_GUIDES);
     if (!g) return;
+    if (g.kind === "marquee") {
+      const box = { x: Math.min(g.start.x, g.current.x), y: Math.min(g.start.y, g.current.y), w: Math.abs(g.current.x - g.start.x), h: Math.abs(g.current.y - g.start.y) };
+      if (box.w * zoom < 4 || box.h * zoom < 4) {
+        if (!g.add) props.onSelectRegion(null);
+        return;
+      }
+      const inside = layersInBox(box);
+      const cur = props.selectedSet ?? (selectedRegionId ? [selectedRegionId] : []);
+      const ids = g.add ? [...new Set([...cur, ...inside])] : inside;
+      props.onSelectMain(false);
+      if (ids.length === 0) props.onSelectRegion(null);
+      else if (ids.length === 1) props.onSelectRegion(ids[0]);
+      else props.onSelectSet?.(ids);
+      return;
+    }
     if (g.kind === "draw") {
       const x = Math.min(g.start.x, g.current.x);
       const y = Math.min(g.start.y, g.current.y);
@@ -1170,7 +1225,21 @@ export function Stage(props: StageProps) {
             />
           )}
 
-          {props.showOverlay && setBox && !selected && effectiveTool === "select" && (
+          {gesture?.kind === "marquee" && (
+            <rect
+              x={Math.min(gesture.start.x, gesture.current.x)}
+              y={Math.min(gesture.start.y, gesture.current.y)}
+              width={Math.abs(gesture.current.x - gesture.start.x)}
+              height={Math.abs(gesture.current.y - gesture.start.y)}
+              fill="rgba(14,165,233,0.08)"
+              stroke="#0ea5e9"
+              strokeWidth={1}
+              strokeDasharray="5 4"
+              vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+          )}
+          {props.showOverlay && setBox && !selected && (effectiveTool === "select" || effectiveTool === "marquee") && (
             // The selected bộ nhân vật (or layers picked together): one frame around all of them — its edge drags them,
             // a corner scales them; each picked layer's own box dashed inside it.
             <g>

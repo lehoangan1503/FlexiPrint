@@ -4,7 +4,7 @@
  * Customize Tool editor shell. Owns the loaded product bundle, the design
  * (regions/items, with undo), the preview selection, and every dialog.
  *
- * Shortcuts: V select · H hand (Space) · R rect · O ellipse · P polygon ·
+ * Shortcuts: V select · H hand (Space) · M selection box (or drag on empty canvas) · R rect · O ellipse · P polygon ·
  * L add custom layer · T text zone · U customer-photo zone · C then X / Y / C
  * centre the selected zone on the main (x / y / both) ·
  * Enter/double-click region = object mode · ⌘Z / ⇧⌘Z undo/redo · ⌘S save ·
@@ -26,6 +26,7 @@ import {
   Rocket,
   Save,
   Square,
+  SquareDashedMousePointer,
   Type,
   Undo2,
   UserSquare,
@@ -527,6 +528,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       else if (k === "u") startDraw("photo");
       else if (k === "v") setTool("select");
       else if (k === "h") setTool("hand");
+      else if (k === "m") setTool("marquee");
       else if (k === "r") setTool("rect");
       else if (k === "o") setTool("ellipse");
       else if (k === "p") setTool("polygon");
@@ -1049,6 +1051,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const navTools: Array<{ id: StageTool; icon: typeof Square; label: string; keys: string[] }> = [
     { id: "select", icon: MousePointer2, label: "Chọn / di chuyển", keys: ["V"] },
     { id: "hand", icon: Hand, label: "Kéo khung nhìn", keys: ["H"] },
+    { id: "marquee", icon: SquareDashedMousePointer, label: "Khung chọn — kéo khung quanh các phần tử để gom lại (Shift: chọn thêm). Kéo ở chỗ trống bằng công cụ Chọn cũng được", keys: ["M"] },
   ];
   const drawing = tool === "rect" || tool === "ellipse" || tool === "polygon";
   const kinds: Array<{ id: DrawKind; icon: typeof Square; label: string; keys: string[] }> = [

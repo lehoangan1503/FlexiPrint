@@ -365,7 +365,7 @@ export const charApi = {
     call<{ project: CtCharProject }>(`char/projects/${id}/${step}${action ? `/${action}` : ""}`, json("POST", body)).then((r) => r.project),
   /** One clipart file edited by hand: its new alpha on the set's canvas → files, thumbnails, products replaced. */
   /** A hand edit of one clipart: its new mask (null = unchanged) and / or a move of its option (whole px). */
-  editFile: (id: string, imageId: string, mask: string | null, move?: { dx: number; dy: number } | null, fix?: { png: string | null; grow: string | null; band: number; tol: number } | null) =>
+  editFile: (id: string, imageId: string, mask: string | null, move?: { dx: number; dy: number } | null, fix?: { png: string | null; growPng: string | null; band: number; tol: number; grow: number } | null) =>
     call<{ project: CtCharProject }>(`char/projects/${id}/layers/file`, json("POST", { imageId, mask, move: move ?? null, fix: fix ?? null })).then((r) => r.project),
   /** A pose set's "phần nằm sau" of one layer (server/char/behind.ts): its mask, or null to clear it. */
   /** The parent's biggest version, whole, split at this layer's copies (the "phần nằm sau" editor — server/char/behind.ts). */

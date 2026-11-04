@@ -152,7 +152,7 @@ async function rowsOf(db: Db, ids: string[]): Promise<Map<string, CtCharImage>> 
  * may go — "mask" = where the editor's preview grew it (a save), "plate" = the picture's figure (a new cut). */
 interface Fix extends EdgeFix {
   png: Buffer | null;
-  grow: Buffer | null;
+  growPng: Buffer | null;
   growTo: "mask" | "plate";
 }
 
@@ -188,10 +188,10 @@ async function applyMask(db: Db, userId: string, p: CtCharProject, set: CtCharLa
     out.data[i + 2] = alpha ? from.data[i + 2] : 0;
     out.data[i + 3] = alpha;
   }
-  if (fix?.grow && plate) {
+  if (fix?.growPng && plate) {
     // Grown over the strip next to it: what the editor added under the "Thêm" brush is grown again here from the file
     // itself, in this file's colour (its pink plate colours never stay) — as far as the preview went, a step per stroke.
-    const gc = alphaPlane(await rgba(fix.grow, W, H));
+    const gc = alphaPlane(await rgba(fix.growPng, W, H));
     const a = alphaPlane(out);
     const figure = new Uint8Array(W * H);
     for (let i = 0; i < W * H; i++) {
@@ -224,7 +224,7 @@ async function applyMask(db: Db, userId: string, p: CtCharProject, set: CtCharLa
       paths.push(m.path);
       return m.url;
     };
-    patch.editFix = { url: await keep(fix.png), growUrl: await keep(fix.grow), band: fix.band, tol: fix.tol };
+    patch.editFix = { url: await keep(fix.png), growUrl: await keep(fix.growPng), band: fix.band, tol: fix.tol, grow: fix.grow };
   }
   set.slots = set.slots.map((sl) => (sl.key !== g.slot ? sl : { ...sl, files: sl.files.map((x) => (x.imageId === f.imageId ? { ...x, ...patch } : x)) }));
   return { olds: [old], news: [s.row], paths };
@@ -247,7 +247,7 @@ async function fixWithKept(f: CtCharLayerFile, set: CtCharLayerSet, png: Buffer 
     for (let i = 3; i < W * H * 4; i += 4) r.data[i] = Math.max(r.data[i], kept.data[i]);
     return toPng(r);
   };
-  return { png: await join(png, f.editFix?.url), grow: await join(grow, f.editFix?.growUrl), growTo: "mask", ...settings };
+  return { ...settings, png: await join(png, f.editFix?.url), growPng: await join(grow, f.editFix?.growUrl), growTo: "mask" };
 }
 
 /** A picture on the set's canvas moved by whole px (what leaves the canvas goes, what comes in is empty). */
@@ -339,7 +339,7 @@ async function relink(db: Db, p: CtCharProject, olds: CtCharImage[], news: CtCha
 
 /** POST …/layers/file {imageId, mask?, move?: {dx, dy}} — the mask first (drawn where the file is), then the move. */
 export async function editLayerFile(db: Db, userId: string, p: CtCharProject, body: unknown): Promise<CtCharProject> {
-  const b = (body ?? {}) as { imageId?: unknown; mask?: unknown; move?: { dx?: unknown; dy?: unknown } | null; fix?: { png?: unknown; grow?: unknown; band?: unknown; tol?: unknown } | null };
+  const b = (body ?? {}) as { imageId?: unknown; mask?: unknown; move?: { dx?: unknown; dy?: unknown } | null; fix?: { png?: unknown; growPng?: unknown; band?: unknown; tol?: unknown; grow?: unknown } | null };
   const set = p.layers;
   if (!set || set.status !== "done") throw new Error("Chưa có bộ file");
   const g = fileOf(set, String(b.imageId ?? ""));
@@ -347,8 +347,8 @@ export async function editLayerFile(db: Db, userId: string, p: CtCharProject, bo
   const mask = b.mask == null ? null : pngBytes(b.mask);
   if (b.mask != null && !mask) throw new Error("Mặt nạ không hợp lệ (PNG)");
   const fixPng = b.fix?.png ? pngBytes(b.fix.png) : null;
-  const growPng = b.fix?.grow ? pngBytes(b.fix.grow) : null;
-  if ((b.fix?.png && !fixPng) || (b.fix?.grow && !growPng)) throw new Error("Vùng cân màu không hợp lệ (PNG)");
+  const growPng = b.fix?.growPng ? pngBytes(b.fix.growPng) : null;
+  if ((b.fix?.png && !fixPng) || (b.fix?.growPng && !growPng)) throw new Error("Vùng cân màu không hợp lệ (PNG)");
   const fixSettings = edgeFixOf(b.fix);
   const dx = Math.round(Number(b.move?.dx) || 0);
   const dy = Math.round(Number(b.move?.dy) || 0);
@@ -485,7 +485,7 @@ export async function reapplyEdits(db: Db, userId: string, p: CtCharProject, old
           const r = await keptBrush(f, set, url);
           return r ? png(r) : null;
         };
-        const fix: Fix | null = f.editFix ? { png: await brush(f.editFix.url), grow: await brush(f.editFix.growUrl), growTo: "plate", ...edgeFixOf(f.editFix) } : null;
+        const fix: Fix | null = f.editFix ? { ...edgeFixOf(f.editFix), png: await brush(f.editFix.url), growPng: await brush(f.editFix.growUrl), growTo: "plate" } : null;
         // History = the plain cut of the file: "Hoàn tác" drops the edit.
         const r = await applyMask(db, userId, p, set, g, moved ? await png(moved) : null, true, fix);
         paths.push(...r.paths);

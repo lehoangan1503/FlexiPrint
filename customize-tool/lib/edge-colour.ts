@@ -19,18 +19,23 @@ export interface EdgeFix {
   band: number;
   /** ΔE (CIE76) a pixel must lie from its inner neighbours' colour to be repainted. */
   tol: number;
+  /** "Thêm": how many px the clipart grows past its edge (1–10, like "Độ mịn" for Làm mịn). */
+  grow: number;
 }
 
-export const EDGE_FIX_DEFAULT: EdgeFix = { band: 6, tol: 10 };
+export const EDGE_FIX_DEFAULT: EdgeFix = { band: 6, tol: 10, grow: 4 };
 
 /** The limits the UI and the server both keep to. */
 export function edgeFixOf(v: unknown): EdgeFix {
-  const o = (v ?? {}) as { band?: unknown; tol?: unknown };
+  const o = (v ?? {}) as { band?: unknown; tol?: unknown; grow?: unknown };
   const band = Math.round(Number(o.band));
   const tol = Number(o.tol);
+  const grow = Math.round(Number(o.grow));
   return {
     band: Number.isFinite(band) ? Math.min(10, Math.max(1, band)) : EDGE_FIX_DEFAULT.band,
     tol: Number.isFinite(tol) ? Math.min(60, Math.max(3, tol)) : EDGE_FIX_DEFAULT.tol,
+    // Saved before "Phủ thêm" had its own size: it grew by the band.
+    grow: Number.isFinite(grow) ? Math.min(10, Math.max(1, grow)) : Number.isFinite(band) ? Math.min(10, Math.max(1, band)) : EDGE_FIX_DEFAULT.grow,
   };
 }
 
@@ -222,15 +227,18 @@ function chamfer(ww: number, hh: number, zero: (i: number) => boolean): Float32A
 
 /**
  * "Cân màu — Thêm" (asked 2026-11-04): the clipart grows over a thin strip its 3b picture left uncovered — the doll's
- * pink tank top showing between a tee's hem and the jeans' waist, which no picture of the set covers. Under the brush,
- * pixels up to `band` px outside the file (and inside the picture's own figure: never onto the background) are added,
- * opaque; they, and the file's own mixed edge pixels there (ΔE > tol), take the colour of the clean file pixels just
- * inside (at least `band` px deep — a print-size cut edge is mixed with what was beside it in the 3b picture ~5 px in;
- * the nearest ones) — copying the edge itself carried its pink tint outwards in stripes (tried 2026-11-04). col: RGBA colours (RGB written); alpha: the file's alpha (written); figure: the 3b picture's
- * alpha (the plate's). Returns how many px were added.
+ * pink tank top showing between a tee's hem and the jeans' waist, which no picture of the set covers.
+ * Under the brush: first the file's own edge is evened out (fixEdgeColours, `band`: its pink-mixed pixels take the
+ * colour right inside them — the dark navy along a sweater's edge), then pixels up to `grow` px outside the file
+ * (inside the picture's own figure: never onto the background) are added, opaque, walked from the file outwards, each
+ * taking its settled neighbours' colour nearer the file — so the strip continues the edge's own colour (the darkest
+ * band next to it, asked 2026-11-04: a colour from deeper inside came out lighter than the edge). col: RGBA colours
+ * (RGB written); alpha: the file's alpha (written); figure: the 3b picture's alpha (the plate's). Returns how many px
+ * were added.
  */
 export function growEdge(col: Bytes, alpha: Bytes, figure: ArrayLike<number>, cover: ArrayLike<number>, w: number, h: number, fix: EdgeFix): number {
-  const { band, tol } = fix;
+  fixEdgeColours(col, alpha, cover, w, h, fix);
+  const { grow } = fix;
   let bx0 = w, by0 = h, bx1 = -1, by1 = -1;
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++)
@@ -241,92 +249,59 @@ export function growEdge(col: Bytes, alpha: Bytes, figure: ArrayLike<number>, co
         if (y > by1) by1 = y;
       }
   if (bx1 < 0) return 0;
-  const deep = Math.max(3, band);
-  const reach = band + deep + 4;
-  const pad = reach + 2;
+  const pad = grow + 2;
   const x0 = Math.max(0, bx0 - pad), y0 = Math.max(0, by0 - pad);
   const x1 = Math.min(w - 1, bx1 + pad), y1 = Math.min(h - 1, by1 + pad);
   const ww = x1 - x0 + 1;
   const hh = y1 - y0 + 1;
   const n = ww * hh;
   const G = (i: number) => (y0 + Math.floor(i / ww)) * w + x0 + (i % ww);
-  // Outside: distance from the file; inside: depth into it.
-  const out = chamfer(ww, hh, (i) => alpha[G(i)] >= 128);
-  const depth = chamfer(ww, hh, (i) => alpha[G(i)] < 128);
-  const clean = (i: number) => depth[i] >= deep && alpha[G(i)] >= 230;
-  // The pixels to paint: grown ones, and the file's mixed edge under the brush.
-  const grow: number[] = [];
-  const edge: number[] = [];
+  const dist = chamfer(ww, hh, (i) => alpha[G(i)] >= 128);
+  const settled = new Uint8Array(n);
+  const list: number[] = [];
   for (let i = 0; i < n; i++) {
     const g = G(i);
-    if (cover[g] < 64) continue;
-    if (out[i] > 0 && out[i] <= band && figure[g] >= 128) grow.push(i);
-    else if (!out[i] && depth[i] < deep) edge.push(i);
+    if (!dist[i]) {
+      settled[i] = 1;
+      // The file's own soft edge under the brush turns as opaque as the picture there: half-opaque, it let the doll's
+      // pink show through as a dark line along the old edge (2026-11-04).
+      if (cover[g] >= 64 && alpha[g] < figure[g]) alpha[g] = figure[g];
+    } else if (cover[g] >= 64 && dist[i] <= grow + 0.5 && figure[g] >= 128) list.push(i);
   }
-  if (!grow.length && !edge.length) return 0;
-  /** The mean colour of the nearest clean pixels (within 1 px of the nearest), or null. */
-  const ref = (i: number): [number, number, number] | null => {
+  if (!list.length) return 0;
+  list.sort((a, b) => dist[a] - dist[b]);
+  let added = 0;
+  const step = (i: number, any: boolean): boolean => {
     const lx = i % ww;
     const ly = Math.floor(i / ww);
-    let near = Infinity;
-    for (let dy = -reach; dy <= reach; dy++) {
-      const yy = ly + dy;
-      if (yy < 0 || yy >= hh) continue;
-      for (let dx = -reach; dx <= reach; dx++) {
-        const xx = lx + dx;
-        if (xx < 0 || xx >= ww) continue;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < near && clean(yy * ww + xx)) near = d2;
-      }
-    }
-    if (near === Infinity) return null;
-    const lim = (Math.sqrt(near) + 1) ** 2;
     let r = 0, g = 0, b = 0, k = 0;
-    for (let dy = -reach; dy <= reach; dy++) {
-      const yy = ly + dy;
-      if (yy < 0 || yy >= hh) continue;
-      for (let dx = -reach; dx <= reach; dx++) {
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
         const xx = lx + dx;
-        if (xx < 0 || xx >= ww || dx * dx + dy * dy > lim) continue;
+        const yy = ly + dy;
+        if (xx < 0 || yy < 0 || xx >= ww || yy >= hh) continue;
         const j = yy * ww + xx;
-        if (!clean(j)) continue;
+        if (!settled[j] || (!any && dist[j] >= dist[i])) continue;
         const s = G(j) * 4;
-        r += col[s];
-        g += col[s + 1];
-        b += col[s + 2];
-        k++;
+        const wt = (dx && dy ? 0.7 : 1) * Math.max(alpha[G(j)], 1);
+        r += col[s] * wt;
+        g += col[s + 1] * wt;
+        b += col[s + 2] * wt;
+        k += wt;
       }
-    }
-    return k ? [r / k, g / k, b / k] : null;
+    if (!k) return false;
+    const gi = G(i);
+    col[gi * 4] = Math.round(r / k);
+    col[gi * 4 + 1] = Math.round(g / k);
+    col[gi * 4 + 2] = Math.round(b / k);
+    // Opaque (a half-opaque ring let the doll's pink show through), within the picture's own soft outline.
+    if (figure[gi] > alpha[gi]) alpha[gi] = figure[gi];
+    settled[i] = 1;
+    added++;
+    return true;
   };
-  const lab = new Float32Array(6);
-  const paint: Array<[number, [number, number, number], boolean]> = [];
-  for (const i of grow) {
-    const c = ref(i);
-    if (c) paint.push([i, c, true]);
-  }
-  for (const i of edge) {
-    const c = ref(i);
-    if (!c) continue;
-    const s = G(i) * 4;
-    toLab(col[s], col[s + 1], col[s + 2], lab, 0);
-    toLab(c[0], c[1], c[2], lab, 3);
-    if ((lab[0] - lab[3]) ** 2 + (lab[1] - lab[4]) ** 2 + (lab[2] - lab[5]) ** 2 > tol * tol) paint.push([i, c, false]);
-  }
-  let added = 0;
-  for (const [i, c, grown] of paint) {
-    const g = G(i);
-    col[g * 4] = Math.round(c[0]);
-    col[g * 4 + 1] = Math.round(c[1]);
-    col[g * 4 + 2] = Math.round(c[2]);
-    if (grown) {
-      // Opaque (a half-opaque ring let the doll's pink show through), within the picture's own soft outline.
-      if (figure[g] > alpha[g]) alpha[g] = figure[g];
-      added++;
-    } else if (alpha[g] < 255) {
-      // A mixed edge pixel now has the clipart's colour: it covers what is under it like the rest.
-      alpha[g] = Math.max(alpha[g], Math.min(255, figure[g]));
-    }
-  }
+  let left = list.filter((i) => !step(i, false));
+  for (let round = 0; left.length && round < 3; round++) left = left.filter((i) => !step(i, true));
   return added;
 }

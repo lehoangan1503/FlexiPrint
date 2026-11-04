@@ -775,7 +775,7 @@ export interface CtCharLayerFile {
   /** "Cân màu" by hand (lib/edge-colour.ts, asked 2026-11-04): where the brush went (`url`, PNG alpha, the set's
    * canvas at `editCrop`), where its "Thêm" strokes went (`growUrl`: the file grew there) and its settings — done
    * again after a new cut. */
-  editFix?: { url?: string; growUrl?: string; band: number; tol: number };
+  editFix?: { url?: string; growUrl?: string; band: number; tol: number; grow?: number };
   /** Moved by hand in the editor: [dx, dy] px on the set's canvas from where it was cut (every colour of the option,
    * back and front together) — a new cut is moved the same. */
   offset?: number[];

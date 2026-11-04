@@ -40,11 +40,9 @@ interface Shift {
 }
 
 /** What the editor sends for "Cân màu": the recolour brush, the "Thêm" (grow) brush, both PNG data URLs. */
-export interface CtEdgeFixSave {
+export interface CtEdgeFixSave extends EdgeFix {
   png: string | null;
-  grow: string | null;
-  band: number;
-  tol: number;
+  growPng: string | null;
 }
 
 /** One undo step: a changed rectangle of the mask, a move of the whole clipart (Di chuyển, asked 2026-11-04), or a
@@ -698,7 +696,7 @@ export function MaskEditor(props: MaskEditorProps) {
       st.pixels = null;
       push({ kind: "paint", x, y, before, after, layer, coverBefore, coverAfter, mask });
       setChanges((k) => k + 1);
-      setMsg(n ? null : fixGrow ? "Không có chỗ hở sát mép clipart dưới cọ (chỉ phủ trong hình của ảnh 3b, tối đa Độ rộng mép)" : "Không thấy vệt màu lạ ở mép dưới cọ (tăng Độ rộng mép hoặc giảm Dung sai)");
+      setMsg(n ? null : fixGrow ? "Không có chỗ hở sát mép clipart dưới cọ (chỉ phủ trong hình của ảnh 3b)" : "Không thấy vệt màu lạ ở mép dưới cọ (tăng Độ rộng mép hoặc giảm Dung sai)");
     }
     sg.clearRect(0, 0, W, H);
   };
@@ -1093,7 +1091,7 @@ export function MaskEditor(props: MaskEditorProps) {
         if (!cb) throw new Error("Không xuất được vùng cân màu");
         return dataUrl(cb);
       };
-      const painted: CtEdgeFixSave | null = st.painted || st.grown ? { png: st.painted ? await brush(st.cover) : null, grow: st.grown ? await brush(st.growCover) : null, ...fix } : null;
+      const painted: CtEdgeFixSave | null = st.painted || st.grown ? { ...fix, png: st.painted ? await brush(st.cover) : null, growPng: st.grown ? await brush(st.growCover) : null } : null;
       await props.onSave(changes > 0 ? await dataUrl(blob) : null, moved ? off : null, painted);
       if (close) props.onClose();
       return true;
@@ -1266,12 +1264,20 @@ export function MaskEditor(props: MaskEditorProps) {
                     <Palette className="h-4 w-4 shrink-0" />
                     Chỉ đổi màu
                   </button>
-                  <button onClick={() => setFixGrow(true)} className={side(fixGrow, "bg-emerald-600 text-white")} title="Clipart nở thêm (tối đa Độ rộng mép) phủ lên chỗ hở sát nó — như hồng búp bê giữa gấu áo và cạp quần — bằng màu clipart ngay bên trong">
+                  <button onClick={() => setFixGrow(true)} className={side(fixGrow, "bg-emerald-600 text-white")} title="Clipart nở thêm (bằng Phủ thêm) phủ lên chỗ hở sát nó — như hồng búp bê giữa gấu áo và cạp quần — bằng màu clipart ngay bên trong">
                     <Plus className="h-4 w-4 shrink-0" />
                     Thêm (phủ chỗ hở)
                   </button>
                 </div>
-                <div className="px-0.5 text-[10px] text-muted-foreground">Màu lấy từ clipart sát bên trong, vẫn che lớp dưới. Thêm chỉ phủ trong hình của ảnh 3b, không ra nền. Lưu = mọi màu của kiểu này (mỗi màu theo màu của nó).</div>
+                {fixGrow && (
+                  <label className="flex flex-col gap-0.5" title="Clipart nở ra bao nhiêu px ở chỗ quét (như Độ mịn của Làm mịn) — px của file in, 2–4 px thường đủ phủ dải hồng">
+                    <span className="flex">
+                      Phủ thêm <span className="ml-auto tabular-nums">{fix.grow} px</span>
+                    </span>
+                    <input type="range" min={1} max={10} value={fix.grow} onChange={(e) => setFix((f) => ({ ...f, grow: Number(e.target.value) }))} />
+                  </label>
+                )}
+                <div className="px-0.5 text-[10px] text-muted-foreground">Màu lấy từ pixel clipart liền kề (vùng sát mép), vẫn che lớp dưới. Thêm chỉ phủ trong hình của ảnh 3b, không ra nền. Lưu = mọi màu của kiểu này (mỗi màu theo màu của nó).</div>
               </div>
             )}
             {effTool === "wand" && (

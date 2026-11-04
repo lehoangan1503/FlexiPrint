@@ -525,7 +525,7 @@ function MultiProps(props: InspectorProps & { ids: string[] }) {
                   key={g.key}
                   onClick={(e) => (e.metaKey || e.ctrlKey ? props.onToggleMany(g.ids) : props.onPickMany(g.ids))}
                   title={`${g.label} — ${g.ids.length} layer · ⌘-click để chọn thêm nhiều phần`}
-                  className={cx("max-w-full truncate rounded-full border px-2 py-0.5 text-[11px]", on ? "border-sky-500 bg-sky-500/15 text-sky-700 dark:text-sky-300" : "bg-background hover:bg-accent")}
+                  className={cx("max-w-full truncate rounded-full border px-2 py-0.5 text-[11px]", on ? "border-sky-500 bg-sky-500 font-medium text-white" : "bg-background hover:bg-accent")}
                 >
                   {g.label} <span className="text-muted-foreground">({g.ids.length})</span>
                 </button>

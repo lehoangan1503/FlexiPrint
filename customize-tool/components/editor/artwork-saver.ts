@@ -13,7 +13,8 @@ import type { CtAsset, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtSel
 import { ctApi } from "../../lib/api-client";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
 import { displayAssets } from "../../lib/library";
-import { versionLayers } from "../../lib/layout";
+import { claimSharedLayers, versionLayers } from "../../lib/layout";
+import { defaultRegionSelection, isSelectionValid, mainVersions, normalizeProductConfig, normalizeRegion } from "../../lib/design";
 
 export interface ArtworkSaverInput {
   product: CtProduct | null;
@@ -61,6 +62,44 @@ function storedSelection(selection: CtSelection): CtSelection {
   return out;
 }
 
+export interface VersionArtworksInput {
+  product: CtProduct;
+  main: CtAsset;
+  mains: CtAsset[];
+  assets: CtAsset[];
+  regions: CtRegion[];
+  items: CtRegionItem[];
+  config: CtProductConfig;
+  selection: CtSelection;
+}
+
+/**
+ * Every version of the product rendered as its print file and stored as its artwork; a version whose hash is in
+ * `hashes` already (versionId → hash) is skipped, and `hashes` is updated. Versions gone from the product lose
+ * theirs. Used by the editor's Lưu thiết kế and by the dashboard's Artwork tab (a product never saved in the editor).
+ */
+export async function saveVersionArtworks(input: VersionArtworksInput, hashes: Map<string, string>, onVersion?: (done: number, total: number) => void): Promise<number> {
+  const { product, main, mains, assets, regions, items, config, selection } = input;
+  let made = 0;
+  for (const [k, m] of mains.entries()) {
+    onVersion?.(k, mains.length);
+    const sel = versionSelection(selection, m.id);
+    const layers = versionLayers(regions, items, m.id);
+    const used = new Set(layers.regions.map((r) => r.id));
+    const content = Object.fromEntries(Object.entries(sel).filter(([key]) => key === CT_MAIN_KEY || used.has(key)));
+    const hash = hashOf(JSON.stringify({ r: layers.regions, i: layers.items, s: content, l: config.layouts[m.id] ?? null, print: config.print?.spec.outline ?? null }));
+    if (hashes.get(m.id) === hash) continue;
+    const canvas = await renderComposite({ main, assets: displayAssets(assets, "flat"), regions, items, selection: sel, scale: 1, layouts: config.layouts, cutToFrame: true });
+    const file = await canvasToBlob(canvas, "image/png");
+    await ctApi.saveProductArtwork(product.id, file, { versionId: m.id, hash, name: `${product.name} — ${m.name || "version"}`, selection: storedSelection(content) });
+    hashes.set(m.id, hash);
+    made++;
+  }
+  onVersion?.(mains.length, mains.length);
+  await ctApi.pruneProductArtworks(product.id, mains.map((m) => m.id));
+  return made;
+}
+
 export function useArtworkSaver(input: ArtworkSaverInput): ArtworkSaver {
   const ref = useRef(input);
   ref.current = input;
@@ -96,21 +135,9 @@ export function useArtworkSaver(input: ArtworkSaverInput): ArtworkSaver {
   };
 
   const runOnce = async () => {
-    const { product, mains, regions, items, config, selection } = ref.current;
-    if (!product) return;
-    for (const m of mains) {
-      const sel = versionSelection(selection, m.id);
-      const layers = versionLayers(regions, items, m.id);
-      const used = new Set(layers.regions.map((r) => r.id));
-      const content = Object.fromEntries(Object.entries(sel).filter(([k]) => k === CT_MAIN_KEY || used.has(k)));
-      const hash = hashOf(JSON.stringify({ r: layers.regions, i: layers.items, s: content, l: config.layouts[m.id] ?? null, print: config.print?.spec.outline ?? null }));
-      if (hashes.current.get(m.id) === hash) continue;
-      const file = await render(sel);
-      await ctApi.saveProductArtwork(product.id, file, { versionId: m.id, hash, name: `${product.name} — ${m.name || "version"}`, selection: storedSelection(content) });
-      hashes.current.set(m.id, hash);
-      setFolderName((n) => n ?? product.name);
-    }
-    await ctApi.pruneProductArtworks(product.id, mains.map((m) => m.id));
+    const { product, main, mains, assets, regions, items, config, selection } = ref.current;
+    if (!product || !main) return;
+    if (await saveVersionArtworks({ product, main, mains, assets, regions, items, config, selection }, hashes.current)) setFolderName((n) => n ?? product.name);
   };
 
   const saveAll = useCallback(() => {
@@ -134,7 +161,6 @@ export function useArtworkSaver(input: ArtworkSaverInput): ArtworkSaver {
       }
     })();
     // runOnce reads everything from the ref.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const saveExtra = async (name: string) => {
@@ -151,4 +177,42 @@ export function useArtworkSaver(input: ArtworkSaverInput): ArtworkSaver {
   };
 
   return { saveAll, saveExtra, busy, folderName };
+}
+
+/**
+ * A product's artworks made from its saved design, without opening the editor (the dashboard's Artwork tab): the
+ * content is the design's samples (CtProductConfig.samples), as the editor would show it. Returns how many were made.
+ */
+export async function buildProductArtworks(productId: string, onVersion?: (done: number, total: number) => void): Promise<number> {
+  const [bundle, have] = await Promise.all([ctApi.getBundle(productId), ctApi.productArtworks(productId)]);
+  const product = bundle.product;
+  const main = bundle.assets.find((a) => a.id === product.main_asset_id);
+  if (!main) throw new Error("Sản phẩm chưa có version");
+  const config = normalizeProductConfig(product.config);
+  const regions = bundle.regions.map(normalizeRegion);
+  const layers = claimSharedLayers(regions, main.id) ?? regions;
+  // Every layer's choice: what the designer left (samples), else its default — as the editor fills them on opening.
+  const selection: CtSelection = {};
+  if (config.samples[CT_MAIN_KEY]) selection[CT_MAIN_KEY] = config.samples[CT_MAIN_KEY];
+  for (const r of layers) {
+    const cur = config.samples[r.id];
+    selection[r.id] = cur && isSelectionValid(r, cur, bundle.items, bundle.assets) ? cur : defaultRegionSelection(r, bundle.items, bundle.assets);
+  }
+  const hashes = new Map<string, string>();
+  for (const a of have.artworks) if (a.meta.artwork?.versionId && a.meta.artwork.hash) hashes.set(a.meta.artwork.versionId, a.meta.artwork.hash);
+  return saveVersionArtworks(
+    {
+      product,
+      main,
+      mains: mainVersions(bundle.assets, main.id),
+      assets: bundle.assets,
+      // Older designs' shared layers belong to the default version, as the editor reads them.
+      regions: layers,
+      items: bundle.items,
+      config,
+      selection,
+    },
+    hashes,
+    onVersion,
+  );
 }

@@ -42,6 +42,33 @@ interface Loaded {
   layers: CtRegion[];
 }
 
+/** Where the pick map has pixels (canvas px), with a margin; the whole canvas when it is empty or nearly full. */
+function contentBox(m: CtPickMap, W: number, H: number): { x: number; y: number; w: number; h: number } {
+  let x0 = m.w;
+  let y0 = m.h;
+  let x1 = -1;
+  let y1 = -1;
+  for (const l of m.layers) {
+    for (let i = 0; i < l.alpha.length; i++) {
+      if (l.alpha[i] < 24) continue;
+      const x = i % m.w;
+      const y = (i - x) / m.w;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (x1 < 0) return { x: 0, y: 0, w: W, h: H };
+  const k = 1 / m.scale;
+  const pad = Math.max(x1 - x0, y1 - y0) * k * 0.06;
+  const x = Math.max(0, x0 * k - pad);
+  const y = Math.max(0, y0 * k - pad);
+  const w = Math.min(W, (x1 + 1) * k + pad) - x;
+  const h = Math.min(H, (y1 + 1) * k + pad) - y;
+  return w * h > W * H * 0.8 ? { x: 0, y: 0, w: W, h: H } : { x, y, w, h };
+}
+
 export function SetPicker({ project, editable }: { project: CtCharProject; editable: boolean }) {
   const productId = project.product_ids[0];
   const [data, setData] = useState<Loaded | null>(null);
@@ -51,6 +78,9 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
   const [picked, setPicked] = useState<string[]>([]);
   const [shot, setShot] = useState<{ url: string; pickedUrl: string | null } | null>(null);
   const pickMap = useRef<CtPickMap | null>(null);
+  /** The part of the canvas that has something on it (canvas px): the preview shows only it — a bộ con of one
+   * character on a wide canvas would be a speck otherwise. */
+  const [view, setView] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const anchor = useRef<string | null>(null);
 
@@ -112,6 +142,7 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
         }
         if (!live) return;
         pickMap.current = map;
+        if (!view) setView(contentBox(map, main.width, main.height));
         const url = full.toDataURL("image/png");
         urls.push(url);
         setShot({ url, pickedUrl });
@@ -123,6 +154,8 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
       live = false;
       clearTimeout(t);
     };
+    // `view` is set once from the first picture (the frame stays put while options change).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, config, version, selection, picked, pickedSet]);
 
   // ---- picking ----
@@ -153,9 +186,10 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
       const el = box.current;
       if (!el || !data) return { x: 0, y: 0 };
       const r = el.getBoundingClientRect();
-      return { x: ((clientX - r.left) / r.width) * data.main.width, y: ((clientY - r.top) / r.height) * data.main.height };
+      const v = view ?? { x: 0, y: 0, w: data.main.width, h: data.main.height };
+      return { x: v.x + ((clientX - r.left) / r.width) * v.w, y: v.y + ((clientY - r.top) / r.height) * v.h };
     },
-    [data],
+    [data, view],
   );
   const onDown = (e: React.PointerEvent) => {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -165,7 +199,7 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
   const onMove = (e: React.PointerEvent) => {
     if (!drag || !data || !box.current) return;
     const p = toCanvas(e.clientX, e.clientY);
-    const screen = (data.main.width / box.current.getBoundingClientRect().width) * 4;
+    const screen = ((view?.w ?? data.main.width) / box.current.getBoundingClientRect().width) * 4;
     setDrag({ ...drag, x1: p.x, y1: p.y, moved: drag.moved || Math.hypot(p.x - drag.x0, p.y - drag.y0) > screen });
   };
   const onUp = () => {
@@ -236,6 +270,9 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
         const sub = bundle.assets.find((a) => a.id === i.asset_id);
         return sub ? [sub, ...bundle.assets.filter((a) => a.parent_id === sub.id && a.role === "variant").sort((a, b) => a.sort_order - b.sort_order)] : [];
       });
+  const v = view ?? { x: 0, y: 0, w: main.width, h: main.height };
+  /** The whole canvas picture, placed so that `v` fills the preview box. */
+  const picStyle: React.CSSProperties = { left: `${(-v.x / v.w) * 100}%`, top: `${(-v.y / v.h) * 100}%`, width: `${(main.width / v.w) * 100}%`, height: `${(main.height / v.h) * 100}%` };
   const dragBox = drag?.moved ? { x: Math.min(drag.x0, drag.x1), y: Math.min(drag.y0, drag.y1), w: Math.abs(drag.x1 - drag.x0), h: Math.abs(drag.y1 - drag.y0) } : null;
 
   return (
@@ -249,6 +286,7 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
               onClick={() => {
                 setVersionId(v.id);
                 setPicked([]);
+                setView(null);
               }}
               className={cx("rounded-full border px-2.5 py-0.5 text-xs", v.id === versionId ? "border-foreground bg-foreground text-background" : "hover:bg-accent")}
             >
@@ -263,7 +301,7 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
           <div
             ref={box}
             className="relative w-full cursor-crosshair touch-none select-none overflow-hidden rounded-lg border"
-            style={{ ...CHECKER_STYLE, aspectRatio: `${main.width} / ${main.height}` }}
+            style={{ ...CHECKER_STYLE, aspectRatio: `${v.w} / ${v.h}` }}
             onPointerDown={onDown}
             onPointerMove={onMove}
             onPointerUp={onUp}
@@ -271,12 +309,12 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
             {shot ? (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element -- a local data URL */}
-                <img src={shot.url} alt={project.name} className="pointer-events-none absolute inset-0 h-full w-full" draggable={false} />
+                <img src={shot.url} alt={project.name} className="pointer-events-none absolute max-w-none" style={picStyle} draggable={false} />
                 {shot.pickedUrl && (
                   <>
                     <div className="pointer-events-none absolute inset-0 bg-black/60" />
                     {/* eslint-disable-next-line @next/next/no-img-element -- a local data URL */}
-                    <img src={shot.pickedUrl} alt="" className="pointer-events-none absolute inset-0 h-full w-full" draggable={false} />
+                    <img src={shot.pickedUrl} alt="" className="pointer-events-none absolute max-w-none" style={picStyle} draggable={false} />
                   </>
                 )}
               </>
@@ -288,7 +326,7 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
             {dragBox && (
               <div
                 className="pointer-events-none absolute border-2 border-dashed border-sky-400 bg-sky-400/15"
-                style={{ left: `${(dragBox.x / main.width) * 100}%`, top: `${(dragBox.y / main.height) * 100}%`, width: `${(dragBox.w / main.width) * 100}%`, height: `${(dragBox.h / main.height) * 100}%` }}
+                style={{ left: `${((dragBox.x - v.x) / v.w) * 100}%`, top: `${((dragBox.y - v.y) / v.h) * 100}%`, width: `${(dragBox.w / v.w) * 100}%`, height: `${(dragBox.h / v.h) * 100}%` }}
               />
             )}
           </div>
@@ -341,7 +379,7 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
                   <span className={cx("flex h-4 w-4 shrink-0 items-center justify-center rounded border", on ? "border-sky-500 bg-sky-500 text-white" : "border-muted-foreground/40")}>{on && <Check className="h-3 w-3" />}</span>
                   {r.kind === "text" ? <Type className="h-3.5 w-3.5 text-muted-foreground" /> : r.kind === "photo" ? <UserSquare className="h-3.5 w-3.5 text-muted-foreground" /> : null}
                   <span className="truncate text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {shortName(r.config.image.label || r.name)}
+                    {shortName(r.kind === "image" ? r.config.image.label || r.name : r.name)}
                     {options.length > 1 ? ` (${options.length})` : ""}
                   </span>
                   {follows && <span className="text-[10px] text-muted-foreground">· đổi theo layer khác</span>}

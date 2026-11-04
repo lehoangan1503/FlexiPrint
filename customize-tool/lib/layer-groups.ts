@@ -4,7 +4,7 @@
  *
  *   "Grandkid 1 — Hair · Grandkids sitting with Grandma]"   character before " — ", pose after " · "
  *   "Người 3 — hair — lớp trước [5 People]"                   the version tag "[…]" is dropped
- *   "Thân — Person 3", "Chữ — Name #3"                         a part of character number 3 → joins "Người 3"
+ *   "Thân — Person 3", "Chữ — Name #3", "Chữ — Rider 3 name"   a part of character number 3 → joins "Người 3"
  *   "Nền", "Phần tử — Ground", "Rug · …"                       its own group
  *
  * A chooser (a 1 px layer drawing nothing) has no group.
@@ -53,8 +53,8 @@ export function layerGroupOf(regions: CtRegion[]): Map<string, { key: string; la
       out.set(p.r.id, numbered.get(`${numberOf(p.who)}|${p.pose}`)!);
       continue;
     }
-    // "Thân — Person 3", "Chữ — Name #3": a part of character 3, when there is one.
-    const n = numberOf(p.part);
+    // "Thân — Person 3", "Chữ — Name #3", "Chữ — Rider 1 name": a part of character 3 / 1, when there is one.
+    const n = numberOf(p.part) ?? /(?:^|\s|#)(\d{1,2})(?:\s|$)/.exec(p.part)?.[1] ?? null;
     const owner = n ? numbered.get(`${n}|${p.pose}`) : undefined;
     out.set(p.r.id, owner ?? { key: `${p.who}|${p.pose}`, label: p.pose ? `${p.who} · ${p.pose}` : p.who });
   }

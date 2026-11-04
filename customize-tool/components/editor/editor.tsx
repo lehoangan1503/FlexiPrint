@@ -917,6 +917,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         ),
         confirmLabel: "Mở bộ",
         cancelLabel: "Đóng",
+        tone: "info",
       });
       if (open) window.open(`/dashboard?tab=library&set=${r.project.id}`, "_blank");
     } catch (e) {

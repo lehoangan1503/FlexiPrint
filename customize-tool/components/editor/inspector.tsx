@@ -20,6 +20,7 @@ import {
   Loader2,
   Move,
   Plus,
+  Scissors,
   Trash2,
   Type,
   Upload,
@@ -283,6 +284,9 @@ export function Inspector(props: InspectorProps) {
                 <span className="flex-1 truncate font-medium">{r.config.charSet?.name || "Bộ nhân vật"}</span>
                 <span className="text-[10px] text-muted-foreground">{groupList.length} layer</span>
                 <span className="hidden gap-0.5 group-hover:flex">
+                  <LayerButton label="Tách 1 nhân vật / phần của bộ thành bộ clipart mới" onClick={() => props.onSelectSet(groupList.map((x) => x.id))}>
+                    <Scissors className="h-3 w-3" />
+                  </LayerButton>
                   <LayerButton label="Xoá cả bộ khỏi version" danger onClick={() => removeMany(groupList.map((x) => x.id))}>
                     <Trash2 className="h-3 w-3" />
                   </LayerButton>
@@ -454,6 +458,28 @@ function FontSelect({ family, fontUrl, mixed, onChange }: { family: string; font
 }
 
 /**
+ * A bộ's layers grouped by what they draw, read from their names ("Grandkid 1 — Hair · Grandkids sitting with Grandma
+ * [3P]" → "Grandkid 1 · Grandkids sitting with Grandma"): the character before " — ", the pose after " · ". A layer
+ * named without " — " (Background, Rug) is its own group; a chooser (a 1 px layer drawing nothing) none.
+ */
+function characterGroups(regions: CtRegion[]): Array<{ key: string; label: string; ids: string[] }> {
+  const out = new Map<string, { key: string; label: string; ids: string[] }>();
+  for (const r of [...regions].sort((a, b) => b.sort_order - a.sort_order)) {
+    const b = shapeBounds(r.shape);
+    if (b.w <= 1 && b.h <= 1) continue;
+    const [part, ...rest] = layerLabel(r.name).split(" · ");
+    const who = part.split(" — ")[0].trim() || part.trim();
+    // Some imported names keep a stray "]" from their version tag.
+    const pose = rest.join(" · ").replace(/[[\]]/g, "").trim();
+    const key = `${who}|${pose}`;
+    const g = out.get(key) ?? { key, label: pose ? `${who} · ${pose}` : who, ids: [] };
+    g.ids.push(r.id);
+    out.set(key, g);
+  }
+  return [...out.values()];
+}
+
+/**
  * Several layers picked (⌘ / Shift-click): where they are as one box, one look for every text among them (font,
  * size, curve, colours…), save them as a bộ clipart, remove them. A field whose texts differ says so.
  */
@@ -489,6 +515,12 @@ function MultiProps(props: InspectorProps & { ids: string[] }) {
     props.onSelectRegion(null);
   };
   const images = list.filter((r) => r.kind === "image").length;
+  // The bộ the picked layers belong to (all of them in one): its characters, each one click away — the way to take
+  // one character with every option of his pose out of a big bộ (asked 2026-11-04).
+  const setId = list[0]?.config.charSet?.projectId;
+  const inOneSet = !!setId && list.every((r) => r.config.charSet?.projectId === setId);
+  const groups = inOneSet ? characterGroups(design.state.regions.filter((r) => r.config?.charSet?.projectId === setId)) : [];
+  const pickedKey = [...ids].sort().join(",");
   return (
     <div className="space-y-4 border-b p-3">
       <div className="flex items-center gap-2">
@@ -497,6 +529,31 @@ function MultiProps(props: InspectorProps & { ids: string[] }) {
           {[images && `${images} ảnh`, texts.length && `${texts.length} chữ`, list.length - images - texts.length && `${list.length - images - texts.length} ảnh khách`].filter(Boolean).join(" · ")}
         </span>
       </div>
+      {groups.length > 1 && (
+        <div className="space-y-1.5 rounded-md bg-muted/50 p-2">
+          <div className="text-[11px] font-medium">Chọn riêng 1 nhân vật / phần trong bộ (mọi lựa chọn của nó) để lưu thành bộ mới:</div>
+          <div className="flex flex-wrap gap-1">
+            {groups.map((g) => {
+              const on = [...g.ids].sort().join(",") === pickedKey;
+              return (
+                <button
+                  key={g.key}
+                  onClick={(e) => (e.metaKey || e.ctrlKey ? props.onToggleMany(g.ids) : props.onPickMany(g.ids))}
+                  title={`${g.label} — ${g.ids.length} layer · ⌘-click để chọn thêm nhiều phần`}
+                  className={cx("max-w-full truncate rounded-full border px-2 py-0.5 text-[11px]", on ? "border-sky-500 bg-sky-500/15 text-sky-700 dark:text-sky-300" : "bg-background hover:bg-accent")}
+                >
+                  {g.label} <span className="text-muted-foreground">{g.ids.length}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {props.onExtractSet && (
+        <CtButton size="sm" variant="primary" className="w-full justify-center" onClick={() => props.onExtractSet?.(ids)} title="Các layer đang chọn (đúng vị trí, mọi lựa chọn của chúng) thành 1 bộ clipart trong Thư viện — kéo vào sản phẩm khác như mọi bộ">
+          <Users className="h-3.5 w-3.5" /> Lưu {list.length} layer thành bộ clipart mới
+        </CtButton>
+      )}
       {box && (
         <div className="grid grid-cols-4 gap-1.5">
           <CtField label="X">
@@ -574,11 +631,6 @@ function MultiProps(props: InspectorProps & { ids: string[] }) {
       )}
 
       <div className="flex flex-wrap gap-1.5 border-t pt-3">
-        {props.onExtractSet && (
-          <CtButton size="sm" variant="primary" onClick={() => props.onExtractSet?.(ids)} title="Các layer này (đúng vị trí, mọi lựa chọn của chúng) thành 1 bộ clipart trong Thư viện — kéo vào sản phẩm khác như mọi bộ">
-            <Users className="h-3.5 w-3.5" /> Lưu thành bộ clipart
-          </CtButton>
-        )}
         <CtButton size="sm" variant="ghost" className="text-destructive" onClick={removeAll}>
           <Trash2 className="h-3.5 w-3.5" /> Xoá {list.length} layer
         </CtButton>

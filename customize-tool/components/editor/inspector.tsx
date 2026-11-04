@@ -241,6 +241,11 @@ export function Inspector(props: InspectorProps) {
         <span className="font-semibold" title="⌘ / Ctrl-click: chọn thêm layer · Shift-click: chọn liền một dải · Shift-click trên canvas: thêm / bớt">
           Layers
         </span>
+        <CtTooltip label="Tách 1 nhân vật / phần thành bộ clipart mới (chọn mọi layer, rồi bấm nhân vật ở cột dưới)" side="left">
+          <button className="ml-auto mr-1 rounded p-1 hover:bg-accent" onClick={() => props.onPickMany(regions.map((r) => r.id))} disabled={regions.length < 2}>
+            <Scissors className="h-4 w-4" />
+          </button>
+        </CtTooltip>
         <CtTooltip label={props.showOverlay ? "Ẩn khung vùng" : "Hiện khung vùng"} side="left">
           <button className="rounded p-1 hover:bg-accent" onClick={props.onToggleOverlay}>
             {props.showOverlay ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
@@ -519,7 +524,8 @@ function MultiProps(props: InspectorProps & { ids: string[] }) {
   // one character with every option of his pose out of a big bộ (asked 2026-11-04).
   const setId = list[0]?.config.charSet?.projectId;
   const inOneSet = !!setId && list.every((r) => r.config.charSet?.projectId === setId);
-  const groups = inOneSet ? characterGroups(design.state.regions.filter((r) => r.config?.charSet?.projectId === setId)) : [];
+  // Not one bộ's (the product's own layers, or several bộ): every layer of the version, grouped the same way.
+  const groups = characterGroups(inOneSet ? design.state.regions.filter((r) => r.config?.charSet?.projectId === setId) : design.state.regions);
   const pickedKey = [...ids].sort().join(",");
   return (
     <div className="space-y-4 border-b p-3">

@@ -35,6 +35,7 @@ import type { DesignApi } from "./use-design";
 import { useImageSize } from "./use-image-size";
 import { CLIPART_DRAG, type CtLibraryDrag } from "./library-panel";
 import { charSetBounds, placeCharSet } from "../../lib/char-set-layers";
+import { layerGroupOf } from "../../lib/layer-groups";
 import { updateItem, updateRegion } from "./use-design";
 import { mainFrameFor } from "../../lib/layout";
 import { frameSvgPath } from "../../lib/material-frame";
@@ -355,6 +356,11 @@ export function Stage(props: StageProps) {
       }
       if (total && inside / total >= 0.6) out.push(l.id);
     }
+    // A layer showing nothing now (glasses set to "none") goes with the character its picked layers belong to.
+    const groupOf = layerGroupOf(shownRegions);
+    const keys = new Set(out.map((id) => groupOf.get(id)?.key).filter(Boolean));
+    const drawn = new Set(m.layers.filter((l) => l.id && l.alpha.some((a) => a >= 24)).map((l) => l.id));
+    for (const r of shownRegions) if (!out.includes(r.id) && !drawn.has(r.id) && keys.has(groupOf.get(r.id)?.key)) out.push(r.id);
     return out;
   };
   const sceneRect = useMemo(() => {
@@ -1231,10 +1237,23 @@ export function Stage(props: StageProps) {
               y={Math.min(gesture.start.y, gesture.current.y)}
               width={Math.abs(gesture.current.x - gesture.start.x)}
               height={Math.abs(gesture.current.y - gesture.start.y)}
-              fill="rgba(14,165,233,0.08)"
-              stroke="#0ea5e9"
-              strokeWidth={1}
-              strokeDasharray="5 4"
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth={3}
+              vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+          )}
+          {gesture?.kind === "marquee" && (
+            <rect
+              x={Math.min(gesture.start.x, gesture.current.x)}
+              y={Math.min(gesture.start.y, gesture.current.y)}
+              width={Math.abs(gesture.current.x - gesture.start.x)}
+              height={Math.abs(gesture.current.y - gesture.start.y)}
+              fill="rgba(14,165,233,0.18)"
+              stroke="#0284c7"
+              strokeWidth={1.5}
+              strokeDasharray="6 4"
               vectorEffect="non-scaling-stroke"
               pointerEvents="none"
             />

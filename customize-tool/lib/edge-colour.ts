@@ -198,7 +198,8 @@ export const GROW_CLEAN_BAND = 6;
  * Under the brush: first the file's own edge is evened out (fixEdgeColours over GROW_CLEAN_BAND: its mixed pixels take
  * the colour right inside them), then its edge moves out by exactly `grow` px, soft ramp and all — each pixel's alpha
  * = the highest within `grow` px (a disk), as far as the picture's own figure goes (never onto the background) — and
- * every pixel that gained takes the colour of the NEAREST solid pixel of the file (asked 2026-11-04: "màu gần nhất với
+ * every pixel that gained — and the file's own outer ring there — takes the colour of the NEAREST solid pixel of the file
+ * (all 4 neighbours solid) (asked 2026-11-04: "màu gần nhất với
  * pixel kế bên"; a mean or a deeper colour came out lighter than the edge, and growing ring by ring with the old soft
  * edge made opaque grew more than asked). col: RGBA colours (RGB written); alpha: the file's alpha (written); figure:
  * the 3b picture's alpha (the plate's). Returns how many px gained.
@@ -223,6 +224,14 @@ export function growEdge(col: Bytes, alpha: Bytes, figure: ArrayLike<number>, co
   disk.sort((a, b) => a[0] * a[0] + a[1] * a[1] - (b[0] * b[0] + b[1] * b[1]));
   const r2 = r * r + 0.5;
   const a0 = Uint8Array.from(alpha);
+  // The colour comes from the file's solid inside, not its outermost pixel: that ring is the cut's mixed edge (or a
+  // colour an earlier fix left there — a lighter navy copied outwards as a light band, 2026-11-04).
+  const core = (q: number) => {
+    if (a0[q] < 128) return false;
+    const x = q % w;
+    const y = (q - x) / w;
+    return x > 0 && y > 0 && x < w - 1 && y < h - 1 && a0[q - 1] >= 128 && a0[q + 1] >= 128 && a0[q - w] >= 128 && a0[q + w] >= 128;
+  };
   const out: Array<[number, number, number]> = [];
   for (let y = by0; y <= by1; y++)
     for (let x = bx0; x <= bx1; x++) {
@@ -237,17 +246,21 @@ export function growEdge(col: Bytes, alpha: Bytes, figure: ArrayLike<number>, co
         if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
         const q = yy * w + xx;
         if (d2 <= r2 && a0[q] > best) best = a0[q];
-        if (src < 0 && a0[q] >= 128) src = q;
+        if (src < 0 && core(q)) src = q;
         if (d2 > r2 && src >= 0) break;
       }
       best = Math.min(best, figure[g]);
-      if (best > a0[g] && src >= 0) out.push([g, best, src]);
+      if (src < 0) continue;
+      // Gained alpha, or the file's own outer ring: the nearest solid colour.
+      if (best > a0[g] || (a0[g] > 0 && !core(g))) out.push([g, Math.max(best, a0[g]), src]);
     }
+  let gained = 0;
   for (const [g, a, q] of out) {
+    if (a > alpha[g]) gained++;
     alpha[g] = a;
     col[g * 4] = col[q * 4];
     col[g * 4 + 1] = col[q * 4 + 1];
     col[g * 4 + 2] = col[q * 4 + 2];
   }
-  return out.length;
+  return gained;
 }

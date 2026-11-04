@@ -142,7 +142,7 @@ const TOOLS: Array<{ id: Tool; label: string; key: string; icon: typeof Brush; t
   { id: "wand", label: "Đũa thần", key: "W", icon: Wand2, tip: "Bấm vào 1 màu — chọn cả mảng cùng màu (như Photoshop)" },
   { id: "island", label: "Mảng", key: "I", icon: Sparkles, tip: "Bớt: bấm vào 1 mảnh rời → xoá cả mảnh. Thêm: bấm vào 1 lỗ thủng → lấp cả lỗ" },
   { id: "smooth", label: "Làm mịn", key: "S", icon: Droplets, tip: "Tô lên mép cắt — mép bớt sắc, bớt răng cưa (chỉ làm mờ vào trong, không thêm màu)" },
-  { id: "recolor", label: "Cân màu", key: "C", icon: Palette, tip: "Tô lên mép có vệt màu lạ (da, hồng…) — vệt đổi sang màu của chính clipart ngay bên trong, vẫn giữ độ phủ nên vẫn che lớp dưới. Chỉ sửa vệt mỏng ở mép; lệch to thì cắt lại bộ" },
+  { id: "recolor", label: "Cân màu", key: "C", icon: Palette, tip: "Đổi màu: vệt màu lạ ở mép (da, hồng…) thành màu clipart sát bên. Thêm: mép nở ra N px phủ chỗ hở. X để đổi. Lưu = mọi màu của kiểu này" },
   { id: "move", label: "Di chuyển", key: "V", icon: Move, tip: "Kéo cả bộ clipart (trước + sau) tới chỗ mới — phím mũi tên = 1 px, Shift = 10 px" },
   { id: "hand", label: "Tay", key: "H", icon: Hand, tip: "Kéo khung nhìn (hoặc giữ Space)" },
 ];
@@ -1061,7 +1061,10 @@ export function MaskEditor(props: MaskEditorProps) {
       const t = tools.find((x) => x.key.toLowerCase() === e.key.toLowerCase());
       if (t) setTool(t.id);
       if (e.key.toLowerCase() === "m" && !props.readOnly) smoothAll();
-      if (e.key.toLowerCase() === "x") setOp((o) => (o === "add" ? "remove" : "add"));
+      if (e.key.toLowerCase() === "x") {
+        if (tool === "recolor") setFixGrow((v) => !v);
+        else setOp((o) => (o === "add" ? "remove" : "add"));
+      }
       if (e.key === "[") setSize((v) => Math.max(2, Math.round(v / 1.25)));
       if (e.key === "]") setSize((v) => Math.min(600, Math.round(v * 1.25)));
       if (e.key === "Escape") props.onClose();
@@ -1246,38 +1249,25 @@ export function MaskEditor(props: MaskEditorProps) {
               </div>
             )}
             {effTool === "recolor" && (
-              <div className="flex flex-col gap-1.5 border-t pt-2 text-xs">
-                <label className="flex flex-col gap-0.5" title="Chỉ sửa trong dải mép này (px của file in; 6 px ≈ 1–2 px trên màn hình). Vệt rộng hơn = cắt lại bộ, không sửa tay">
-                  <span className="flex">
-                    Độ rộng mép <span className="ml-auto tabular-nums">{fix.band} px</span>
-                  </span>
-                  <input type="range" min={1} max={10} value={fix.band} onChange={(e) => setFix((f) => ({ ...f, band: Number(e.target.value) }))} />
-                </label>
-                <label className="flex flex-col gap-0.5" title="Màu lệch hơn mức này so với màu clipart ngay bên trong thì bị đổi; thấp = đổi nhiều hơn">
-                  <span className="flex">
-                    Dung sai màu <span className="ml-auto tabular-nums">{fix.tol}</span>
-                  </span>
-                  <input type="range" min={3} max={60} value={fix.tol} onChange={(e) => setFix((f) => ({ ...f, tol: Number(e.target.value) }))} />
-                </label>
+              <div className="flex flex-col gap-1.5 border-t pt-2 text-xs" title="X để đổi">
                 <div className="flex flex-col gap-0.5">
-                  <button onClick={() => setFixGrow(false)} className={side(!fixGrow, "bg-sky-600 text-white")} title="Chỉ đổi màu vệt lạ ở mép, không đổi hình clipart">
+                  <button onClick={() => setFixGrow(false)} className={side(!fixGrow, "bg-sky-600 text-white")} title="Vệt màu lạ ở mép đổi sang màu pixel clipart sát bên">
                     <Palette className="h-4 w-4 shrink-0" />
-                    Chỉ đổi màu
+                    Đổi màu
+                    {keyTag("X")}
                   </button>
-                  <button onClick={() => setFixGrow(true)} className={side(fixGrow, "bg-emerald-600 text-white")} title="Clipart nở thêm (bằng Phủ thêm) phủ lên chỗ hở sát nó — như hồng búp bê giữa gấu áo và cạp quần — bằng màu clipart ngay bên trong">
+                  <button onClick={() => setFixGrow(true)} className={side(fixGrow, "bg-emerald-600 text-white")} title="Mép clipart nở ra đúng số px này ở chỗ quét, màu = pixel clipart gần nhất — phủ chỗ hở (hồng búp bê giữa gấu áo và cạp quần)">
                     <Plus className="h-4 w-4 shrink-0" />
-                    Thêm (phủ chỗ hở)
+                    Thêm
+                    {keyTag("X")}
                   </button>
                 </div>
-                {fixGrow && (
-                  <label className="flex flex-col gap-0.5" title="Clipart nở ra bao nhiêu px ở chỗ quét (như Độ mịn của Làm mịn) — px của file in, 2–4 px thường đủ phủ dải hồng">
-                    <span className="flex">
-                      Phủ thêm <span className="ml-auto tabular-nums">{fix.grow} px</span>
-                    </span>
-                    <input type="range" min={1} max={10} value={fix.grow} onChange={(e) => setFix((f) => ({ ...f, grow: Number(e.target.value) }))} />
-                  </label>
-                )}
-                <div className="px-0.5 text-[10px] text-muted-foreground">Màu lấy từ pixel clipart liền kề (vùng sát mép), vẫn che lớp dưới. Thêm chỉ phủ trong hình của ảnh 3b, không ra nền. Lưu = mọi màu của kiểu này (mỗi màu theo màu của nó).</div>
+                <label className="flex flex-col gap-0.5" title={fixGrow ? "Mép nở ra bao nhiêu px (px của file in)" : "Dải mép được đổi màu rộng bao nhiêu px (px của file in)"}>
+                  <span className="flex">
+                    {fixGrow ? "Nở thêm" : "Độ rộng mép"} <span className="ml-auto tabular-nums">{fixGrow ? fix.grow : fix.band} px</span>
+                  </span>
+                  <input type="range" min={1} max={10} value={fixGrow ? fix.grow : fix.band} onChange={(e) => setFix((f) => (fixGrow ? { ...f, grow: Number(e.target.value) } : { ...f, band: Number(e.target.value) }))} />
+                </label>
               </div>
             )}
             {effTool === "wand" && (

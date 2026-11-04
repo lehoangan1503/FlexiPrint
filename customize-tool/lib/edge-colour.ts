@@ -23,7 +23,7 @@ export interface EdgeFix {
   grow: number;
 }
 
-export const EDGE_FIX_DEFAULT: EdgeFix = { band: 6, tol: 10, grow: 4 };
+export const EDGE_FIX_DEFAULT: EdgeFix = { band: 6, tol: 10, grow: 2 };
 
 /** The limits the UI and the server both keep to. */
 export function edgeFixOf(v: unknown): EdgeFix {
@@ -189,56 +189,23 @@ export function fixEdgeColours(col: Bytes, alpha: ArrayLike<number>, cover: Arra
   return count;
 }
 
-/** Chamfer distance (1 / √2) on a ww×hh plane: 0 where `zero(i)`, else to the nearest such pixel. */
-function chamfer(ww: number, hh: number, zero: (i: number) => boolean): Float32Array {
-  const n = ww * hh;
-  const dist = new Float32Array(n);
-  for (let i = 0; i < n; i++) dist[i] = zero(i) ? 0 : 1e6;
-  const D = Math.SQRT2;
-  for (let ly = 0; ly < hh; ly++)
-    for (let lx = 0; lx < ww; lx++) {
-      const i = ly * ww + lx;
-      let d = dist[i];
-      if (!d) continue;
-      if (lx > 0) d = Math.min(d, dist[i - 1] + 1);
-      if (ly > 0) {
-        d = Math.min(d, dist[i - ww] + 1);
-        if (lx > 0) d = Math.min(d, dist[i - ww - 1] + D);
-        if (lx < ww - 1) d = Math.min(d, dist[i - ww + 1] + D);
-      }
-      dist[i] = d;
-    }
-  for (let ly = hh - 1; ly >= 0; ly--)
-    for (let lx = ww - 1; lx >= 0; lx--) {
-      const i = ly * ww + lx;
-      let d = dist[i];
-      if (!d) continue;
-      if (lx < ww - 1) d = Math.min(d, dist[i + 1] + 1);
-      if (ly < hh - 1) {
-        d = Math.min(d, dist[i + ww] + 1);
-        if (lx < ww - 1) d = Math.min(d, dist[i + ww + 1] + D);
-        if (lx > 0) d = Math.min(d, dist[i + ww - 1] + D);
-      }
-      dist[i] = d;
-    }
-  return dist;
-}
-
+/** Band of the file's edge evened out before "Thêm" grows it (its pink- / skin-mixed pixels, ~5 px at print size). */
+export const GROW_CLEAN_BAND = 6;
 
 /**
  * "Cân màu — Thêm" (asked 2026-11-04): the clipart grows over a thin strip its 3b picture left uncovered — the doll's
  * pink tank top showing between a tee's hem and the jeans' waist, which no picture of the set covers.
- * Under the brush: first the file's own edge is evened out (fixEdgeColours, `band`: its pink-mixed pixels take the
- * colour right inside them — the dark navy along a sweater's edge), then pixels up to `grow` px outside the file
- * (inside the picture's own figure: never onto the background) are added, opaque, walked from the file outwards, each
- * taking its settled neighbours' colour nearer the file — so the strip continues the edge's own colour (the darkest
- * band next to it, asked 2026-11-04: a colour from deeper inside came out lighter than the edge). col: RGBA colours
- * (RGB written); alpha: the file's alpha (written); figure: the 3b picture's alpha (the plate's). Returns how many px
- * were added.
+ * Under the brush: first the file's own edge is evened out (fixEdgeColours over GROW_CLEAN_BAND: its mixed pixels take
+ * the colour right inside them), then its edge moves out by exactly `grow` px, soft ramp and all — each pixel's alpha
+ * = the highest within `grow` px (a disk), as far as the picture's own figure goes (never onto the background) — and
+ * every pixel that gained takes the colour of the NEAREST solid pixel of the file (asked 2026-11-04: "màu gần nhất với
+ * pixel kế bên"; a mean or a deeper colour came out lighter than the edge, and growing ring by ring with the old soft
+ * edge made opaque grew more than asked). col: RGBA colours (RGB written); alpha: the file's alpha (written); figure:
+ * the 3b picture's alpha (the plate's). Returns how many px gained.
  */
 export function growEdge(col: Bytes, alpha: Bytes, figure: ArrayLike<number>, cover: ArrayLike<number>, w: number, h: number, fix: EdgeFix): number {
-  fixEdgeColours(col, alpha, cover, w, h, fix);
-  const { grow } = fix;
+  fixEdgeColours(col, alpha, cover, w, h, { ...fix, band: GROW_CLEAN_BAND });
+  const r = fix.grow;
   let bx0 = w, by0 = h, bx1 = -1, by1 = -1;
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++)
@@ -249,59 +216,38 @@ export function growEdge(col: Bytes, alpha: Bytes, figure: ArrayLike<number>, co
         if (y > by1) by1 = y;
       }
   if (bx1 < 0) return 0;
-  const pad = grow + 2;
-  const x0 = Math.max(0, bx0 - pad), y0 = Math.max(0, by0 - pad);
-  const x1 = Math.min(w - 1, bx1 + pad), y1 = Math.min(h - 1, by1 + pad);
-  const ww = x1 - x0 + 1;
-  const hh = y1 - y0 + 1;
-  const n = ww * hh;
-  const G = (i: number) => (y0 + Math.floor(i / ww)) * w + x0 + (i % ww);
-  const dist = chamfer(ww, hh, (i) => alpha[G(i)] >= 128);
-  const settled = new Uint8Array(n);
-  const list: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const g = G(i);
-    if (!dist[i]) {
-      settled[i] = 1;
-      // The file's own soft edge under the brush turns as opaque as the picture there: half-opaque, it let the doll's
-      // pink show through as a dark line along the old edge (2026-11-04).
-      if (cover[g] >= 64 && alpha[g] < figure[g]) alpha[g] = figure[g];
-    } else if (cover[g] >= 64 && dist[i] <= grow + 0.5 && figure[g] >= 128) list.push(i);
-  }
-  if (!list.length) return 0;
-  list.sort((a, b) => dist[a] - dist[b]);
-  let added = 0;
-  const step = (i: number, any: boolean): boolean => {
-    const lx = i % ww;
-    const ly = Math.floor(i / ww);
-    let r = 0, g = 0, b = 0, k = 0;
-    for (let dy = -1; dy <= 1; dy++)
-      for (let dx = -1; dx <= 1; dx++) {
-        if (!dx && !dy) continue;
-        const xx = lx + dx;
-        const yy = ly + dy;
-        if (xx < 0 || yy < 0 || xx >= ww || yy >= hh) continue;
-        const j = yy * ww + xx;
-        if (!settled[j] || (!any && dist[j] >= dist[i])) continue;
-        const s = G(j) * 4;
-        const wt = (dx && dy ? 0.7 : 1) * Math.max(alpha[G(j)], 1);
-        r += col[s] * wt;
-        g += col[s + 1] * wt;
-        b += col[s + 2] * wt;
-        k += wt;
+  // The disk's offsets, nearest first (the first solid one found is the nearest).
+  const disk: Array<[number, number]> = [];
+  const far = r + GROW_CLEAN_BAND;
+  for (let dy = -far; dy <= far; dy++) for (let dx = -far; dx <= far; dx++) if (dx * dx + dy * dy <= far * far) disk.push([dx, dy]);
+  disk.sort((a, b) => a[0] * a[0] + a[1] * a[1] - (b[0] * b[0] + b[1] * b[1]));
+  const r2 = r * r + 0.5;
+  const a0 = Uint8Array.from(alpha);
+  const out: Array<[number, number, number]> = [];
+  for (let y = by0; y <= by1; y++)
+    for (let x = bx0; x <= bx1; x++) {
+      const g = y * w + x;
+      if (cover[g] < 64 || !figure[g]) continue;
+      let best = a0[g];
+      let src = -1;
+      for (const [dx, dy] of disk) {
+        const d2 = dx * dx + dy * dy;
+        const xx = x + dx;
+        const yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        const q = yy * w + xx;
+        if (d2 <= r2 && a0[q] > best) best = a0[q];
+        if (src < 0 && a0[q] >= 128) src = q;
+        if (d2 > r2 && src >= 0) break;
       }
-    if (!k) return false;
-    const gi = G(i);
-    col[gi * 4] = Math.round(r / k);
-    col[gi * 4 + 1] = Math.round(g / k);
-    col[gi * 4 + 2] = Math.round(b / k);
-    // Opaque (a half-opaque ring let the doll's pink show through), within the picture's own soft outline.
-    if (figure[gi] > alpha[gi]) alpha[gi] = figure[gi];
-    settled[i] = 1;
-    added++;
-    return true;
-  };
-  let left = list.filter((i) => !step(i, false));
-  for (let round = 0; left.length && round < 3; round++) left = left.filter((i) => !step(i, true));
-  return added;
+      best = Math.min(best, figure[g]);
+      if (best > a0[g] && src >= 0) out.push([g, best, src]);
+    }
+  for (const [g, a, q] of out) {
+    alpha[g] = a;
+    col[g * 4] = col[q * 4];
+    col[g * 4 + 1] = col[q * 4 + 1];
+    col[g * 4 + 2] = col[q * 4 + 2];
+  }
+  return out.length;
 }

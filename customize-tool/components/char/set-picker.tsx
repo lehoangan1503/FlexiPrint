@@ -129,20 +129,24 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
     const urls: string[] = [];
     const t = setTimeout(async () => {
       const { main, bundle, layers } = data;
-      const k = Math.min(1, SIDE / Math.max(main.width, main.height));
       const assets = displayAssets(bundle.assets, "flat");
-      const input = { main, assets, regions: layers, items: bundle.items, selection, scale: k, layouts: config.layouts };
+      const base = { main, assets, regions: layers, items: bundle.items, selection, layouts: config.layouts };
       try {
-        const [full, map] = await Promise.all([renderComposite(input), renderPickMap({ ...input, scale: 1 }, 700)]);
+        // The pick map first: it says which part of the canvas has something on it, and the preview is drawn sharp
+        // for that part (a small character on a wide canvas would be blurry blown up from a whole-canvas picture).
+        const map = await renderPickMap({ ...base, scale: 1 }, 700);
+        const frame = view ?? contentBox(map, main.width, main.height);
+        const k = Math.min(1, SIDE / Math.max(frame.w, frame.h), 4096 / Math.max(main.width, main.height));
+        const full = await renderComposite({ ...base, scale: k });
         let pickedUrl: string | null = null;
         if (picked.length) {
           const blankAssets = assets.map((a) => (a.role === "main" ? { ...a, url: BLANK } : a));
-          const only = await renderComposite({ ...input, main: { ...main, url: BLANK }, assets: blankAssets, regions: layers.filter((r) => pickedSet.has(r.id)) });
+          const only = await renderComposite({ ...base, scale: k, main: { ...main, url: BLANK }, assets: blankAssets, regions: layers.filter((r) => pickedSet.has(r.id)) });
           pickedUrl = only.toDataURL("image/png");
         }
         if (!live) return;
         pickMap.current = map;
-        if (!view) setView(contentBox(map, main.width, main.height));
+        if (!view) setView(frame);
         const url = full.toDataURL("image/png");
         urls.push(url);
         setShot({ url, pickedUrl });
@@ -301,7 +305,7 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
           <div
             ref={box}
             className="relative w-full cursor-crosshair touch-none select-none overflow-hidden rounded-lg border"
-            style={{ ...CHECKER_STYLE, aspectRatio: `${v.w} / ${v.h}` }}
+            style={{ ...CHECKER_STYLE, aspectRatio: `${v.w} / ${v.h}`, width: `min(100%, calc(70vh * ${v.w / v.h}))` }}
             onPointerDown={onDown}
             onPointerMove={onMove}
             onPointerUp={onUp}

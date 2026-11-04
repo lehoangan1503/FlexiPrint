@@ -28,7 +28,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Brush, Droplets, Hand, History, Lasso, Loader2, Minus, Move, Palette, Plus, Redo2, RotateCcw, Save, Sparkles, Undo2, Wand2, X } from "lucide-react";
 import { CHECKER_STYLE, CtButton, cx } from "../ui";
-import { EDGE_FIX_DEFAULT, fixEdgeColours, type EdgeFix } from "../../lib/edge-colour";
+import { EDGE_FIX_DEFAULT, fixEdgeColours, growEdge, type EdgeFix } from "../../lib/edge-colour";
 
 type Tool = "brush" | "lasso" | "wand" | "island" | "smooth" | "recolor" | "move" | "hand";
 type Op = "add" | "remove";
@@ -39,12 +39,31 @@ interface Shift {
   dy: number;
 }
 
+/** What the editor sends for "Cân màu": the recolour brush, the "Thêm" (grow) brush, both PNG data URLs. */
+export interface CtEdgeFixSave {
+  png: string | null;
+  grow: string | null;
+  band: number;
+  tol: number;
+}
+
 /** One undo step: a changed rectangle of the mask, a move of the whole clipart (Di chuyển, asked 2026-11-04), or a
  * "Cân màu" stroke (the colours and the brush's cover in its rectangle). */
 type Patch =
   | { kind: "mask"; x: number; y: number; before: ImageData; after: ImageData }
   | { kind: "move"; before: Shift; after: Shift; at: number }
-  | { kind: "paint"; x: number; y: number; before: ImageData; after: ImageData; coverBefore: ImageData; coverAfter: ImageData };
+  | {
+      kind: "paint";
+      x: number;
+      y: number;
+      before: ImageData;
+      after: ImageData;
+      /** Which brush canvas the stroke went to ("Thêm" grows the clipart: its mask changed too). */
+      layer: "cover" | "grow";
+      coverBefore: ImageData;
+      coverAfter: ImageData;
+      mask?: { before: ImageData; after: ImageData };
+    };
 
 interface Box {
   x0: number;
@@ -71,8 +90,9 @@ export interface MaskEditorProps {
   canRevert: boolean;
   readOnly?: boolean;
   /** `png`: the new mask (null when only moved); `move`: whole px the clipart was dragged (null when not moved);
-   * `fix`: where "Cân màu" went (PNG, alpha = the brush) and its settings — null when it was not used. */
-  onSave: (png: string | null, move: { dx: number; dy: number } | null, fix: { png: string; band: number; tol: number } | null) => Promise<void>;
+   * `fix`: where "Cân màu" went (PNG, alpha = the brush; `grow` = its "Thêm" strokes) and its settings — null when it
+   * was not used. */
+  onSave: (png: string | null, move: { dx: number; dy: number } | null, fix: CtEdgeFixSave | null) => Promise<void>;
   onRevert: () => Promise<void>;
   onClose: () => void;
   /** Opened from one clipart: show the clipart itself ("Kết quả" — region × picture on the checker, the picture
@@ -194,8 +214,11 @@ export function MaskEditor(props: MaskEditorProps) {
     paint: HTMLCanvasElement;
     /** Where "Cân màu" went (alpha), sent with the save; `stroke` = the stroke being drawn. */
     cover: HTMLCanvasElement;
+    /** Where "Cân màu — Thêm" went (alpha). */
+    growCover: HTMLCanvasElement;
     coverStroke: HTMLCanvasElement;
     painted: boolean;
+    grown: boolean;
   } | null>(null);
   const undo = useRef<Patch[]>([]);
   const redo = useRef<Patch[]>([]);
@@ -217,6 +240,8 @@ export function MaskEditor(props: MaskEditorProps) {
   const [tol, setTol] = useState(18);
   const [soften, setSoften] = useState(2);
   const [fix, setFix] = useState<EdgeFix>(EDGE_FIX_DEFAULT);
+  // "Cân màu": only recolour the edge, or also grow the clipart over a thin uncovered strip ("Thêm").
+  const [fixGrow, setFixGrow] = useState(false);
   const [contiguous, setContiguous] = useState(true);
   const [viewMode, setViewMode] = useState<View>(props.focusPiece ? "result" : "overlay");
   const [showOthers, setShowOthers] = useState(true);
@@ -277,7 +302,7 @@ export function MaskEditor(props: MaskEditorProps) {
             }
           pg.putImageData(pd, 0, 0);
         }
-        store.current = { colour, subject, others, context, mask, committed, tmp: canvas(W, H), pixels: null, smooth: null, paint, cover: canvas(W, H), coverStroke: canvas(W, H), painted: false };
+        store.current = { colour, subject, others, context, mask, committed, tmp: canvas(W, H), pixels: null, smooth: null, paint, cover: canvas(W, H), growCover: canvas(W, H), coverStroke: canvas(W, H), painted: false, grown: false };
         setReady(true);
       } catch (e) {
         if (live) setLoadError(e instanceof Error ? e.message : "Không tải được ảnh");
@@ -529,7 +554,11 @@ export function MaskEditor(props: MaskEditorProps) {
     }
     if (p.kind === "paint") {
       ctx2d(st.paint).putImageData(back ? p.before : p.after, p.x, p.y);
-      ctx2d(st.cover).putImageData(back ? p.coverBefore : p.coverAfter, p.x, p.y);
+      ctx2d(p.layer === "grow" ? st.growCover : st.cover).putImageData(back ? p.coverBefore : p.coverAfter, p.x, p.y);
+      if (p.mask) {
+        ctx2d(st.mask).putImageData(back ? p.mask.before : p.mask.after, p.x, p.y);
+        ctx2d(st.committed).putImageData(back ? p.mask.before : p.mask.after, p.x, p.y);
+      }
       st.pixels = null;
       setChanges((n) => n + (back ? -1 : 1));
       schedule();
@@ -616,39 +645,60 @@ export function MaskEditor(props: MaskEditorProps) {
     stroke.current!.box = grow(stroke.current!.box, bx0, by0, bx1 + 1, by1 + 1);
   };
 
-  /** The "Cân màu" stroke done: the stray edge colours under it repainted (lib/edge-colour.ts), its cover added to
-   * what the save sends. One undo step. */
+  /** The "Cân màu" stroke done: the stray edge colours under it repainted (lib/edge-colour.ts) — with "Thêm" the
+   * clipart also grows over the thin strip next to it — its cover added to what the save sends. One undo step. */
   const recolorStroke = (b: Box | null) => {
     const st = store.current;
     if (!st || !b) return;
-    const pad = fix.band + 6;
+    const pad = 2 * fix.band + 12;
     const x = Math.max(0, Math.floor(b.x0) - pad);
     const y = Math.max(0, Math.floor(b.y0) - pad);
     const w = Math.min(W, Math.ceil(b.x1) + pad) - x;
     const h = Math.min(H, Math.ceil(b.y1) + pad) - y;
     const sg = ctx2d(st.coverStroke);
     if (w > 0 && h > 0) {
+      const layer = fixGrow ? "grow" : "cover";
+      const target = fixGrow ? st.growCover : st.cover;
       const before = ctx2d(st.paint).getImageData(x, y, w, h);
-      const coverBefore = ctx2d(st.cover).getImageData(x, y, w, h);
-      const m = ctx2d(st.mask).getImageData(x, y, w, h).data;
+      const coverBefore = ctx2d(target).getImageData(x, y, w, h);
+      const maskBefore = ctx2d(st.mask).getImageData(x, y, w, h);
       const c = sg.getImageData(x, y, w, h).data;
       const alpha = new Uint8Array(w * h);
       const cover = new Uint8Array(w * h);
+      const figure = new Uint8Array(w * h);
       for (let i = 0; i < w * h; i++) {
-        alpha[i] = m[i * 4 + 3];
+        alpha[i] = maskBefore.data[i * 4 + 3];
         cover[i] = c[i * 4 + 3];
+        figure[i] = before.data[i * 4 + 3];
       }
       const after = new ImageData(new Uint8ClampedArray(before.data), w, h);
-      const n = fixEdgeColours(after.data, alpha, cover, w, h, fix);
+      let n: number;
+      let mask: { before: ImageData; after: ImageData } | undefined;
+      if (fixGrow) {
+        n = growEdge(after.data, alpha, figure, cover, w, h, fix);
+        // The picture's alpha stays on the colours; the clipart's new alpha goes to the mask.
+        for (let i = 0; i < w * h; i++) after.data[i * 4 + 3] = before.data[i * 4 + 3];
+        const ma = new ImageData(w, h);
+        for (let i = 0; i < w * h; i++) {
+          ma.data[i * 4] = ma.data[i * 4 + 1] = ma.data[i * 4 + 2] = 255;
+          ma.data[i * 4 + 3] = alpha[i];
+        }
+        ctx2d(st.mask).putImageData(ma, x, y);
+        ctx2d(st.committed).putImageData(ma, x, y);
+        mask = { before: maskBefore, after: ma };
+        st.grown = true;
+      } else {
+        n = fixEdgeColours(after.data, alpha, cover, w, h, fix);
+        st.painted = true;
+      }
       ctx2d(st.paint).putImageData(after, x, y);
-      const cg = ctx2d(st.cover);
+      const cg = ctx2d(target);
       cg.drawImage(st.coverStroke, x, y, w, h, x, y, w, h);
       const coverAfter = cg.getImageData(x, y, w, h);
       st.pixels = null;
-      st.painted = true;
-      push({ kind: "paint", x, y, before, after, coverBefore, coverAfter });
+      push({ kind: "paint", x, y, before, after, layer, coverBefore, coverAfter, mask });
       setChanges((k) => k + 1);
-      setMsg(n ? null : "Không thấy vệt màu lạ ở mép dưới cọ (tăng Độ rộng mép hoặc giảm Dung sai)");
+      setMsg(n ? null : fixGrow ? "Không có chỗ hở sát mép clipart dưới cọ (chỉ phủ trong hình của ảnh 3b, tối đa Độ rộng mép)" : "Không thấy vệt màu lạ ở mép dưới cọ (tăng Độ rộng mép hoặc giảm Dung sai)");
     }
     sg.clearRect(0, 0, W, H);
   };
@@ -1038,12 +1088,12 @@ export function MaskEditor(props: MaskEditorProps) {
     try {
       const blob = await new Promise<Blob | null>((res) => st.mask.toBlob(res, "image/png"));
       if (!blob) throw new Error("Không xuất được mặt nạ");
-      let painted: { png: string; band: number; tol: number } | null = null;
-      if (st.painted) {
-        const cb = await new Promise<Blob | null>((res) => st.cover.toBlob(res, "image/png"));
+      const brush = async (c: HTMLCanvasElement) => {
+        const cb = await new Promise<Blob | null>((res) => c.toBlob(res, "image/png"));
         if (!cb) throw new Error("Không xuất được vùng cân màu");
-        painted = { png: await dataUrl(cb), ...fix };
-      }
+        return dataUrl(cb);
+      };
+      const painted: CtEdgeFixSave | null = st.painted || st.grown ? { png: st.painted ? await brush(st.cover) : null, grow: st.grown ? await brush(st.growCover) : null, ...fix } : null;
       await props.onSave(changes > 0 ? await dataUrl(blob) : null, moved ? off : null, painted);
       if (close) props.onClose();
       return true;
@@ -1211,7 +1261,17 @@ export function MaskEditor(props: MaskEditorProps) {
                   </span>
                   <input type="range" min={3} max={60} value={fix.tol} onChange={(e) => setFix((f) => ({ ...f, tol: Number(e.target.value) }))} />
                 </label>
-                <div className="px-0.5 text-[10px] text-muted-foreground">Vệt đổi sang màu clipart, vẫn che lớp dưới. Lưu = mọi màu của kiểu này (mỗi màu theo màu của nó).</div>
+                <div className="flex flex-col gap-0.5">
+                  <button onClick={() => setFixGrow(false)} className={side(!fixGrow, "bg-sky-600 text-white")} title="Chỉ đổi màu vệt lạ ở mép, không đổi hình clipart">
+                    <Palette className="h-4 w-4 shrink-0" />
+                    Chỉ đổi màu
+                  </button>
+                  <button onClick={() => setFixGrow(true)} className={side(fixGrow, "bg-emerald-600 text-white")} title="Clipart nở thêm (tối đa Độ rộng mép) phủ lên chỗ hở sát nó — như hồng búp bê giữa gấu áo và cạp quần — bằng màu clipart ngay bên trong">
+                    <Plus className="h-4 w-4 shrink-0" />
+                    Thêm (phủ chỗ hở)
+                  </button>
+                </div>
+                <div className="px-0.5 text-[10px] text-muted-foreground">Màu lấy từ clipart sát bên trong, vẫn che lớp dưới. Thêm chỉ phủ trong hình của ảnh 3b, không ra nền. Lưu = mọi màu của kiểu này (mỗi màu theo màu của nó).</div>
               </div>
             )}
             {effTool === "wand" && (

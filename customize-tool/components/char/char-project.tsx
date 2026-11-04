@@ -81,6 +81,11 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
   const reload = useCallback(async () => {
     try {
       const r = await charApi.get(projectId);
+      // A bộ con has no brief / master / cut to work on: it is shown in the library (asked 2026-11-04).
+      if (r.project.brief.extracted) {
+        window.location.replace(`/dashboard?tab=library&set=${r.project.id}`);
+        return;
+      }
       // A brief still being typed wins over the server copy.
       setProject((cur) => (pendingBrief.current && cur ? { ...r.project, brief: cur.brief } : r.project));
       setImages(r.images);

@@ -48,7 +48,8 @@ function parse(raw: unknown): CtExtractSetBody | string {
   if (b.regions.length > MAX_LAYERS) return "Quá nhiều layer";
   const items = Array.isArray(b.items) ? b.items : [];
   const preview = typeof b.preview === "string" ? b.preview : "";
-  return { name, productId: b.productId, width, height, regions: b.regions, items, preview };
+  const fromSetId = typeof b.fromSetId === "string" && UUID.test(b.fromSetId) ? b.fromSetId : undefined;
+  return { name, productId: b.productId, width, height, regions: b.regions, items, preview, fromSetId };
 }
 
 /** POST char/extract */
@@ -106,7 +107,9 @@ export async function extractCharSet(s: CtSession, raw: unknown): Promise<NextRe
     await s.supabase.from(CT_TABLES.products).update({ main_asset_id: main.id, notes: `Bộ clipart tách từ “${source.name}”` }).eq("id", product.id);
 
     // ---- the bộ ----
-    const brief = { ...defaultCharBrief("character"), idea: `Tách từ sản phẩm “${source.name}”: ${outRegions.length} layer`, extracted: { productId: source.id, productName: source.name, layers: outRegions.length, at: new Date().toISOString() } };
+    const { data: parent } = b.fromSetId ? await s.supabase.from(CT_TABLES.charProjects).select("id, name").eq("id", b.fromSetId).maybeSingle<{ id: string; name: string }>() : { data: null };
+    const from = parent ? { setId: parent.id, setName: parent.name } : {};
+    const brief = { ...defaultCharBrief("character"), idea: `Tách từ ${parent ? `bộ “${parent.name}”` : `sản phẩm “${source.name}”`}: ${outRegions.length} layer`, extracted: { productId: source.id, productName: source.name, layers: outRegions.length, at: new Date().toISOString(), ...from } };
     const { data: row, error } = await s.supabase
       .from(CT_TABLES.charProjects)
       .insert({ user_id: s.user.id, name: b.name, brief, status: "product", product_ids: [product.id] })

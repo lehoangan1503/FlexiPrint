@@ -835,6 +835,8 @@ export interface CtExtractSetBody {
   items: CtRegionItem[];
   /** PNG data URL of the layers drawn together (the bộ's picture in the library). */
   preview: string;
+  /** Picked in the library on this bộ (its product = productId): the new bộ is its child. */
+  fromSetId?: string;
 }
 
 export interface CtExtractSetResult {

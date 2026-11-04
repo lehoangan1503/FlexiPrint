@@ -9,7 +9,8 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_TABLES } from "../../config";
-import type { CtAsset, CtCharProject, CtProduct, CtProductBundle, CtRegion, CtRegionItem } from "../../types";
+import type { CtAsset, CtCharProject, CtProduct, CtProductBundle, CtProductCharSet, CtRegion, CtRegionItem } from "../../types";
+import { parseCharBrief } from "../../lib/char-brief";
 import type { CtPrintTemplate } from "../../types/print";
 import { charSetDrop } from "../../lib/char-set-layers";
 import { normalizeProductConfig } from "../../lib/design";
@@ -127,10 +128,12 @@ export async function setProducts(s: CtSession, projectId: string): Promise<Next
  * every set whose layers were dropped into it (CtRegionConfig.charSet) — the editor's "Bộ nhân vật" button. */
 export async function productSets(s: CtSession, productId: string): Promise<NextResponse> {
   const db = s.supabase;
-  const { data: own } = await db.from(CT_TABLES.charProjects).select("id, name").contains("product_ids", [productId]).returns<Array<{ id: string; name: string }>>();
+  const { data: own } = await db.from(CT_TABLES.charProjects).select("id, name, brief").contains("product_ids", [productId]).returns<Array<{ id: string; name: string; brief: unknown }>>();
   const { data: dropped } = await db.from(CT_TABLES.regions).select("config").eq("product_id", productId).not("config->charSet", "is", null).returns<Array<Pick<CtRegion, "config">>>();
   const ownIds = new Set((own ?? []).map((x) => x.id));
   const others = [...new Set((dropped ?? []).flatMap((r) => (r.config?.charSet ? [r.config.charSet.projectId] : [])))].filter((id) => !ownIds.has(id));
-  const named = others.length ? ((await db.from(CT_TABLES.charProjects).select("id, name").in("id", others).returns<Array<{ id: string; name: string }>>()).data ?? []) : [];
-  return NextResponse.json({ sets: [...(own ?? []).map((x) => ({ ...x, own: true })), ...named.map((x) => ({ ...x, own: false }))] });
+  const named = others.length ? ((await db.from(CT_TABLES.charProjects).select("id, name, brief").in("id", others).returns<Array<{ id: string; name: string; brief: unknown }>>()).data ?? []) : [];
+  // A bộ con is opened in the library, not on the /v2 page (the editor's header button).
+  const row = (x: { id: string; name: string; brief: unknown }, own: boolean): CtProductCharSet => ({ id: x.id, name: x.name, own, ...(parseCharBrief(x.brief).extracted ? { extracted: true } : {}) });
+  return NextResponse.json({ sets: [...(own ?? []).map((x) => row(x, true)), ...named.map((x) => row(x, false))] });
 }

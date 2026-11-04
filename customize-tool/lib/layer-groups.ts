@@ -74,3 +74,44 @@ export function layerGroups(regions: CtRegion[]): CtLayerGroup[] {
   }
   return [...out.values()];
 }
+
+/** What a pick map (lib/compositor renderPickMap) holds: each shown layer's alpha at `scale`. */
+export interface CtPickPixels {
+  scale: number;
+  w: number;
+  h: number;
+  layers: Array<{ id: string | null; alpha: Uint8ClampedArray }>;
+}
+
+/**
+ * The layers a selection box (canvas px) holds: those with most of their own visible pixels (≥ 60 %) inside it — the
+ * pixels, not their frames (a bộ's layers all share the canvas-wide frame), so a background covering the whole artwork
+ * stays out of a box drawn round one character. A layer showing nothing now (glasses set to "none") goes with the
+ * character its picked layers belong to (`shown`: the layers on show, named — layerGroupOf).
+ */
+export function layersInBox(m: CtPickPixels, box: { x: number; y: number; w: number; h: number }, shown: CtRegion[]): string[] {
+  const x0 = Math.max(0, Math.floor(box.x * m.scale));
+  const y0 = Math.max(0, Math.floor(box.y * m.scale));
+  const x1 = Math.min(m.w, Math.ceil((box.x + box.w) * m.scale));
+  const y1 = Math.min(m.h, Math.ceil((box.y + box.h) * m.scale));
+  const out: string[] = [];
+  const drawn = new Set<string>();
+  for (const l of m.layers) {
+    if (!l.id) continue;
+    let total = 0;
+    let inside = 0;
+    for (let i = 0; i < l.alpha.length; i++) {
+      if (l.alpha[i] < 24) continue;
+      total++;
+      const x = i % m.w;
+      const y = (i - x) / m.w;
+      if (x >= x0 && x < x1 && y >= y0 && y < y1) inside++;
+    }
+    if (total) drawn.add(l.id);
+    if (total && inside / total >= 0.6) out.push(l.id);
+  }
+  const groupOf = layerGroupOf(shown);
+  const keys = new Set(out.map((id) => groupOf.get(id)?.key).filter(Boolean));
+  for (const r of shown) if (!out.includes(r.id) && !drawn.has(r.id) && keys.has(groupOf.get(r.id)?.key)) out.push(r.id);
+  return out;
+}

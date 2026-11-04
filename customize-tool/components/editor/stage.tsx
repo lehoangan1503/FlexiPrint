@@ -35,7 +35,7 @@ import type { DesignApi } from "./use-design";
 import { useImageSize } from "./use-image-size";
 import { CLIPART_DRAG, type CtLibraryDrag } from "./library-panel";
 import { charSetBounds, placeCharSet } from "../../lib/char-set-layers";
-import { layerGroupOf } from "../../lib/layer-groups";
+import { layersInBox } from "../../lib/layer-groups";
 import { updateItem, updateRegion } from "./use-design";
 import { mainFrameFor } from "../../lib/layout";
 import { frameSvgPath } from "../../lib/material-frame";
@@ -333,39 +333,8 @@ export function Stage(props: StageProps) {
     // A few screen px of slack: thin strokes stay clickable when zoomed out.
     return m ? pickAt(m, w, 3 / zoomRef.current) : undefined;
   };
-  /**
-   * The layers a selection box holds: those with most of their own visible pixels (≥ 60 %) inside it — the pick map's
-   * pixels, not their frames (a bộ's layers all share the canvas-wide frame), so a background covering the whole
-   * artwork stays out of a box drawn round one character.
-   */
-  const layersInBox = (box: CtBounds): string[] => {
-    const m = pickMap.current;
-    if (!m) return [];
-    const x0 = Math.max(0, Math.floor(box.x * m.scale));
-    const y0 = Math.max(0, Math.floor(box.y * m.scale));
-    const x1 = Math.min(m.w, Math.ceil((box.x + box.w) * m.scale));
-    const y1 = Math.min(m.h, Math.ceil((box.y + box.h) * m.scale));
-    const out: string[] = [];
-    for (const l of m.layers) {
-      if (!l.id) continue;
-      let total = 0;
-      let inside = 0;
-      for (let i = 0; i < l.alpha.length; i++) {
-        if (l.alpha[i] < 24) continue;
-        total++;
-        const x = i % m.w;
-        const y = (i - x) / m.w;
-        if (x >= x0 && x < x1 && y >= y0 && y < y1) inside++;
-      }
-      if (total && inside / total >= 0.6) out.push(l.id);
-    }
-    // A layer showing nothing now (glasses set to "none") goes with the character its picked layers belong to.
-    const groupOf = layerGroupOf(shownRegions);
-    const keys = new Set(out.map((id) => groupOf.get(id)?.key).filter(Boolean));
-    const drawn = new Set(m.layers.filter((l) => l.id && l.alpha.some((a) => a >= 24)).map((l) => l.id));
-    for (const r of shownRegions) if (!out.includes(r.id) && !drawn.has(r.id) && keys.has(groupOf.get(r.id)?.key)) out.push(r.id);
-    return out;
-  };
+  /** The layers a selection box holds (lib/layer-groups layersInBox). */
+  const layersInBoxNow = (box: CtBounds): string[] => (pickMap.current ? layersInBox(pickMap.current, box, shownRegions) : []);
   const sceneRect = useMemo(() => {
     const sc = props.scene;
     if (!sc?.url || !sc.box.w) return null;
@@ -791,7 +760,7 @@ export function Stage(props: StageProps) {
         if (!g.add) props.onSelectRegion(null);
         return;
       }
-      const inside = layersInBox(box);
+      const inside = layersInBoxNow(box);
       const cur = props.selectedSet ?? (selectedRegionId ? [selectedRegionId] : []);
       const ids = g.add ? [...new Set([...cur, ...inside])] : inside;
       props.onSelectMain(false);

@@ -439,6 +439,9 @@ export interface CtCharExtracted {
   productName: string;
   layers: number;
   at: string;
+  /** The bộ it was taken from (picked in the library), when it came from one — "con của bộ nào". */
+  setId?: string;
+  setName?: string;
 }
 
 /**
@@ -1032,6 +1035,8 @@ export interface CtProductCharSet {
   id: string;
   name: string;
   own: boolean;
+  /** A bộ con (picked layers saved as a bộ): opened in the library, never on the /v2 page. */
+  extracted?: boolean;
 }
 
 /** A product a bộ nhân vật is used in (GET char/projects/:id/used-by): its own (built from it) or one it was dropped into. */

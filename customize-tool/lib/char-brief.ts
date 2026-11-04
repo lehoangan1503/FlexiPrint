@@ -368,7 +368,14 @@ function parseExtracted(raw: unknown): CtCharExtracted | null {
   const o = rec(raw);
   const productId = s(o.productId, 60);
   if (!productId) return null;
-  return { productId, productName: s(o.productName, 200), layers: typeof o.layers === "number" && Number.isFinite(o.layers) ? Math.max(0, Math.round(o.layers)) : 0, at: s(o.at, 40) };
+  const setId = s(o.setId, 60);
+  return {
+    productId,
+    productName: s(o.productName, 200),
+    layers: typeof o.layers === "number" && Number.isFinite(o.layers) ? Math.max(0, Math.round(o.layers)) : 0,
+    at: s(o.at, 40),
+    ...(setId ? { setId, setName: s(o.setName, 200) } : {}),
+  };
 }
 
 function parseImportShopify(o: Record<string, unknown>): NonNullable<CtCharImported["shopify"]> {

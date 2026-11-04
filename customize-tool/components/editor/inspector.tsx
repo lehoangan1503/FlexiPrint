@@ -527,7 +527,7 @@ function MultiProps(props: InspectorProps & { ids: string[] }) {
                   title={`${g.label} — ${g.ids.length} layer · ⌘-click để chọn thêm nhiều phần`}
                   className={cx("max-w-full truncate rounded-full border px-2 py-0.5 text-[11px]", on ? "border-sky-500 bg-sky-500 font-medium text-white" : "bg-background hover:bg-accent")}
                 >
-                  {g.label} <span className="text-muted-foreground">({g.ids.length})</span>
+                  {g.label} <span className={on ? "opacity-80" : "text-muted-foreground"}>({g.ids.length})</span>
                 </button>
               );
             })}

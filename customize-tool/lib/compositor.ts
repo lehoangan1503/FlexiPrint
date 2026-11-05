@@ -5,11 +5,11 @@
  * scaled once at the end, so preview and full-res export are the same picture.
  */
 
-import type { CtFillConfig, CtMainFrame, CtMainLayout, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtShape, CtTextConfig, CtTransform } from "../types";
+import type { CtFillConfig, CtMainFrame, CtMainLayout, CtPrintSilhouette, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtShape, CtTextConfig, CtTransform } from "../types";
 import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, textBand } from "./geometry";
 
 export { textBand };
-import { activeRegions, normalizeRegion, regionForSelection, resolveLinked, selectedMainId, selectedMainImageId, textMode, zoneText } from "./design";
+import { activeRegions, normalizeRegion, regionForSelection, resolveLinked, selectedMainId, textColorFromOption, selectedMainImageId, textMode, zoneText } from "./design";
 import { mainFrameFor, resolveLayout } from "./layout";
 import { frameRegionFor, renditionFrameBox, traceFrame } from "./material-frame";
 import { scaleShape } from "./print-template";
@@ -147,7 +147,7 @@ function drawPlan(input: CompositeInput): { selection: CtSelection; mainId: stri
   // A zone's chosen sub-option (its shape / lettering) is drawn in place of its own look.
   // Child zones only while their parent shows the option they belong to.
   const regions = activeRegions(resolved.regions.map(normalizeRegion), selection)
-    .map((r) => regionForSelection(normalizeRegion(r), selection[r.id]))
+    .map((r) => textColorFromOption(regionForSelection(normalizeRegion(r), selection[r.id]), selection))
     .filter((r) => !(input.display && r.config.printOnly))
     .sort((a, b) => a.sort_order - b.sort_order);
   return { selection, mainId, items: resolved.items, regions };
@@ -540,6 +540,94 @@ export function mirrorSheet(half: HTMLCanvasElement): HTMLCanvasElement {
   ctx.drawImage(half, 0, 0);
   ctx.restore();
   return out;
+}
+
+/**
+ * Silhouette of a print sheet (asked 2026-11-05, like Teeinblue's acrylic files): every pixel the print covers —
+ * grown by `offset` px and with its inner holes filled, so it is the piece's outer shape — painted solid black on a
+ * transparent sheet of the same size. The factory reads it as the white-ink / cut layer.
+ */
+export function silhouetteOf(sheet: HTMLCanvasElement, offset = 0): HTMLCanvasElement {
+  const w = sheet.width;
+  const h = sheet.height;
+  const src = sheet.getContext("2d")?.getImageData(0, 0, w, h);
+  if (!src) throw new Error("Canvas 2D không khả dụng");
+  // 1) Binary mask of what is printed (alpha ≥ 16), as a black-on-transparent canvas.
+  const bin = document.createElement("canvas");
+  bin.width = w;
+  bin.height = h;
+  const bctx = bin.getContext("2d");
+  if (!bctx) throw new Error("Canvas 2D không khả dụng");
+  const bd = bctx.createImageData(w, h);
+  for (let i = 3; i < src.data.length; i += 4) if (src.data[i] >= 16) bd.data[i] = 255;
+  bctx.putImageData(bd, 0, 0);
+  // 2) Grow it: the mask stamped on rings around itself (a disc dilation, fine for a few dozen px).
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const octx = out.getContext("2d");
+  if (!octx) throw new Error("Canvas 2D không khả dụng");
+  octx.drawImage(bin, 0, 0);
+  const r = Math.max(0, Math.round(offset));
+  for (let ring = r; ring > 0; ring -= Math.max(1, Math.ceil(r / 3))) {
+    const steps = Math.max(16, Math.ceil(2 * Math.PI * ring));
+    for (let k = 0; k < steps; k++) {
+      const a = (2 * Math.PI * k) / steps;
+      octx.drawImage(bin, Math.round(ring * Math.cos(a)), Math.round(ring * Math.sin(a)));
+    }
+  }
+  // 3) Fill the holes: what the outside cannot reach from the sheet's border is inside the piece.
+  const od = octx.getImageData(0, 0, w, h);
+  const outside = new Uint8Array(w * h);
+  const stack: number[] = [];
+  const seed = (i: number) => {
+    if (!outside[i] && od.data[i * 4 + 3] < 128) {
+      outside[i] = 1;
+      stack.push(i);
+    }
+  };
+  for (let x = 0; x < w; x++) {
+    seed(x);
+    seed((h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y++) {
+    seed(y * w);
+    seed(y * w + w - 1);
+  }
+  while (stack.length) {
+    const i = stack.pop() as number;
+    const x = i % w;
+    if (x > 0) seed(i - 1);
+    if (x < w - 1) seed(i + 1);
+    if (i >= w) seed(i - w);
+    if (i < w * (h - 1)) seed(i + w);
+  }
+  for (let i = 0; i < w * h; i++) {
+    const on = outside[i] ? 0 : 255;
+    od.data[i * 4] = 0;
+    od.data[i * 4 + 1] = 0;
+    od.data[i * 4 + 2] = 0;
+    od.data[i * 4 + 3] = on;
+  }
+  octx.putImageData(od, 0, 0);
+  return out;
+}
+
+/** The print sheet with its silhouette above it (Merchize / Teeinblue acrylic layout): one file twice as tall. */
+export function silhouetteStack(sheet: HTMLCanvasElement, offset = 0): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = sheet.width;
+  out.height = sheet.height * 2;
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D không khả dụng");
+  ctx.drawImage(silhouetteOf(sheet, offset), 0, 0);
+  ctx.drawImage(sheet, 0, sheet.height);
+  return out;
+}
+
+/** Apply the product's silhouette setting (CtProductConfig.printSilhouette) to a finished print sheet. */
+export function withSilhouette(sheet: HTMLCanvasElement, cfg: CtPrintSilhouette | null | undefined): HTMLCanvasElement {
+  return cfg?.enabled ? silhouetteStack(sheet, cfg.offset) : sheet;
 }
 
 const fontFiles = new Map<string, Promise<void>>();

@@ -62,6 +62,7 @@ import { useAiStyles } from "./ai-styles-store";
 import { processPhoto } from "../../lib/photo-process";
 import { ctApi } from "../../lib/api-client";
 import { OptionThumb } from "./option-thumb";
+import { TextColorBy } from "./text-color-by";
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtNumber, CtSelect, CtTextarea, CtTooltip, cx } from "../ui";
 import type { DesignApi } from "./use-design";
 import { updateItem, updateRegion } from "./use-design";
@@ -873,6 +874,14 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
               <CtNumber value={cfg.text.strokeWidth} min={0} onChange={(v) => setText({ strokeWidth: Math.max(0, v) })} />
             </CtField>
           </div>
+          <TextColorBy
+            region={region}
+            regions={design.state.regions}
+            items={design.state.items}
+            assets={props.assets}
+            value={cfg.text.colorBy}
+            onChange={(colorBy) => setText({ colorBy })}
+          />
           <CtField label={`Uốn cong: ${cfg.text.curve}`}>
             <input
               type="range"
@@ -937,6 +946,8 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
   // No "Free" tab since 2026-11-04 (asked): only AI tạo ảnh and Face are offered; an older free zone opens with none.
   const [tab, setTab] = useState<CtPhotoMode | null>(cfg.photo.mode && cfg.photo.mode !== "free" ? cfg.photo.mode : null);
   const [dialog, setDialog] = useState<CtAiStyle | "new" | null>(null);
+  /** The shared library grid is shown only on demand (asked 2026-11-05: ticking a stranger's style by mistake). */
+  const [showLib, setShowLib] = useState(false);
   const ai = useAiStyles();
   /** `${sourceUrl}|${style}|${cutout}|${fadeCrop}|${version}` → rendered blob URL, so flipping styles doesn't re-bill the AI. */
   const renders = useRef(new Map<string, string>());
@@ -1110,16 +1121,63 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
           </div>
         ) : (
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground">Thư viện chung · {ai.styles.length} style</span>
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[11px] font-medium">{showLib ? `Thư viện chung · ${ai.styles.length} style` : `Style của artwork này · ${pickedAi.length}`}</span>
               <div className="flex gap-1">
+                <CtButton size="sm" variant={showLib ? "primary" : "outline"} onClick={() => setShowLib((v) => !v)} title={showLib ? "Về style của artwork này" : "Mở thư viện chung để thêm / bỏ style"}>
+                  {showLib ? "Xong" : "Thư viện chung"}
+                </CtButton>
                 <CtButton size="sm" variant="primary" onClick={() => setDialog("new")}>
                   <Plus className="h-3.5 w-3.5" /> Thêm mới
                 </CtButton>
               </div>
             </div>
-            {ai.styles.length === 0 && !ai.loading && <p className="rounded border border-dashed p-2 text-center text-[11px] text-muted-foreground">Chưa có style AI nào.</p>}
-            {ai.styles.length > 0 && (
+            {!showLib && (
+              <div className="space-y-1.5">
+                {pickedAi.length === 0 && !ai.loading && (
+                  <p className="rounded border border-dashed p-2 text-center text-[11px] text-muted-foreground">Chưa có style — bấm Thêm mới (prompt + ảnh tham chiếu riêng) hoặc chọn từ Thư viện chung.</p>
+                )}
+                {pickedAi.map((ref) => {
+                  const st = ai.styles.find((x) => aiStyleRef(x.id) === ref);
+                  if (!st) return null;
+                  return (
+                    <div key={st.id} className={cx("flex gap-2 rounded-md border p-1.5", ref === selectedAi && "border-sky-500")}>
+                      <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-[repeating-conic-gradient(#f1f1f1_0_25%,#fff_0_50%)] bg-[length:12px_12px]">
+                        {st.params.demoUrl ? <img src={st.params.demoUrl} alt={st.name} className="h-full w-full object-contain" /> : <span className="px-1 text-center text-[9px] text-muted-foreground">chưa có demo</span>}
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center gap-1">
+                          <span className="truncate text-[11px] font-semibold">{st.name}</span>
+                          {ref === selectedAi && <span className="shrink-0 rounded bg-sky-500 px-1 text-[9px] font-semibold text-white">Mặc định</span>}
+                          <span className="ml-auto flex shrink-0 gap-1">
+                            <button type="button" className="rounded border px-1 text-[10px] hover:bg-accent" onClick={() => setDialog(st)}>
+                              {st.can_edit ? "Sửa" : "Xem"}
+                            </button>
+                            {pickedAi.length > 1 && (
+                              <button type="button" className="rounded border px-1 text-[10px] text-muted-foreground hover:bg-accent" title="Bỏ khỏi artwork này (style vẫn còn trong thư viện)" onClick={() => toggleStyle(ref, false)}>
+                                Bỏ
+                              </button>
+                            )}
+                          </span>
+                        </div>
+                        <p className="line-clamp-3 whitespace-pre-line text-[10px] leading-snug text-muted-foreground" title={st.prompt}>
+                          {st.prompt || "(chưa có prompt)"}
+                        </p>
+                        {st.params.refUrls.length > 0 && (
+                          <div className="flex gap-1">
+                            {st.params.refUrls.map((u) => (
+                              <img key={u} src={u} alt="ảnh tham chiếu" title="Ảnh tham chiếu" className="h-8 w-8 rounded border object-cover" />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {showLib && ai.styles.length === 0 && !ai.loading && <p className="rounded border border-dashed p-2 text-center text-[11px] text-muted-foreground">Chưa có style AI nào.</p>}
+            {showLib && ai.styles.length > 0 && (
               <div className="grid grid-cols-3 gap-1.5">
                 {ai.styles.map((st) => {
                   const ref = aiStyleRef(st.id);

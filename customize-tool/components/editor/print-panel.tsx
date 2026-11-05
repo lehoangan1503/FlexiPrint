@@ -14,16 +14,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import { BookmarkPlus, Download, Eye, EyeOff, Loader2, Scissors, Settings2, Upload, X } from "lucide-react";
-import type { CtAsset, CtMainLayout, CtMaterialConfig, CtPrintGuide, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
+import type { CtAsset, CtMainLayout, CtMaterialConfig, CtPrintGuide, CtPrintSilhouette, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import type { CtProductPrint } from "../../types/print";
 import { displayAssets } from "../../lib/library";
-import { canvasToBlob, mirrorSheet, printFrame, renderComposite } from "../../lib/compositor";
+import { canvasToBlob, mirrorSheet, printFrame, renderComposite, withSilhouette } from "../../lib/compositor";
 import { frameSvgPath } from "../../lib/material-frame";
 import { normalizeSamples } from "../../lib/design";
 import { printSize } from "../../lib/print-template";
 import { ctApi } from "../../lib/api-client";
 import { printApi } from "../../lib/print-api";
-import { Rulers } from "./rulers";
+import { GridLines, GridToggleButton, useGridToggle } from "./grid";
 import { CtButton, CtSelect } from "../ui";
 
 /** Preview render: longest side in px (the download is always full resolution). */
@@ -80,6 +80,9 @@ export interface PrintPanelProps {
   /** The fulfiller's template laid over the print file (CtProductConfig.printGuide). */
   printGuide: CtPrintGuide | null;
   onPrintGuide: (g: CtPrintGuide | null) => void;
+  /** Silhouette above the print (CtProductConfig.printSilhouette). */
+  printSilhouette: CtPrintSilhouette | null;
+  onPrintSilhouette: (s: CtPrintSilhouette | null) => void;
 }
 
 function shrink(src: HTMLCanvasElement, k: number): HTMLCanvasElement {
@@ -117,10 +120,11 @@ export function PrintPanel(props: PrintPanelProps) {
   const cutFrame = frame && !size?.id ? frame : null;
   const cutPath = cutFrame && !cutFrame.config.maskUrl ? frameSvgPath(cutFrame) : "";
   const mirror = !!props.print?.spec.mirror;
+  const sil = props.printSilhouette?.enabled ? props.printSilhouette : null;
   /** The print file: the sheet — and, a khuôn made as one half (spec.mirror), its mirror image beside it. */
   const printCanvas = async (): Promise<HTMLCanvasElement> => {
     const sheet = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts, ...sizeArgs });
-    return props.print?.spec.mirror ? mirrorSheet(sheet) : sheet;
+    return withSilhouette(props.print?.spec.mirror ? mirrorSheet(sheet) : sheet, props.printSilhouette);
   };
 
   useEffect(() => {
@@ -132,7 +136,7 @@ export function PrintPanel(props: PrintPanelProps) {
         const k = Math.min(1, PREVIEW_SIDE / Math.max(full.width, full.height));
         // The cut line on the preview only (a copy; print.png stays clean): the khuôn's outline + holes, magenta.
         const small = k < 1 || cutPath ? shrink(full, k) : full;
-        if (cutPath) drawCutLine(small, cutPath, k, mirror ? main.width : 0);
+        if (cutPath && !sil) drawCutLine(small, cutPath, k, mirror ? main.width : 0);
         url = URL.createObjectURL(await canvasToBlob(small, "image/png"));
         if (!live) return URL.revokeObjectURL(url);
         setShot({ url, w: full.width, h: full.height });
@@ -147,7 +151,7 @@ export function PrintPanel(props: PrintPanelProps) {
       if (url) URL.revokeObjectURL(url);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sizeArgs follows sizeId
-  }, [main, assets, regions, items, selection, layouts, sizeId]);
+  }, [main, assets, regions, items, selection, layouts, sizeId, sil?.offset, !!sil]);
 
   const download = async () => {
     setSaving(true);
@@ -203,8 +207,6 @@ export function PrintPanel(props: PrintPanelProps) {
 
   const mm = material.id !== "none" ? material.widthMm : 0;
   const dpi = shot && mm ? Math.round(shot.w / (mm / 25.4)) : 0;
-  // The real width for the rulers' mm: the khuôn's sheet, else the material's.
-  const sheetMm = props.print?.spec.widthMm || mm;
 
   // ---- the template over the print file (never in print.png) ----
   const guideUrl = props.printGuide?.url ?? props.print?.spec.frameUrl ?? null;
@@ -230,6 +232,7 @@ export function PrintPanel(props: PrintPanelProps) {
     }
   };
   const [notice, setNotice] = useState<string | null>(null);
+  const [showGrid, toggleGrid] = useGridToggle();
 
   // ---- where the preview sits in its box (for the rulers and the template over it) ----
   const viewRef = useRef<HTMLDivElement | null>(null);
@@ -259,6 +262,7 @@ export function PrintPanel(props: PrintPanelProps) {
           {frame ? `Toàn khung edit, cắt theo khuôn "${frame.name}"` : "Toàn khung edit (không có khuôn)"}
           {cutPath && " · đường hồng = đường cắt (file cut.svg riêng, không in)"}
           {props.print?.spec.mirror && " · + nửa đối xứng"}
+          {sil && " · nửa trên = silhouette, nửa dưới = bản in"}
           {shot && ` · ${shot.w}×${shot.h}px`}
           {dpi > 0 && ` · ${mm}mm ≈ ${dpi} dpi`}
         </span>
@@ -324,8 +328,34 @@ export function PrintPanel(props: PrintPanelProps) {
           </CtButton>
         )}
         {notice && <span className="text-amber-600">{notice}</span>}
+        <span className="ml-auto flex items-center gap-2">
+          <label className="flex cursor-pointer items-center gap-1.5 font-medium" title="Như file mica của Teeinblue / Merchize: hình khối đen của bản in ở nửa trên (lớp in trắng / đường cắt), bản in ở nửa dưới — một file cao gấp đôi. Áp dụng cả file in tạo lúc khách thêm vào giỏ (sau Publish).">
+            <input
+              type="checkbox"
+              className="accent-sky-500"
+              checked={!!sil}
+              onChange={(e) => props.onPrintSilhouette(e.target.checked ? { enabled: true, offset: props.printSilhouette?.offset ?? 0 } : null)}
+            />
+            Silhouette
+          </label>
+          {sil && (
+            <label className="flex items-center gap-1.5 text-muted-foreground" title="Nới hình khối ra ngoài mép bản in (px của file in)">
+              Nới viền
+              <input
+                type="number"
+                min={0}
+                max={60}
+                value={sil.offset}
+                onChange={(e) => props.onPrintSilhouette({ enabled: true, offset: Math.max(0, Math.min(60, Math.round(Number(e.target.value) || 0))) })}
+                className="w-14 rounded border bg-background px-1.5 py-0.5 tabular-nums"
+              />
+              px
+            </label>
+          )}
+          {shot && <GridToggleButton on={showGrid} onToggle={toggleGrid} />}
+        </span>
       </div>
-      <div ref={viewRef} className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-8 pl-10 pt-10">
+      <div ref={viewRef} className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-8">
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
         ) : shot ? (
@@ -349,7 +379,16 @@ export function PrintPanel(props: PrintPanelProps) {
                 style={{ left: place.x, top: place.y, width: place.w, height: place.h, opacity: guideOpacity }}
               />
             )}
-            {place && <Rulers zoom={place.w / shot.w} pan={{ x: place.x, y: place.y }} width={shot.w} height={shot.h} mmPerUnit={sheetMm ? sheetMm / (mirror ? shot.w / 2 : shot.w) : undefined} />}
+            {place && showGrid && (
+              <svg
+                className="pointer-events-none absolute overflow-visible"
+                style={{ left: place.x, top: place.y, width: place.w, height: place.h }}
+                viewBox={`0 0 ${shot.w} ${shot.h}`}
+                preserveAspectRatio="none"
+              >
+                <GridLines width={shot.w} height={shot.h} zoom={place.w / shot.w} />
+              </svg>
+            )}
           </>
         ) : (
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />

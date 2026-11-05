@@ -14,7 +14,7 @@ import sharp, { type OverlayOptions } from "sharp";
 import { CT_TABLES } from "../config";
 import type { CtAsset, CtProduct, CtRegion, CtRegionItem, CtSelection, CtShape } from "../types";
 import type { CtPrintSpec } from "../types/print";
-import { activeRegions, defaultRegionSelection, normalizeProductConfig, normalizeRegion, resolveLinked, selectedMainId, textMode } from "../lib/design";
+import { activeRegions, defaultRegionSelection, normalizeProductConfig, normalizeRegion, resolveLinked, selectedMainId, textColorFromOption, textMode } from "../lib/design";
 import { onVersion } from "../lib/layout";
 import { loadFont, textSvg } from "./print-text";
 import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, textBand, translateShape } from "../lib/geometry";
@@ -127,7 +127,8 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
       const m = await sharp(pic).metadata();
       layers.push({ input: pic, left: Math.round(p.cx - (m.width ?? p.w) / 2), top: Math.round(p.cy - (m.height ?? p.h) / 2) });
     } else if (r.kind === "text") {
-      const t = r.config.text;
+      // A text whose colour follows another layer's option (a red "1st Christmas" → red name).
+      const t = textColorFromOption(r, chosen).config.text;
       const raw = sel.kind === "text" && sel.text ? sel.text : t.defaultText;
       const font = await loadFont(t.fontFamily, t.fontWeight, t.fontUrl);
       if (font) {

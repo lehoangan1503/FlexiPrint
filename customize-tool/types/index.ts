@@ -112,6 +112,12 @@ export interface CtTransform {
 
 export type CtTextAlign = "left" | "center" | "right";
 
+/** CtTextConfig.colorBy: the image layer whose option picks the colour, option asset id → hex colour. */
+export interface CtTextColorBy {
+  regionId: string;
+  colors: Record<string, string>;
+}
+
 export interface CtTextConfig {
   label: string;
   placeholder: string;
@@ -138,6 +144,12 @@ export interface CtTextConfig {
   /** With a curve: the arc turned by this many degrees (clockwise) about the zone's centre — a brim on a tilted head. */
   arcTilt?: number;
   uppercase: boolean;
+  /**
+   * The text's colour follows another layer's option (asked 2026-11-05: pick the red "1st Christmas" → the name
+   * turns red too): while that image layer shows option X, the text is drawn in colors[X]. An option with no colour
+   * here keeps `color`. Applied by every renderer (lib/design.ts textColorFromOption).
+   */
+  colorBy?: CtTextColorBy;
   /** Preset texts (mode "list"): the customer picks one from a dropdown. */
   choices: string[];
   /**
@@ -785,6 +797,18 @@ export interface CtProductConfig {
    * in's own guide sheet is offered instead when the product has one).
    */
   printGuide: CtPrintGuide | null;
+  /**
+   * Silhouette in the print file (asked 2026-11-05, like Teeinblue's acrylic artworks): the sheet's outer shape in
+   * solid black above the print, one file twice as tall (Merchize acrylic layout). null = plain print file.
+   */
+  printSilhouette: CtPrintSilhouette | null;
+}
+
+/** CtProductConfig.printSilhouette: how the silhouette is made from the print sheet. */
+export interface CtPrintSilhouette {
+  enabled: boolean;
+  /** px the shape grows past the printed pixels (the cut margin), 0–60. */
+  offset: number;
 }
 
 /** A reference picture over the print file (CtProductConfig.printGuide): stretched to the print file's box. */

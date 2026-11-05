@@ -24,7 +24,7 @@
  * is exactly what the storefront and exports render.
  */
 
-import { Rulers } from "./rulers";
+import { GridLines, GridToggleButton, useGridToggle } from "./grid";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CtAsset, CtBounds, CtMainFrame, CtProductScene, CtPhotoFrame, CtPoint, CtRegion, CtRegionItem, CtRegionKind, CtSelection, CtShape, CtTransform } from "../../types";
 import { bandShape, clamp, fitZoneToBounds, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, SNAP_FRACTIONS, snapAxis, textBand, translateShape } from "../../lib/geometry";
@@ -165,6 +165,7 @@ export function Stage(props: StageProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
   const [zoom, setZoom] = useState(0.5);
+  const [showGrid, toggleGrid] = useGridToggle();
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [draft, setDraft] = useState<CtPoint[]>([]);
@@ -1067,7 +1068,6 @@ export function Stage(props: StageProps) {
       }}
     >
       {dropping && <div className="pointer-events-none absolute inset-2 z-20 rounded-lg border-2 border-dashed border-sky-500 bg-sky-500/5" />}
-      <Rulers zoom={zoom} pan={pan} width={main.width} height={main.height} mmPerUnit={props.mmPerPx} />
       {sceneRect && props.scene?.url && (
         // The background in main px: the design box of the scene maps onto (0, 0, main.width, main.height).
         <img
@@ -1097,6 +1097,8 @@ export function Stage(props: StageProps) {
           viewBox={`0 0 ${main.width} ${main.height}`}
           style={{ pointerEvents: "none" }}
         >
+          {/* Edit grid (Teeinblue-style), over the pictures and under every guide / handle. */}
+          {showGrid && <GridLines width={main.width} height={main.height} zoom={zoom} />}
           {/* Khuôn vật liệu: what is printed / made into the vật liệu — outside it dimmed, its cut-out parts hatched. */}
           {/* A khuôn drawn as a picture (khuôn in face): its own cut line + safe zone. */}
           {props.showOverlay && props.materialFrame?.config.guideUrl && (
@@ -1677,6 +1679,7 @@ export function Stage(props: StageProps) {
         <button className="rounded px-2 py-1 hover:bg-accent" onClick={(e) => { e.stopPropagation(); setZoom(1); }} onPointerDown={(e) => e.stopPropagation()}>
           100%
         </button>
+        <GridToggleButton on={showGrid} onToggle={toggleGrid} />
       </div>
 
       {props.drawInto && (tool === "rect" || tool === "ellipse" || tool === "polygon") && (

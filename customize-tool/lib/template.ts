@@ -115,6 +115,8 @@ export function buildTemplate(args: {
       print: config.print,
       mockupsByOption: config.mockupsByOption,
       zoneMockups: config.zoneMockups,
+      // The print file made at add-to-cart carries the silhouette above it when the product asks for one.
+      printSilhouette: config.printSilhouette,
     },
     // Swatches (main versions, layer options) show the flat clipart; the design is drawn with its material.
     assets: Array.from(used.values()).map((a) => renderAsset(a, flatUrl.get(a.id))),

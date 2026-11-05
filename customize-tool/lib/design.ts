@@ -16,6 +16,7 @@ import type {
   CtPhotoStyleRef,
   CtProductConfig,
   CtPrintGuide,
+  CtPrintSilhouette,
   CtProductPrint,
   CtProductScene,
   CtRegion,
@@ -274,6 +275,7 @@ export function defaultProductConfig(): CtProductConfig {
     mockupsByOption: {},
     zoneMockups: [],
     printGuide: null,
+    printSilhouette: null,
   };
 }
 
@@ -318,7 +320,16 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     mockupsByOption: normalizeMockupsByOption(raw?.mockupsByOption),
     zoneMockups: normalizeZoneMockups(raw?.zoneMockups),
     printGuide: normalizePrintGuide(raw?.printGuide),
+    printSilhouette: normalizePrintSilhouette(raw?.printSilhouette),
   };
+}
+
+function normalizePrintSilhouette(raw: unknown): CtPrintSilhouette | null {
+  if (!raw || typeof raw !== "object") return null;
+  const g = raw as Partial<CtPrintSilhouette>;
+  if (!g.enabled) return null;
+  const off = typeof g.offset === "number" && Number.isFinite(g.offset) ? Math.round(g.offset) : 0;
+  return { enabled: true, offset: Math.max(0, Math.min(60, off)) };
 }
 
 function normalizePrintGuide(raw: unknown): CtPrintGuide | null {
@@ -563,6 +574,19 @@ export function isLinkedLayer(region: CtRegion, regions: CtRegion[]): boolean {
  * followed; a loop stops). Every renderer resolves this before drawing, so the editor, print file, mockups and
  * storefront always agree.
  */
+/**
+ * A text layer whose colour follows another layer's option (CtTextConfig.colorBy): drawn in the colour given for the
+ * option that layer shows now; any other region, or an option without a colour, comes back unchanged.
+ */
+export function textColorFromOption(region: CtRegion, selection: CtSelection): CtRegion {
+  const by = region.kind === "text" ? region.config.text?.colorBy : undefined;
+  if (!by) return region;
+  const sel = selection[by.regionId];
+  const hex = sel?.kind === "image" && sel.assetId ? by.colors[sel.assetId] : undefined;
+  if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) return region;
+  return { ...region, config: { ...region.config, text: { ...region.config.text, color: hex } } };
+}
+
 export function resolveLinked<A extends CtRenderAsset>(regions: CtRegion[], items: CtRegionItem[], assets: A[], selection: CtSelection): CtSelection {
   const linked = regions.filter((r) => isLinkedLayer(r, regions));
   if (!linked.length) return selection;

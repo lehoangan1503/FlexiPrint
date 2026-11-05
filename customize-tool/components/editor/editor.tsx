@@ -1302,6 +1302,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                 design.commit((st) => ({ ...st, config: { ...st.config, printGuide } }));
                 flash(printGuide ? "Đã đặt template — nhớ Lưu thiết kế" : "Đã bỏ template — nhớ Lưu thiết kế");
               }}
+              printSilhouette={config.printSilhouette}
+              onPrintSilhouette={(printSilhouette) => design.commit((st) => ({ ...st, config: { ...st.config, printSilhouette } }))}
             />
           ) : view === "preview" ? (
             main ? null : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>

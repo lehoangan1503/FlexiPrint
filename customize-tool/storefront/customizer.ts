@@ -53,7 +53,7 @@ import type {
   CtTransform,
 } from "../types";
 import { ctGoogleFontsHref } from "../config";
-import { canvasToBlob, compositeBleed, drawComposite, loadImage, mirrorSheet, printFrame, renderComposite } from "../lib/compositor";
+import { canvasToBlob, compositeBleed, drawComposite, loadImage, mirrorSheet, printFrame, renderComposite, withSilhouette } from "../lib/compositor";
 import { isHidden, layoutFor, onVersion } from "../lib/layout";
 import { drawOnScene } from "../lib/scene";
 import { renderZoneMockup, zoneFills } from "../lib/zone-mockup";
@@ -677,12 +677,13 @@ export class Customizer {
   private async printFile(selection: CtSelection): Promise<HTMLCanvasElement> {
     const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts };
     const print = this.tpl.config.print;
-    if (!print) return renderComposite({ ...input, scale: 1, cutToFrame: true });
+    const sil = this.tpl.config.printSilhouette;
+    if (!print) return withSilhouette(await renderComposite({ ...input, scale: 1, cutToFrame: true }), sil);
     const picked = pickedOptions(this.root);
     const size = print.spec.sizes.length ? printSize(print.spec, picked.find((v) => print.spec.sizes.some((s) => s.name.toLowerCase() === v.toLowerCase())) ?? null) : null;
     const sheet = await renderComposite({ ...input, scale: 1, cutToFrame: !size, size: size && size.id ? size : null });
     // A khuôn made as one half (one trouser leg): the other half is its mirror image.
-    return print.spec.mirror ? mirrorSheet(sheet) : sheet;
+    return withSilhouette(print.spec.mirror ? mirrorSheet(sheet) : sheet, sil);
   }
 
   /** Zones the chosen main version uses: its own layers (older templates: a layout may hide some). */

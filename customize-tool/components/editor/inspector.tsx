@@ -1122,7 +1122,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
         ) : (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-1">
-              <span className="text-[11px] font-medium">{showLib ? `Thư viện chung · ${ai.styles.length} style` : `Style của artwork này · ${pickedAi.length}`}</span>
+              <span className="whitespace-nowrap text-[11px] font-medium">{showLib ? `Thư viện chung · ${ai.styles.length} style` : `Của artwork · ${pickedAi.length}`}</span>
               <div className="flex gap-1">
                 <CtButton size="sm" variant={showLib ? "primary" : "outline"} onClick={() => setShowLib((v) => !v)} title={showLib ? "Về style của artwork này" : "Mở thư viện chung để thêm / bỏ style"}>
                   {showLib ? "Xong" : "Thư viện chung"}

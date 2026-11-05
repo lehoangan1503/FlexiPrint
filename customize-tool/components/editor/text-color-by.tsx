@@ -49,6 +49,9 @@ export async function dominantColor(url: string): Promise<string | null> {
   return `#${hex(best.r)}${hex(best.g)}${hex(best.b)}`;
 }
 
+/** The "no leader" choice (Radix Select takes no empty value). */
+const NONE = "none";
+
 export interface TextColorByProps {
   region: CtRegion;
   regions: CtRegion[];
@@ -89,9 +92,9 @@ export function TextColorBy({ region, regions, items, assets, value, onChange }:
     <div className="space-y-2 rounded-md border p-2.5">
       <CtField label="Màu theo option của layer">
         <CtSelect<string>
-          value={value?.regionId ?? ""}
-          onChange={(id) => (id ? void fill(id, {}) : onChange(undefined))}
-          options={[{ value: "", label: "Không — màu cố định" }, ...leaders.map((x) => ({ value: x.r.id, label: x.r.name }))]}
+          value={value?.regionId ?? NONE}
+          onChange={(id) => (id !== NONE ? void fill(id, {}) : onChange(undefined))}
+          options={[{ value: NONE, label: "Không — màu cố định" }, ...leaders.map((x) => ({ value: x.r.id, label: x.r.name }))]}
         />
       </CtField>
       {value && lead && (

@@ -619,6 +619,8 @@ export interface SilhouetteCut {
   path?: string;
   /** A khuôn cut by an AI mask: the mask picture (alpha = the piece), stretched to the sheet. */
   maskUrl?: string;
+  /** The khuôn has its own holes (a hanging hole drawn in it): no tab is added. */
+  hasHoles?: boolean;
 }
 
 /** A solid black shape of the khuôn on a transparent sheet of `w` × `h`. */
@@ -709,7 +711,7 @@ export function silhouetteStack(sheet: HTMLCanvasElement, sil: HTMLCanvasElement
 export async function withSilhouette(sheet: HTMLCanvasElement, cfg: CtPrintSilhouette | null | undefined, cut?: SilhouetteCut | null): Promise<HTMLCanvasElement> {
   if (!cfg?.enabled) return sheet;
   const sil = (cut ? await silhouetteOfCut(sheet.width, sheet.height, cut) : null) ?? silhouetteOf(sheet, cfg.offset);
-  if (cfg.hole) addHangingHole(sil, cfg.holeSize);
+  if (cfg.hole && !cut?.hasHoles) addHangingHole(sil, cfg.holeSize);
   return silhouetteStack(sheet, sil);
 }
 
@@ -718,7 +720,7 @@ export function silhouetteCutOf(frame: CtRegion | null, mirrored: boolean): Silh
   if (!frame || mirrored) return null;
   if (frame.config.maskUrl) return { maskUrl: frame.config.maskUrl };
   const path = frameSvgPath(frame);
-  return path ? { path } : null;
+  return path ? { path, hasHoles: (frame.config.cuts ?? []).length > 0 } : null;
 }
 
 const fontFiles = new Map<string, Promise<void>>();

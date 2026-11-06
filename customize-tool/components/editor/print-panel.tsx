@@ -344,13 +344,14 @@ export function PrintPanel(props: PrintPanelProps) {
               {cutFrame ? `theo khuôn "${cutFrame.name}"` : "theo viền bản in"}
             </span>
           )}
-          {sil && (
+          {sil && cutFrame && (cutFrame.config.cuts ?? []).length > 0 && <span className="text-muted-foreground">· lỗ treo lấy theo khuôn</span>}
+          {sil && !(cutFrame && (cutFrame.config.cuts ?? []).length > 0) && (
             <label className="flex cursor-pointer items-center gap-1.5" title="Tai treo tròn có lỗ ở giữa mép trên của hình (ornament)">
               <input type="checkbox" className="accent-sky-500" checked={sil.hole} onChange={(e) => props.onPrintSilhouette({ ...sil, hole: e.target.checked })} />
               Lỗ treo
             </label>
           )}
-          {sil?.hole && (
+          {sil?.hole && !(cutFrame && (cutFrame.config.cuts ?? []).length > 0) && (
             <label className="flex items-center gap-1.5 text-muted-foreground" title="Đường kính ngoài của tai treo, % chiều rộng file in">
               Cỡ
               <input

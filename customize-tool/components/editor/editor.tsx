@@ -1103,23 +1103,44 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         ) : (
           <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">Chưa publish</span>
         )}
-        <div className="ml-3 flex shrink-0 rounded-md border p-0.5">
+        {/* Two steps, like Teeinblue's Artwork → Product (asked 2026-11-06: "người editor không hiểu"): the artwork
+            (design, preview, print file) first, then the product made from it (photos, Shopify). */}
+        <div className="ml-3 flex shrink-0 items-center gap-1.5">
           {(
             [
-              ["design", "Thiết kế"],
-              ["preview", "Xem trước"],
-              ["print", "File in"],
-              ["mockup", "Mockups"],
-            ] as Array<[View, string]>
-          ).map(([v, label]) => (
-            <button
-              key={v}
-              onClick={() => openView(v)}
-              className={cx("whitespace-nowrap rounded px-3 py-1 text-xs font-medium", view === v ? "bg-foreground text-background" : "hover:bg-accent")}
-            >
-              {label}
-            </button>
-          ))}
+              ["1", "Artwork", [["design", "Thiết kế"], ["preview", "Xem trước"], ["print", "File in"]]],
+              ["2", "Sản phẩm", [["mockup", "Mockups"]]],
+            ] as Array<[string, string, Array<[View, string]>]>
+          ).map(([n, step, tabs]) => {
+            const here = tabs.some(([v]) => v === view);
+            return (
+              <div key={n} className={cx("flex items-center gap-1 rounded-md border p-0.5", here ? "border-sky-500/60" : "")}>
+                <span className={cx("flex items-center gap-1 px-1.5 text-[11px] font-semibold", here ? "text-sky-500" : "text-muted-foreground")}>
+                  <span className={cx("flex h-4 w-4 items-center justify-center rounded-full text-[10px]", here ? "bg-sky-500 text-white" : "bg-muted")}>{n}</span>
+                  {step}
+                </span>
+                {tabs.map(([v, label]) => (
+                  <button
+                    key={v}
+                    onClick={() => openView(v)}
+                    className={cx("whitespace-nowrap rounded px-3 py-1 text-xs font-medium", view === v ? "bg-foreground text-background" : "hover:bg-accent")}
+                  >
+                    {label}
+                  </button>
+                ))}
+                {n === "2" && (
+                  <button
+                    onClick={() => void openDeploy()}
+                    disabled={!main || deploying}
+                    title="Ảnh, mô tả, giá, collection → đưa lên Shopify"
+                    className="flex items-center gap-1 whitespace-nowrap rounded px-3 py-1 text-xs font-medium hover:bg-accent disabled:opacity-50"
+                  >
+                    {deploying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Rocket className="h-3 w-3" />} Deploy
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
         {charSets.map((cs) => (
           <CtTooltip key={cs.id} label={`${cs.own ? "Bộ nhân vật dựng sản phẩm này" : "Bộ nhân vật đã kéo vào"}: ${cs.name}`}>
@@ -1150,15 +1171,10 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               </CtButton>
             </span>
           </CtTooltip>
-          <CtTooltip label="Lưu thiết kế" shortcut={["⌘", "S"]}>
+          <CtTooltip label="Lưu artwork (thiết kế, layer, option, file in)" shortcut={["⌘", "S"]}>
             <CtButton variant={design.dirty ? "primary" : "outline"} size="sm" onClick={() => void save()} disabled={saving}>
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-              {design.dirty ? "Lưu thiết kế" : "Đã lưu"}
-            </CtButton>
-          </CtTooltip>
-          <CtTooltip label="Đưa sản phẩm lên Shopify">
-            <CtButton size="sm" variant="outline" onClick={() => void openDeploy()} disabled={!main || deploying}>
-              {deploying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />} Deploy sản phẩm
+              {design.dirty ? "Lưu artwork" : "Đã lưu"}
             </CtButton>
           </CtTooltip>
         </div>

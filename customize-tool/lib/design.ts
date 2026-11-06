@@ -17,6 +17,7 @@ import type {
   CtProductConfig,
   CtPrintGuide,
   CtPrintSilhouette,
+  CtArtworkLink,
   CtProductPrint,
   CtProductScene,
   CtRegion,
@@ -276,6 +277,8 @@ export function defaultProductConfig(): CtProductConfig {
     zoneMockups: [],
     printGuide: null,
     printSilhouette: null,
+    artworkRevision: 0,
+    artworkLink: null,
   };
 }
 
@@ -321,6 +324,24 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     zoneMockups: normalizeZoneMockups(raw?.zoneMockups),
     printGuide: normalizePrintGuide(raw?.printGuide),
     printSilhouette: normalizePrintSilhouette(raw?.printSilhouette),
+    artworkRevision: typeof raw?.artworkRevision === "number" && Number.isFinite(raw.artworkRevision) ? Math.max(0, Math.round(raw.artworkRevision)) : 0,
+    artworkLink: normalizeArtworkLink(raw?.artworkLink),
+  };
+}
+
+function normalizeArtworkLink(raw: unknown): CtArtworkLink | null {
+  if (!raw || typeof raw !== "object") return null;
+  const l = raw as Partial<CtArtworkLink>;
+  if (typeof l.artworkId !== "string" || !l.artworkId) return null;
+  const map = (m: unknown): Record<string, string> =>
+    m && typeof m === "object" ? Object.fromEntries(Object.entries(m as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string")) : {};
+  return {
+    artworkId: l.artworkId,
+    revision: typeof l.revision === "number" && Number.isFinite(l.revision) ? l.revision : 0,
+    regionMap: map(l.regionMap),
+    itemMap: map(l.itemMap),
+    assetIds: Array.isArray(l.assetIds) ? l.assetIds.filter((x): x is string => typeof x === "string") : [],
+    syncedAt: typeof l.syncedAt === "string" ? l.syncedAt : "",
   };
 }
 

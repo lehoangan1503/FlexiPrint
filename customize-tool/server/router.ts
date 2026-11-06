@@ -127,6 +127,7 @@ import { khuonAi } from "./print-khuon";
 import { aiTemplateBlank, uploadTemplateBlank } from "./print-blanks";
 import { createProductFromTemplate } from "./print-products";
 import * as artworks from "./artworks";
+import * as artworkLink from "./artwork-link";
 import * as fonts from "./fonts";
 import * as productMockups from "./product-mockups";
 import * as packs from "./mockup-packs";
@@ -295,6 +296,14 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return h.editorPhoto(session, id, await req.formData());
     } else if (sub === "print-pack" && method === "POST") {
       return h.editorPrintPack(session, id, await req.formData());
+    } else if (sub === "artwork" && !path[3] && method === "GET") {
+      return artworkLink.artworkStatus(session, id);
+    } else if (sub === "artwork-products" && !path[3] && method === "POST") {
+      return artworkLink.createFromArtwork(session, id, await readJson<unknown>(req));
+    } else if (sub === "artwork-products" && path[3] === "sync" && method === "POST") {
+      return artworkLink.syncManyFromArtwork(session, id, await readJson<unknown>(req));
+    } else if (sub === "artwork-sync" && !path[3] && method === "POST") {
+      return artworkLink.syncFromArtwork(session, id);
     } else if (sub === "artworks" && !path[3] && method === "GET") {
       return artworks.listProductArtworks(session, id);
     } else if (sub === "artworks" && !path[3] && method === "POST") {

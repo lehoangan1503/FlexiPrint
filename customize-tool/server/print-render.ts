@@ -39,8 +39,10 @@ export async function loadArtwork(db: PrintDb, productId: string): Promise<Artwo
   const subs = await inChunks(assetIds, (x) => db.from(CT_TABLES.assets).select("*").in("id", x).returns<CtAsset[]>());
   const variants = await inChunks(assetIds, (x) => db.from(CT_TABLES.assets).select("*").in("parent_id", x).returns<CtAsset[]>());
   // Every main version (a boy / a girl, 1–5 people — each has its own layers).
-  const { data: mains } = await db.from(CT_TABLES.assets).select("*").eq("product_id", productId).eq("role", "main").returns<CtAsset[]>();
   const config = normalizeProductConfig(product.config);
+  // A product made from an artwork draws the artwork's versions (server/artwork-link.ts).
+  const owners = [productId, ...(config.artworkLink ? [config.artworkLink.artworkId] : [])];
+  const { data: mains } = await db.from(CT_TABLES.assets).select("*").in("product_id", owners).eq("role", "main").returns<CtAsset[]>();
   const all = new Map([...(subs ?? []), ...(variants ?? []), ...(mains ?? [])].map((a) => [a.id, a]));
   return { product, regions: (regions ?? []).map(normalizeRegion), items: items ?? [], assets: [...all.values()], spec: config.print?.spec ?? null };
 }

@@ -5,6 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
+import type { CtArtworkProductRow, CtArtworkSource } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
   CtAgentStatus,
@@ -99,6 +100,14 @@ export const ctApi = {
   updateProduct: (id: string, body: CtUpdateProductBody) =>
     call<{ product: CtProduct }>(`products/${id}`, json("PATCH", body)).then((r) => r.product),
   deleteProduct: (id: string) => call<void>(`products/${id}`, { method: "DELETE" }),
+  /** Artwork ↔ products (server/artwork-link.ts). */
+  artworkStatus: (id: string) =>
+    call<{ revision: number; source: (CtArtworkSource & { linkedRevision: number }) | null; products: CtArtworkProductRow[] }>(`products/${id}/artwork`),
+  productFromArtwork: (artworkId: string, name?: string) =>
+    call<{ product: CtProduct }>(`products/${artworkId}/artwork-products`, json("POST", { name })).then((r) => r.product),
+  syncFromArtwork: (id: string) => call<{ product: CtProduct }>(`products/${id}/artwork-sync`, { method: "POST" }).then((r) => r.product),
+  syncManyFromArtwork: (artworkId: string, ids: string[]) =>
+    call<{ updated: string[]; failed: Array<{ id: string; error: string }> }>(`products/${artworkId}/artwork-products/sync`, json("POST", { ids })),
   saveDesign: (id: string, body: CtSaveDesignBody) => call<{ ok: true }>(`products/${id}/design`, json("PUT", body)),
   publish: (id: string) => call<{ product: CtProduct; publish: CtPublishResponse }>(`products/${id}/publish`, { method: "POST" }),
   deploy: (id: string, body: CtDeployBody) => call<CtDeployResponse>(`products/${id}/deploy`, json("POST", body)),

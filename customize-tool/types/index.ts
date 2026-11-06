@@ -802,6 +802,49 @@ export interface CtProductConfig {
    * solid black above the print, one file twice as tall (Merchize acrylic layout). null = plain print file.
    */
   printSilhouette: CtPrintSilhouette | null;
+  /**
+   * Artwork side (asked 2026-11-06): every "Lưu artwork" of a product that is not linked to another artwork bumps
+   * this number — products made from it compare their link's revision with it ("Có bản artwork mới").
+   */
+  artworkRevision: number;
+  /**
+   * Product side: this product was made from another product's artwork and holds a snapshot of its design (layers,
+   * options, versions, khuôn, print settings). Editing the artwork never changes it; "Cập nhật artwork" takes the
+   * artwork's current design again (one product, or many at once). null = the product is its own artwork.
+   */
+  artworkLink: CtArtworkLink | null;
+}
+
+/** CtProductConfig.artworkLink */
+export interface CtArtworkLink {
+  /** The product row that holds the artwork. */
+  artworkId: string;
+  /** The artwork's revision this snapshot was taken at. */
+  revision: number;
+  /** Artwork region / item id → this product's copy (kept across updates, so per-option mockups stay keyed). */
+  regionMap: Record<string, string>;
+  itemMap: Record<string, string>;
+  /** The artwork's own pictures (versions, uploads — not mockups) at snapshot time: the product reads only these, so
+   * a version the artwork adds later never shows up in it. */
+  assetIds: string[];
+  syncedAt: string;
+}
+
+/** GET products/:id/artwork-products — the products made from this artwork. */
+export interface CtArtworkProductRow {
+  id: string;
+  name: string;
+  revision: number;
+  published_version: number | null;
+  shopify: boolean;
+  updated_at: string;
+}
+
+/** The artwork a linked product points to, with its current revision (for the "Có bản artwork mới" badge). */
+export interface CtArtworkSource {
+  id: string;
+  name: string;
+  revision: number;
 }
 
 /** CtProductConfig.printSilhouette: how the silhouette is made from the print sheet. */
@@ -914,7 +957,7 @@ export interface CtMockupEdit {
 }
 
 /** What a published template carries (no design samples). */
-export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide">;
+export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink">;
 
 export interface CtProduct {
   id: string;
@@ -939,6 +982,10 @@ export interface CtProductListRow extends CtProduct {
   main_asset: Pick<CtAsset, "url" | "width" | "height"> | null;
   /** The product's first mockup (the card shows it before the main object). */
   mockup_url: string | null;
+  /** Made from an artwork (config.artworkLink): its name and whether the artwork has a newer revision. */
+  artwork_from?: { id: string; name: string; outdated: boolean } | null;
+  /** Products made from this artwork. */
+  artwork_users?: number;
 }
 
 export interface CtGeneration {

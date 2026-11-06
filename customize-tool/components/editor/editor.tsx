@@ -60,6 +60,7 @@ import { StorefrontPreview } from "./storefront-preview";
 import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zoneOptionView } from "./use-design";
 import { PrintDialog } from "./print-dialog";
 import { PrintPanel } from "./print-panel";
+import { ArtworkLinkBar } from "./artwork-link-bar";
 import { CLIPART_DRAG, SETS_CHANGED, isCharSetDrag, type CtCharSetDrag, type CtClipartDrag, type CtLibraryDrag } from "./library-panel";
 import { ctConfirm, ctPrompt } from "../dialogs";
 import { renderComposite } from "../../lib/compositor";
@@ -364,6 +365,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   }, [product, selection]);
 
   // ---------------------------------------------------------------- save
+  /** Bumped on every save: the artwork bar reloads (the artwork's revision moved). */
+  const [savedTick, setSavedTick] = useState(0);
   const save = useCallback(async (): Promise<boolean> => {
     if (!product) return false;
     setSaving(true);
@@ -373,6 +376,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       const config = { ...design.state.config, samples: savedSamples.current.samples };
       await ctApi.saveDesign(product.id, { regions: design.state.regions, items: design.state.items, config });
       design.markSaved();
+      setSavedTick((n) => n + 1);
       setNotice("Đã lưu");
       setTimeout(() => setNotice(null), 1500);
       // Every version is an artwork in the product's folder of the library (in the background).
@@ -1142,6 +1146,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             );
           })}
         </div>
+        <ArtworkLinkBar productId={product.id} productName={product.name} dirty={design.dirty} savedTick={savedTick} onFlash={flash} />
         {charSets.map((cs) => (
           <CtTooltip key={cs.id} label={`${cs.own ? "Bộ nhân vật dựng sản phẩm này" : "Bộ nhân vật đã kéo vào"}: ${cs.name}`}>
             <Link

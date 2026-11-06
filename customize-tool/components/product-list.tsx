@@ -132,9 +132,20 @@ export function CustomizeProductList({
                 <div className="flex items-center gap-2 p-2.5">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{p.name}</div>
+                    {p.artwork_from && <div className="truncate text-[10px] text-muted-foreground">từ artwork “{p.artwork_from.name}”</div>}
                     <div className="mt-0.5 flex items-center gap-1.5 whitespace-nowrap">
                       <span className={cx("rounded px-1.5 py-0.5 text-[10px] font-medium", STATUS_CLASS[p.status])}>{STATUS_LABEL[p.status]}</span>
                       {p.shopify && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-600">Đã deploy</span>}
+                      {p.artwork_from?.outdated && (
+                        <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600" title={`Artwork “${p.artwork_from.name}” đã có bản mới — mở sản phẩm để cập nhật`}>
+                          Artwork mới
+                        </span>
+                      )}
+                      {!!p.artwork_users && (
+                        <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-medium text-violet-600" title="Số sản phẩm làm từ artwork này">
+                          Artwork · {p.artwork_users} SP
+                        </span>
+                      )}
                       <span className="text-[10px] text-muted-foreground">{new Date(p.created_at).toLocaleDateString("vi-VN")}</span>
                     </div>
                   </div>

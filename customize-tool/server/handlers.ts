@@ -87,7 +87,27 @@ export async function listProducts(s: CtSession, search: string): Promise<NextRe
   // a product to sell — listed in Thư viện, not here.
   const { data: extracted } = await s.supabase.from(CT_TABLES.charProjects).select("product_ids").not("brief->extracted->>productId", "is", null).returns<Array<{ product_ids: string[] | null }>>();
   const hidden = new Set((extracted ?? []).flatMap((x) => x.product_ids ?? []));
-  const products: CtProductListRow[] = (data ?? []).filter((p) => !hidden.has(p.id)).map((p) => ({ ...p, mockup_url: first.get(p.id) ?? null }));
+  // Artwork ↔ products (server/artwork-link.ts): the source of a made product, newer or not; how many use an artwork.
+  const links = new Map((data ?? []).flatMap((p) => { const l = normalizeProductConfig(p.config).artworkLink; return l ? [[p.id, l] as const] : []; }));
+  const sourceIds = [...new Set([...links.values()].map((l) => l.artworkId))];
+  const { data: sources } = sourceIds.length
+    ? await s.supabase.from(CT_TABLES.products).select("id,name,config").in("id", sourceIds).returns<Array<Pick<CtProduct, "id" | "name" | "config">>>()
+    : { data: [] };
+  const sourceById = new Map((sources ?? []).map((x) => [x.id, x]));
+  const users = new Map<string, number>();
+  for (const l of links.values()) users.set(l.artworkId, (users.get(l.artworkId) ?? 0) + 1);
+  const products: CtProductListRow[] = (data ?? [])
+    .filter((p) => !hidden.has(p.id))
+    .map((p) => {
+      const l = links.get(p.id);
+      const src = l ? sourceById.get(l.artworkId) : undefined;
+      return {
+        ...p,
+        mockup_url: first.get(p.id) ?? null,
+        artwork_from: l ? { id: l.artworkId, name: src?.name ?? "(artwork đã xoá)", outdated: !!src && normalizeProductConfig(src.config).artworkRevision > l.revision } : null,
+        artwork_users: users.get(p.id) ?? 0,
+      };
+    });
   return NextResponse.json({ products });
 }
 
@@ -153,6 +173,9 @@ export async function updateProduct(s: CtSession, productId: string, body: CtUpd
 
 export async function deleteProduct(s: CtSession, productId: string): Promise<NextResponse> {
   if (!(await ownedProduct(s, productId))) return jsonError("Không có quyền xoá sản phẩm này", 403);
+  // An artwork that products were made from: they read its pictures (server/artwork-link.ts).
+  const { data: users } = await s.supabase.from(CT_TABLES.products).select("name").eq("config->artworkLink->>artworkId", productId).returns<Array<{ name: string }>>();
+  if (users?.length) return jsonError(`Artwork này đang dùng ở ${users.length} sản phẩm (${users.map((u) => u.name).slice(0, 3).join(", ")}) — xoá các sản phẩm đó trước`, 409);
   const { data: assets } = await s.supabase.from(CT_TABLES.assets).select("storage_path").eq("product_id", productId);
   await ctRemove((assets ?? []).map((a: { storage_path: string }) => a.storage_path));
   const { error } = await s.supabase.from(CT_TABLES.products).delete().eq("id", productId);
@@ -161,7 +184,8 @@ export async function deleteProduct(s: CtSession, productId: string): Promise<Ne
 }
 
 export async function saveDesign(s: CtSession, productId: string, body: CtSaveDesignBody): Promise<NextResponse> {
-  if (!(await ownedProduct(s, productId))) return jsonError("Không có quyền sửa sản phẩm này", 403);
+  const owned = await ownedProduct(s, productId);
+  if (!owned) return jsonError("Không có quyền sửa sản phẩm này", 403);
   const regions = Array.isArray(body.regions) ? body.regions : [];
   const regionIds = new Set(regions.map((r) => r.id));
   const items = (Array.isArray(body.items) ? body.items : []).filter((i) => regionIds.has(i.region_id));
@@ -174,11 +198,22 @@ export async function saveDesign(s: CtSession, productId: string, body: CtSaveDe
   if (body.config) {
     const { error: cfgErr } = await s.supabase
       .from(CT_TABLES.products)
-      .update({ config: normalizeProductConfig(body.config) })
+      .update({ config: withArtworkRevision(normalizeProductConfig(body.config), owned) })
       .eq("id", productId);
     if (cfgErr) return jsonError(missingMigration(cfgErr.message) ?? cfgErr.message, 500);
   }
   return NextResponse.json({ ok: true });
+}
+
+/**
+ * The artwork bookkeeping is the server's (never the editor's copy, which may be stale): a product made from an
+ * artwork keeps its link as stored; an artwork's save is one more revision (products made from it then show
+ * "Có bản artwork mới").
+ */
+function withArtworkRevision(cfg: CtProductConfig, stored: CtProduct): CtProductConfig {
+  const prev = normalizeProductConfig(stored.config);
+  if (prev.artworkLink) return { ...cfg, artworkLink: prev.artworkLink, artworkRevision: prev.artworkRevision };
+  return { ...cfg, artworkLink: null, artworkRevision: prev.artworkRevision + 1 };
 }
 
 /** Friendlier error when migrations/002 has not been run yet. */
@@ -816,6 +851,16 @@ export async function deleteAsset(s: CtSession, assetId: string): Promise<NextRe
   // Library cliparts: refused while a product still uses them.
   if (asset.product_id === null) return deleteClipart(s, assetId);
   if (asset.user_id !== s.user.id && !(await isAdmin(s))) return jsonError("Không có quyền xoá asset này", 403);
+  // A picture of an artwork that products made from it still use (server/artwork-link.ts): they keep the old design.
+  if (asset.role !== "mockup") {
+    const { data: users } = await s.supabase
+      .from(CT_TABLES.products)
+      .select("name,config")
+      .eq("config->artworkLink->>artworkId", asset.product_id)
+      .returns<Array<Pick<CtProduct, "name" | "config">>>();
+    const using = (users ?? []).filter((p) => normalizeProductConfig(p.config).artworkLink?.assetIds.includes(assetId));
+    if (using.length) return jsonError(`Ảnh này đang dùng ở ${using.length} sản phẩm làm từ artwork (${using.map((p) => p.name).slice(0, 3).join(", ")}) — cập nhật các sản phẩm đó lên bản artwork mới trước khi xoá`, 409);
+  }
   // Variants cascade in the DB; collect their files first.
   const { data: children } = await s.supabase.from(CT_TABLES.assets).select("storage_path").eq("parent_id", assetId);
   const { error } = await s.supabase.from(CT_TABLES.assets).delete().eq("id", assetId);

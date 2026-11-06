@@ -30,7 +30,7 @@ import type {
   CtUpdateClipartBody,
 } from "../types";
 import { asLayerClipart, asMainOption, asVersion, memberRole, normalizeCategoryRules, originRole } from "../lib/library";
-import { normalizeSubOptions } from "../lib/design";
+import { normalizeProductConfig, normalizeSubOptions } from "../lib/design";
 import { isAdmin } from "./ai-styles";
 import { readImageInfo } from "./image-size";
 import { r2PublicUrl } from "./r2";
@@ -720,11 +720,19 @@ async function loadGroupExtras(db: Db, product: CtProduct, regions: CtRegion[], 
 
 /** Every asset the editor / publish needs: the product's own + the library cliparts it uses. */
 export async function loadProductAssets(db: Db, product: CtProduct, items: CtRegionItem[], regions: CtRegion[] = []): Promise<CtAsset[]> {
+  // A product made from an artwork (server/artwork-link.ts) uses the artwork's own pictures — its versions, uploads,
+  // vật liệu — never its mockups (the product has its own).
+  const link = normalizeProductConfig(product.config).artworkLink;
+  const artworkId = link?.artworkId ?? null;
+  // Only the pictures the snapshot was taken with (link.assetIds): a version added to the artwork later stays out.
+  const fromArtwork: CtAsset[] = link?.assetIds.length
+    ? await inChunks(link.assetIds, (x) => db.from(CT_TABLES.assets).select("*").in("id", x).eq("product_id", link.artworkId).returns<CtAsset[]>())
+    : [];
   const [{ data: own }, { data: links }] = await Promise.all([
     db.from(CT_TABLES.assets).select("*").eq("product_id", product.id).order("sort_order").order("created_at").returns<CtAsset[]>(),
     db.from(CT_TABLES.productMains).select("asset_id").eq("product_id", product.id).returns<Array<{ asset_id: string }>>(),
   ]);
-  const ownList = own ?? [];
+  const ownList = [...(own ?? []), ...fromArtwork];
   const ownIds = new Set(ownList.map((a) => a.id));
   const wanted = new Set<string>([...items.map((i) => i.asset_id), ...(links ?? []).map((l) => l.asset_id)]);
   if (product.main_asset_id) wanted.add(product.main_asset_id);
@@ -734,7 +742,7 @@ export async function loadProductAssets(db: Db, product: CtProduct, items: CtReg
   const withOptions = [...list, ...(await loadSubOptions(db, product, new Set(list.map((a) => a.id))))];
   const all = [...withOptions, ...(await loadGroupExtras(db, product, regions, new Set(withOptions.map((a) => a.id))))];
   // A vật liệu made theo khuôn belongs to the product whose khuôn it was cut to.
-  return all.filter((a) => !a.meta?.frame || a.meta.frame.productId === product.id);
+  return all.filter((a) => !a.meta?.frame || a.meta.frame.productId === product.id || (!!artworkId && a.meta.frame.productId === artworkId));
 }
 
 // ---------------------------------------------------------------------------

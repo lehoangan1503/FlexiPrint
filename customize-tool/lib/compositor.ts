@@ -648,7 +648,7 @@ async function silhouetteOfCut(w: number, h: number, cut: SilhouetteCut): Promis
 
 /**
  * A hanging tab with its hole (asked 2026-11-06, like Teeinblue's ornament silhouettes): a black ring centred over the
- * shape's top edge, its hole cut through. `size` = the ring's outer diameter as a % of the sheet's width.
+ * shape's top edge, its hole cut through. `size` = the ring's outer diameter as a % of the shape's width.
  */
 export function addHangingHole(sil: HTMLCanvasElement, size = 9): void {
   const w = sil.width;
@@ -676,7 +676,8 @@ export function addHangingHole(sil: HTMLCanvasElement, size = 9): void {
       top = y;
       break;
     }
-  const R = Math.max(6, (w * Math.max(2, Math.min(25, size))) / 200);
+  // Sized on the piece, not the sheet (a small figure on a wide sheet keeps a small tab) — Teeinblue's are ~8–10 %.
+  const R = Math.max(6, ((x1 - x0 + 1) * Math.max(2, Math.min(25, size))) / 200);
   const cy = Math.max(R, top - R * 0.45);
   ctx.save();
   ctx.fillStyle = "#000";

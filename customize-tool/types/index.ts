@@ -811,7 +811,7 @@ export interface CtPrintSilhouette {
   offset: number;
   /** A hanging tab with a round hole at the top centre of the shape (ornaments). */
   hole: boolean;
-  /** The tab's outer diameter, % of the print width (default 9). */
+  /** The tab's outer diameter, % of the shape's width (default 9). */
   holeSize: number;
 }
 

@@ -352,7 +352,7 @@ export function PrintPanel(props: PrintPanelProps) {
             </label>
           )}
           {sil?.hole && !(cutFrame && (cutFrame.config.cuts ?? []).length > 0) && (
-            <label className="flex items-center gap-1.5 text-muted-foreground" title="Đường kính ngoài của tai treo, % chiều rộng file in">
+            <label className="flex items-center gap-1.5 text-muted-foreground" title="Đường kính ngoài của tai treo, % chiều rộng của hình">
               Cỡ
               <input
                 type="number"

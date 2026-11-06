@@ -17,7 +17,7 @@ import { BookmarkPlus, Download, Eye, EyeOff, Loader2, Scissors, Settings2, Uplo
 import type { CtAsset, CtMainLayout, CtMaterialConfig, CtPrintGuide, CtPrintSilhouette, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import type { CtProductPrint } from "../../types/print";
 import { displayAssets } from "../../lib/library";
-import { canvasToBlob, mirrorSheet, printFrame, renderComposite, withSilhouette } from "../../lib/compositor";
+import { canvasToBlob, mirrorSheet, printFrame, renderComposite, silhouetteCutOf, withSilhouette } from "../../lib/compositor";
 import { frameSvgPath } from "../../lib/material-frame";
 import { normalizeSamples } from "../../lib/design";
 import { printSize } from "../../lib/print-template";
@@ -124,7 +124,8 @@ export function PrintPanel(props: PrintPanelProps) {
   /** The print file: the sheet — and, a khuôn made as one half (spec.mirror), its mirror image beside it. */
   const printCanvas = async (): Promise<HTMLCanvasElement> => {
     const sheet = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts, ...sizeArgs });
-    return withSilhouette(props.print?.spec.mirror ? mirrorSheet(sheet) : sheet, props.printSilhouette);
+    // The silhouette follows the khuôn when the file is cut to one (its outline + holes), else the print's own shape.
+    return withSilhouette(mirror ? mirrorSheet(sheet) : sheet, props.printSilhouette, silhouetteCutOf(cutFrame, mirror));
   };
 
   useEffect(() => {
@@ -151,7 +152,7 @@ export function PrintPanel(props: PrintPanelProps) {
       if (url) URL.revokeObjectURL(url);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sizeArgs follows sizeId
-  }, [main, assets, regions, items, selection, layouts, sizeId, sil?.offset, !!sil]);
+  }, [main, assets, regions, items, selection, layouts, sizeId, sil?.offset, sil?.hole, sil?.holeSize, !!sil]);
 
   const download = async () => {
     setSaving(true);
@@ -334,11 +335,37 @@ export function PrintPanel(props: PrintPanelProps) {
               type="checkbox"
               className="accent-sky-500"
               checked={!!sil}
-              onChange={(e) => props.onPrintSilhouette(e.target.checked ? { enabled: true, offset: props.printSilhouette?.offset ?? 0 } : null)}
+              onChange={(e) => props.onPrintSilhouette(e.target.checked ? { enabled: true, offset: props.printSilhouette?.offset ?? 0, hole: props.printSilhouette?.hole ?? true, holeSize: props.printSilhouette?.holeSize ?? 9 } : null)}
             />
             Silhouette
           </label>
           {sil && (
+            <span className="text-muted-foreground" title={cutFrame ? "Silhouette lấy đúng hình khuôn của sản phẩm (đường cắt + lỗ)" : "Không có khuôn: silhouette lấy theo viền bản in"}>
+              {cutFrame ? `theo khuôn "${cutFrame.name}"` : "theo viền bản in"}
+            </span>
+          )}
+          {sil && (
+            <label className="flex cursor-pointer items-center gap-1.5" title="Tai treo tròn có lỗ ở giữa mép trên của hình (ornament)">
+              <input type="checkbox" className="accent-sky-500" checked={sil.hole} onChange={(e) => props.onPrintSilhouette({ ...sil, hole: e.target.checked })} />
+              Lỗ treo
+            </label>
+          )}
+          {sil?.hole && (
+            <label className="flex items-center gap-1.5 text-muted-foreground" title="Đường kính ngoài của tai treo, % chiều rộng file in">
+              Cỡ
+              <input
+                type="number"
+                min={2}
+                max={25}
+                step={0.5}
+                value={sil.holeSize}
+                onChange={(e) => props.onPrintSilhouette({ ...sil, holeSize: Math.max(2, Math.min(25, Number(e.target.value) || 9)) })}
+                className="w-14 rounded border bg-background px-1.5 py-0.5 tabular-nums"
+              />
+              %
+            </label>
+          )}
+          {sil && !cutFrame && (
             <label className="flex items-center gap-1.5 text-muted-foreground" title="Nới hình khối ra ngoài mép bản in (px của file in)">
               Nới viền
               <input
@@ -346,7 +373,7 @@ export function PrintPanel(props: PrintPanelProps) {
                 min={0}
                 max={60}
                 value={sil.offset}
-                onChange={(e) => props.onPrintSilhouette({ enabled: true, offset: Math.max(0, Math.min(60, Math.round(Number(e.target.value) || 0))) })}
+                onChange={(e) => props.onPrintSilhouette({ ...sil, offset: Math.max(0, Math.min(60, Math.round(Number(e.target.value) || 0))) })}
                 className="w-14 rounded border bg-background px-1.5 py-0.5 tabular-nums"
               />
               px

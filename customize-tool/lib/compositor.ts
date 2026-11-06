@@ -11,7 +11,7 @@ import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, textBand 
 export { textBand };
 import { activeRegions, normalizeRegion, regionForSelection, resolveLinked, selectedMainId, textColorFromOption, selectedMainImageId, textMode, zoneText } from "./design";
 import { mainFrameFor, resolveLayout } from "./layout";
-import { frameRegionFor, renditionFrameBox, traceFrame } from "./material-frame";
+import { frameRegionFor, frameSvgPath, renditionFrameBox, traceFrame } from "./material-frame";
 import { scaleShape } from "./print-template";
 
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
@@ -613,21 +613,112 @@ export function silhouetteOf(sheet: HTMLCanvasElement, offset = 0): HTMLCanvasEl
   return out;
 }
 
+/** Where the silhouette's shape comes from when the product has a khuôn (CtRegion material frame): its cut line. */
+export interface SilhouetteCut {
+  /** The khuôn's outline + holes as an SVG path in the sheet's px (lib/material-frame.ts frameSvgPath). */
+  path?: string;
+  /** A khuôn cut by an AI mask: the mask picture (alpha = the piece), stretched to the sheet. */
+  maskUrl?: string;
+}
+
+/** A solid black shape of the khuôn on a transparent sheet of `w` × `h`. */
+async function silhouetteOfCut(w: number, h: number, cut: SilhouetteCut): Promise<HTMLCanvasElement | null> {
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D không khả dụng");
+  if (cut.path) {
+    ctx.fillStyle = "#000";
+    ctx.fill(new Path2D(cut.path), "evenodd");
+    return out;
+  }
+  if (cut.maskUrl) {
+    const img = await loadImage(cut.maskUrl);
+    ctx.drawImage(img, 0, 0, w, h);
+    ctx.globalCompositeOperation = "source-in";
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, w, h);
+    return out;
+  }
+  return null;
+}
+
+/**
+ * A hanging tab with its hole (asked 2026-11-06, like Teeinblue's ornament silhouettes): a black ring centred over the
+ * shape's top edge, its hole cut through. `size` = the ring's outer diameter as a % of the sheet's width.
+ */
+export function addHangingHole(sil: HTMLCanvasElement, size = 9): void {
+  const w = sil.width;
+  const h = sil.height;
+  const ctx = sil.getContext("2d");
+  if (!ctx) return;
+  const a = ctx.getImageData(0, 0, w, h).data;
+  // The shape's box (alpha ≥ 128).
+  let x0 = w;
+  let x1 = -1;
+  let y0 = h;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      if (a[(y * w + x) * 4 + 3] >= 128) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+      }
+  if (x1 < 0) return;
+  const cx = Math.round((x0 + x1) / 2);
+  // The top of the shape right under the ring's centre (a dome is lower there than the box's top only at its sides).
+  let top = y0;
+  for (let y = y0; y < h; y++)
+    if (a[(y * w + cx) * 4 + 3] >= 128) {
+      top = y;
+      break;
+    }
+  const R = Math.max(6, (w * Math.max(2, Math.min(25, size))) / 200);
+  const cy = Math.max(R, top - R * 0.45);
+  ctx.save();
+  ctx.fillStyle = "#000";
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.fill();
+  // A neck so the ring is one piece with the shape below it.
+  ctx.fillRect(cx - R * 0.6, cy, R * 1.2, Math.max(0, top - cy) + R * 0.5);
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.beginPath();
+  ctx.arc(cx, cy, R * 0.42, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 /** The print sheet with its silhouette above it (Merchize / Teeinblue acrylic layout): one file twice as tall. */
-export function silhouetteStack(sheet: HTMLCanvasElement, offset = 0): HTMLCanvasElement {
+export function silhouetteStack(sheet: HTMLCanvasElement, sil: HTMLCanvasElement): HTMLCanvasElement {
   const out = document.createElement("canvas");
   out.width = sheet.width;
   out.height = sheet.height * 2;
   const ctx = out.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D không khả dụng");
-  ctx.drawImage(silhouetteOf(sheet, offset), 0, 0);
+  ctx.drawImage(sil, 0, 0);
   ctx.drawImage(sheet, 0, sheet.height);
   return out;
 }
 
-/** Apply the product's silhouette setting (CtProductConfig.printSilhouette) to a finished print sheet. */
-export function withSilhouette(sheet: HTMLCanvasElement, cfg: CtPrintSilhouette | null | undefined): HTMLCanvasElement {
-  return cfg?.enabled ? silhouetteStack(sheet, cfg.offset) : sheet;
+/**
+ * Apply the product's silhouette setting (CtProductConfig.printSilhouette) to a finished print sheet: the khuôn's own
+ * shape when the product has one (`cut`), else the print's outer shape grown by `offset`; + the hanging hole.
+ */
+export async function withSilhouette(sheet: HTMLCanvasElement, cfg: CtPrintSilhouette | null | undefined, cut?: SilhouetteCut | null): Promise<HTMLCanvasElement> {
+  if (!cfg?.enabled) return sheet;
+  const sil = (cut ? await silhouetteOfCut(sheet.width, sheet.height, cut) : null) ?? silhouetteOf(sheet, cfg.offset);
+  if (cfg.hole) addHangingHole(sil, cfg.holeSize);
+  return silhouetteStack(sheet, sil);
+}
+
+/** The silhouette's khuôn for a print sheet cut to its frame (none for a mirrored sheet: it follows the print). */
+export function silhouetteCutOf(frame: CtRegion | null, mirrored: boolean): SilhouetteCut | null {
+  if (!frame || mirrored) return null;
+  if (frame.config.maskUrl) return { maskUrl: frame.config.maskUrl };
+  const path = frameSvgPath(frame);
+  return path ? { path } : null;
 }
 
 const fontFiles = new Map<string, Promise<void>>();

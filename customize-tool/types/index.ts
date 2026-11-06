@@ -807,8 +807,12 @@ export interface CtProductConfig {
 /** CtProductConfig.printSilhouette: how the silhouette is made from the print sheet. */
 export interface CtPrintSilhouette {
   enabled: boolean;
-  /** px the shape grows past the printed pixels (the cut margin), 0–60. */
+  /** px the shape grows past the printed pixels (the cut margin), 0–60. Not used when the product has a khuôn. */
   offset: number;
+  /** A hanging tab with a round hole at the top centre of the shape (ornaments). */
+  hole: boolean;
+  /** The tab's outer diameter, % of the print width (default 9). */
+  holeSize: number;
 }
 
 /** A reference picture over the print file (CtProductConfig.printGuide): stretched to the print file's box. */

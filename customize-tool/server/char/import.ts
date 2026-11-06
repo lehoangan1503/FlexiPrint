@@ -43,6 +43,7 @@ import { applyMaterialPreset, isMaterialId } from "../../lib/materials";
 import { createAgentTask, setAgentChats } from "../agent/tasks";
 import { loadFont, textSvg } from "../print-text";
 import { placePiece } from "./import-place";
+import { autoColorSync } from "../color-sync";
 import { findProductFolder, productFolder } from "../artworks";
 import * as h from "../handlers";
 import { readImageInfo } from "../image-size";
@@ -781,7 +782,10 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     if (m.versions.length > 1) config.main = { ...config.main, enabled: true, label: m.versionLabel || "Version", display: "button", subOptions: [] };
     const material = m.material && isMaterialId(m.material) ? m.material : m.cut === "alpha" ? "acrylic_clear" : null;
     config.material = { ...(material ? applyMaterialPreset(config.material, material) : config.material), widthMm: m.widthMm || config.material.widthMm };
-    await body(await h.saveDesign(s, product.id, { regions: regions.map((r, i) => ({ ...r, sort_order: i })), items, config }));
+    // Texts drawn in a colour layer's colour follow that layer's option (a red theme → a red name), asked 2026-11-06.
+    const synced = await autoColorSync(regions, items, await optionAssets(db, items));
+    if (synced.linked) console.info(`[ct] import ${p.id}: ${synced.linked} chữ đổi màu theo option`);
+    await body(await h.saveDesign(s, product.id, { regions: synced.regions.map((r, i) => ({ ...r, sort_order: i })), items, config }));
     await db.from(CT_TABLES.products).update({ main_asset_id: mains[0].id }).eq("id", product.id);
     // The versions' tiles: a picture of each version as built (asked 2026-11-04 — the store showed "Red / Gre / Rei").
     if (m.versions.length > 1) {
@@ -1036,6 +1040,19 @@ async function dropLeftovers(db: Db, p: CtCharProject, userId: string): Promise<
     if ((data ?? []).length < 1000) break;
   }
   await ctRemove(thumbs.filter((k) => !used.has(k.split("/").pop() ?? "")));
+}
+
+/** The option pictures of these layer items: each group's first clipart and its đa sắc. */
+async function optionAssets(db: Db, items: CtRegionItem[]): Promise<CtAsset[]> {
+  const ids = [...new Set(items.map((i) => i.asset_id))];
+  const out: CtAsset[] = [];
+  for (let i = 0; i < ids.length; i += 60) {
+    const part = ids.slice(i, i + 60);
+    const { data: subs } = await db.from(CT_TABLES.assets).select("*").in("id", part).returns<CtAsset[]>();
+    const { data: kids } = await db.from(CT_TABLES.assets).select("*").in("parent_id", part).returns<CtAsset[]>();
+    out.push(...(subs ?? []), ...(kids ?? []));
+  }
+  return out;
 }
 
 /** A product of the set with its clipart folder (its files on R2 too). */

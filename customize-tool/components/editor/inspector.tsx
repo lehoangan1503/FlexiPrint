@@ -62,7 +62,7 @@ import { useAiStyles } from "./ai-styles-store";
 import { processPhoto } from "../../lib/photo-process";
 import { ctApi } from "../../lib/api-client";
 import { OptionThumb } from "./option-thumb";
-import { TextColorBy } from "./text-color-by";
+import { ColorLayerTexts, TextColorBy } from "./text-color-by";
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtNumber, CtSelect, CtTextarea, CtTooltip, cx } from "../ui";
 import type { DesignApi } from "./use-design";
 import { updateItem, updateRegion } from "./use-design";
@@ -1391,6 +1391,20 @@ function ImageProps(props: InspectorProps & { region: CtRegion }) {
   return (
     <div className="space-y-2 border-t pt-3">
       {leader && <p className="text-[11px] text-muted-foreground">Đổi theo layer “{leader.name}”</p>}
+      <ColorLayerTexts
+        region={region}
+        regions={design.state.regions}
+        items={design.state.items}
+        assets={assets}
+        onLink={(links) =>
+          design.commit((st) =>
+            links.reduce(
+              (acc, l) => updateRegion(acc, l.textId, (r) => { const n = normalizeRegion(r); return { ...n, config: { ...n.config, text: { ...n.config.text, colorBy: l.colorBy } } }; }),
+              st,
+            ),
+          )
+        }
+      />
       {items.length > 0 && (
         <>
           <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Ảnh ({items.length})</div>

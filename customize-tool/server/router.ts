@@ -231,6 +231,11 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     return path[3] === "ai" ? aiTemplateBlank(session, id) : uploadTemplateBlank(session, id, await req.formData());
   }
   if (head === "products" && id === "from-template" && !sub && method === "POST") return createProductFromTemplate(session, (await readJson<Record<string, unknown>>(req)) ?? {});
+  // Not an id: must come before the UUID check below (it answered "id không hợp lệ" to every upload, 2026-11-06).
+  if (head === "ai-styles" && id === "refs" && !sub && method === "POST") {
+    const form = await req.formData().catch(() => null);
+    return st.uploadAiStyleRefs(session, form);
+  }
   if (id && !UUID.test(id)) return h.jsonError("id không hợp lệ", 400);
   if (head === "print-templates" && !sub) {
     if (!id && method === "GET") return printTpl.listTemplates(session);
@@ -246,10 +251,6 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     if (!id && method === "POST") return prices.createPriceTable(session, await readJson<unknown>(req));
     if (id && method === "PATCH") return prices.updatePriceTable(session, id, await readJson<unknown>(req));
     if (id && method === "DELETE") return prices.deletePriceTable(session, id);
-  }
-  if (head === "ai-styles" && id === "refs" && !sub && method === "POST") {
-    const form = await req.formData().catch(() => null);
-    return st.uploadAiStyleRefs(session, form);
   }
   if (head === "ai-styles" && id && sub === "demo" && method === "POST") {
     const form = await req.formData().catch(() => null);

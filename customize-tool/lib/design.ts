@@ -329,7 +329,8 @@ function normalizePrintSilhouette(raw: unknown): CtPrintSilhouette | null {
   const g = raw as Partial<CtPrintSilhouette>;
   if (!g.enabled) return null;
   const off = typeof g.offset === "number" && Number.isFinite(g.offset) ? Math.round(g.offset) : 0;
-  return { enabled: true, offset: Math.max(0, Math.min(60, off)) };
+  const size = typeof g.holeSize === "number" && Number.isFinite(g.holeSize) ? g.holeSize : 9;
+  return { enabled: true, offset: Math.max(0, Math.min(60, off)), hole: g.hole !== false, holeSize: Math.max(2, Math.min(25, Math.round(size * 10) / 10)) };
 }
 
 function normalizePrintGuide(raw: unknown): CtPrintGuide | null {

@@ -216,7 +216,7 @@ export function PrintPanel(props: PrintPanelProps) {
       const entries = [
         { name: `${base}-print.png`, data: await bytes(full) },
         { name: `${base}-thiet-ke-tren-khuon.png`, data: await bytes(p.onKhuon) },
-        { name: `${base}-khuon-trong.png`, data: await bytes(p.blank) },
+        { name: `${base}-silhouette-khuon.png`, data: await bytes(p.blank) },
       ];
       if (sil) entries.push({ name: `${base}-print-khong-silhouette.png`, data: await bytes(sheet) });
       if (cutPath) entries.push({ name: `${base}-cut.svg`, data: new TextEncoder().encode(cutSvg(cutPath, main.width, main.height, mirror, material.id !== "none" ? material.widthMm : 0)) });
@@ -309,7 +309,7 @@ export function PrintPanel(props: PrintPanelProps) {
         <div className="flex rounded-md border p-0.5">
           {(
             [
-              ["pair", "Thiết kế trong khuôn + khuôn trống"],
+              ["pair", "Thiết kế trong khuôn + silhouette"],
               ["file", "print.png"],
             ] as Array<["pair" | "file", string]>
           ).map(([k, label]) => (
@@ -342,7 +342,7 @@ export function PrintPanel(props: PrintPanelProps) {
           <CtButton size="sm" variant="outline" onClick={() => void download()} disabled={saving || !shot}>
             <Download className="h-3.5 w-3.5" /> Tải print.png
           </CtButton>
-          <CtButton size="sm" onClick={() => void downloadPack()} disabled={saving || !shot} title="print.png + thiết kế trên khuôn + khuôn trống (+ cut.svg, bản không silhouette) trong 1 file zip cho xưởng">
+          <CtButton size="sm" onClick={() => void downloadPack()} disabled={saving || !shot} title="print.png + thiết kế trên khuôn + silhouette khuôn full đen (+ cut.svg, bản không silhouette) trong 1 file zip cho xưởng">
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Package className="h-3.5 w-3.5" />} Tải gói file in
           </CtButton>
         </div>
@@ -446,7 +446,7 @@ export function PrintPanel(props: PrintPanelProps) {
           {(
             [
               ["onKhuon", "Thiết kế nằm trong khuôn", "Bản in đặt đúng trên khuôn, đường hồng = đường cắt"],
-              ["blank", "Khuôn in (trống)", "Cùng kích thước px — đặt bản bên trái chồng lên là ra sản phẩm"],
+              ["blank", "Silhouette khuôn (full đen)", "Như Teeinblue — cùng kích thước px, đặt bản bên trái chồng lên là ra sản phẩm"],
             ] as Array<["onKhuon" | "blank", string, string]>
           ).map(([k, title, hint]) => (
             <figure key={k} className="flex min-h-0 flex-col items-center gap-2">

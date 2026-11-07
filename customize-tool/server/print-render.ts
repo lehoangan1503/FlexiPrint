@@ -51,7 +51,7 @@ export async function loadArtwork(db: PrintDb, productId: string): Promise<Artwo
 export function safeReport(b: ArtworkBundle): Array<{ layer: string; kind: string; box: { x: number; y: number; w: number; h: number }; inSafe: boolean }> {
   if (!b.spec) return [];
   return b.regions
-    .filter((r) => !r.config.materialFrame && !r.config.fill && !r.config.printOnly)
+    .filter((r) => !r.config.materialFrame && !r.config.fill && !r.config.printOnly && !r.config.previewOnly)
     .map((r) => {
       const box = shapeBounds(r.shape);
       return { layer: r.name, kind: r.kind, box: { x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h) }, inSafe: boundsInSafe(b.spec as CtPrintSpec, box) };
@@ -91,6 +91,8 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
   // A child layer only while its parent shows its option (a boy's hair while "Grandchild 1" is "Boy").
   for (const r of activeRegions([...b.regions].sort((x, y) => x.sort_order - y.sort_order), chosen)) {
     if (r.config.materialFrame) continue;
+    // The print file never has a preview-only layer (a blank scene, a sample text the photo shows).
+    if (!guides && r.config.previewOnly) continue;
     const sel = chosen[r.id];
     const bounds = shapeBounds(r.shape);
     if (r.kind === "image" && sel.kind === "image" && sel.assetId) {

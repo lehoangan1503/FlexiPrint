@@ -6,6 +6,6 @@ import { shapeBounds } from "../../lib/geometry";
 import { boundsInSafe } from "../../lib/print-template";
 
 export function outsideSafe(print: CtProductPrint | null, r: CtRegion): boolean {
-  if (!print || r.config.materialFrame || r.config.fill || r.config.printOnly) return false;
+  if (!print || r.config.materialFrame || r.config.fill || r.config.printOnly || r.config.previewOnly) return false;
   return !boundsInSafe(print.spec, shapeBounds(r.shape));
 }

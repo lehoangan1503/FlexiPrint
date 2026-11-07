@@ -413,6 +413,11 @@ export interface CtRegionConfig {
    */
   printOnly?: boolean;
   /**
+   * Shown on the preview / product photo only, never in the print file (asked 2026-11-07, Teeinblue's "Preview
+   * (preview only)" group): a decoration that sells the look — a preview-only blank scene, a sample text, a shadow.
+   */
+  previewOnly?: boolean;
+  /**
    * A layer of a bộ nhân vật v2 dropped from the library (asked 2026-10-29): the set's layers land together, pixel
    * for pixel as the set built them, and are listed as ONE "bộ" layer with its own layers under it.
    */

@@ -148,7 +148,9 @@ function drawPlan(input: CompositeInput): { selection: CtSelection; mainId: stri
   // Child zones only while their parent shows the option they belong to.
   const regions = activeRegions(resolved.regions.map(normalizeRegion), selection)
     .map((r) => textColorFromOption(regionForSelection(normalizeRegion(r), selection[r.id]), selection))
-    .filter((r) => !(input.display && r.config.printOnly))
+    // Print only / preview only (Teeinblue's two groups): a picture of the product leaves out what only the factory
+    // gets, the print file what only the customer sees.
+    .filter((r) => (input.display ? !r.config.printOnly : !r.config.previewOnly))
     .sort((a, b) => a.sort_order - b.sort_order);
   return { selection, mainId, items: resolved.items, regions };
 }
@@ -794,8 +796,9 @@ function shapeEdge(shape: HTMLCanvasElement, px: number, color: string): HTMLCan
 /**
  * The two files the factory lays on each other (asked 2026-11-07: "preview nằm trong khuôn in và khuôn in (rỗng) để
  * ghép đôi"), both exactly the print sheet's px:
- *   blank    the empty khuôn — the piece's shape in white with its line (magenta), transparent outside;
- *   onKhuon  the same khuôn with the print on it and the line on top — laid on `blank`, it is the finished piece.
+ *   blank    the empty khuôn as Teeinblue's "Print silhouette": the piece's shape in SOLID BLACK, transparent outside
+ *            (asked 2026-11-07 — no white fill, no line);
+ *   onKhuon  the khuôn (white) with the print on it and the cut line on top — laid on `blank`, it is the piece.
  * The shape is the khuôn's own (cut line / mask), else the print's outline (an acrylic cut along the art), else the
  * whole sheet.
  */
@@ -825,16 +828,18 @@ export async function khuonPair(sheet: HTMLCanvasElement, input: KhuonPairInput)
   if (!bctx) throw new Error("Canvas 2D không khả dụng");
   bctx.drawImage(shape, 0, 0);
   bctx.globalCompositeOperation = "source-in";
-  bctx.fillStyle = "#fff";
+  bctx.fillStyle = "#000";
   bctx.fillRect(0, 0, w, h);
-  bctx.globalCompositeOperation = "source-over";
-  bctx.drawImage(edge, 0, 0);
   const onKhuon = document.createElement("canvas");
   onKhuon.width = w;
   onKhuon.height = h;
   const octx = onKhuon.getContext("2d");
   if (!octx) throw new Error("Canvas 2D không khả dụng");
-  octx.drawImage(blank, 0, 0);
+  octx.drawImage(shape, 0, 0);
+  octx.globalCompositeOperation = "source-in";
+  octx.fillStyle = "#fff";
+  octx.fillRect(0, 0, w, h);
+  octx.globalCompositeOperation = "source-over";
   octx.drawImage(sheet, 0, 0);
   octx.drawImage(edge, 0, 0);
   return { blank, onKhuon };

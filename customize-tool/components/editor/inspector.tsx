@@ -365,7 +365,8 @@ export function Inspector(props: InspectorProps) {
                     </span>
                   )}
                   {r.config.fill && <span className="ml-1 text-[10px] text-muted-foreground">{r.config.fill.mode === "tile" ? "hoa văn" : "phủ"}</span>}
-                  {r.config.printOnly && <span className="ml-1 text-[10px] text-muted-foreground">chỉ in</span>}
+                  {r.config.printOnly && <span className="ml-1 rounded bg-orange-500/15 px-1 text-[10px] text-orange-600">chỉ in</span>}
+                  {r.config.previewOnly && <span className="ml-1 rounded bg-sky-500/15 px-1 text-[10px] text-sky-600">chỉ preview</span>}
                 </span>
               )}
               {renaming !== r.id && (
@@ -411,6 +412,7 @@ export function Inspector(props: InspectorProps) {
             </span>
           </div>
         )}
+        <ArtworkParts {...props} />
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -425,6 +427,41 @@ export function Inspector(props: InspectorProps) {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The two parts every artwork must carry, like Teeinblue's "Preview (preview only)" / "Print (Order only)" groups
+ * (asked 2026-11-07): the phôi trơn the preview is drawn on — never printed — and the khuôn in the print file is cut
+ * to — never on the preview. Shown under the layers, with a warning when the artwork lacks one.
+ */
+function ArtworkParts(props: InspectorProps) {
+  const cfg = props.design.state.config;
+  const frame = props.design.state.regions.find((r) => r.config.materialFrame);
+  const khuon = props.print ? `${props.print.name}${props.print.kind === "cut" ? " · cắt theo viền" : ""}` : frame ? frame.name : cfg.material.id !== "none" && cfg.material.shape === "contour" ? "cắt theo viền hình (alpha)" : null;
+  const rows: Array<{ tag: string; tone: string; label: string; value: string | null; missing: string; pic: string | null }> = [
+    { tag: "Preview only", tone: "bg-sky-500/15 text-sky-600", label: "Phôi trơn", value: cfg.scene.url ? "phôi đặt dưới thiết kế ở Xem trước" : null, missing: "Chưa có phôi trơn — Xem trước / mockup sẽ thiếu nền sản phẩm", pic: cfg.scene.url },
+    { tag: "Print only", tone: "bg-orange-500/15 text-orange-600", label: "Khuôn in", value: khuon, missing: "Chưa có khuôn in — file in không có đường cắt / silhouette chuẩn", pic: null },
+  ];
+  return (
+    <div className="border-t">
+      {rows.map((r) => (
+        <div key={r.tag} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+          <span className="h-5 w-5 shrink-0 overflow-hidden rounded border" style={CHECKER_STYLE}>
+            {r.pic && <img src={r.pic} alt="" className="h-full w-full object-contain" />}
+          </span>
+          <span className={cx("shrink-0 rounded px-1 text-[10px] font-medium", r.tone)}>{r.tag}</span>
+          <span className="min-w-0 flex-1 truncate" title={r.value ?? r.missing}>
+            {r.label} · {r.value ? <span className="text-muted-foreground">{r.value}</span> : <span className="text-amber-600">thiếu</span>}
+          </span>
+          {!r.value && (
+            <span title={r.missing}>
+              <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" />
+            </span>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -760,6 +797,19 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
           </CtField>
           <p className="col-span-2 text-[11px] text-muted-foreground">Chữ dài hơn khung tự thu nhỏ cho vừa — muốn chữ to hơn thì kéo khung rộng ra. Xoay: kéo nút tròn trên khung (Shift: từng 15°).</p>
         </div>
+      )}
+      {!cfg.materialFrame && (
+        <CtField label="Hiện ở">
+          <CtSelect<"both" | "preview" | "print">
+            value={cfg.printOnly ? "print" : cfg.previewOnly ? "preview" : "both"}
+            onChange={(v) => set((r) => ({ ...r, config: { ...r.config, printOnly: v === "print" || undefined, previewOnly: v === "preview" || undefined } }))}
+            options={[
+              { value: "both", label: "Preview + file in" },
+              { value: "preview", label: "Chỉ preview (không vào file in)" },
+              { value: "print", label: "Chỉ file in (không hiện trên preview / ảnh)" },
+            ]}
+          />
+        </CtField>
       )}
       {outsideSafe(props.print ?? null, region) && (
         <p className="flex items-start gap-1.5 rounded bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-400">

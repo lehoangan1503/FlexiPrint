@@ -327,11 +327,12 @@ export function GuidePage() {
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <Shot src="fx-base-cut.jpg" caption="Trang Product base: mục Cắt + file in và Phôi / nền xem trước (Acrylic: ảnh nền cây thông)" tone="fx" />
-              <Shot src="fx-artwork-on-base.jpg" caption="Artwork: ô “Xem trên base” — Xem trước tự có tấm acrylic trong + viền sáng theo đúng hình của version" tone="fx" />
+              <Shot src="fx-artwork-on-base.jpg" caption="Artwork xem trên base Acrylic: preview = phôi AI của version (acrylic thật, dây treo) + nhân vật / chữ khách chọn đặt lên" tone="fx" />
             </div>
+            <Shot src="fx-phoi-ai.jpg" caption="Phôi AI theo version: 8 version tàu, mỗi cái 1 ảnh acrylic thật do AI vẽ từ phần cố định — chỗ nhân vật để trống cho khách chọn" tone="fx" />
             <div className="rounded-2xl border-2 border-sky-500/50 bg-sky-500/5 p-4">
               <div className="mb-3 font-semibold">1 artwork — đổi base là ra loại sản phẩm khác (không sửa thiết kế)</div>
-              <Shot src="fx-same-artwork.jpg" caption="Cùng artwork tàu Gingerbread: trên base Acrylic (phôi tự sinh) · Ceramic tròn (cắt theo khuôn, phôi sứ) · Poseable Doll (in phẳng)" tone="fx" />
+              <Shot src="fx-same-artwork.jpg" caption="Cùng artwork tàu Gingerbread: trên base Acrylic · Ceramic tròn (cắt theo khuôn, phôi sứ) · Poseable Doll (in phẳng)" tone="fx" />
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <Shot src="fx-filein-stack.jpg" caption="File in trên base Acrylic: silhouette full đen nửa trên + bản in nửa dưới, đúng kiểu Merchize của Cherivia — tự sinh từ hình, không vẽ" tone="fx" />
@@ -344,7 +345,8 @@ export function GuidePage() {
             <div className="grid gap-3 md:grid-cols-2">
               {[
                 ["Một chỗ sửa, mọi nơi theo", "Đổi khuôn / phôi / viền ở trang base rồi Lưu → mọi artwork xem trên base đó và mọi sản phẩm của nó cập nhật ngay. Teeinblue phải sửa từng artwork."],
-                ["Không vẽ phôi cho từng version", "Acrylic: phôi = tấm acrylic trong vẽ từ chính hình của version + ảnh nền của base. Thêm version là có preview ngay."],
+                ["Phôi theo version: AI vẽ, không ai vẽ tay", "Bấm “Phôi AI theo version” → AI vẽ phần cố định của từng version thành acrylic thật trên nền của base, tự căn khớp từng px. Teeinblue phải vẽ tay 8 ảnh."],
+                ["File in không bao giờ có vật liệu", "Phôi AI chỉ để khách xem. File gửi xưởng (kèm đơn add to cart) là thiết kế gốc + khuôn / silhouette — vật liệu do xưởng quyết định."],
                 ["Preview luôn khớp file in", "Không có bản sao Preview / Print: cùng 1 layer ra cả hai, nên không thể lệch nhau."],
                 ["Artwork dùng lại được", "Cùng 1 thiết kế đặt lên Acrylic, Ceramic, áo… chỉ bằng cách chọn base. Định dạng file của xưởng nằm ở base."],
                 ["Đúng cách cả ngành làm", "Teeinblue (tài liệu), Customily, Customall, Printful / Gelato đều để thông số vật lý ở sản phẩm trơn."],
@@ -382,6 +384,9 @@ export function GuidePage() {
               </p>
               <p>
                 <b>Xem trước</b>: trang bán trên phôi của base. <b>File in</b>: cắt theo khuôn / viền của base, silhouette theo base. Đổi base để thử loại sản phẩm khác.
+              </p>
+              <p>
+                Base acrylic: ở Layers → nhóm Preview bấm <b>Phôi AI theo version</b> → <b>Vẽ N version chưa có</b> (~2 phút, các version vẽ cùng lúc). Xong thì sản phẩm làm từ artwork tự nhận.
               </p>
             </Step>
             <Step n={4} title="Tạo sản phẩm = artwork + product base" shot="fx-create-product.jpg">
@@ -439,7 +444,7 @@ export function GuidePage() {
           <Section id="file-in" title="9. File in theo từng loại sản phẩm" lead="Base quyết định; artwork chỉ đưa thiết kế.">
             <div className="grid gap-4 md:grid-cols-3">
               {[
-                { icon: Scissors, t: "Acrylic Ornament", d: "Cắt theo viền hình + 2.5 mm, tai treo. Preview: tấm acrylic trong tự vẽ trên ảnh nền cây thông.", s: "1 file cao gấp đôi: silhouette full đen trên, bản in dưới (như Cherivia gửi Merchize)" },
+                { icon: Scissors, t: "Acrylic Ornament", d: "Cắt theo viền hình + 2.5 mm, tai treo. Preview: phôi AI theo version (acrylic thật trên nền cây thông), phần khách chọn đặt lên.", s: "1 file cao gấp đôi: silhouette full đen trên, bản in dưới (như Cherivia gửi Merchize)" },
                 { icon: ImageIcon, t: "Ornament sứ / kính tròn", d: "Đặt artwork vào khuôn tròn của base, chỉnh cỡ / vị trí ở sản phẩm. Preview: phôi sứ / kính của khuôn.", s: "File in cắt theo khuôn + cut.svg; gói zip có silhouette khuôn" },
                 { icon: Printer, t: "Poseable Doll · áo · thảm", d: "In phẳng nguyên canvas, không cắt.", s: "Không silhouette" },
               ].map(({ icon: Icon, t, d, s }) => (

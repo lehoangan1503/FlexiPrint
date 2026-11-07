@@ -72,7 +72,9 @@ function promptFor(material: string, hole: boolean): string {
 async function keepBackground(ref: Buffer, ai: Buffer, mask: Buffer | null, w: number, h: number): Promise<Buffer> {
   if (!mask) return sharp(ai).jpeg({ quality: 90 }).toBuffer();
   const alpha = await sharp(mask).resize(w, h, { fit: "fill" }).greyscale().blur(Math.max(2, w / 80)).extractChannel(0).toBuffer();
-  const piece = await sharp(ai).removeAlpha().joinChannel(alpha).png().toBuffer();
+  // Two steps: in one pipeline sharp drops the alpha last — the joined mask went with it.
+  const rgb = await sharp(ai).removeAlpha().png().toBuffer();
+  const piece = await sharp(rgb).joinChannel(alpha).png().toBuffer();
   return sharp(ref).resize(w, h, { fit: "fill" }).removeAlpha().composite([{ input: piece }]).jpeg({ quality: 90 }).toBuffer();
 }
 

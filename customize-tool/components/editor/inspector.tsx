@@ -69,6 +69,9 @@ import { updateItem, updateRegion } from "./use-design";
 
 const KIND_ICON: Record<CtRegionKind, typeof ImageIcon> = { image: ImageIcon, text: Type, photo: UserSquare };
 
+/** The Layers panel's groups (Teeinblue's Preview / Print groups + the shared design layers). */
+type LayerGroupKey = "preview" | "print" | "both";
+
 export interface InspectorProps {
   design: DesignApi;
   assets: CtAsset[];
@@ -86,6 +89,8 @@ export interface InspectorProps {
   onToggleOverlay: () => void;
   /** The mouse is over a layer row (null = left it): the canvas shows that layer's frame. */
   onHoverRegion: (id: string | null) => void;
+  /** The phôi trơn (Preview group's fixed row): opens the scene dialog — upload / place the design on the phôi. */
+  onOpenScene?: () => void;
   /** Show an option on the canvas. */
   onPreviewOption: (regionId: string, assetId: string) => void;
   /** The text a text zone shows on the canvas (and in the Mockups samples). */
@@ -237,32 +242,13 @@ export function Inspector(props: InspectorProps) {
     design.commit((s) => updateRegion(s, id, (r) => (r.name === clean ? r : { ...r, name: clean })));
   };
 
-  return (
-    <div className="flex h-full flex-col text-sm">
-      <div className="flex items-center justify-between border-b px-3 py-2">
-        <span className="font-semibold" title="⌘ / Ctrl-click: chọn thêm layer · Shift-click: chọn liền một dải · Shift-click trên canvas: thêm / bớt">
-          Layers
-        </span>
-        <CtTooltip label="Tách 1 nhân vật / phần thành bộ clipart mới (chọn mọi layer, rồi bấm nhân vật ở cột dưới)" side="left">
-          <button className="ml-auto mr-1 rounded p-1 hover:bg-accent" onClick={() => props.onPickMany(regions.map((r) => r.id))} disabled={regions.length < 2}>
-            <Scissors className="h-4 w-4" />
-          </button>
-        </CtTooltip>
-        <CtTooltip label={props.showOverlay ? "Ẩn khung vùng" : "Hiện khung vùng"} side="left">
-          <button className="rounded p-1 hover:bg-accent" onClick={props.onToggleOverlay}>
-            {props.showOverlay ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-          </button>
-        </CtTooltip>
-      </div>
-      <div className="max-h-[40%] overflow-y-auto border-b">
-        {ordered.length === 0 && (
-          <p className="px-3 py-4 text-xs text-muted-foreground">Chưa có layer.</p>
-        )}
-        {ordered.map((r, index) => {
+  /** One layer row (and, the first layer of a bộ, the bộ's row above it). `flat`: no bộ grouping (the Preview / Print
+   * groups list their few layers one by one). `index` = its place in the whole topmost-first list (drag-to-restack). */
+  const renderRow = (r: CtRegion, index: number, flat: boolean) => {
           const Icon = KIND_ICON[r.kind];
           const hasFrame = r.kind === "photo" && r.config.photo?.frame?.enabled !== false && hasTestPhoto(props.selection[r.id]);
           const frameActive = hasFrame && r.id === selectedRegionId && props.frameSelected;
-          const group = r.config?.charSet ? groupOf(r.id) : null;
+          const group = !flat && r.config?.charSet ? groupOf(r.id) : null;
           const groupList = group ? (setGroups.get(group) ?? []) : [];
           const groupOpen = !!group && openSets.has(group);
           return (
@@ -365,8 +351,6 @@ export function Inspector(props: InspectorProps) {
                     </span>
                   )}
                   {r.config.fill && <span className="ml-1 text-[10px] text-muted-foreground">{r.config.fill.mode === "tile" ? "hoa văn" : "phủ"}</span>}
-                  {r.config.printOnly && <span className="ml-1 rounded bg-orange-500/15 px-1 text-[10px] text-orange-600">chỉ in</span>}
-                  {r.config.previewOnly && <span className="ml-1 rounded bg-sky-500/15 px-1 text-[10px] text-sky-600">chỉ preview</span>}
                 </span>
               )}
               {renaming !== r.id && (
@@ -397,7 +381,110 @@ export function Inspector(props: InspectorProps) {
             )}
             </Fragment>
           );
-        })}
+  };
+
+  /**
+   * Teeinblue's two layer groups (asked 2026-11-07: "tổ chức được như dropdown print only preview only như
+   * teeinblue"): "Preview (preview only)" = what only the customer sees (the phôi trơn + preview-only layers),
+   * "Print (Order only)" = what only the factory gets (the khuôn in + print-only layers), then the design's own
+   * layers, used for both. A layer dropped on a group's title moves into it.
+   */
+  const inPreview = (r: CtRegion) => !!r.config.previewOnly && !r.config.materialFrame;
+  const inPrint = (r: CtRegion) => !!r.config.printOnly || !!r.config.materialFrame;
+  const moveTo = (id: string, where: LayerGroupKey) =>
+    design.commit((st) =>
+      updateRegion(st, id, (x) => (x.config.materialFrame ? x : { ...x, config: { ...x.config, previewOnly: where === "preview" || undefined, printOnly: where === "print" || undefined } })),
+    );
+  const [closedGroups, setClosedGroups] = useState<Set<LayerGroupKey>>(new Set());
+  const [overGroup, setOverGroup] = useState<LayerGroupKey | null>(null);
+  const cfgNow = design.state.config;
+  const khuonLayer = ordered.find((r) => r.config.materialFrame);
+  const khuonName = props.print ? `${props.print.name}${props.print.kind === "cut" ? " · cắt theo viền hình" : ""}` : cfgNow.material.id !== "none" && cfgNow.material.shape === "contour" ? "cắt theo viền hình (alpha)" : null;
+  const groupHead = (key: LayerGroupKey, title: string, count: number, hint: string, tone: string) => (
+    <div
+      onClick={() =>
+        setClosedGroups((cur) => {
+          const next = new Set(cur);
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          return next;
+        })
+      }
+      onDragOver={(e) => {
+        if (!dragId) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setOverGroup(key);
+      }}
+      onDragLeave={() => setOverGroup(null)}
+      onDrop={(e) => {
+        e.preventDefault();
+        if (dragId) moveTo(dragId, key);
+        setOverGroup(null);
+        endDrag();
+      }}
+      title={`${hint} — kéo 1 layer thả vào đây để chuyển nó vào nhóm này`}
+      className={cx("flex cursor-pointer select-none items-center gap-1.5 border-y bg-muted/60 px-2 py-1.5 text-xs font-semibold", overGroup === key && "ring-2 ring-inset ring-sky-500")}
+    >
+      {closedGroups.has(key) ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+      <span className={cx("h-2 w-2 shrink-0 rounded-full", tone)} />
+      <span className="flex-1 truncate">{title}</span>
+      <span className="text-[10px] font-normal text-muted-foreground">{count}</span>
+    </div>
+  );
+  /** A fixed row of a group (the phôi, the khuôn): what every artwork must have; "thiếu" when it does not. */
+  const fixedRow = (pic: string | null, label: string, value: string | null, missing: string, onClick?: () => void) => (
+    <div onClick={onClick} className={cx("flex items-center gap-2 py-1.5 pl-6 pr-3 text-xs", onClick ? "cursor-pointer hover:bg-accent" : "")} title={value ? undefined : missing}>
+      <span className="h-5 w-5 shrink-0 overflow-hidden rounded border" style={CHECKER_STYLE}>
+        {pic && <img src={pic} alt="" className="h-full w-full object-contain" />}
+      </span>
+      <span className="min-w-0 flex-1 truncate">
+        {label} · {value ? <span className="text-muted-foreground">{value}</span> : <span className="font-medium text-amber-600">thiếu</span>}
+      </span>
+      {!value && <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" />}
+    </div>
+  );
+  const previewList = ordered.filter(inPreview);
+  const printList = ordered.filter(inPrint);
+  const bothList = ordered.filter((r) => !inPreview(r) && !inPrint(r));
+
+  return (
+    <div className="flex h-full flex-col text-sm">
+      <div className="flex items-center justify-between border-b px-3 py-2">
+        <span className="font-semibold" title="⌘ / Ctrl-click: chọn thêm layer · Shift-click: chọn liền một dải · Shift-click trên canvas: thêm / bớt">
+          Layers
+        </span>
+        <CtTooltip label="Tách 1 nhân vật / phần thành bộ clipart mới (chọn mọi layer, rồi bấm nhân vật ở cột dưới)" side="left">
+          <button className="ml-auto mr-1 rounded p-1 hover:bg-accent" onClick={() => props.onPickMany(regions.map((r) => r.id))} disabled={regions.length < 2}>
+            <Scissors className="h-4 w-4" />
+          </button>
+        </CtTooltip>
+        <CtTooltip label={props.showOverlay ? "Ẩn khung vùng" : "Hiện khung vùng"} side="left">
+          <button className="rounded p-1 hover:bg-accent" onClick={props.onToggleOverlay}>
+            {props.showOverlay ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+          </button>
+        </CtTooltip>
+      </div>
+      <div className="max-h-[40%] overflow-y-auto border-b">
+        {ordered.length === 0 && (
+          <p className="px-3 py-4 text-xs text-muted-foreground">Chưa có layer.</p>
+        )}
+        {groupHead("preview", "Preview (preview only)", previewList.length + 1, "Chỉ hiện ở Xem trước / mockup — không bao giờ vào file in", "bg-sky-500")}
+        {!closedGroups.has("preview") && (
+          <>
+            {fixedRow(cfgNow.scene.url, "Phôi trơn (blank)", cfgNow.scene.url ? "nền sản phẩm khi xem trước" : null, "Chưa có phôi trơn — bấm để thêm / đặt thiết kế lên phôi", props.onOpenScene)}
+            {previewList.map((r) => renderRow(r, ordered.indexOf(r), true))}
+          </>
+        )}
+        {groupHead("print", "Print (Order only)", printList.length + (khuonLayer ? 0 : 1), "Chỉ có trong file in gửi xưởng — không hiện trên preview", "bg-orange-500")}
+        {!closedGroups.has("print") && (
+          <>
+            {!khuonLayer && fixedRow(null, "Khuôn in", khuonName, "Chưa có khuôn in — file in không có đường cắt / silhouette chuẩn")}
+            {printList.map((r) => renderRow(r, ordered.indexOf(r), true))}
+          </>
+        )}
+        {groupHead("both", "Thiết kế (preview + file in)", bothList.length, "Layer dùng cho cả preview lẫn file in", "bg-emerald-500")}
+        {!closedGroups.has("both") && bothList.map((r) => renderRow(r, ordered.indexOf(r), false))}
         {props.mainLayer && (
           // The version's own picture: always the bottom row (layers marked "dưới main" are drawn behind it).
           <div
@@ -412,7 +499,6 @@ export function Inspector(props: InspectorProps) {
             </span>
           </div>
         )}
-        <ArtworkParts {...props} />
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -427,41 +513,6 @@ export function Inspector(props: InspectorProps) {
           </>
         )}
       </div>
-    </div>
-  );
-}
-
-/**
- * The two parts every artwork must carry, like Teeinblue's "Preview (preview only)" / "Print (Order only)" groups
- * (asked 2026-11-07): the phôi trơn the preview is drawn on — never printed — and the khuôn in the print file is cut
- * to — never on the preview. Shown under the layers, with a warning when the artwork lacks one.
- */
-function ArtworkParts(props: InspectorProps) {
-  const cfg = props.design.state.config;
-  const frame = props.design.state.regions.find((r) => r.config.materialFrame);
-  const khuon = props.print ? `${props.print.name}${props.print.kind === "cut" ? " · cắt theo viền" : ""}` : frame ? frame.name : cfg.material.id !== "none" && cfg.material.shape === "contour" ? "cắt theo viền hình (alpha)" : null;
-  const rows: Array<{ tag: string; tone: string; label: string; value: string | null; missing: string; pic: string | null }> = [
-    { tag: "Preview only", tone: "bg-sky-500/15 text-sky-600", label: "Phôi trơn", value: cfg.scene.url ? "phôi đặt dưới thiết kế ở Xem trước" : null, missing: "Chưa có phôi trơn — Xem trước / mockup sẽ thiếu nền sản phẩm", pic: cfg.scene.url },
-    { tag: "Print only", tone: "bg-orange-500/15 text-orange-600", label: "Khuôn in", value: khuon, missing: "Chưa có khuôn in — file in không có đường cắt / silhouette chuẩn", pic: null },
-  ];
-  return (
-    <div className="border-t">
-      {rows.map((r) => (
-        <div key={r.tag} className="flex items-center gap-2 px-3 py-1.5 text-xs">
-          <span className="h-5 w-5 shrink-0 overflow-hidden rounded border" style={CHECKER_STYLE}>
-            {r.pic && <img src={r.pic} alt="" className="h-full w-full object-contain" />}
-          </span>
-          <span className={cx("shrink-0 rounded px-1 text-[10px] font-medium", r.tone)}>{r.tag}</span>
-          <span className="min-w-0 flex-1 truncate" title={r.value ?? r.missing}>
-            {r.label} · {r.value ? <span className="text-muted-foreground">{r.value}</span> : <span className="text-amber-600">thiếu</span>}
-          </span>
-          {!r.value && (
-            <span title={r.missing}>
-              <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" />
-            </span>
-          )}
-        </div>
-      ))}
     </div>
   );
 }
@@ -799,14 +850,14 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
         </div>
       )}
       {!cfg.materialFrame && (
-        <CtField label="Hiện ở">
+        <CtField label="Nhóm">
           <CtSelect<"both" | "preview" | "print">
             value={cfg.printOnly ? "print" : cfg.previewOnly ? "preview" : "both"}
             onChange={(v) => set((r) => ({ ...r, config: { ...r.config, printOnly: v === "print" || undefined, previewOnly: v === "preview" || undefined } }))}
             options={[
-              { value: "both", label: "Preview + file in" },
-              { value: "preview", label: "Chỉ preview (không vào file in)" },
-              { value: "print", label: "Chỉ file in (không hiện trên preview / ảnh)" },
+              { value: "both", label: "Thiết kế (preview + file in)" },
+              { value: "preview", label: "Preview (preview only)" },
+              { value: "print", label: "Print (Order only)" },
             ]}
           />
         </CtField>

@@ -1511,6 +1511,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               showOverlay={showOverlay}
               onToggleOverlay={() => setShowOverlay((v) => !v)}
               onHoverRegion={setHoverRegionId}
+              onOpenScene={() => setSceneOpen(true)}
             />
             </div>
           </aside>

@@ -21,6 +21,7 @@ import { ImportPage } from "../components/char/import-page";
 import { ImportStatus } from "../components/char/import-status";
 import { isAdmin } from "../server/ai-styles";
 import { BaseProductView } from "../components/base/base-product-page";
+import { GuidePage } from "../components/guide/guide-page";
 
 export async function CustomizeListPage() {
   const session = await ctSession();
@@ -101,4 +102,11 @@ export async function BaseProductPage({ params }: { params: Promise<{ id: string
   if (!session) redirect(CT_CONFIG.loginPath);
   const { id } = await params;
   return <BaseProductView baseId={id} />;
+}
+
+/** The team's guide (asked 2026-11-07): src/app/huong-dan/page.tsx → export { CustomizeGuidePage as default }. */
+export async function CustomizeGuidePage() {
+  const session = await ctSession();
+  if (!session) redirect(CT_CONFIG.loginPath);
+  return <GuidePage />;
 }

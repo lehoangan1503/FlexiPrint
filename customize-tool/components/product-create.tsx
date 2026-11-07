@@ -50,7 +50,7 @@ function BaseCard({ b, on, onPick }: { b: CtBaseProductRow; on: boolean; onPick:
     <button
       type="button"
       onClick={onPick}
-      className={cx("flex items-center gap-3 rounded-lg border p-2 text-left hover:bg-accent", on && "border-sky-500 ring-2 ring-sky-500/40")}
+      className={cx("flex w-full items-center gap-3 rounded-lg border p-2 text-left hover:bg-accent", on && "border-sky-500 ring-2 ring-sky-500/40")}
     >
       <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md border" style={CHECKER_STYLE}>
         {pic ? <img src={pic} alt="" className="h-full w-full object-contain" /> : null}
@@ -128,7 +128,7 @@ export function CreateProductDialog({
                 <Loader2 className="col-span-3 mx-auto my-8 h-5 w-5 animate-spin" />
               ) : (
                 shownArtworks.map((a) => {
-                  const pic = a.thumbnail_url ?? a.main_asset?.url ?? null;
+                  const pic = a.preview_url ?? a.thumbnail_url ?? a.main_asset?.url ?? null;
                   return (
                     <button
                       key={a.id}

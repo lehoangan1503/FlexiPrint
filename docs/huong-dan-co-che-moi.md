@@ -1,5 +1,7 @@
 # FlexiPrint (flexi2) — Cơ chế mới: Product base · Artwork · Sản phẩm
 
+> Bản có hình: https://flexi2.next.lc/huong-dan
+
 Ngày 2026-11-07. Áp dụng cho https://flexi2.next.lc. Viết cho cả team: người làm thiết kế, người lên sản phẩm, sếp.
 
 ---
@@ -151,9 +153,9 @@ Hiện có:
 Editor artwork chỉ có 3 tab: **Thiết kế · Xem trước · File in**.
 
 - **Thiết kế**: canvas phẳng. Cột trái = các version. Cột phải = Layers + thuộc tính.
-  - Mỗi layer có ô **Hiện ở**: *Preview + file in* (mặc định) / *Chỉ preview* (vd. chữ mẫu, bóng đổ chỉ để đẹp ảnh) /
-    *Chỉ file in* (vd. nền mà ảnh option đã có sẵn). Layer được đánh dấu có nhãn *chỉ preview* / *chỉ in*.
-  - Dưới Layers luôn có 2 dòng **Preview only · Phôi trơn** và **Print only · Khuôn in** — phải đủ cả hai.
+  - Cột Layers có 3 nhóm xổ / gập như Teeinblue: **Preview (preview only)** (dòng cố định *Phôi trơn* — bấm để đặt
+    phôi), **Print (Order only)** (dòng cố định *Khuôn in*), **Thiết kế (preview + file in)**. Kéo layer thả lên tiêu đề
+    nhóm để chuyển nhóm, hoặc chọn layer → ô **Nhóm**. Thiếu phôi / khuôn → báo "thiếu".
   - Không chọn layer nào: cột phải hiện các option để xem thử từng lựa chọn.
 - **Xem trước**: trang sản phẩm như khách thấy trên Shopify, thiết kế đặt trên phôi trơn (layer *chỉ file in* bị ẩn).
 - **File in**: đúng file gửi xưởng (layer *chỉ preview* bị bỏ).

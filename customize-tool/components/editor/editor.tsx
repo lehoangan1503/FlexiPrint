@@ -16,6 +16,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  ExternalLink,
   Hand,
   Users,
   ImageIcon,
@@ -33,7 +34,7 @@ import {
 } from "lucide-react";
 import { CT_CONFIG, ctGoogleFontsHref } from "../../config";
 import { CT_BASE_OPTION, CT_MAIN_KEY } from "../../types";
-import type { CtAsset, CtProductCharSet, CtMainFrame, CtMainOptionConfig, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
+import type { CtAsset, CtBaseProductRow, CtProductCharSet, CtMainFrame, CtMainOptionConfig, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import { charApi, ctApi } from "../../lib/api-client";
 import {
   defaultProductConfig,
@@ -50,7 +51,7 @@ import {
   zoneSubtree,
 } from "../../lib/design";
 import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, shapeBounds, translateShape } from "../../lib/geometry";
-import { CtAutoWidthInput, CtButton, CtTooltip, CtTooltipProvider, cx } from "../ui";
+import { CtAutoWidthInput, CtButton, CtSelect, CtTooltip, CtTooltipProvider, cx } from "../ui";
 import { Stage, type EditTarget, type StageTool } from "./stage";
 import { Inspector } from "./inspector";
 import { AssetPanel } from "./asset-panel";
@@ -73,10 +74,10 @@ import { frameRegionFor } from "../../lib/material-frame";
 import { ImportStatus } from "../char/import-status";
 
 /**
- * Thiết kế = edit, flat (what is printed — no phôi) · File in = the flat print file · Xem trước = the real storefront
- * page, the artwork on the phôi trơn · Mockups = AI photos of the finished product on its phôi.
+ * An artwork's tabs: Thiết kế = edit, flat (what is printed — no phôi) · File in = the flat print file · Xem trước =
+ * the real storefront page, the artwork on the phôi trơn. Mockups live on the product page (isProduct below).
  */
-type View = "design" | "preview" | "print" | "mockup";
+type View = "design" | "preview" | "print";
 
 
 /** Kinds drawn with a frame tool. A custom layer comes from a dropped clipart instead: its frame is the image itself. */
@@ -150,6 +151,20 @@ export function CustomizeEditor({ productId }: { productId: string }) {
 
   /** The bộ nhân vật this product uses (built from it first) — the header's "Bộ nhân vật" button opens it. */
   const [charSets, setCharSets] = useState<CtProductCharSet[]>([]);
+
+  /**
+   * A product (what is sold, migration 031) is not edited here: its page = its base product (variants + price), its
+   * mockups on the left and the storefront page (price + personalisation) on the right. The base products to pick.
+   */
+  const isProduct = product?.kind === "product";
+  const [bases, setBases] = useState<CtBaseProductRow[]>([]);
+  useEffect(() => {
+    if (!isProduct) return;
+    ctApi
+      .listBaseProducts()
+      .then(setBases)
+      .catch(() => undefined);
+  }, [isProduct]);
 
   // ---------------------------------------------------------------- load
   useEffect(() => {
@@ -1085,16 +1100,117 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   // Image layer: its items. Photo zone: the child frame the customer's photo goes in.
   const objectModeDisabled = selectedRegion?.kind === "photo" ? false : selectedRegion?.kind !== "image" || !items.some((i) => i.region_id === selectedRegionId);
 
+  if (isProduct) {
+    const base = bases.find((b) => b.id === product.base_product_id) ?? null;
+    const changeBase = async (id: string) => {
+      if (id === product.base_product_id) return;
+      try {
+        setProduct(await ctApi.updateProduct(product.id, { base_product_id: id }));
+        flash("Đã đổi product base — giá và biến thể theo base mới");
+      } catch (e) {
+        flash(e instanceof Error ? e.message : "Không đổi được");
+      }
+    };
+    return (
+      <CtTooltipProvider>
+        <div className="flex h-screen flex-col bg-background text-foreground">
+          <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
+            <CtTooltip label="Danh sách sản phẩm">
+              <Link href={CT_CONFIG.homePath} className="shrink-0 rounded p-1.5 hover:bg-accent">
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
+            </CtTooltip>
+            <span className="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-sky-600">Sản phẩm</span>
+            <CtAutoWidthInput className="text-sm font-semibold" value={nameDraft} maxWidth={380} onChange={setNameDraft} onCommit={(v) => void renameProduct(v)} />
+            <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+              Product base
+              <CtSelect<string>
+                className="h-7 w-56 text-xs"
+                value={product.base_product_id ?? ""}
+                onChange={(id) => void changeBase(id)}
+                options={bases.map((b) => ({ value: b.id, label: b.name }))}
+                placeholder="Chọn product base…"
+              />
+              {base && (
+                <Link href={`/base-products/${base.id}`} target="_blank" className="rounded p-1 hover:bg-accent" title="Mở product base">
+                  <ExternalLink className="h-3 w-3" />
+                </Link>
+              )}
+            </div>
+            <ArtworkLinkBar productId={product.id} productName={product.name} dirty={design.dirty} savedTick={savedTick} onFlash={flash} />
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              <ImportStatus />
+              {notice && <span className="max-w-60 truncate text-xs text-muted-foreground">{notice}</span>}
+              {design.dirty && (
+                <CtButton variant="outline" size="sm" onClick={() => void save()} disabled={saving}>
+                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Lưu
+                </CtButton>
+              )}
+              <CtButton variant="primary" size="sm" onClick={() => void openDeploy()} disabled={!main || deploying || !product.base_product_id} title={product.base_product_id ? "Ảnh, mô tả, collection → Shopify (giá + biến thể theo product base)" : "Chọn product base trước"}>
+                {deploying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />} Deploy
+              </CtButton>
+            </div>
+          </header>
+          {main ? (
+            <div className="flex min-h-0 flex-1">
+              <div className="w-[46%] min-w-[440px] shrink-0 border-r">
+                <AiMockupsPanel
+                  compact
+                  product={product}
+                  main={main}
+                  assets={assets}
+                  regions={allRegions}
+                  items={allItems}
+                  selection={selection}
+                  config={config}
+                  onAssets={(created) => setAssets((a) => [...a.filter((x) => !created.some((c) => c.id === x.id)), ...created])}
+                  onDelete={deleteMockup}
+                  onProduct={(p) => {
+                    setProduct(p);
+                    const scene = normalizeProductConfig(p.config).scene;
+                    design.commit((st) => ({ ...st, config: { ...st.config, scene } }));
+                  }}
+                  onOpenScene={() => setSceneOpen(true)}
+                  flash={flash}
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <StorefrontPreview compact product={product} assets={assets} regions={allRegions} items={allItems} config={config} priceTableId={base?.config.priceTableId ?? null} />
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Artwork của sản phẩm chưa có version nào.</div>
+          )}
+          {main && (
+            <SceneDialog
+              open={sceneOpen}
+              onClose={() => setSceneOpen(false)}
+              scene={config.scene}
+              onChange={setScene}
+              main={main}
+              assets={assets}
+              regions={allRegions}
+              items={allItems}
+              selection={selection}
+              layouts={config.layouts}
+            />
+          )}
+        </div>
+      </CtTooltipProvider>
+    );
+  }
+
   return (
     <CtTooltipProvider>
     <div className="flex h-screen flex-col bg-background text-foreground">
       {/* Header */}
       <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
-        <CtTooltip label="Danh sách sản phẩm">
-          <Link href={CT_CONFIG.basePath} className="shrink-0 rounded p-1.5 hover:bg-accent">
+        <CtTooltip label="Danh sách artwork">
+          <Link href={`${CT_CONFIG.homePath}?tab=artwork`} className="shrink-0 rounded p-1.5 hover:bg-accent">
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </CtTooltip>
+        <span className="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-violet-600">Artwork</span>
         <CtAutoWidthInput
           className="text-sm font-semibold"
           value={nameDraft}
@@ -1102,49 +1218,20 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           onChange={setNameDraft}
           onCommit={(v) => void renameProduct(v)}
         />
-        {product.published_version ? (
-          <span className="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600">v{product.published_version}</span>
-        ) : (
-          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">Chưa publish</span>
-        )}
-        {/* Two steps, like Teeinblue's Artwork → Product (asked 2026-11-06: "người editor không hiểu"): the artwork
-            (design, preview, print file) first, then the product made from it (photos, Shopify). */}
-        <div className="ml-3 flex shrink-0 items-center gap-1.5">
+        {/* An artwork shows only its design, its preview and its print file (asked 2026-11-07); photos, price and
+            Shopify belong to the products made from it ("Sản phẩm từ artwork" → Tạo sản phẩm). */}
+        <div className="ml-3 flex shrink-0 items-center gap-1 rounded-md border p-0.5">
           {(
             [
-              ["1", "Artwork", [["design", "Thiết kế"], ["preview", "Xem trước"], ["print", "File in"]]],
-              ["2", "Sản phẩm", [["mockup", "Mockups"]]],
-            ] as Array<[string, string, Array<[View, string]>]>
-          ).map(([n, step, tabs]) => {
-            const here = tabs.some(([v]) => v === view);
-            return (
-              <div key={n} className={cx("flex items-center gap-1 rounded-md border p-0.5", here ? "border-sky-500/60" : "")}>
-                <span className={cx("flex items-center gap-1 px-1.5 text-[11px] font-semibold", here ? "text-sky-500" : "text-muted-foreground")}>
-                  <span className={cx("flex h-4 w-4 items-center justify-center rounded-full text-[10px]", here ? "bg-sky-500 text-white" : "bg-muted")}>{n}</span>
-                  {step}
-                </span>
-                {tabs.map(([v, label]) => (
-                  <button
-                    key={v}
-                    onClick={() => openView(v)}
-                    className={cx("whitespace-nowrap rounded px-3 py-1 text-xs font-medium", view === v ? "bg-foreground text-background" : "hover:bg-accent")}
-                  >
-                    {label}
-                  </button>
-                ))}
-                {n === "2" && (
-                  <button
-                    onClick={() => void openDeploy()}
-                    disabled={!main || deploying}
-                    title="Ảnh, mô tả, giá, collection → đưa lên Shopify"
-                    className="flex items-center gap-1 whitespace-nowrap rounded px-3 py-1 text-xs font-medium hover:bg-accent disabled:opacity-50"
-                  >
-                    {deploying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Rocket className="h-3 w-3" />} Deploy
-                  </button>
-                )}
-              </div>
-            );
-          })}
+              ["design", "Thiết kế"],
+              ["preview", "Xem trước"],
+              ["print", "File in"],
+            ] as Array<[View, string]>
+          ).map(([v, label]) => (
+            <button key={v} onClick={() => openView(v)} className={cx("whitespace-nowrap rounded px-3 py-1 text-xs font-medium", view === v ? "bg-foreground text-background" : "hover:bg-accent")}>
+              {label}
+            </button>
+          ))}
         </div>
         <ArtworkLinkBar productId={product.id} productName={product.name} dirty={design.dirty} savedTick={savedTick} onFlash={flash} />
         {charSets.map((cs) => (
@@ -1326,30 +1413,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               printSilhouette={config.printSilhouette}
               onPrintSilhouette={(printSilhouette) => design.commit((st) => ({ ...st, config: { ...st.config, printSilhouette } }))}
             />
-          ) : view === "preview" ? (
-            main ? null : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
-          ) : main ? (
-            <AiMockupsPanel
-              product={product}
-              main={main}
-              assets={assets}
-              regions={allRegions}
-              items={allItems}
-              selection={selection}
-              config={config}
-              onAssets={(created) => setAssets((a) => [...a.filter((x) => !created.some((c) => c.id === x.id)), ...created])}
-              onDelete={deleteMockup}
-              onProduct={(p) => {
-                setProduct(p);
-                const scene = normalizeProductConfig(p.config).scene;
-                design.commit((st) => ({ ...st, config: { ...st.config, scene } }));
-              }}
-              onOpenScene={() => setSceneOpen(true)}
-              flash={flash}
-            />
-          ) : (
+          ) : view === "preview" && !main ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
-          )}
+          ) : null}
           {previewMounted && main && (
             <div className={cx("min-h-0 flex-1", view !== "preview" && "hidden")}>
               <StorefrontPreview product={product} assets={assets} regions={allRegions} items={allItems} config={config} />

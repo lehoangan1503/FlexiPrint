@@ -20,6 +20,7 @@ import { CharProjectView } from "../components/char/char-project";
 import { ImportPage } from "../components/char/import-page";
 import { ImportStatus } from "../components/char/import-status";
 import { isAdmin } from "../server/ai-styles";
+import { BaseProductView } from "../components/base/base-product-page";
 
 export async function CustomizeListPage() {
   const session = await ctSession();
@@ -66,7 +67,8 @@ function libraryUrl(lib?: string | null, set?: string | null): string {
 }
 
 export async function CustomizePrintTemplatesPage() {
-  redirect(libraryUrl("khuon"));
+  // Khuôn in live in the Product base tab since 2026-11-07.
+  redirect(`${CT_CONFIG.homePath}?tab=bases`);
 }
 
 export async function CustomizeLibraryPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -91,4 +93,12 @@ export async function CharImportPage() {
   const session = await ctSession();
   if (!session) redirect(CT_CONFIG.loginPath);
   return <ImportPage />;
+}
+
+/** Product base (asked 2026-11-07): src/app/base-products/[id]/page.tsx → export { BaseProductPage as default }. */
+export async function BaseProductPage({ params }: { params: Promise<{ id: string }> }) {
+  const session = await ctSession();
+  if (!session) redirect(CT_CONFIG.loginPath);
+  const { id } = await params;
+  return <BaseProductView baseId={id} />;
 }

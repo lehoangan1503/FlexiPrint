@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeft, Check, CheckCircle2, ExternalLink, Info, Link2, Loader2, Pencil, Plus, Rocket, Star, X } from "lucide-react";
 import { CT_CONFIG } from "../../config";
 import type {
+  CtBaseProductRow,
   CtAsset,
   CtDeployResponse,
   CtPriceTable,
@@ -59,6 +60,8 @@ export function DeployPage({ productId }: { productId: string }) {
   const [info, setInfo] = useState<CtShopifyInfo | null>(null);
   const [tables, setTables] = useState<CtPriceTable[]>([]);
   const [tableId, setTableId] = useState<string>("");
+  /** The product's base product: its price table is the one deployed, not picked here. */
+  const [base, setBase] = useState<CtBaseProductRow | null>(null);
   const [editing, setEditing] = useState<CtPriceTable | "new" | null>(null);
   const [form, setForm] = useState<Form>({ title: "", descriptionHtml: "", status: "ACTIVE", vendor: "", productType: "", tags: "" });
   const [media, setMedia] = useState<string[]>([]);
@@ -90,17 +93,25 @@ export function DeployPage({ productId }: { productId: string }) {
       ctApi.listPriceTables().catch(() => [] as CtPriceTable[]),
       ctApi.shopifyInfo(productId).catch((e: Error) => ({ configured: true, shop: null, product: null, error: e.message })),
       ctApi.listCollections().catch(() => [] as CtShopifyCollection[]),
+      ctApi.listBaseProducts().catch(() => [] as CtBaseProductRow[]),
     ])
-      .then(([b, list, shop, cols]) => {
+      .then(([b, list, shop, cols, bases]) => {
         if (cancelled) return;
         setBundle(b);
         setTables(list);
         setInfo(shop);
         setCollections(cols);
         const link = b.product.shopify ?? null;
-        // The table it was deployed with, else the one of its material (never just the newest — 2026-10-30).
-        setTableId(link?.priceTableId && list.some((t) => t.id === link.priceTableId) ? link.priceTableId : (priceTableFor(list, b.product.config?.material?.id ?? "")?.id ?? ""));
+        // A product's base product owns its variants + prices (2026-11-07); an older product: the table it was deployed
+        // with, else the one of its material (never just the newest — 2026-10-30).
+        const own = bases.find((x) => x.id === b.product.base_product_id) ?? null;
+        setBase(own);
+        setTableId(
+          own?.config.priceTableId ??
+            (link?.priceTableId && list.some((t) => t.id === link.priceTableId) ? link.priceTableId : (priceTableFor(list, b.product.config?.material?.id ?? "")?.id ?? "")),
+        );
         fill(shop.product, link?.title ?? b.product.name);
+        if (!shop.product && own) setForm((f) => ({ ...f, productType: f.productType || own.config.productType, descriptionHtml: f.descriptionHtml || own.config.description }));
         // Not on Shopify yet: it starts in the collections that fit it (no twin collections — 2026-10-30).
         if (!shop.product) {
           const fit = suggestCollections(cols, { title: link?.title ?? b.product.name });
@@ -319,6 +330,15 @@ export function DeployPage({ productId }: { productId: string }) {
         <div className="space-y-5">
           {/* Price table */}
           <Card title="Bảng giá">
+            {base ? (
+              <p className="text-xs text-muted-foreground">
+                Giá + biến thể theo product base{" "}
+                <a href={`/base-products/${base.id}`} target="_blank" rel="noreferrer" className="font-medium text-foreground underline">
+                  {base.name}
+                </a>{" "}
+                — đổi giá ở đó.
+              </p>
+            ) : (
             <div className="flex items-end gap-2">
               <div className="flex-1">
                 <CtField label="Chọn bảng giá">
@@ -337,6 +357,7 @@ export function DeployPage({ productId }: { productId: string }) {
                 <Plus className="h-3.5 w-3.5" /> Tạo bảng giá
               </CtButton>
             </div>
+            )}
             {table ? <PriceSummary table={table} /> : <p className="text-xs text-muted-foreground">Deploy cần 1 bảng giá: Size × Pack, mỗi ô là 1 variant Shopify có giá.</p>}
             {problems.length > 0 && <Notice level="warn" text={problems.join(" ")} />}
           </Card>

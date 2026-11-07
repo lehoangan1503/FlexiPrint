@@ -13,15 +13,14 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { BookmarkPlus, Download, Eye, EyeOff, Loader2, Scissors, Settings2, Upload, X } from "lucide-react";
+import { Download, Eye, EyeOff, Loader2, Package, Scissors, Settings2, Upload, X } from "lucide-react";
 import type { CtAsset, CtMainLayout, CtMaterialConfig, CtPrintGuide, CtPrintSilhouette, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import type { CtProductPrint } from "../../types/print";
 import { displayAssets } from "../../lib/library";
-import { canvasToBlob, mirrorSheet, printFrame, renderComposite, silhouetteCutOf, withSilhouette } from "../../lib/compositor";
+import { canvasToBlob, khuonPair, mirrorSheet, printFrame, renderComposite, silhouetteCutOf, withSilhouette } from "../../lib/compositor";
+import { zip } from "../../lib/zip";
 import { frameSvgPath } from "../../lib/material-frame";
-import { normalizeSamples } from "../../lib/design";
 import { printSize } from "../../lib/print-template";
-import { ctApi } from "../../lib/api-client";
 import { printApi } from "../../lib/print-api";
 import { GridLines, GridToggleButton, useGridToggle } from "./grid";
 import { CtButton, CtSelect } from "../ui";
@@ -111,7 +110,6 @@ export function PrintPanel(props: PrintPanelProps) {
   const size = props.print && sizes.length ? printSize(props.print.spec, sizeId || sizes[0].id) : null;
   const sizeArgs = size?.id ? { size, cutToFrame: false } : { cutToFrame: true };
   const [shot, setShot] = useState<Rendered | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const flat = displayAssets(assets, "flat");
@@ -121,20 +119,55 @@ export function PrintPanel(props: PrintPanelProps) {
   const cutPath = cutFrame && !cutFrame.config.maskUrl ? frameSvgPath(cutFrame) : "";
   const mirror = !!props.print?.spec.mirror;
   const sil = props.printSilhouette?.enabled ? props.printSilhouette : null;
-  /** The print file: the sheet — and, a khuôn made as one half (spec.mirror), its mirror image beside it. */
-  const printCanvas = async (): Promise<HTMLCanvasElement> => {
+  /** The flat sheet — and, a khuôn made as one half (spec.mirror), its mirror image beside it. */
+  const flatSheet = async (): Promise<HTMLCanvasElement> => {
     const sheet = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts, ...sizeArgs });
-    // The silhouette follows the khuôn when the file is cut to one (its outline + holes), else the print's own shape.
-    return withSilhouette(mirror ? mirrorSheet(sheet) : sheet, props.printSilhouette, silhouetteCutOf(cutFrame, mirror));
+    return mirror ? mirrorSheet(sheet) : sheet;
   };
+  /** The print file: the flat sheet, with the silhouette above it when on. */
+  const printCanvas = async (sheet?: HTMLCanvasElement): Promise<HTMLCanvasElement> =>
+    // The silhouette follows the khuôn when the file is cut to one (its outline + holes), else the print's own shape.
+    withSilhouette(sheet ?? (await flatSheet()), props.printSilhouette, silhouetteCutOf(cutFrame, mirror));
+  /** The factory pair (asked 2026-11-07): the design inside its khuôn + the empty khuôn, same px. */
+  const pairOf = (sheet: HTMLCanvasElement) =>
+    khuonPair(sheet, {
+      cut: silhouetteCutOf(cutFrame, mirror),
+      alpha: !cutFrame && (props.print?.kind === "cut" || material.shape === "contour" || !!sil),
+      offset: sil?.offset ?? 0,
+      hole: sil?.hole ?? false,
+      holeSize: sil?.holeSize ?? 9,
+    });
+  /** Shown: the pair for the factory (default) or the print file alone. */
+  const [mode, setMode] = useState<"pair" | "file">("pair");
+  const [pair, setPair] = useState<{ onKhuon: string; blank: string } | null>(null);
 
   useEffect(() => {
     let live = true;
     let url = "";
     const t = setTimeout(async () => {
       try {
-        const full = await printCanvas();
+        const sheet = await flatSheet();
+        const full = await printCanvas(sheet);
         const k = Math.min(1, PREVIEW_SIDE / Math.max(full.width, full.height));
+        // The pair, at preview size too.
+        const p = await pairOf(sheet);
+        const kp = Math.min(1, (PREVIEW_SIDE * 0.7) / Math.max(sheet.width, sheet.height));
+        const pairUrls = {
+          onKhuon: URL.createObjectURL(await canvasToBlob(kp < 1 ? shrink(p.onKhuon, kp) : p.onKhuon, "image/png")),
+          blank: URL.createObjectURL(await canvasToBlob(kp < 1 ? shrink(p.blank, kp) : p.blank, "image/png")),
+        };
+        if (!live) {
+          URL.revokeObjectURL(pairUrls.onKhuon);
+          URL.revokeObjectURL(pairUrls.blank);
+          return;
+        }
+        setPair((old) => {
+          if (old) {
+            URL.revokeObjectURL(old.onKhuon);
+            URL.revokeObjectURL(old.blank);
+          }
+          return pairUrls;
+        });
         // The cut line on the preview only (a copy; print.png stays clean): the khuôn's outline + holes, magenta.
         const small = k < 1 || cutPath ? shrink(full, k) : full;
         if (cutPath && !sil) drawCutLine(small, cutPath, k, mirror ? main.width : 0);
@@ -171,6 +204,35 @@ export function PrintPanel(props: PrintPanelProps) {
     }
   };
 
+  /** Everything the factory gets in one zip: print file, design in the khuôn, empty khuôn, cut line. */
+  const downloadPack = async () => {
+    setSaving(true);
+    try {
+      const sheet = await flatSheet();
+      const full = await printCanvas(sheet);
+      const p = await pairOf(sheet);
+      const bytes = async (c: HTMLCanvasElement) => new Uint8Array(await (await canvasToBlob(c, "image/png")).arrayBuffer());
+      const base = `${product.name.replace(/[^\w-]+/g, "-") || "artwork"}${size?.name ? `-${size.name}` : ""}`;
+      const entries = [
+        { name: `${base}-print.png`, data: await bytes(full) },
+        { name: `${base}-thiet-ke-tren-khuon.png`, data: await bytes(p.onKhuon) },
+        { name: `${base}-khuon-trong.png`, data: await bytes(p.blank) },
+      ];
+      if (sil) entries.push({ name: `${base}-print-khong-silhouette.png`, data: await bytes(sheet) });
+      if (cutPath) entries.push({ name: `${base}-cut.svg`, data: new TextEncoder().encode(cutSvg(cutPath, main.width, main.height, mirror, material.id !== "none" ? material.widthMm : 0)) });
+      const href = URL.createObjectURL(zip(entries));
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = `${base}-file-in.zip`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(href), 1000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Xuất gói file in thất bại");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const downloadCut = async () => {
     if (!cutFrame) return;
     const base = `${product.name.replace(/[^\w-]+/g, "-") || "product"}-cut`;
@@ -189,21 +251,6 @@ export function PrintPanel(props: PrintPanelProps) {
     a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(href), 1000);
-  };
-
-  /** The finished artwork (this choice) as one more artwork in the product's library folder (server/artworks.ts). */
-  const saveArtwork = async () => {
-    setSaving(true);
-    setSaved(null);
-    try {
-      const full = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts, cutToFrame: true });
-      const r = await ctApi.saveProductArtwork(product.id, await canvasToBlob(full, "image/png"), { name: `${product.name} — artwork`, selection: normalizeSamples(selection) });
-      setSaved(r.artwork.name);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Không lưu được artwork");
-    } finally {
-      setSaving(false);
-    }
   };
 
   const mm = material.id !== "none" ? material.widthMm : 0;
@@ -259,6 +306,18 @@ export function PrintPanel(props: PrintPanelProps) {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-3 border-b px-4 py-2 text-xs">
         <span className="font-semibold">File in</span>
+        <div className="flex rounded-md border p-0.5">
+          {(
+            [
+              ["pair", "Thiết kế trong khuôn + khuôn trống"],
+              ["file", "print.png"],
+            ] as Array<["pair" | "file", string]>
+          ).map(([k, label]) => (
+            <button key={k} onClick={() => setMode(k)} className={`rounded px-2 py-0.5 font-medium ${mode === k ? "bg-foreground text-background" : "hover:bg-accent"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
         <span className="text-muted-foreground">
           {frame ? `Toàn khung edit, cắt theo khuôn "${frame.name}"` : "Toàn khung edit (không có khuôn)"}
           {cutPath && " · đường hồng = đường cắt (file cut.svg riêng, không in)"}
@@ -269,13 +328,9 @@ export function PrintPanel(props: PrintPanelProps) {
         </span>
         <span className="text-muted-foreground">Bản phẳng + layer của khách đang chọn ở Thiết kế — đúng file gửi xưởng.</span>
         <div className="ml-auto flex items-center gap-2">
-          {saved && <span className="text-emerald-600">Đã lưu “{saved}” vào thư viện</span>}
           {sizes.length > 0 && (
             <CtSelect<string> className="w-28" value={sizeId || sizes[0].id} options={sizes.map((s) => ({ value: s.id, label: `Cỡ ${s.name}` }))} onChange={setSizeId} />
           )}
-          <CtButton size="sm" variant="outline" onClick={() => void saveArtwork()} disabled={saving || !shot} title="Lưu artwork hoàn chỉnh (lựa chọn đang xem) vào danh mục mang tên sản phẩm (tab Artwork) — Lưu thiết kế cũng tự lưu mỗi version">
-            <BookmarkPlus className="h-3.5 w-3.5" /> Lưu artwork vào thư viện
-          </CtButton>
           <CtButton size="sm" variant="outline" onClick={props.onOpenSettings}>
             <Settings2 className="h-3.5 w-3.5" /> Cài đặt in
           </CtButton>
@@ -284,8 +339,11 @@ export function PrintPanel(props: PrintPanelProps) {
               <Scissors className="h-3.5 w-3.5" /> {cutPath ? "Tải cut.svg" : "Tải mask cắt"}
             </CtButton>
           )}
-          <CtButton size="sm" onClick={() => void download()} disabled={saving || !shot}>
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Tải print.png
+          <CtButton size="sm" variant="outline" onClick={() => void download()} disabled={saving || !shot}>
+            <Download className="h-3.5 w-3.5" /> Tải print.png
+          </CtButton>
+          <CtButton size="sm" onClick={() => void downloadPack()} disabled={saving || !shot} title="print.png + thiết kế trên khuôn + khuôn trống (+ cut.svg, bản không silhouette) trong 1 file zip cho xưởng">
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Package className="h-3.5 w-3.5" />} Tải gói file in
           </CtButton>
         </div>
       </div>
@@ -383,7 +441,35 @@ export function PrintPanel(props: PrintPanelProps) {
           {shot && <GridToggleButton on={showGrid} onToggle={toggleGrid} />}
         </span>
       </div>
-      <div ref={viewRef} className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-8">
+      {mode === "pair" && !error && (
+        <div className="grid min-h-0 flex-1 grid-cols-2 gap-6 overflow-auto p-6">
+          {(
+            [
+              ["onKhuon", "Thiết kế nằm trong khuôn", "Bản in đặt đúng trên khuôn, đường hồng = đường cắt"],
+              ["blank", "Khuôn in (trống)", "Cùng kích thước px — đặt bản bên trái chồng lên là ra sản phẩm"],
+            ] as Array<["onKhuon" | "blank", string, string]>
+          ).map(([k, title, hint]) => (
+            <figure key={k} className="flex min-h-0 flex-col items-center gap-2">
+              <figcaption className="text-center text-xs">
+                <div className="font-semibold">{title}</div>
+                <div className="text-muted-foreground">{hint}</div>
+              </figcaption>
+              {pair ? (
+                // eslint-disable-next-line @next/next/no-img-element -- a local blob
+                <img src={pair[k]} alt={title} className="max-h-[70vh] max-w-full object-contain shadow-sm" style={{ backgroundColor: "#e8e8e8", backgroundImage: "repeating-conic-gradient(#0000000f 0% 25%, transparent 0% 50%)", backgroundSize: "16px 16px" }} />
+              ) : (
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              )}
+            </figure>
+          ))}
+          {sil && (
+            <p className="col-span-2 text-center text-[11px] text-muted-foreground">
+              Silhouette đang bật: print.png = silhouette đen ở nửa trên + bản in ở nửa dưới (xem ở chế độ print.png); gói file in có thêm bản không silhouette.
+            </p>
+          )}
+        </div>
+      )}
+      <div ref={viewRef} className={`relative min-h-0 flex-1 items-center justify-center overflow-hidden p-8 ${mode === "pair" && !error ? "hidden" : "flex"}`}>
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
         ) : shot ? (

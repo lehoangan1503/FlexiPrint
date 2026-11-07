@@ -24,6 +24,18 @@ this MCP. Everything you read here is live production data.
   are variants ("đa sắc", recolours) and renditions (material versions: meta.material = the material preset id,
   meta.materialVersion = a version's label, e.g. "có dây"). Editors upload all of them by hand.
 
+## Product base · Artwork · Sản phẩm (since 2026-11-07, like Teeinblue Product Base / Artwork / Campaign)
+- PRODUCT BASE (list_base_products): the blank product sold — name = kind of product (Acrylic Ornament 1 side,
+  Glass Ornament 1 side, Ceramic Ornament 2 sides, Poseable Doll), its Notion price table (variants: sizes × packs
+  with prices), Shopify product type, the khuôn in + phôi of the piece, print areas. No design.
+- ARTWORK (ct_products kind "artwork"): ONE whole design — every version, layer, option, khuôn, phôi, preview and
+  print file. A finished bộ (drawn, imported) gives clipart + its artwork; char_add_product, create_artwork_product
+  and import builds make artworks. An artwork is never deployed.
+- SẢN PHẨM (kind "product"): what is sold = an artwork + a product base (make_product_from_artwork). It keeps a
+  snapshot of the artwork (later artwork edits never reach it; the editor updates by hand), takes variants + price +
+  product type from its base, and has its own title (theme), mockups and Shopify link. make_product_mockups,
+  check_deploy and deploy_product work on the PRODUCT id.
+
 ## Tools
 - Library reads: list_categories, get_category, list_cliparts, get_history, view_image.
 - Tasks from the web app: get_task, report_progress, ask_user, submit_result, fail_task.

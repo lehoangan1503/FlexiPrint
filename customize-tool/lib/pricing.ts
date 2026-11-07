@@ -179,3 +179,15 @@ export function priceTableFor<T extends Pick<CtPriceTable, "name">>(tables: T[],
   const word = materialWord(material);
   return (word && tables.find((t) => word.find.test(t.name))) || null;
 }
+
+/**
+ * The base product of a material (an import, an agent's product): the one made of it, else the one whose name
+ * carries the material's word. A doll / unknown material: null — the editor picks.
+ */
+export function baseProductFor<T extends { name: string; config: { material: string } }>(bases: T[], material: string): T | null {
+  if (!material || material === "none") return null;
+  const same = bases.find((b) => b.config.material === material);
+  if (same) return same;
+  const word = materialWord(material);
+  return (word && bases.find((b) => word.find.test(b.name))) || null;
+}

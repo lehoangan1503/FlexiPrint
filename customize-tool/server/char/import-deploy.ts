@@ -1,16 +1,18 @@
 /**
- * An imported bộ goes to Shopify by itself (asked 2026-10-30: "việc import bộ là thẳng tới deploy và ra sản phẩm
- * preview luôn chứ không deploy tay"): once built, its product is deployed as a DRAFT — the folder's title and
- * description (title-description.txt), the price table named after its material, its mockups as images — and the set
- * keeps the staff preview link (live theme, template flexi2). Nothing goes on sale: an
- * editor turns it ACTIVE later.
+ * An imported bộ → Shopify. Asked 2026-10-30 to go there by itself; since 2026-11-07 (Product base · Artwork · Sản
+ * phẩm) a build stops at the clipart + the ARTWORK, and this runs on request: the artwork's product (made on the
+ * base product of the folder's material) is deployed as a DRAFT — the folder's title and description
+ * (title-description.txt), the base product's variants + prices, its mockups — and the set keeps the staff preview
+ * link (live theme, template flexi2). Nothing goes on sale: an editor turns it ACTIVE later.
  */
 
 import { CT_TABLES } from "../../config";
-import type { CtAsset, CtCharImportManifest, CtCharImportShopify, CtCharProject, CtPriceTable, CtProduct } from "../../types";
+import type { CtAsset, CtCharImportManifest, CtCharImportShopify, CtCharProject, CtProduct } from "../../types";
 import { suggestCollections } from "../../lib/collections";
 import { defaultDeployMedia } from "../../lib/deploy-media";
-import { materialWord, priceTableFor } from "../../lib/pricing";
+import { baseProductFor, materialWord } from "../../lib/pricing";
+import { listBaseRows } from "../base-products";
+import { ensureProductFor } from "../artwork-link";
 import { runDeploy } from "../handlers";
 import { createCollection, listCollections, shopifyConfigured } from "../shopify";
 import { siteUrl } from "../site-url";
@@ -93,30 +95,36 @@ export function savedDeployInfo(p: CtCharProject, product: CtProduct | null): Im
 }
 
 /**
- * The built product → a Shopify draft (the set's Shopify product again when it has one); the outcome (link or why
- * not) on brief.imported.shopify. Never throws.
+ * The built artwork → its product (made on the base product of its material when it has none yet) → a Shopify draft
+ * (the product's Shopify product again when it has one); the outcome (link or why not) on brief.imported.shopify.
+ * Since 2026-11-07 a build stops at the artwork: this runs when someone asks ("Tạo sản phẩm + đưa lên Shopify",
+ * MCP char_import_deploy). Never throws.
  */
-export async function deployImported(s: CtSession, setId: string, productId: string, info: ImportDeployInfo): Promise<void> {
+export async function deployImported(s: CtSession, setId: string, artworkId: string, info: ImportDeployInfo): Promise<void> {
   try {
     await saveImportShopify(s, setId, { status: "deploying", error: "", ...info });
     if (!shopifyConfigured()) throw new Error("Chưa cấu hình Shopify trên server");
     const db = s.supabase;
-    const { data: product } = await db.from(CT_TABLES.products).select("*").eq("id", productId).single<CtProduct>();
-    if (!product) throw new Error("Không thấy sản phẩm của bộ");
+    const { data: artwork } = await db.from(CT_TABLES.products).select("*").eq("id", artworkId).single<CtProduct>();
+    if (!artwork) throw new Error("Không thấy artwork của bộ");
 
     const word = materialWord(info.material);
-    const { data: tables } = await db.from(CT_TABLES.priceTables).select("*").order("updated_at", { ascending: false }).limit(200).returns<CtPriceTable[]>();
-    const table = priceTableFor(tables ?? [], info.material);
-    if (!table) {
+    const base = baseProductFor(await listBaseRows(db), info.material);
+    if (!base) {
       throw new Error(
         word
-          ? `Chưa có bảng giá cho chất liệu ${word.name} — tạo một bảng giá có chữ "${word.name}" trong tên (trang Deploy) rồi bấm "Đưa lên Shopify lại"`
-          : `Không biết bảng giá nào cho chất liệu "${info.material || "chưa rõ"}" — deploy ở trang Deploy của sản phẩm`,
+          ? `Chưa có product base cho chất liệu ${word.name} — tạo ở tab Product base rồi bấm lại`
+          : `Không biết product base nào cho chất liệu "${info.material || "chưa rõ"}" — tạo sản phẩm từ artwork (chọn product base) rồi deploy ở trang sản phẩm`,
       );
     }
+    const product = artwork.kind === "product" ? artwork : await ensureProductFor(db, artwork.user_id, artwork, base);
+    const productId = product.id;
+    const table = base.priceTable;
+    if (!table) throw new Error(`Product base “${base.name}” chưa gắn bảng giá`);
 
     const { data: mockups } = await db.from(CT_TABLES.assets).select("id, name").eq("product_id", productId).eq("role", "mockup").order("created_at").returns<Array<Pick<CtAsset, "id" | "name">>>();
     const title = (info.title || product.name).trim();
+    if (title && title !== product.name) await db.from(CT_TABLES.products).update({ name: title }).eq("id", productId);
     const ornament = /ornament/i.test(title);
     const collections = await listCollections();
     // The product type a type rule of the store already names (CHERIVIA ships "Acrylic Ornament" / "Christmas
@@ -136,7 +144,7 @@ export async function deployImported(s: CtSession, setId: string, productId: str
         descriptionHtml: info.description ? descriptionHtml(info.description) : "",
         status: product.shopify?.status ?? "DRAFT",
         vendor: "",
-        productType,
+        productType: base.config.productType || productType,
         tags,
         mediaAssetIds: defaultDeployMedia(mockups ?? []).slice(0, MAX_MEDIA),
         collectionIds: fit.map((c) => c.id),
@@ -148,7 +156,7 @@ export async function deployImported(s: CtSession, setId: string, productId: str
     if ("error" in r) throw new Error(r.error);
     // An active product opens its own page (a preview link expires); a draft one only has the preview link (live theme).
     const live = (product.shopify?.status ?? "DRAFT") === "ACTIVE";
-    await saveImportShopify(s, setId, { status: "done", previewUrl: live ? r.shopify.url : (r.previewUrl ?? r.shopify.url), adminUrl: r.shopify.adminUrl, priceTable: table.name, error: r.warnings.join(" ") });
+    await saveImportShopify(s, setId, { status: "done", productId, previewUrl: live ? r.shopify.url : (r.previewUrl ?? r.shopify.url), adminUrl: r.shopify.adminUrl, priceTable: table.name, error: r.warnings.join(" ") });
   } catch (e) {
     await saveImportShopify(s, setId, { status: "failed", error: e instanceof Error ? e.message : String(e) }).catch(() => undefined);
   }

@@ -828,7 +828,9 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     await refreshSetUsers(s, { ...p, product_ids: old }, product.id).catch((e: Error) => console.warn("[ct] import set users", e.message));
     for (const pid of old) await dropProduct(s, pid);
     await dropLeftovers(db, p, userId).catch((e: Error) => console.warn("[ct] import leftovers", e.message));
-    await deployImported(s, p.id, product.id, deployInfo(m));
+    // A finished import = clipart + a whole ARTWORK (asked 2026-11-07), not a product: the deploy info is kept for
+    // "Tạo sản phẩm + đưa lên Shopify" (import-deploy.ts), nothing goes to Shopify by itself.
+    await saveImportShopify(s, p.id, { status: "idle", error: "", ...deployInfo(m) });
     return product.id;
   } catch (e) {
     await dropProduct(s, product.id).catch(() => undefined);

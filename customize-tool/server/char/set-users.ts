@@ -76,7 +76,13 @@ export async function refreshSetUsers(s: CtSession, p: CtCharProject, newProduct
   const db = s.supabase;
   const { data: using } = await db.from(CT_TABLES.regions).select("product_id").eq("config->charSet->>projectId", p.id).returns<Array<{ product_id: string }>>();
   const skip = new Set([...p.product_ids, newProductId]);
-  const targets = [...new Set((using ?? []).map((r) => r.product_id))].filter((id) => !skip.has(id));
+  let targets = [...new Set((using ?? []).map((r) => r.product_id))].filter((id) => !skip.has(id));
+  if (!targets.length) return 0;
+  // Only artworks follow the set (2026-11-07): a product (what is sold) is a snapshot of its artwork and changes only
+  // when someone updates it ("Có bản artwork mới").
+  const { data: sold } = await db.from(CT_TABLES.products).select("id").in("id", targets).eq("kind", "product").returns<Array<{ id: string }>>();
+  const soldIds = new Set((sold ?? []).map((x) => x.id));
+  targets = targets.filter((id) => !soldIds.has(id));
   if (!targets.length) return 0;
   const source = await bundleOf(db, newProductId);
   if (!source) return 0;

@@ -7,7 +7,8 @@
  *
  *   GET  products/:id/artwork                  → { revision, source, products } — the artwork this product was made
  *                                                 from (if any) and the products made from this one
- *   POST products/:id/artwork-products {name?} → { product } a new product made from this artwork
+ *   POST products/:id/artwork-products {baseProductId, name?} → { product } a new product (kind "product") made
+ *                                                 from this artwork on a base product (variants + price)
  *   POST products/:id/artwork-sync             → { product } this product takes its artwork's current design
  *   POST products/:id/artwork-products/sync {ids} → { updated, failed } several products of this artwork at once
  *
@@ -19,15 +20,16 @@
 
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../config";
-import type { CtArtworkLink, CtArtworkProductRow, CtArtworkSource, CtProduct, CtProductConfig, CtRegion, CtRegionItem } from "../types";
+import type { CtArtworkLink, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtCreateFromArtworkBody, CtProduct, CtProductConfig, CtRegion, CtRegionItem } from "../types";
 import { normalizeProductConfig } from "../lib/design";
 import { jsonError, ownedProduct } from "./handlers";
-import type { CtSession } from "./supabase";
+import type { CtServiceClient, CtSession } from "./supabase";
+import { loadBaseProduct } from "./base-products";
 
 /** What the snapshot copies from the artwork's config: the design. The rest (photos, mockups) is the product's own. */
 const DESIGN_KEYS = ["main", "layouts", "samples", "material", "print", "printGuide", "printSilhouette"] as const;
 
-type Db = CtSession["supabase"];
+type Db = CtSession["supabase"] | CtServiceClient;
 
 async function loadDesign(db: Db, artworkId: string): Promise<{ regions: CtRegion[]; items: CtRegionItem[] }> {
   const { data: regions, error } = await db.from(CT_TABLES.regions).select("*").eq("product_id", artworkId).order("sort_order").returns<CtRegion[]>();
@@ -138,19 +140,47 @@ export async function artworkStatus(s: CtSession, id: string): Promise<NextRespo
   return NextResponse.json({ revision: cfg.artworkRevision, source, products });
 }
 
-/** POST products/:id/artwork-products {name?} */
+/**
+ * A product (what is sold) made from `artwork` on `base` — the snapshot + its base product. Its name starts as the
+ * artwork's (the theme), renamed freely. The service client (MCP) passes the owner's id.
+ */
+export async function makeProductFromArtwork(db: Db, userId: string, artwork: CtProduct, base: CtBaseProduct, name?: string): Promise<CtProduct> {
+  if ((artwork.kind ?? "artwork") !== "artwork" || normalizeProductConfig(artwork.config).artworkLink) throw new Error(`"${artwork.name}" là sản phẩm, không phải artwork — tạo từ artwork gốc của nó`);
+  const title = (name?.trim() || artwork.name).slice(0, 200);
+  const { data: product, error } = await db.from(CT_TABLES.products).insert({ user_id: userId, name: title, kind: "product", base_product_id: base.id }).select("*").single<CtProduct>();
+  if (error || !product) throw new Error(error?.message ?? "Không tạo được sản phẩm");
+  try {
+    return await snapshot(db, artwork, product);
+  } catch (e) {
+    await db.from(CT_TABLES.products).delete().eq("id", product.id);
+    throw e;
+  }
+}
+
+/**
+ * The artwork's first product, made on `base` when it has none yet (an import going to Shopify, the agent). The
+ * artwork's own mockups (sales pictures of an import, photos made before artworks and products were split) move to
+ * it: an artwork shows no mockups.
+ */
+export async function ensureProductFor(db: Db, userId: string, artwork: CtProduct, base: CtBaseProduct): Promise<CtProduct> {
+  const { data: made } = await db.from(CT_TABLES.products).select("*").eq("kind", "product").eq("config->artworkLink->>artworkId", artwork.id).order("created_at").limit(1).returns<CtProduct[]>();
+  if (made?.[0]) return made[0];
+  const product = await makeProductFromArtwork(db, userId, artwork, base);
+  await db.from(CT_TABLES.assets).update({ product_id: product.id }).eq("product_id", artwork.id).eq("role", "mockup");
+  return product;
+}
+
+/** POST products/:id/artwork-products CtCreateFromArtworkBody */
 export async function createFromArtwork(s: CtSession, artworkId: string, body: unknown): Promise<NextResponse> {
   const artwork = await ownedProduct(s, artworkId);
   if (!artwork) return jsonError("Không tìm thấy artwork", 404);
-  if (normalizeProductConfig(artwork.config).artworkLink) return jsonError("Sản phẩm này làm từ artwork khác — tạo từ artwork gốc", 400);
-  const raw = body && typeof body === "object" ? (body as { name?: unknown }).name : undefined;
-  const name = (typeof raw === "string" && raw.trim() ? raw.trim() : `${artwork.name} — sản phẩm`).slice(0, 200);
-  const { data: product, error } = await s.supabase.from(CT_TABLES.products).insert({ user_id: s.user.id, name }).select("*").single<CtProduct>();
-  if (error || !product) return jsonError(error?.message ?? "Không tạo được sản phẩm", 500);
+  const b = body && typeof body === "object" ? (body as Partial<Record<keyof CtCreateFromArtworkBody, unknown>>) : {};
+  const base = typeof b.baseProductId === "string" ? await loadBaseProduct(s.supabase, b.baseProductId) : null;
+  if (!base) return jsonError("Chọn product base (loại sản phẩm: biến thể + giá) cho sản phẩm", 400);
   try {
-    return NextResponse.json({ product: await snapshot(s.supabase, artwork, product) }, { status: 201 });
+    const product = await makeProductFromArtwork(s.supabase, s.user.id, artwork, base, typeof b.name === "string" ? b.name : undefined);
+    return NextResponse.json({ product }, { status: 201 });
   } catch (e) {
-    await s.supabase.from(CT_TABLES.products).delete().eq("id", product.id);
     return jsonError(e instanceof Error ? e.message : "Không chép được artwork", 500);
   }
 }

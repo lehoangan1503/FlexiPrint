@@ -3,14 +3,14 @@
  * passes) — the same pipeline as the editor's Deploy page (server/handlers.ts runDeploy):
  *
  *   check_deploy     what a deploy of the product would use and what blocks it (Vietnamese "missing" list)
+ *   list_base_products / make_product_from_artwork   product bases (variants + price) and a product = artwork + base
  *   deploy_product   the same checks again, then the storefront template + the Shopify product (variants from the
  *                    price table, mockups as images); run again it updates the same Shopify product
  *
  * The task's user must be able to edit the product (its owner, or an admin — migration 026).
  */
 
-import { CT_TABLES } from "../../config";
-import type { CtAgentTask, CtAsset, CtContentResult, CtPriceTable, CtProduct, CtShopifyCollection, CtShopifyInfo } from "../../types";
+import type { CtAgentTask, CtAsset, CtBaseProduct, CtContentResult, CtPriceTable, CtProduct, CtShopifyCollection, CtShopifyInfo } from "../../types";
 import { auditOptions } from "../../lib/option-audit";
 import { suggestCollections } from "../../lib/collections";
 import { defaultDeployMedia } from "../../lib/deploy-media";
@@ -20,6 +20,9 @@ import { serviceSession } from "../char/product";
 import { ownedProduct, productTemplate, readDeployBody, runDeploy } from "../handlers";
 import { listCollections, previewLinks, shopifyConfigured, shopifyInfo } from "../shopify";
 import { siteUrl } from "../site-url";
+import { listBaseRows, loadBaseProduct } from "../base-products";
+import { makeProductFromArtwork } from "../artwork-link";
+import { CT_CONFIG, CT_TABLES } from "../../config";
 import type { CtServiceClient, CtSession } from "../supabase";
 import { TASK_ARG, json, liveStatus, loadTask } from "./task-common";
 import type { CtMcpContext, CtMcpTool } from "./tools";
@@ -52,6 +55,8 @@ async function progress(db: CtServiceClient, taskId: string, text: string): Prom
 const textOf = (html: string) => html.replace(/<[^>]*>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ").trim();
 
 interface DeployState {
+  /** The product's base product (variants + price), when it has one. */
+  base: CtBaseProduct | null;
   info: CtShopifyInfo;
   tables: CtPriceTable[];
   mockups: CtAsset[];
@@ -62,7 +67,8 @@ interface DeployState {
 
 /** Everything a deploy of the product reads. */
 async function deployState(db: CtServiceClient, s: CtSession, product: CtProduct): Promise<DeployState> {
-  const [info, tables, mockups, built, content] = await Promise.all([
+  const [base, info, tables, mockups, built, content] = await Promise.all([
+    product.base_product_id ? loadBaseProduct(db, product.base_product_id) : Promise.resolve(null),
     shopifyInfo(product.shopify?.productId ?? null).catch((e: Error): CtShopifyInfo => ({ configured: shopifyConfigured(), shop: null, product: null, error: e.message })),
     db
       .from(CT_TABLES.priceTables)
@@ -92,6 +98,7 @@ async function deployState(db: CtServiceClient, s: CtSession, product: CtProduct
       .then((r) => r.data?.result ?? null),
   ]);
   return {
+    base,
     info,
     tables,
     mockups,
@@ -102,8 +109,9 @@ async function deployState(db: CtServiceClient, s: CtSession, product: CtProduct
 }
 
 /** What blocks a deploy (Vietnamese, the editor reads it). */
-function blockers(st: DeployState, pick: { tableId: string | null; title: string; descriptionHtml: string; mediaIds: string[] }): string[] {
+function blockers(st: DeployState, pick: { kind: string; tableId: string | null; title: string; descriptionHtml: string; mediaIds: string[] }): string[] {
   const out: string[] = [];
+  if (pick.kind !== "product") out.push("Đây là ARTWORK, không phải sản phẩm — make_product_from_artwork (artwork + product base) rồi deploy sản phẩm đó.");
   if (!st.info.configured) out.push("Chưa cấu hình Shopify trên server (SHOPIFY_STORE_DOMAIN / CLIENT_ID / CLIENT_SECRET).");
   const table = st.tables.find((t) => t.id === pick.tableId);
   if (!st.tables.length) out.push("Chưa có bảng giá nào — editor tạo bảng giá ở trang Deploy.");
@@ -125,6 +133,8 @@ function blockers(st: DeployState, pick: { tableId: string | null; title: string
 
 /** The price table a deploy takes when none is named: the one the product was deployed with, else its material's. */
 function defaultTable(st: DeployState, product: CtProduct): string | null {
+  // The base product owns the prices (2026-11-07).
+  if (st.base?.config.priceTableId) return st.base.config.priceTableId;
   const linked = product.shopify?.priceTableId;
   if (linked && st.tables.some((t) => t.id === linked)) return linked;
   return priceTableFor(st.tables, product.config?.material?.id ?? "")?.id ?? null;
@@ -214,9 +224,63 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         mockups: st.mockups.map((a) => ({ id: a.id, url: a.url, default: defaultMedia(st, product).includes(a.id) })),
         collections: collections.map((c) => ({ id: c.id, title: c.title, smart: c.smart, rules: c.smart ? c.rules.map((r) => `${r.column} ${r.relation} ${r.condition}`) : undefined, suggested: fit.some((x) => x.id === c.id) })),
         lastContent: st.content ? { title: st.content.title, descriptionHtml: st.content.descriptionHtml } : null,
-        missing: blockers(st, { tableId, title, descriptionHtml, mediaIds: defaultMedia(st, product) }),
+        missing: blockers(st, { kind: product.kind ?? "artwork", tableId, title, descriptionHtml, mediaIds: defaultMedia(st, product) }),
         next: "Fill what is missing (title + description_html in US English per the content rules; a price table that fits — never create one, the editor keeps them; make_product_mockups when there is none), then deploy_product. Collections: reuse the store's — the suggested ones fit the title; a smart (rule-based) one is joined through its rules (the deploy adds the tag / type), so pick it like any other. Never create a collection when one fits.",
       });
+    },
+  },
+  {
+    name: "list_base_products",
+    description:
+      "Product bases (2026-11-07, like Teeinblue): the blank products sold — name = kind of product (Acrylic Ornament 1 side, Glass Ornament 1 side, Ceramic Ornament 2 sides, Poseable Doll), material, Shopify product type, the price table that makes the variants (sizes × packs with prices), the khuôn in an artwork is drawn for (sheet px), print areas, how many products use each. A product (what is sold) = an artwork + one of these.",
+    inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db } = await loadTask(ctx, args.task_id);
+      const bases = await listBaseRows(db);
+      return json({
+        bases: bases.map((b) => ({
+          id: b.id,
+          name: b.name,
+          material: b.config.material,
+          productType: b.config.productType,
+          khuon: b.template ? { id: b.template.id, name: b.template.name, width: b.template.width, height: b.template.height, phoi: b.template.blankUrl } : null,
+          printAreas: b.config.printAreas,
+          variants: b.priceTable ? priceCells(b.priceTable.config).map((c) => ({ size: c.size?.label ?? "", pack: c.pack?.label ?? "", price: c.price, compareAt: c.compareAt })) : [],
+          priceTable: b.priceTable?.name ?? null,
+          products: b.products,
+        })),
+      });
+    },
+  },
+  {
+    name: "make_product_from_artwork",
+    description:
+      "A product (what is sold) from a finished artwork on a product base: the product holds a snapshot of the artwork (layers, options, versions, khuôn, print settings — later artwork edits never change it; the editor updates it by hand) and takes its variants + prices + product type from the base. Its name starts as the artwork's (the theme), or `name`. → product_id, editor link. Then make_product_mockups / wait_product_mockups, then check_deploy / deploy_product on THIS product id (never on the artwork).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        artwork_id: { type: "string", description: "The artwork (a set's product id, an import's, render_artwork's)." },
+        base_product_id: { type: "string", description: "From list_base_products — the one of the artwork's material / khuôn." },
+        name: { type: "string", description: "Product title (theme), default = the artwork's name." },
+      },
+      required: ["task_id", "artwork_id", "base_product_id"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task } = await loadTask(ctx, args.task_id);
+      if (!task.user_id) throw new Error("The task has no user");
+      const s = await serviceSession(db, task.user_id);
+      const id = str(args.artwork_id);
+      if (!UUID.test(id)) throw new Error("artwork_id is not a valid id");
+      const artwork = await ownedProduct(s, id);
+      if (!artwork) throw new Error("No such artwork, or the task's user may not edit it");
+      const base = await loadBaseProduct(db, str(args.base_product_id));
+      if (!base) throw new Error("No such product base — list_base_products");
+      const product = await makeProductFromArtwork(db, task.user_id, artwork, base, str(args.name) || undefined);
+      await progress(db, task.id, `Đã tạo sản phẩm “${product.name}” từ artwork “${artwork.name}” trên ${base.name}`);
+      return json({ product_id: product.id, editor: `${siteUrl()}${CT_CONFIG.basePath}/${product.id}`, next: "make_product_mockups on product_id, then check_deploy / deploy_product." });
     },
   },
   {
@@ -263,7 +327,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         primaryCollectionId: str(args.primary_collection_id) || collectionIds[0] || null,
         shopifyProductId: null,
       });
-      const missing = blockers(st, { tableId, title: body?.title ?? "", descriptionHtml: body?.descriptionHtml ?? "", mediaIds });
+      const missing = blockers(st, { kind: product.kind ?? "artwork", tableId, title: body?.title ?? "", descriptionHtml: body?.descriptionHtml ?? "", mediaIds });
       if (!body || missing.length) throw new Error(`Chưa deploy được:\n- ${(missing.length ? missing : ["Thiếu title hoặc bảng giá."]).join("\n- ")}`);
       await progress(db, task.id, `Đang deploy “${body.title}” lên Shopify (${body.status})…`);
       const r = await runDeploy(s, product, body, siteUrl());

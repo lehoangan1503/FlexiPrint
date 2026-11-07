@@ -14,7 +14,8 @@ import { ArrowUpCircle, ExternalLink, Layers, Loader2, Plus } from "lucide-react
 import type { CtArtworkProductRow, CtArtworkSource } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { CT_CONFIG } from "../../config";
-import { CtButton, CtInput, cx } from "../ui";
+import { CtButton, cx } from "../ui";
+import { CreateProductDialog } from "../product-create";
 
 interface Status {
   revision: number;
@@ -37,7 +38,7 @@ export function ArtworkLinkBar({ productId, productName, dirty, savedTick, onFla
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(() => {
@@ -98,19 +99,10 @@ export function ArtworkLinkBar({ productId, productName, dirty, savedTick, onFla
   // ---- an artwork ----
   const rows = status.products;
   const behindRows = rows.filter((r) => r.revision < status.revision);
-  const create = async () => {
+  const create = () => {
     if (dirty) return onFlash("Lưu artwork trước — sản phẩm mới lấy bản đã lưu");
-    setBusy("create");
-    try {
-      const p = await ctApi.productFromArtwork(productId, name.trim() || undefined);
-      window.open(href(p.id), "_blank");
-      setName("");
-      load();
-    } catch (e) {
-      onFlash(e instanceof Error ? e.message : "Không tạo được sản phẩm");
-    } finally {
-      setBusy(null);
-    }
+    setOpen(false);
+    setCreating(true);
   };
   const syncPicked = async () => {
     const ids = [...picked];
@@ -131,6 +123,15 @@ export function ArtworkLinkBar({ productId, productName, dirty, savedTick, onFla
 
   return (
     <div ref={boxRef} className="relative ml-2 shrink-0">
+      <CreateProductDialog
+        open={creating}
+        onOpenChange={setCreating}
+        artwork={{ id: productId, name: productName }}
+        onCreated={(id) => {
+          window.open(href(id), "_blank");
+          load();
+        }}
+      />
       <button
         onClick={() => setOpen((v) => !v)}
         className={cx("flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] hover:bg-accent", open && "bg-accent")}
@@ -182,9 +183,9 @@ export function ArtworkLinkBar({ productId, productName, dirty, savedTick, onFla
             </div>
           )}
           <div className="flex items-center gap-2 border-t pt-2">
-            <CtInput value={name} placeholder={`${productName} — sản phẩm`} onChange={(e) => setName(e.target.value)} className="h-8 text-xs" />
-            <CtButton size="sm" variant="primary" disabled={!!busy} onClick={() => void create()}>
-              {busy === "create" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Tạo sản phẩm
+            <span className="text-[11px] text-muted-foreground">Sản phẩm = artwork này + 1 product base (biến thể, giá).</span>
+            <CtButton size="sm" variant="primary" className="ml-auto shrink-0" disabled={!!busy} onClick={create}>
+              <Plus className="h-3.5 w-3.5" /> Tạo sản phẩm
             </CtButton>
           </div>
         </div>

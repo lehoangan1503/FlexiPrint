@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtArtworkProductRow, CtArtworkSource } from "../types";
+import type { CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseProductRow, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
   CtAgentStatus,
@@ -93,8 +93,16 @@ export const ctApi = {
   /** Opens the product on the store with a link made at click time (stored preview links expire). */
   shopifyOpenUrl: (productId: string) => `${CT_CONFIG.apiBase}/products/${productId}/shopify/open`,
 
-  listProducts: (q: string) =>
-    call<{ products: CtProductListRow[] }>(`products?q=${encodeURIComponent(q)}`).then((r) => r.products),
+  listProducts: (q: string, kind?: CtProductKind) =>
+    call<{ products: CtProductListRow[] }>(`products?q=${encodeURIComponent(q)}${kind ? `&kind=${kind}` : ""}`).then((r) => r.products),
+  /** A hand-made artwork: on a base product's khuôn, or a blank canvas of any size. */
+  createArtwork: (body: CtCreateArtworkBody) => call<{ product: CtProduct }>("products/artwork", json("POST", body)).then((r) => r.product),
+  /** Product base (server/base-products.ts). */
+  listBaseProducts: () => call<{ bases: CtBaseProductRow[] }>("base-products").then((r) => r.bases),
+  getBaseProduct: (id: string) => call<CtBaseProductDetail>(`base-products/${id}`),
+  createBaseProduct: (body: CtBaseProductBody) => call<{ base: CtBaseProduct }>("base-products", json("POST", body)).then((r) => r.base),
+  updateBaseProduct: (id: string, body: CtBaseProductBody) => call<{ base: CtBaseProduct }>(`base-products/${id}`, json("PATCH", body)).then((r) => r.base),
+  deleteBaseProduct: (id: string) => call<void>(`base-products/${id}`, { method: "DELETE" }),
   createProduct: (name: string) => call<{ product: CtProduct }>("products", json("POST", { name })).then((r) => r.product),
   getBundle: (id: string) => call<CtProductBundle>(`products/${id}`),
   updateProduct: (id: string, body: CtUpdateProductBody) =>
@@ -103,8 +111,8 @@ export const ctApi = {
   /** Artwork ↔ products (server/artwork-link.ts). */
   artworkStatus: (id: string) =>
     call<{ revision: number; source: (CtArtworkSource & { linkedRevision: number }) | null; products: CtArtworkProductRow[] }>(`products/${id}/artwork`),
-  productFromArtwork: (artworkId: string, name?: string) =>
-    call<{ product: CtProduct }>(`products/${artworkId}/artwork-products`, json("POST", { name })).then((r) => r.product),
+  productFromArtwork: (artworkId: string, body: CtCreateFromArtworkBody) =>
+    call<{ product: CtProduct }>(`products/${artworkId}/artwork-products`, json("POST", body)).then((r) => r.product),
   syncFromArtwork: (id: string) => call<{ product: CtProduct }>(`products/${id}/artwork-sync`, { method: "POST" }).then((r) => r.product),
   syncManyFromArtwork: (artworkId: string, ids: string[]) =>
     call<{ updated: string[]; failed: Array<{ id: string; error: string }> }>(`products/${artworkId}/artwork-products/sync`, json("POST", { ids })),

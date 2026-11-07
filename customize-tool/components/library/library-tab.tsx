@@ -7,7 +7,8 @@
  *   Clipart   the clipart sets (bộ nhân vật / bộ ảnh khách / imports) as cards — two option pictures + "…" so a set
  *             does not look like a product — searched and filtered by kind (lib/set-kind.ts). A card opens the set's
  *             clipart (CharSetFiles) here; a set not drawn yet opens its own page (/v2/:id).
- *   Phôi      blank product photos, a card per khuôn · Khuôn in  print templates (unchanged).
+ *   Font chữ  the team's fonts.
+ * Khuôn in + phôi moved to the Product base tab (2026-11-07): each base product owns the khuôn + phôi of its piece.
  *
  * "Import bộ clipart" and "Tạo bộ clipart mới" sit on top. The sub-tab and the open set are in the address
  * (?lib=…&set=…) so a reload or a link opens them again.
@@ -26,17 +27,13 @@ import { ctConfirm, ctPrompt } from "../dialogs";
 import { CharSetFiles } from "../char/set-files";
 import { KindHelpButton } from "../char/kind-help";
 import { ImportButton } from "../char/import-button";
-import { KhuonTab } from "../print/khuon-tab";
-import { PhoiTab } from "../print/phoi-tab";
 import { FilterChips } from "../filter-chips";
 import { FontsTab } from "./fonts-tab";
 
-export type CtLibraryTab = "clipart" | "phoi" | "khuon" | "fonts";
+export type CtLibraryTab = "clipart" | "fonts";
 
 const TABS: Array<[CtLibraryTab, string]> = [
   ["clipart", "Clipart"],
-  ["phoi", "Template phôi"],
-  ["khuon", "Khuôn in"],
   ["fonts", "Font chữ"],
 ];
 
@@ -112,12 +109,6 @@ export function LibraryTab({ currentUserId, admin }: { currentUserId: string; ad
         {error && <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
         {tab === "fonts" ? (
           <FontsTab currentUserId={currentUserId} admin={admin} />
-        ) : tab === "khuon" ? (
-          <div className="flex h-[calc(100vh-13rem)] min-h-[480px] flex-col overflow-hidden rounded-xl border">
-            <KhuonTab />
-          </div>
-        ) : tab === "phoi" ? (
-          <PhoiTab />
         ) : openSet ? (
           <div className="space-y-3">
             <button onClick={() => openOne(null)} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">

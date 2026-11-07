@@ -18,6 +18,7 @@ import type {
   CtGeneration,
   CtProduct,
   CtProductConfig,
+  CtProductKind,
   CtProductBundle,
   CtProductListRow,
   CtPublicUploadResponse,
@@ -46,6 +47,7 @@ import { printPack, readPrintPackForm } from "./material";
 import { deleteClipart, loadProductAssets } from "./library";
 import { renameProductFolder } from "./artworks";
 import { loadPriceTable } from "./price-tables";
+import { loadBaseProduct } from "./base-products";
 import { createCollection, deployToShopify, listCollections, previewLinks, searchShopifyProducts, shopifyConfigured, shopifyInfo } from "./shopify";
 import { priceTableProblems } from "../lib/pricing";
 
@@ -66,14 +68,15 @@ export async function ownedProduct(s: CtSession, productId: string): Promise<CtP
 // Products
 // ---------------------------------------------------------------------------
 
-export async function listProducts(s: CtSession, search: string): Promise<NextResponse> {
+export async function listProducts(s: CtSession, search: string, kind: CtProductKind | null = null): Promise<NextResponse> {
   let q = s.supabase
     .from(CT_TABLES.products)
-    .select("*, main_asset:ct_assets!ct_products_main_asset_fk(url,width,height)")
+    .select("*, main_asset:ct_assets!ct_products_main_asset_fk(url,width,height), base_product:ct_base_products(id,name)")
     // Newest made first — not the last one edited (asked 2026-10-29: opening a product must not move it up).
     .order("created_at", { ascending: false })
     .limit(200);
   if (search) q = q.ilike("name", `%${search}%`);
+  if (kind) q = q.eq("kind", kind);
   const { data, error } = await q.returns<Omit<CtProductListRow, "mockup_url">[]>();
   if (error) return jsonError(error.message, 500);
   // The card shows the product as it is sold: its first mockup (oldest = the straight-on one).
@@ -83,6 +86,14 @@ export async function listProducts(s: CtSession, search: string): Promise<NextRe
     : { data: [] };
   const first = new Map<string, string>();
   for (const m of mockups ?? []) if (!first.has(m.product_id)) first.set(m.product_id, m.url);
+  // An artwork's card: its saved print file (the first version's, made at "Lưu artwork" — server/artworks.ts).
+  const art = new Map<string, string>();
+  if (kind === "artwork" && ids.length) {
+    const rows = await inChunks(ids, (chunk) =>
+      s.supabase.from(CT_TABLES.assets).select("url, meta->artwork->>productId").is("product_id", null).in("meta->artwork->>productId", chunk).order("created_at").returns<Array<{ url: string; productId: string }>>(),
+    ).catch((): Array<{ url: string; productId: string }> => []);
+    for (const r of rows) if (!art.has(r.productId)) art.set(r.productId, r.url);
+  }
   // A bộ made from picked layers (server/char/extract-set.ts) keeps them on a product of its own: a library item, not
   // a product to sell — listed in Thư viện, not here.
   const { data: extracted } = await s.supabase.from(CT_TABLES.charProjects).select("product_ids").not("brief->extracted->>productId", "is", null).returns<Array<{ product_ids: string[] | null }>>();
@@ -96,6 +107,12 @@ export async function listProducts(s: CtSession, search: string): Promise<NextRe
   const sourceById = new Map((sources ?? []).map((x) => [x.id, x]));
   const users = new Map<string, number>();
   for (const l of links.values()) users.set(l.artworkId, (users.get(l.artworkId) ?? 0) + 1);
+  // An artwork's products may be outside this page (kind filter): count them on their own.
+  if (kind === "artwork" && ids.length) {
+    const { data: made } = await s.supabase.from(CT_TABLES.products).select("config->artworkLink->>artworkId").eq("kind", "product").returns<Array<{ artworkId: string | null }>>();
+    users.clear();
+    for (const m of made ?? []) if (m.artworkId) users.set(m.artworkId, (users.get(m.artworkId) ?? 0) + 1);
+  }
   const products: CtProductListRow[] = (data ?? [])
     .filter((p) => !hidden.has(p.id))
     .map((p) => {
@@ -103,7 +120,8 @@ export async function listProducts(s: CtSession, search: string): Promise<NextRe
       const src = l ? sourceById.get(l.artworkId) : undefined;
       return {
         ...p,
-        mockup_url: first.get(p.id) ?? null,
+        mockup_url: kind === "artwork" ? null : (first.get(p.id) ?? null),
+        preview_url: art.get(p.id) ?? null,
         artwork_from: l ? { id: l.artworkId, name: src?.name ?? "(artwork đã xoá)", outdated: !!src && normalizeProductConfig(src.config).artworkRevision > l.revision } : null,
         artwork_users: users.get(p.id) ?? 0,
       };
@@ -164,6 +182,12 @@ export async function updateProduct(s: CtSession, productId: string, body: CtUpd
   if (body.main_asset_id !== undefined) patch.main_asset_id = body.main_asset_id;
   if (body.thumbnail_url !== undefined) patch.thumbnail_url = body.thumbnail_url;
   if (typeof body.notes === "string") patch.notes = body.notes;
+  // A product (what is sold) can move to another base product (variants + price); an artwork has none.
+  if (body.base_product_id !== undefined) {
+    if ((product.kind ?? "artwork") !== "product") return jsonError("Chỉ sản phẩm mới có product base — artwork thì tạo sản phẩm từ nó", 400);
+    if (!body.base_product_id || !(await loadBaseProduct(s.supabase, body.base_product_id))) return jsonError("Không tìm thấy product base", 404);
+    patch.base_product_id = body.base_product_id;
+  }
   const { data, error } = await s.supabase.from(CT_TABLES.products).update(patch).eq("id", productId).select("*").single<CtProduct>();
   if (error) return jsonError(error.message, 500);
   // Its folder in the library (artworks, a v2 set's cliparts) carries its name.
@@ -358,6 +382,12 @@ export async function deploy(s: CtSession, productId: string, raw: unknown, orig
 export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeployBody, origin: string): Promise<CtDeployResponse | { error: string; status: number }> {
   const productId = product.id;
   if (!shopifyConfigured()) return { error: "Chưa cấu hình Shopify (SHOPIFY_STORE_DOMAIN / SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET)", status: 501 };
+  // Only a product is sold (migration 031): an artwork is made into one first, on a base product.
+  if ((product.kind ?? "artwork") !== "product") return { error: "Đây là artwork — tạo sản phẩm từ artwork (chọn product base) rồi deploy sản phẩm đó", status: 400 };
+  // The base product owns the variants + prices and the product type.
+  const base = product.base_product_id ? await loadBaseProduct(s.supabase, product.base_product_id) : null;
+  if (base?.config.priceTableId) body = { ...body, priceTableId: base.config.priceTableId };
+  if (base && !body.productType) body = { ...body, productType: base.config.productType };
   const table = await loadPriceTable(s, body.priceTableId);
   if (!table) return { error: "Không tìm thấy bảng giá", status: 404 };
   const problems = priceTableProblems(table.config);

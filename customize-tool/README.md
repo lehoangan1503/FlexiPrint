@@ -1,6 +1,18 @@
 # Customize Tool (2D)
 
-Tool dựng sản phẩm custom 2D kiểu Customily / Teeinblue: **main object** + các **vùng custom** + **sub object** có nhiều **version**. Clipart (ảnh bất kỳ) upload tay vào danh mục, mỗi danh mục có 2 tab Clipart / Artwork; mỗi version của sản phẩm được lưu thành 1 artwork trong danh mục mang tên sản phẩm. Thiết kế và File in phẳng (file in = toàn khung edit, cắt theo khuôn); Xem trước và **Mockups** đặt artwork lên phôi trơn (upload hoặc AI vẽ theo khuôn in), mockup bối cảnh do AI tạo.
+Tool dựng sản phẩm custom 2D kiểu Customily / Teeinblue. Từ 2026-11-07 hệ thống có 3 thứ, như Teeinblue
+Product Base / Artwork / Campaign:
+
+- **Product base** (`ct_base_products`, `server/base-products.ts`, trang `/base-products/:id`): loại sản phẩm bán
+  (Acrylic Ornament 1 side, Glass Ornament 1 side, Ceramic Ornament 2 sides, Poseable Doll — theo trang giá Notion):
+  bảng giá Notion = biến thể + giá, print area, khuôn in + phôi của chất liệu, xưởng. Không có thiết kế; mockup của nó =
+  mockup các sản phẩm làm từ nó.
+- **Artwork** (`ct_products.kind = 'artwork'`): 1 thiết kế hoàn chỉnh — mọi version, layer, option, khuôn, phôi, xem
+  trước, file in. Editor chỉ có Thiết kế · Xem trước · File in. Bộ clipart (vẽ / import) làm ra clipart + artwork; tạo
+  tay được (trên khuôn của 1 product base, hoặc canvas W×H tự chọn).
+- **Sản phẩm** (`kind = 'product'`): artwork + product base (`server/artwork-link.ts`, bản chụp artwork — sửa artwork
+  không đổi sản phẩm, có badge "Có bản artwork mới"). Trang sản phẩm: trái = mockups (AI / import tay), phải = trang bán
+  (giá + biến thể của base, form personalize của artwork); Deploy lấy giá từ base.
 
 Toàn bộ code nằm trong folder này. Host site chỉ có 3 file shim 1 dòng và 1 tab trên dashboard.
 

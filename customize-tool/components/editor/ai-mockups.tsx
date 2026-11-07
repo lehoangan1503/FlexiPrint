@@ -11,8 +11,8 @@
  *               product the mockups will be made of, before making them.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw, Sparkles, Trash2, Wallpaper } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Loader2, RefreshCw, Sparkles, Trash2, Upload, Wallpaper } from "lucide-react";
 import type { CtAsset, CtPackImage, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
@@ -35,6 +35,8 @@ export interface AiMockupsPanelProps {
   onProduct: (p: CtProduct) => void;
   onOpenScene: () => void;
   flash: (msg: string) => void;
+  /** The product page's left column (2026-11-07): sections stacked, not side by side. */
+  compact?: boolean;
 }
 
 /** Longest side of the artwork drawn on the phôi + thiết kế picture. */
@@ -146,6 +148,26 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
     }
   };
 
+  // Mockups made elsewhere (a photographer, Photoshop): uploaded as they are (asked 2026-11-07, "nút import mockup thủ công").
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(0);
+  const importFiles = async (files: File[]) => {
+    setUploading(files.length);
+    const added: CtAsset[] = [];
+    for (const f of files) {
+      try {
+        added.push(await ctApi.uploadAsset(product.id, f, { role: "mockup", name: f.name.replace(/\.[a-z0-9]+$/i, "") }));
+      } catch (e) {
+        props.flash(e instanceof Error ? e.message : "Không upload được");
+      }
+      setUploading((n) => n - 1);
+    }
+    if (added.length) {
+      props.onAssets(added);
+      props.flash(`Đã thêm ${added.length} mockup`);
+    }
+  };
+
   const remove = async (a: CtAsset) => {
     if (!(await ctConfirm({ title: `Xoá mockup “${a.name}”?`, tone: "danger", confirmLabel: "Xoá" }))) return;
     await props.onDelete(a);
@@ -153,8 +175,8 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-6xl space-y-5 p-6">
-        <section className="grid gap-4 rounded-xl border bg-card p-4 md:grid-cols-[220px_220px_1fr]">
+      <div className={cx("mx-auto max-w-6xl space-y-5", props.compact ? "p-4" : "p-6")}>
+        <section className={cx("grid gap-4 rounded-xl border bg-card p-4", props.compact ? "grid-cols-2" : "md:grid-cols-[220px_220px_1fr]")}>
           <div>
             <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Phôi trơn</div>
             <div className="flex aspect-square items-center justify-center overflow-hidden rounded-lg border" style={CHECKER_STYLE}>
@@ -202,9 +224,11 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                 <img src={art} alt="Thiết kế" className="h-full w-full object-contain" />
               )}
             </div>
-            <p className="mt-2 text-[11px] leading-snug text-muted-foreground">Nội dung đang chọn ở Thiết kế — mockup tạo từ đúng sản phẩm này. Đổi lựa chọn ở Thiết kế để xem bản khác.</p>
+            <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+              {props.compact ? "Nội dung mẫu của artwork — tham khảo khi tạo mockup." : "Nội dung đang chọn ở Thiết kế — mockup tạo từ đúng sản phẩm này. Đổi lựa chọn ở Thiết kế để xem bản khác."}
+            </p>
           </div>
-          <div className="flex min-w-0 flex-col gap-2">
+          <div className={cx("flex min-w-0 flex-col gap-2", props.compact && "col-span-2")}>
             <div>
               <h3 className="text-sm font-semibold">Mockup bằng AI</h3>
               <p className="text-xs text-muted-foreground">
@@ -246,11 +270,28 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
         )}
 
         <section>
-          <div className="mb-2 text-sm font-semibold">Ảnh sản phẩm ({mockups.length})</div>
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-sm font-semibold">Ảnh sản phẩm ({mockups.length})</span>
+            <CtButton size="sm" variant="outline" className="ml-auto" disabled={uploading > 0} onClick={() => fileRef.current?.click()} title="Thêm mockup có sẵn (ảnh chụp, Photoshop…)">
+              {uploading > 0 ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} {uploading > 0 ? `Đang upload ${uploading}…` : "Import mockup"}
+            </CtButton>
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                e.target.value = "";
+                if (files.length) void importFiles(files);
+              }}
+            />
+          </div>
           {mockups.length === 0 ? (
-            <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Chưa có — bấm “Tạo mockup”.</p>
+            <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Chưa có — bấm “Tạo mockup” hoặc “Import mockup”.</p>
           ) : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <div className={cx("grid gap-3", props.compact ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5")}>
               {mockups.map((m) => (
                 <figure key={m.id} className="group relative overflow-hidden rounded-lg border bg-white">
                   <a href={m.url} target="_blank" rel="noreferrer">

@@ -1540,14 +1540,11 @@ function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionIte
 /**
  * Nothing selected: every layer the customer can change, its options as chips — pick them to make an artwork (asked
  * 2026-10-10: a v2 set's options work from the right sidebar). Picking only changes what the editor shows (the
- * design content), never the product's defaults. Lưu thiết kế saves each version as an artwork; "Lưu thành artwork
- * mới" keeps this combination as one more.
+ * design content), never the product's defaults. The whole artwork is one (every version inside, 2026-11-07): no
+ * extra artwork per combination any more.
  */
 function ArtworkOptions(props: InspectorProps) {
   const { design, assets, selection } = props;
-  const [name, setName] = useState("");
-  const [saved, setSaved] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const regions = formOrder(design.state.regions).filter((r) => !r.config.materialFrame && !isLinkedLayer(r, design.state.regions));
   const rows = regions
     .map((raw) => {
@@ -1566,17 +1563,6 @@ function ArtworkOptions(props: InspectorProps) {
       return options.length >= 2 ? { r, options } : null;
     })
     .filter((x): x is { r: CtRegion; options: CtAsset[] } => x !== null);
-
-  const save = async () => {
-    setError(null);
-    try {
-      await props.onSaveArtwork(name);
-      setSaved(name.trim() || "artwork");
-      setName("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Không lưu được artwork");
-    }
-  };
 
   return (
     <div className="space-y-3 p-3">
@@ -1611,14 +1597,6 @@ function ArtworkOptions(props: InspectorProps) {
           </div>
         );
       })}
-      <div className="space-y-1.5 border-t pt-3">
-        <CtInput value={name} placeholder="Tên artwork (tuỳ chọn)" onChange={(e) => setName(e.target.value)} />
-        <CtButton size="sm" className="w-full" disabled={props.artworkBusy} onClick={() => void save()}>
-          {props.artworkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageIcon className="h-3.5 w-3.5" />} Lưu thành artwork mới
-        </CtButton>
-        {saved && <p className="text-[11px] text-emerald-600">Đã lưu “{saved}” vào thư viện (tab Artwork).</p>}
-        {error && <p className="text-[11px] text-destructive">{error}</p>}
-      </div>
     </div>
   );
 }

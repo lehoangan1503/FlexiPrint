@@ -959,10 +959,23 @@ export interface CtMockupEdit {
 /** What a published template carries (no design samples). */
 export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink">;
 
+/**
+ * What a ct_products row is (migration 031, asked 2026-11-07 — Teeinblue's Artwork / Campaign):
+ *   artwork  a design: layers, options, every version, khuôn, phôi, preview, print file. Sets, imports and hand-made
+ *            designs are artworks. Never sold as such.
+ *   product  what is sold: a base product (variants + price) + a snapshot of a finished artwork (config.artworkLink),
+ *            with its own title, mockups and Shopify link.
+ */
+export type CtProductKind = "artwork" | "product";
+
 export interface CtProduct {
   id: string;
   user_id: string;
   name: string;
+  /** Migration 031; absent on rows read before it ran = "artwork". */
+  kind?: CtProductKind;
+  /** A "product" row: the base product it is made on (variants, price, product type). */
+  base_product_id?: string | null;
   status: CtProductStatus;
   main_asset_id: string | null;
   thumbnail_url: string | null;
@@ -979,9 +992,13 @@ export interface CtProduct {
 }
 
 export interface CtProductListRow extends CtProduct {
+  /** A "product" row: its base product's name. */
+  base_product?: { id: string; name: string } | null;
   main_asset: Pick<CtAsset, "url" | "width" | "height"> | null;
   /** The product's first mockup (the card shows it before the main object). */
   mockup_url: string | null;
+  /** An artwork: its first saved print file (Lưu artwork) — the card's picture. */
+  preview_url?: string | null;
   /** Made from an artwork (config.artworkLink): its name and whether the artwork has a newer revision. */
   artwork_from?: { id: string; name: string; outdated: boolean } | null;
   /** Products made from this artwork. */
@@ -1527,6 +1544,113 @@ export interface CtCreateProductBody {
   name: string;
 }
 
+/**
+ * POST products/artwork — a hand-made artwork (asked 2026-11-07): on a base product's khuôn in (its sheet, cut line,
+ * phôi) or on a blank canvas of any size; layers are added in the editor.
+ */
+export interface CtCreateArtworkBody {
+  name: string;
+  baseProductId?: string | null;
+  /** Without a base product (or one with no khuôn): the canvas, px. */
+  width?: number;
+  height?: number;
+}
+
+/** POST products/:id/artwork-products — a product (what is sold) made from this artwork on a base product. */
+export interface CtCreateFromArtworkBody {
+  name?: string;
+  baseProductId: string;
+}
+
+// ---------------------------------------------------------------------------
+// Product base (ct_base_products, migration 031) — server/base-products.ts
+// ---------------------------------------------------------------------------
+
+/** A print area of a base product (Teeinblue "printarea"): the file the factory takes for that side. */
+export interface CtPrintArea {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  dpi: number;
+}
+
+export interface CtBaseProductFulfillment {
+  provider: string;
+  catalogId: string;
+}
+
+export interface CtBaseProductConfig {
+  /** Shown on the product page until the product's own description replaces it. */
+  description: string;
+  /** Shopify product type — the store's shipping collections key on it ("Acrylic Ornament"). */
+  productType: string;
+  /** The piece's material (pricing, mockup prompts, priceTableFor). */
+  material: CtMaterialId;
+  /** The Notion price table that makes the variants (Size × Pack). */
+  priceTableId: string | null;
+  /** The khuôn in of the piece (ct_print_templates): artworks for it start from its sheet, cut line and phôi. */
+  templateId: string | null;
+  printAreas: CtPrintArea[];
+  fulfillment: CtBaseProductFulfillment;
+  notes: string;
+}
+
+export interface CtBaseProduct {
+  id: string;
+  user_id: string | null;
+  name: string;
+  config: CtBaseProductConfig;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CtBaseProductBody {
+  name: string;
+  config: CtBaseProductConfig;
+}
+
+/** The khuôn in of a base product as its card / page shows it. */
+export interface CtBaseProductTemplate {
+  id: string;
+  name: string;
+  kind: string;
+  width: number;
+  height: number;
+  widthMm: number;
+  /** Its first phôi (the blank piece), when it has one. */
+  blankUrl: string | null;
+  blanks: number;
+}
+
+/** GET base-products — each with what the list shows. */
+export interface CtBaseProductRow extends CtBaseProduct {
+  template: CtBaseProductTemplate | null;
+  priceTable: CtPriceTable | null;
+  /** Products made on it. */
+  products: number;
+  /** Their mockups. */
+  mockups: number;
+  /** The newest product mockup, for the card. */
+  mockup_url: string | null;
+}
+
+/** One product made on a base product (its page lists them, with their mockups). */
+export interface CtBaseProductUse {
+  id: string;
+  name: string;
+  artwork: { id: string; name: string } | null;
+  shopify: boolean;
+  mockups: CtAsset[];
+}
+
+/** GET base-products/:id */
+export interface CtBaseProductDetail {
+  base: CtBaseProductRow;
+  uses: CtBaseProductUse[];
+}
+
 export interface CtUpdateProductBody {
   name?: string;
   status?: CtProductStatus;
@@ -1535,6 +1659,8 @@ export interface CtUpdateProductBody {
   notes?: string;
   /** Design samples only (CtProductConfig.samples) — merged into the stored config. */
   samples?: CtSelection;
+  /** A "product" row: move it to another base product. */
+  base_product_id?: string;
 }
 
 export interface CtSaveDesignBody {

@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, FileArchive, FolderUp, Loader2, MessageSquare, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import type { CtCharImportRow } from "../../types";
+import { CT_CONFIG } from "../../config";
 import { charApi, ctApi } from "../../lib/api-client";
 import {
   RUNNING,
@@ -356,6 +357,11 @@ function RowCard({ row, onResume, onRemove }: { row: CtCharImportRow; onResume: 
         <Link href={`/v2/${row.id}`} className="inline-flex items-center gap-1 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-accent">
           Mở bộ
         </Link>
+        {stage === "done" && imp.productId && (
+          <Link href={`${CT_CONFIG.basePath}/${imp.productId}`} className="inline-flex items-center gap-1 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-accent">
+            Mở artwork
+          </Link>
+        )}
         {chat?.url && (
           <a
             href={chat.url}
@@ -368,7 +374,7 @@ function RowCard({ row, onResume, onRemove }: { row: CtCharImportRow; onResume: 
           </a>
         )}
         {shop?.status === "done" && shop.previewUrl && (
-          <a href={imp.productId ? ctApi.shopifyOpenUrl(imp.productId) : shop.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">
+          <a href={shop.productId ? ctApi.shopifyOpenUrl(shop.productId) : shop.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">
             <ExternalLink className="h-3.5 w-3.5" /> Xem thử trên store
           </a>
         )}

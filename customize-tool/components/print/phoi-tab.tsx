@@ -106,7 +106,7 @@ export function PhoiTab() {
   );
 }
 
-function PhoiRow(props: { template: CtPrintTemplate; busy: string | null; onUpload: (f: File) => void; onAi: () => void; onRemove: (id: string) => void; onFirst: (id: string) => void }) {
+export function PhoiRow(props: { template: CtPrintTemplate; busy: string | null; onUpload: (f: File) => void; onAi: () => void; onRemove: (id: string) => void; onFirst: (id: string) => void }) {
   const { template: t } = props;
   const input = useRef<HTMLInputElement | null>(null);
   return (

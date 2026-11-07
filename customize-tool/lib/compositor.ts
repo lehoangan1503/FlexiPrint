@@ -744,3 +744,98 @@ export function addFontFile(family: string, url: string): Promise<void> {
   }
   return hit;
 }
+
+/** What the khuôn of a print sheet is, for the factory pair (khuonPair). */
+export interface KhuonPairInput {
+  /** The khuôn's cut line / mask (silhouetteCutOf). */
+  cut: SilhouetteCut | null;
+  /** No khuôn: the piece is cut along the print's own outline (acrylic alpha), grown by `offset` px. */
+  alpha: boolean;
+  offset: number;
+  /** An alpha piece's hanging tab (CtPrintSilhouette.hole / holeSize). */
+  hole: boolean;
+  holeSize: number;
+}
+
+/** Colour of the khuôn's line in the factory files: magenta, the usual cut-contour colour. */
+const KHUON_LINE = "#ff00ff";
+
+/** The edge of a shape (alpha ≥ 128) `px` wide, painted `color`: the shape minus itself shrunk. */
+function shapeEdge(shape: HTMLCanvasElement, px: number, color: string): HTMLCanvasElement {
+  const w = shape.width;
+  const h = shape.height;
+  const inner = document.createElement("canvas");
+  inner.width = w;
+  inner.height = h;
+  const ictx = inner.getContext("2d");
+  if (!ictx) throw new Error("Canvas 2D không khả dụng");
+  ictx.drawImage(shape, 0, 0);
+  // Erosion: keep only what is still shape when shifted every way by px.
+  ictx.globalCompositeOperation = "destination-in";
+  const steps = 12;
+  for (let k = 0; k < steps; k++) {
+    const a = (2 * Math.PI * k) / steps;
+    ictx.drawImage(shape, Math.round(px * Math.cos(a)), Math.round(px * Math.sin(a)));
+  }
+  const edge = document.createElement("canvas");
+  edge.width = w;
+  edge.height = h;
+  const ectx = edge.getContext("2d");
+  if (!ectx) throw new Error("Canvas 2D không khả dụng");
+  ectx.drawImage(shape, 0, 0);
+  ectx.globalCompositeOperation = "destination-out";
+  ectx.drawImage(inner, 0, 0);
+  ectx.globalCompositeOperation = "source-in";
+  ectx.fillStyle = color;
+  ectx.fillRect(0, 0, w, h);
+  return edge;
+}
+
+/**
+ * The two files the factory lays on each other (asked 2026-11-07: "preview nằm trong khuôn in và khuôn in (rỗng) để
+ * ghép đôi"), both exactly the print sheet's px:
+ *   blank    the empty khuôn — the piece's shape in white with its line (magenta), transparent outside;
+ *   onKhuon  the same khuôn with the print on it and the line on top — laid on `blank`, it is the finished piece.
+ * The shape is the khuôn's own (cut line / mask), else the print's outline (an acrylic cut along the art), else the
+ * whole sheet.
+ */
+export async function khuonPair(sheet: HTMLCanvasElement, input: KhuonPairInput): Promise<{ blank: HTMLCanvasElement; onKhuon: HTMLCanvasElement }> {
+  const w = sheet.width;
+  const h = sheet.height;
+  let shape = input.cut ? await silhouetteOfCut(w, h, input.cut) : null;
+  if (!shape && input.alpha) {
+    shape = silhouetteOf(sheet, input.offset);
+    if (input.hole) addHangingHole(shape, input.holeSize);
+  }
+  if (!shape) {
+    shape = document.createElement("canvas");
+    shape.width = w;
+    shape.height = h;
+    const sctx = shape.getContext("2d");
+    if (!sctx) throw new Error("Canvas 2D không khả dụng");
+    sctx.fillStyle = "#000";
+    sctx.fillRect(0, 0, w, h);
+  }
+  const line = Math.max(2, Math.round(Math.max(w, h) / 400));
+  const edge = shapeEdge(shape, line, KHUON_LINE);
+  const blank = document.createElement("canvas");
+  blank.width = w;
+  blank.height = h;
+  const bctx = blank.getContext("2d");
+  if (!bctx) throw new Error("Canvas 2D không khả dụng");
+  bctx.drawImage(shape, 0, 0);
+  bctx.globalCompositeOperation = "source-in";
+  bctx.fillStyle = "#fff";
+  bctx.fillRect(0, 0, w, h);
+  bctx.globalCompositeOperation = "source-over";
+  bctx.drawImage(edge, 0, 0);
+  const onKhuon = document.createElement("canvas");
+  onKhuon.width = w;
+  onKhuon.height = h;
+  const octx = onKhuon.getContext("2d");
+  if (!octx) throw new Error("Canvas 2D không khả dụng");
+  octx.drawImage(blank, 0, 0);
+  octx.drawImage(sheet, 0, 0);
+  octx.drawImage(edge, 0, 0);
+  return { blank, onKhuon };
+}

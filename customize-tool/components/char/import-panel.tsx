@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { CT_CONFIG } from "../../config";
 import { charApi, ctApi } from "../../lib/api-client";
 import { CHECKER_STYLE, CtButton } from "../ui";
 import type { CtCharImported } from "../../types";
@@ -132,12 +133,29 @@ export function ImportShopify(ctx: CharCtx) {
       setBusy(false);
     }
   };
+  const sent = shop && shop.status !== "idle";
   const button = editable && shop?.status !== "deploying" && (
-    <CtButton onClick={() => void again()} disabled={busy} title="Đưa sản phẩm của bộ lên Shopify lần nữa (bản nháp, cùng sản phẩm Shopify) — link xem thử mới">
-      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {shop ? "Đưa lên Shopify lại" : "Đưa lên Shopify"}
+    <CtButton
+      onClick={() => void again()}
+      disabled={busy}
+      title="Sản phẩm của artwork này (tạo trên product base theo chất liệu nếu chưa có) → Shopify, bản nháp — link xem thử mới"
+    >
+      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {sent ? "Đưa lên Shopify lại" : "Tạo sản phẩm + đưa lên Shopify"}
     </CtButton>
   );
-  if (!shop) return <section className="flex items-center justify-between gap-3 rounded-xl border bg-card p-4 text-sm">Sản phẩm chưa lên Shopify. {button}</section>;
+  // Built = clipart + artwork (2026-11-07): a product and Shopify only when someone asks.
+  if (!sent)
+    return (
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 text-sm">
+        <span>
+          Bộ đã thành clipart + 1 artwork hoàn chỉnh.{" "}
+          <a href={`${CT_CONFIG.basePath}/${project.product_ids[0]}`} className="underline">
+            Mở artwork
+          </a>
+        </span>
+        {button}
+      </section>
+    );
   return (
     <section className={`space-y-2 rounded-xl border p-4 ${shop.status === "failed" ? "border-destructive/40 bg-destructive/5" : "bg-card"}`}>
       <div className="flex items-center gap-2 text-sm font-semibold">
@@ -147,8 +165,13 @@ export function ImportShopify(ctx: CharCtx) {
       {shop.status === "done" && (
         <div className="flex flex-wrap gap-2">
           {shop.previewUrl && (
-            <a href={imp.productId ? ctApi.shopifyOpenUrl(imp.productId) : shop.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">
+            <a href={shop.productId ? ctApi.shopifyOpenUrl(shop.productId) : shop.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">
               <ExternalLink className="h-3.5 w-3.5" /> Xem thử trên store
+            </a>
+          )}
+          {shop.productId && (
+            <a href={`${CT_CONFIG.basePath}/${shop.productId}`} className="inline-flex items-center gap-1 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-accent">
+              Mở sản phẩm
             </a>
           )}
           {shop.adminUrl && (

@@ -3,7 +3,7 @@
  * route shim (src/app/api/customize-tool/[...path]/route.ts):
  *
  *   GET    ai/providers
- *   GET    products?q=
+ *   GET    products?q=&kind=artwork|product
  *   GET    print-templates               → { templates }   khuôn in (server/print-templates.ts)
  *   POST   print-templates               { name, kind, spec }
  *   PATCH  print-templates/:id           { name?, kind?, spec? }
@@ -25,6 +25,8 @@
  *   GET    shopify/products?q=           → { products } Shopify products to deploy onto
  *   GET    shopify/collections · POST {title}  → collections (deploy page badges; the starred one = breadcrumb)
  *   GET    price-tables · POST CtPriceTableBody · PATCH :id · DELETE :id   bảng giá (server/price-tables.ts)
+ *   GET    base-products · POST CtBaseProductBody · GET/PATCH/DELETE :id   product base (server/base-products.ts)
+ *   POST   products/artwork              CtCreateArtworkBody → { product } a hand-made artwork (server/print-products.ts)
  *   POST   products/:id/assets           multipart: file, role, parent_id?, name?, meta?
  *   PATCH  assets/:id                    CtUpdateAssetBody
  *   DELETE assets/:id
@@ -125,7 +127,7 @@ import * as lib from "./library";
 import * as printTpl from "./print-templates";
 import { khuonAi } from "./print-khuon";
 import { aiTemplateBlank, uploadTemplateBlank } from "./print-blanks";
-import { createProductFromTemplate } from "./print-products";
+import { createArtwork, createProductFromTemplate } from "./print-products";
 import * as artworks from "./artworks";
 import * as artworkLink from "./artwork-link";
 import * as fonts from "./fonts";
@@ -134,6 +136,7 @@ import * as packs from "./mockup-packs";
 import { dispatchChar } from "./char/router";
 import * as packImages from "./pack-images";
 import * as prices from "./price-tables";
+import * as bases from "./base-products";
 import { mcpEndpoint } from "./mcp/server";
 import { asJob, pollJob } from "./jobs";
 import { agentStatus, answerAgentTask, cancelAgentTask, createAgentTask, getAgentTask, listAgentTasks } from "./agent/tasks";
@@ -232,6 +235,7 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     return path[3] === "ai" ? aiTemplateBlank(session, id) : uploadTemplateBlank(session, id, await req.formData());
   }
   if (head === "products" && id === "from-template" && !sub && method === "POST") return createProductFromTemplate(session, (await readJson<Record<string, unknown>>(req)) ?? {});
+  if (head === "products" && id === "artwork" && !sub && method === "POST") return createArtwork(session, await readJson<unknown>(req));
   // Not an id: must come before the UUID check below (it answered "id không hợp lệ" to every upload, 2026-11-06).
   if (head === "ai-styles" && id === "refs" && !sub && method === "POST") {
     const form = await req.formData().catch(() => null);
@@ -247,6 +251,13 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
 
   if (head === "presets" && !id && method === "GET") return lib.listPresets(session, req.nextUrl.searchParams.get("kind"));
 
+  if (head === "base-products" && !sub) {
+    if (!id && method === "GET") return bases.listBaseProducts(session);
+    if (!id && method === "POST") return bases.createBaseProduct(session, await readJson<unknown>(req));
+    if (id && method === "GET") return bases.getBaseProduct(session, id);
+    if (id && method === "PATCH") return bases.updateBaseProduct(session, id, await readJson<unknown>(req));
+    if (id && method === "DELETE") return bases.deleteBaseProduct(session, id);
+  }
   if (head === "price-tables" && !sub) {
     if (!id && method === "GET") return prices.listPriceTables(session);
     if (!id && method === "POST") return prices.createPriceTable(session, await readJson<unknown>(req));
@@ -267,7 +278,10 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
 
   if (head === "products") {
     if (!id) {
-      if (method === "GET") return h.listProducts(session, req.nextUrl.searchParams.get("q")?.trim() ?? "");
+      if (method === "GET") {
+        const kind = req.nextUrl.searchParams.get("kind");
+        return h.listProducts(session, req.nextUrl.searchParams.get("q")?.trim() ?? "", kind === "artwork" || kind === "product" ? kind : null);
+      }
       if (method === "POST") {
         const body = await readJson<CtCreateProductBody>(req);
         return body ? h.createProduct(session, body) : h.jsonError("Body không hợp lệ", 400);

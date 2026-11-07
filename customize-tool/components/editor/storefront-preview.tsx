@@ -33,6 +33,10 @@ export interface StorefrontPreviewProps {
   regions: CtRegion[];
   items: CtRegionItem[];
   config: CtProductConfig;
+  /** The price table to show (a product's base product, 2026-11-07); default = the one it was deployed with. */
+  priceTableId?: string | null;
+  /** The product page's narrow column: smaller side padding. */
+  compact?: boolean;
 }
 
 /** Section settings the theme editor would provide (the liquid schema defaults). */
@@ -45,12 +49,12 @@ const SECTION_TEXT = {
   add: "Add to cart",
 };
 
-export function StorefrontPreview({ product, assets, regions, items, config }: StorefrontPreviewProps) {
+export function StorefrontPreview({ product, assets, regions, items, config, priceTableId, compact }: StorefrontPreviewProps) {
   const { names } = useAiStyles();
   const [cart, setCart] = useState<CtCartPreview | null>(null);
   // The price table the product is deployed with: Size / Pack pickers and a pack's designs, as on Shopify.
   const [table, setTable] = useState<CtPriceTable | null>(null);
-  const tableId = product.shopify?.priceTableId ?? null;
+  const tableId = priceTableId ?? product.shopify?.priceTableId ?? null;
   useEffect(() => {
     if (!tableId) return;
     let cancelled = false;
@@ -92,10 +96,14 @@ export function StorefrontPreview({ product, assets, regions, items, config }: S
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b bg-background px-3 py-2 text-xs text-muted-foreground">
         <Eye className="h-3.5 w-3.5" />
-        <span>
-          Trang sản phẩm như khách thấy trên Shopify (<code>flexi2-product.liquid</code>) — chạy trên bản thiết kế hiện tại, kể cả chưa lưu. Sửa ở tab
-          <b className="text-foreground"> Thiết kế</b>; lên store sau khi <b className="text-foreground">Deploy sản phẩm</b>.
-        </span>
+        {compact ? (
+          <span>Trang sản phẩm như khách thấy: giá + biến thể của product base, form personalize của artwork.</span>
+        ) : (
+          <span>
+            Trang sản phẩm như khách thấy trên Shopify (<code>flexi2-product.liquid</code>) — chạy trên bản thiết kế hiện tại, kể cả chưa lưu. Sửa ở tab
+            <b className="text-foreground"> Thiết kế</b>; lên store sau khi <b className="text-foreground">Deploy sản phẩm</b>.
+          </span>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto" style={{ background: "#faf8f5", color: "#1c1b1a", colorScheme: "light" }}>
         {draft.template ? (
@@ -107,6 +115,7 @@ export function StorefrontPreview({ product, assets, regions, items, config }: S
             pricing={pricing}
             photoUrl={ctApi.photoEndpoint(product.id)}
             onCart={setCart}
+            stacked={compact}
           />
         ) : (
           <p className="p-10 text-center text-sm" style={{ color: "#6b6b6b" }}>
@@ -132,7 +141,9 @@ function LiveStorefront({
   pricing,
   photoUrl,
   onCart,
+  stacked,
 }: {
+  stacked?: boolean;
   title: string;
   mockups: CtAsset[];
   template: CtTemplate;
@@ -177,7 +188,7 @@ function LiveStorefront({
   }, [template]);
 
   return (
-    <section ref={rootRef} id="ct-editor-preview" className="ct-product mx-auto max-w-[1200px] px-6" data-ct-product style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+    <section ref={rootRef} id="ct-editor-preview" className={`ct-product mx-auto max-w-[1200px] ${stacked ? "px-4" : "px-6"}`} data-ct-product style={{ fontFamily: "'DM Sans', system-ui, sans-serif", ...(stacked ? { gridTemplateColumns: "minmax(0, 1fr)", rowGap: 20 } : {}) }}>
       <div className="ct-product__media">
         <div className="ct-gallery" data-ct-gallery hidden={mockups.length === 0}>
           <div className="ct-gallery__main" data-ct-gallery-main>

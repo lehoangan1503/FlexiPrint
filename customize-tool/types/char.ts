@@ -480,7 +480,8 @@ export interface CtCharImported {
 
 /** An import's own deploy: a Shopify draft and the link that opens it in the draft theme. */
 export interface CtCharImportShopify {
-  status: "deploying" | "done" | "failed";
+  /** "idle" = built (an artwork), not sent to Shopify yet (2026-11-07: an import no longer deploys by itself). */
+  status: "idle" | "deploying" | "done" | "failed";
   /** Staff preview in the draft theme (expires; a new deploy makes a new one). */
   previewUrl: string;
   adminUrl: string;
@@ -492,6 +493,8 @@ export interface CtCharImportShopify {
   title: string;
   description: string;
   material: string;
+  /** The product (what is sold, made from the set's artwork) that went to Shopify. */
+  productId?: string;
 }
 
 /** An import as the import page and the header list it (GET char/projects/imports). */

@@ -12,12 +12,13 @@
 import sharp from "sharp";
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../config";
-import type { CtProduct, CtRegion } from "../types";
+import type { CtCreateArtworkBody, CtProduct, CtRegion } from "../types";
 import type { CtPrintFace, CtProductPrint, CtPrintTemplate } from "../types/print";
 import { defaultProductConfig, defaultRegionConfig } from "../lib/design";
 import { newId } from "../lib/geometry";
 import { insertAssetAs } from "./handlers";
 import { getTemplate } from "./print-templates";
+import { loadBaseProduct } from "./base-products";
 import type { CtServiceClient, CtSession } from "./supabase";
 
 /** The user's own client, or the service client (the @flexiprint MCP). */
@@ -117,5 +118,57 @@ export async function createProductFromTemplate(s: CtSession, body: FromTemplate
     return NextResponse.json({ product }, { status: 201 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không tạo được sản phẩm", 500);
+  }
+}
+
+/** An artwork on a blank canvas of any size (no khuôn): one transparent sheet, layers are added in the editor. */
+export async function makeBlankArtwork(db: PrintDb, userId: string, name: string, width: number, height: number): Promise<CtProduct> {
+  const { data: product, error } = await db.from(CT_TABLES.products).insert({ user_id: userId, name, config: defaultProductConfig() }).select("*").single<CtProduct>();
+  if (error || !product) throw new Error(error?.message ?? "Không tạo được artwork");
+  try {
+    const main = await insertAssetAs(db, userId, {
+      productId: product.id,
+      role: "main",
+      parentId: null,
+      generationId: null,
+      name: `Canvas ${width}×${height}`,
+      data: await blankSheet(width, height),
+      meta: { printSheet: true },
+    });
+    await db.from(CT_TABLES.products).update({ main_asset_id: main.id }).eq("id", product.id);
+    return { ...product, main_asset_id: main.id };
+  } catch (e) {
+    await db.from(CT_TABLES.products).delete().eq("id", product.id);
+    throw e;
+  }
+}
+
+/**
+ * POST products/artwork CtCreateArtworkBody (asked 2026-11-07: "tạo thủ công với size width height ngẫu nhiên và vùng
+ * printarea custom"): on the base product's khuôn in (its sheet, cut line, phôi) when it has one, else a blank canvas
+ * of the size given (or the base product's first print area).
+ */
+export async function createArtwork(s: CtSession, raw: unknown): Promise<NextResponse> {
+  const b = raw && typeof raw === "object" ? (raw as Partial<Record<keyof CtCreateArtworkBody, unknown>>) : {};
+  const name = (typeof b.name === "string" ? b.name.trim() : "").slice(0, 200);
+  if (!name) return jsonError("Artwork cần tên", 400);
+  const base = typeof b.baseProductId === "string" ? await loadBaseProduct(s.supabase, b.baseProductId) : null;
+  try {
+    if (base?.config.templateId) {
+      const template = await getTemplate(s, base.config.templateId);
+      if (!template) return jsonError("Khuôn in của product base không còn", 404);
+      return NextResponse.json({ product: await makeTemplateProduct(s.supabase, s.user.id, template, name) }, { status: 201 });
+    }
+    const area = base?.config.printAreas[0];
+    const size = (v: unknown, d: number) => {
+      const n = Math.round(Number(v));
+      return Number.isFinite(n) && n >= 16 && n <= 12000 ? n : d;
+    };
+    const width = size(b.width, area?.width ?? 1000);
+    const height = size(b.height, area?.height ?? 1000);
+    if (width * height > 80_000_000) return jsonError("Canvas quá lớn (tối đa 80 MP)", 400);
+    return NextResponse.json({ product: await makeBlankArtwork(s.supabase, s.user.id, name, width, height) }, { status: 201 });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không tạo được artwork", 500);
   }
 }

@@ -147,27 +147,29 @@ export async function artworkStatus(s: CtSession, id: string): Promise<NextRespo
 export async function makeProductFromArtwork(db: Db, userId: string, artwork: CtProduct, base: CtBaseProduct, name?: string): Promise<CtProduct> {
   if ((artwork.kind ?? "artwork") !== "artwork" || normalizeProductConfig(artwork.config).artworkLink) throw new Error(`"${artwork.name}" là sản phẩm, không phải artwork — tạo từ artwork gốc của nó`);
   const title = (name?.trim() || artwork.name).slice(0, 200);
+  const { count: before } = await db.from(CT_TABLES.products).select("id", { count: "exact", head: true }).eq("kind", "product").eq("config->artworkLink->>artworkId", artwork.id);
   const { data: product, error } = await db.from(CT_TABLES.products).insert({ user_id: userId, name: title, kind: "product", base_product_id: base.id }).select("*").single<CtProduct>();
   if (error || !product) throw new Error(error?.message ?? "Không tạo được sản phẩm");
+  let made: CtProduct;
   try {
-    return await snapshot(db, artwork, product);
+    made = await snapshot(db, artwork, product);
   } catch (e) {
     await db.from(CT_TABLES.products).delete().eq("id", product.id);
     throw e;
   }
+  // The artwork's first product takes the mockups the artwork still holds (an import's sales pictures, photos made
+  // before artworks and products were split, 2026-11-07): an artwork shows none.
+  if (!before) await db.from(CT_TABLES.assets).update({ product_id: made.id }).eq("product_id", artwork.id).eq("role", "mockup");
+  return made;
 }
 
 /**
- * The artwork's first product, made on `base` when it has none yet (an import going to Shopify, the agent). The
- * artwork's own mockups (sales pictures of an import, photos made before artworks and products were split) move to
- * it: an artwork shows no mockups.
+ * The artwork's first product, made on `base` when it has none yet (an import going to Shopify, the agent).
  */
 export async function ensureProductFor(db: Db, userId: string, artwork: CtProduct, base: CtBaseProduct): Promise<CtProduct> {
   const { data: made } = await db.from(CT_TABLES.products).select("*").eq("kind", "product").eq("config->artworkLink->>artworkId", artwork.id).order("created_at").limit(1).returns<CtProduct[]>();
   if (made?.[0]) return made[0];
-  const product = await makeProductFromArtwork(db, userId, artwork, base);
-  await db.from(CT_TABLES.assets).update({ product_id: product.id }).eq("product_id", artwork.id).eq("role", "mockup");
-  return product;
+  return makeProductFromArtwork(db, userId, artwork, base);
 }
 
 /** POST products/:id/artwork-products CtCreateFromArtworkBody */

@@ -163,7 +163,7 @@ export function CustomizeProductList({
                     <div className="truncate text-sm font-medium">{p.name}</div>
                     {p.base_product && <div className="truncate text-[10px] text-muted-foreground">{p.base_product.name}</div>}
                     {p.artwork_from && <div className="truncate text-[10px] text-muted-foreground">artwork “{p.artwork_from.name}”</div>}
-                    <div className="mt-0.5 flex items-center gap-1.5 whitespace-nowrap">
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5 whitespace-nowrap">
                       <span className={cx("rounded px-1.5 py-0.5 text-[10px] font-medium", STATUS_CLASS[p.status])}>{STATUS_LABEL[p.status]}</span>
                       {kind !== "artwork" && p.shopify && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-600">Đã deploy</span>}
                       {p.artwork_from?.outdated && (

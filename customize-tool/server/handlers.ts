@@ -86,13 +86,30 @@ export async function listProducts(s: CtSession, search: string, kind: CtProduct
     : { data: [] };
   const first = new Map<string, string>();
   for (const m of mockups ?? []) if (!first.has(m.product_id)) first.set(m.product_id, m.url);
-  // An artwork's card: its saved print file (the first version's, made at "Lưu artwork" — server/artworks.ts).
+  // An artwork's card (its main asset is often a transparent sheet): its saved print file ("Lưu artwork" —
+  // server/artworks.ts), else a version's picture (meta.thumb), else a mockup of a product made from it.
   const art = new Map<string, string>();
   if (kind === "artwork" && ids.length) {
     const rows = await inChunks(ids, (chunk) =>
       s.supabase.from(CT_TABLES.assets).select("url, meta->artwork->>productId").is("product_id", null).in("meta->artwork->>productId", chunk).order("created_at").returns<Array<{ url: string; productId: string }>>(),
     ).catch((): Array<{ url: string; productId: string }> => []);
     for (const r of rows) if (!art.has(r.productId)) art.set(r.productId, r.url);
+    const thumbs = await inChunks(ids, (chunk) =>
+      s.supabase.from(CT_TABLES.assets).select("product_id, thumb:meta->>thumb").in("product_id", chunk).eq("role", "main").not("meta->>thumb", "is", null).order("created_at").returns<Array<{ product_id: string; thumb: string }>>(),
+    ).catch((): Array<{ product_id: string; thumb: string }> => []);
+    for (const t of thumbs) if (!art.has(t.product_id)) art.set(t.product_id, t.thumb);
+    const { data: made } = await s.supabase.from(CT_TABLES.products).select("id, artworkId:config->artworkLink->>artworkId").eq("kind", "product").returns<Array<{ id: string; artworkId: string | null }>>();
+    const madeIds = (made ?? []).filter((m) => m.artworkId && !art.has(m.artworkId)).map((m) => m.id);
+    if (madeIds.length) {
+      const shots = await inChunks(madeIds, (chunk) => s.supabase.from(CT_TABLES.assets).select("product_id, url").in("product_id", chunk).eq("role", "mockup").order("created_at").returns<Array<{ product_id: string; url: string }>>()).catch(
+        (): Array<{ product_id: string; url: string }> => [],
+      );
+      const artOf = new Map((made ?? []).map((m) => [m.id, m.artworkId]));
+      for (const sh of shots) {
+        const a = artOf.get(sh.product_id);
+        if (a && !art.has(a)) art.set(a, sh.url);
+      }
+    }
   }
   // A bộ made from picked layers (server/char/extract-set.ts) keeps them on a product of its own: a library item, not
   // a product to sell — listed in Thư viện, not here.

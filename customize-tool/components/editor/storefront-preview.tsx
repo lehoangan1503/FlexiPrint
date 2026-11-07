@@ -189,7 +189,7 @@ function LiveStorefront({
 
   return (
     <section ref={rootRef} id="ct-editor-preview" className={`ct-product mx-auto max-w-[1200px] ${stacked ? "px-4" : "px-6"}`} data-ct-product style={{ fontFamily: "'DM Sans', system-ui, sans-serif", ...(stacked ? { gridTemplateColumns: "minmax(0, 1fr)", rowGap: 20 } : {}) }}>
-      <div className="ct-product__media">
+      <div className="ct-product__media" style={stacked ? { position: "static", maxWidth: 560, margin: "0 auto", width: "100%" } : undefined}>
         <div className="ct-gallery" data-ct-gallery hidden={mockups.length === 0}>
           <div className="ct-gallery__main" data-ct-gallery-main>
             {mockups.map((m, i) => (

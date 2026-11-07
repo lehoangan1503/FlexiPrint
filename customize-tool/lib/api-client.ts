@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseProductRow, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind } from "../types";
+import type { CtBasePlacement, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseProductRow, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
   CtAgentStatus,
@@ -101,7 +101,8 @@ export const ctApi = {
   listBaseProducts: () => call<{ bases: CtBaseProductRow[] }>("base-products").then((r) => r.bases),
   getBaseProduct: (id: string) => call<CtBaseProductDetail>(`base-products/${id}`),
   createBaseProduct: (body: CtBaseProductBody) => call<{ base: CtBaseProduct }>("base-products", json("POST", body)).then((r) => r.base),
-  updateBaseProduct: (id: string, body: CtBaseProductBody) => call<{ base: CtBaseProduct }>(`base-products/${id}`, json("PATCH", body)).then((r) => r.base),
+  /** Saves the base; every product on it is laid on it again (reapplied / failed). */
+  updateBaseProduct: (id: string, body: CtBaseProductBody) => call<{ base: CtBaseProduct; reapplied: number; failed: string[] }>(`base-products/${id}`, json("PATCH", body)),
   deleteBaseProduct: (id: string) => call<void>(`base-products/${id}`, { method: "DELETE" }),
   createProduct: (name: string) => call<{ product: CtProduct }>("products", json("POST", { name })).then((r) => r.product),
   getBundle: (id: string) => call<CtProductBundle>(`products/${id}`),
@@ -113,6 +114,8 @@ export const ctApi = {
     call<{ revision: number; source: (CtArtworkSource & { linkedRevision: number }) | null; products: CtArtworkProductRow[] }>(`products/${id}/artwork`),
   productFromArtwork: (artworkId: string, body: CtCreateFromArtworkBody) =>
     call<{ product: CtProduct }>(`products/${artworkId}/artwork-products`, json("POST", body)).then((r) => r.product),
+  /** Where a product's artwork sits in its base's khuôn (Teeinblue "Locate artwork"). */
+  setPlacement: (id: string, placement: CtBasePlacement) => call<{ product: CtProduct }>(`products/${id}/placement`, json("POST", placement)).then((r) => r.product),
   syncFromArtwork: (id: string) => call<{ product: CtProduct }>(`products/${id}/artwork-sync`, { method: "POST" }).then((r) => r.product),
   syncManyFromArtwork: (artworkId: string, ids: string[]) =>
     call<{ updated: string[]; failed: Array<{ id: string; error: string }> }>(`products/${artworkId}/artwork-products/sync`, json("POST", { ids })),

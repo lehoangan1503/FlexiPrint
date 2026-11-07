@@ -57,6 +57,8 @@ import { refreshSetUsers } from "./set-users";
 import { serviceSession } from "./product";
 import { siteUrl } from "../site-url";
 import { makeVersionThumbs } from "../version-thumbs";
+import { listBaseRows } from "../base-products";
+import { baseProductFor } from "../../lib/pricing";
 import { NOT_YOURS, canEditProject, jobDb, jsonError, loadProject, projectRow, type Db } from "./projects";
 
 /** One upload request's files at most (the page sends a few MB at a time). */
@@ -786,7 +788,9 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     const synced = await autoColorSync(regions, items, await optionAssets(db, items));
     if (synced.linked) console.info(`[ct] import ${p.id}: ${synced.linked} chữ đổi màu theo option`);
     await body(await h.saveDesign(s, product.id, { regions: synced.regions.map((r, i) => ({ ...r, sort_order: i })), items, config }));
-    await db.from(CT_TABLES.products).update({ main_asset_id: mains[0].id }).eq("id", product.id);
+    // Viewed on the base of its material (2026-11-08: khuôn, phôi, cut belong to the base — lib/base-fit).
+    const viewOn = baseProductFor(await listBaseRows(db), config.material.id);
+    await db.from(CT_TABLES.products).update({ main_asset_id: mains[0].id, ...(viewOn ? { base_product_id: viewOn.id } : {}) }).eq("id", product.id);
     // The versions' tiles: a picture of each version as built (asked 2026-11-04 — the store showed "Red / Gre / Rei").
     if (m.versions.length > 1) {
       const thumbs = await makeVersionThumbs(db, product.id).catch((e: Error) => ({ made: {}, failed: [e.message] }));

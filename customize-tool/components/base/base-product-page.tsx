@@ -5,6 +5,8 @@
  *
  *   Thông tin        name (= kind of product), Shopify product type, material, description, fulfiller + catalog id
  *   Khuôn in + phôi  the piece an artwork is drawn for (ct_print_templates) and its blank photos
+ *   Cắt + file in    fixed khuôn / along the art / flat, the silhouette (2026-11-08, base-cut-preview.tsx)
+ *   Phôi / nền       the preview photo (a phôi, or a background for the acrylic plate made from the design)
  *   Print areas      the file(s) the factory takes (name, px, dpi)
  *   Biến thể + giá   the Notion price table (sizes × packs): edited here, every product on this base deploys with it
  *   Mockups          none of its own: the mockups of every product made on it, by product
@@ -25,6 +27,7 @@ import { PriceTableEditor } from "../deploy/price-table-editor";
 import { PhoiRow } from "../print/phoi-tab";
 import { KhuonPreview, KhuonTab } from "../print/khuon-tab";
 import { ctConfirm } from "../dialogs";
+import { BaseCutSection, BasePreviewSection } from "./base-cut-preview";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, CtSelect, CtTextarea, CtTooltipProvider } from "../ui";
 
 function Section({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
@@ -85,9 +88,9 @@ export function BaseProductView({ baseId }: { baseId: string }) {
     setSaving(true);
     setError(null);
     try {
-      await ctApi.updateBaseProduct(baseId, { name: name.trim() || detail?.base.name || "Product base", config: cfg });
+      const r = await ctApi.updateBaseProduct(baseId, { name: name.trim() || detail?.base.name || "Product base", config: cfg });
       await load();
-      flash("Đã lưu");
+      flash(r.reapplied ? `Đã lưu · ${r.reapplied} sản phẩm đã cập nhật khuôn / phôi theo base` : "Đã lưu");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không lưu được");
     } finally {
@@ -304,7 +307,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                         {template.spec.width}×{template.spec.height}px · {template.spec.dpi} dpi{template.spec.widthMm ? ` · ${template.spec.widthMm}×${template.spec.heightMm} mm` : ""}
                       </div>
                       <div>{template.kind === "cut" ? "Cắt theo viền thiết kế (alpha)" : template.spec.faces.length ? `${template.spec.faces.length} mặt` : "Khuôn cố định"}</div>
-                      {dirty && cfg.templateId !== detail.base.config.templateId && <div className="mt-1 text-amber-600">Lưu để đổi khuôn — artwork đã làm giữ khuôn cũ của nó.</div>}
+                      {dirty && cfg.templateId !== detail.base.config.templateId && <div className="mt-1 text-amber-600">Lưu để đổi khuôn — mọi artwork xem trên base này và mọi sản phẩm của nó dùng khuôn mới.</div>}
                     </div>
                   </div>
                   <PhoiRow
@@ -322,6 +325,14 @@ export function BaseProductView({ baseId }: { baseId: string }) {
               ) : (
                 <p className="mt-2 text-xs text-muted-foreground">Không khuôn: artwork tạo cho base này dùng canvas = print area đầu tiên.</p>
               )}
+            </Section>
+
+            <Section title="Cắt + file in">
+              <BaseCutSection cfg={cfg} template={template} onChange={(cut) => patch({ cut })} />
+            </Section>
+
+            <Section title="Phôi / nền xem trước">
+              <BasePreviewSection cfg={cfg} template={template} onChange={(preview) => patch({ preview })} />
             </Section>
 
             <Section title={`Mockups (${mockupCount}) · ${detail.uses.length} sản phẩm`}>

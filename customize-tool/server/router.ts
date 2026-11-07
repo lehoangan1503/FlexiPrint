@@ -318,6 +318,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return artworkLink.syncManyFromArtwork(session, id, await readJson<unknown>(req));
     } else if (sub === "artwork-sync" && !path[3] && method === "POST") {
       return artworkLink.syncFromArtwork(session, id);
+    } else if (sub === "placement" && !path[3] && method === "POST") {
+      return artworkLink.setPlacement(session, id, await readJson<unknown>(req));
     } else if (sub === "artworks" && !path[3] && method === "GET") {
       return artworks.listProductArtworks(session, id);
     } else if (sub === "artworks" && !path[3] && method === "POST") {

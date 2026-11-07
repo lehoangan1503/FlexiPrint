@@ -6,6 +6,7 @@
 import { CT_FONTS } from "../config";
 import { CT_BASE_OPTION, CT_MAIN_KEY } from "../types";
 import type {
+  CtBasePlacement,
   CtImageConfig,
   CtMainOptionConfig,
   CtMainSubOptions,
@@ -280,7 +281,16 @@ export function defaultProductConfig(): CtProductConfig {
     printSilhouette: null,
     artworkRevision: 0,
     artworkLink: null,
+    placement: { scale: 1, x: 0, y: 0 },
+    baseFrameId: null,
   };
+}
+
+/** CtProductConfig.placement: scale 0.2–5, x / y −1…1. */
+export function normalizePlacement(raw: unknown): CtBasePlacement {
+  const p = raw && typeof raw === "object" ? (raw as Partial<Record<keyof CtBasePlacement, unknown>>) : {};
+  const n = (v: unknown, d: number, lo: number, hi: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
+  return { scale: n(p.scale, 1, 0.2, 5), x: n(p.x, 0, -1, 1), y: n(p.y, 0, -1, 1) };
 }
 
 /** Keep well-formed choices only; photos must be stored URLs (a blob: URL dies with its tab). */
@@ -327,6 +337,8 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     printSilhouette: normalizePrintSilhouette(raw?.printSilhouette),
     artworkRevision: typeof raw?.artworkRevision === "number" && Number.isFinite(raw.artworkRevision) ? Math.max(0, Math.round(raw.artworkRevision)) : 0,
     artworkLink: normalizeArtworkLink(raw?.artworkLink),
+    placement: normalizePlacement(raw?.placement),
+    baseFrameId: typeof raw?.baseFrameId === "string" && raw.baseFrameId ? raw.baseFrameId : null,
   };
 }
 

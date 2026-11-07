@@ -29,6 +29,7 @@ import type { CtPrintTemplate } from "../types/print";
 import { normalizePriceTableConfig } from "../lib/pricing";
 import { normalizePrintSpec } from "../lib/print-template";
 import { normalizeBaseConfig } from "../lib/base-product";
+import { applyBase } from "./artwork-link";
 import type { CtServiceClient, CtSession } from "./supabase";
 
 type Db = CtSession["supabase"] | CtServiceClient;
@@ -84,7 +85,7 @@ async function rows(db: Db, only: string | null): Promise<CtBaseProductRow[]> {
     tplIds.length ? db.from(CT_TABLES.printTemplates).select("*").in("id", tplIds).returns<CtPrintTemplate[]>() : Promise.resolve({ data: [] as CtPrintTemplate[] }),
     tableIds.length ? db.from(CT_TABLES.priceTables).select("*").in("id", tableIds).returns<CtPriceTable[]>() : Promise.resolve({ data: [] as CtPriceTable[] }),
     bases.length
-      ? db.from(CT_TABLES.products).select("id,base_product_id").in("base_product_id", bases.map((b) => b.id)).returns<Array<{ id: string; base_product_id: string }>>()
+      ? db.from(CT_TABLES.products).select("id,base_product_id").in("base_product_id", bases.map((b) => b.id)).eq("kind", "product").returns<Array<{ id: string; base_product_id: string }>>()
       : Promise.resolve({ data: [] as Array<{ id: string; base_product_id: string }> }),
   ]);
   const tplById = new Map((tpls.data ?? []).map((t) => [t.id, templateInfo(t)]));
@@ -133,6 +134,7 @@ export async function baseProductDetail(db: Db, id: string): Promise<CtBaseProdu
     .from(CT_TABLES.products)
     .select("id,name,config,shopify,created_at")
     .eq("base_product_id", id)
+    .eq("kind", "product")
     .order("created_at", { ascending: false })
     .returns<Array<Pick<CtProduct, "id" | "name" | "config" | "shopify" | "created_at">>>();
   const list = products ?? [];
@@ -181,11 +183,15 @@ export async function updateBaseProduct(s: CtSession, id: string, raw: unknown):
   const { data, error } = await s.supabase.from(CT_TABLES.baseProducts).update({ name: body.name, config: body.config }).eq("id", id).select("*").maybeSingle<CtBaseProduct>();
   if (error) return jsonError(error.message, 500);
   if (!data) return jsonError("Không có quyền sửa product base này (chỉ người tạo hoặc admin)", 403);
-  return NextResponse.json({ base: normalizeRow(data) });
+  // The base owns the khuôn, phôi and cut (2026-11-08): every product on it is laid on it again.
+  const { data: products } = await s.supabase.from(CT_TABLES.products).select("*").eq("base_product_id", id).eq("kind", "product").returns<CtProduct[]>();
+  const failed: string[] = [];
+  for (const p of products ?? []) await applyBase(s.supabase, p).catch((e: Error) => failed.push(`${p.name}: ${e.message}`));
+  return NextResponse.json({ base: normalizeRow(data), reapplied: (products ?? []).length - failed.length, failed });
 }
 
 export async function deleteBaseProduct(s: CtSession, id: string): Promise<NextResponse> {
-  const { count } = await s.supabase.from(CT_TABLES.products).select("id", { count: "exact", head: true }).eq("base_product_id", id);
+  const { count } = await s.supabase.from(CT_TABLES.products).select("id", { count: "exact", head: true }).eq("base_product_id", id).eq("kind", "product");
   if (count) return jsonError(`Đang có ${count} sản phẩm dùng product base này — đổi base của chúng hoặc xoá chúng trước`, 409);
   const { data, error } = await s.supabase.from(CT_TABLES.baseProducts).delete().eq("id", id).select("id");
   if (error) return jsonError(error.message, 500);

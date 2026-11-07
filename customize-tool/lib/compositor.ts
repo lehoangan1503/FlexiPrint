@@ -107,7 +107,10 @@ export async function renderComposite(input: CompositeInput): Promise<HTMLCanvas
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     ctx.globalCompositeOperation = "destination-in";
     const mask = cut.config.maskUrl ? await loadImage(cut.config.maskUrl).catch(() => null) : null;
-    if (mask) ctx.drawImage(mask, 0, 0, main.width, main.height);
+    // The khuôn's mask fills its layer's box (the whole canvas for a khuôn made with the artwork, its place on the
+    // canvas for a base's khuôn — lib/base-fit).
+    const mb = cut.shape.type === "rect" ? cut.shape : { x: 0, y: 0, w: main.width, h: main.height };
+    if (mask) ctx.drawImage(mask, mb.x, mb.y, mb.w, mb.h);
     else {
       ctx.beginPath();
       traceFrame(ctx, cut);

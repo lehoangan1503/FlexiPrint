@@ -48,6 +48,7 @@ import { deleteClipart, loadProductAssets } from "./library";
 import { renameProductFolder } from "./artworks";
 import { loadPriceTable } from "./price-tables";
 import { loadBaseProduct } from "./base-products";
+import { applyBase } from "./artwork-link";
 import { createCollection, deployToShopify, listCollections, previewLinks, searchShopifyProducts, shopifyConfigured, shopifyInfo } from "./shopify";
 import { priceTableProblems } from "../lib/pricing";
 
@@ -199,14 +200,22 @@ export async function updateProduct(s: CtSession, productId: string, body: CtUpd
   if (body.main_asset_id !== undefined) patch.main_asset_id = body.main_asset_id;
   if (body.thumbnail_url !== undefined) patch.thumbnail_url = body.thumbnail_url;
   if (typeof body.notes === "string") patch.notes = body.notes;
-  // A product (what is sold) can move to another base product (variants + price); an artwork has none.
+  // A product (what is sold) moves to another base product: variants, price, khuôn, phôi (applyBase below). An
+  // artwork's base is the one it is viewed on (its print area, khuôn and phôi in Xem trước / File in) — it can be used
+  // on any other base.
   if (body.base_product_id !== undefined) {
-    if ((product.kind ?? "artwork") !== "product") return jsonError("Chỉ sản phẩm mới có product base — artwork thì tạo sản phẩm từ nó", 400);
     if (!body.base_product_id || !(await loadBaseProduct(s.supabase, body.base_product_id))) return jsonError("Không tìm thấy product base", 404);
     patch.base_product_id = body.base_product_id;
   }
   const { data, error } = await s.supabase.from(CT_TABLES.products).update(patch).eq("id", productId).select("*").single<CtProduct>();
   if (error) return jsonError(error.message, 500);
+  if (patch.base_product_id && patch.base_product_id !== product.base_product_id && data?.kind === "product") {
+    try {
+      return NextResponse.json({ product: await applyBase(s.supabase, data) });
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : "Không ghép được artwork lên base mới", 500);
+    }
+  }
   // Its folder in the library (artworks, a v2 set's cliparts) carries its name.
   if (patch.name && patch.name !== product.name) await renameProductFolder(s.supabase, productId, patch.name);
   return NextResponse.json({ product: data });

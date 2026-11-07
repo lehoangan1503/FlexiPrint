@@ -58,6 +58,7 @@ import { AssetPanel } from "./asset-panel";
 import { AiMockupsPanel } from "./ai-mockups";
 import { SceneDialog } from "./scene-dialog";
 import { StorefrontPreview } from "./storefront-preview";
+import { PlacementBar } from "./placement-bar";
 import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zoneOptionView } from "./use-design";
 import { PrintDialog } from "./print-dialog";
 import { PrintPanel } from "./print-panel";
@@ -71,6 +72,9 @@ import { claimSharedLayers, cloneLayers, fitMainFrame, mainFrameFor, resolveLayo
 import { charSetDrop } from "../../lib/char-set-layers";
 import { useArtworkSaver } from "./artwork-saver";
 import { frameRegionFor } from "../../lib/material-frame";
+import { withBase } from "../../lib/base-fit";
+import { printApi } from "../../lib/print-api";
+import type { CtPrintTemplate } from "../../types/print";
 import { ImportStatus } from "../char/import-status";
 
 /**
@@ -158,15 +162,22 @@ export function CustomizeEditor({ productId }: { productId: string }) {
    */
   const isProduct = product?.kind === "product";
   const [bases, setBases] = useState<CtBaseProductRow[]>([]);
+  /** The khuôn in of the bases (an artwork is viewed on its base: its khuôn, phôi, cut — lib/base-fit). */
+  const [templates, setTemplates] = useState<CtPrintTemplate[]>([]);
   useEffect(() => {
-    if (!isProduct) return;
     ctApi
       .listBaseProducts()
       .then(setBases)
       .catch(() => undefined);
-  }, [isProduct]);
+    printApi
+      .list()
+      .then(setTemplates)
+      .catch(() => undefined);
+  }, []);
 
   // ---------------------------------------------------------------- load
+  /** Bumped to load the bundle again (a product's base / placement changed on the server: its layers + config). */
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     ctApi
       .getBundle(productId)
@@ -193,7 +204,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       .catch((e: Error) => setLoadError(e.message));
     // design.reset is stable
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productId]);
+  }, [productId, reloadKey]);
 
   useEffect(() => {
     const id = "ct-google-fonts";
@@ -255,11 +266,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     const all = ids.every((id) => cur.includes(id));
     pickMany(all ? cur.filter((id) => !ids.includes(id)) : [...cur, ...ids]);
   };
-  // The khuôn vật liệu the shown version is cut to: its own, else the default version's.
-  const materialFrame = useMemo(
-    () => (main ? frameRegionFor(design.state.regions.map(normalizeRegion), shownMainId, main.id) : null),
-    [design.state.regions, shownMainId, main],
-  );
   /** Bộ nhân vật the product's layers come from (CtRegionConfig.charSet). */
   const usedSets = useMemo(() => new Set(design.state.regions.flatMap((r) => (r.config?.charSet ? [r.config.charSet.projectId] : []))), [design.state.regions]);
   // Looked up again when a set is dropped in or taken out (the server reads the saved layers).
@@ -283,6 +289,25 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   // Checked against every version's layers, so choices survive switching versions.
   const allRegions = design.state.regions;
   const allItems = design.state.items;
+  /**
+   * An artwork seen on a product base ("Xem trên base", 2026-11-08): the base's khuôn laid on the canvas, its
+   * material / silhouette, its phôi — for the guides, Xem trước and File in only, never saved. A product already has
+   * its base baked in (server applyBase).
+   */
+  const viewBase = !isProduct ? (bases.find((b) => b.id === product?.base_product_id) ?? null) : null;
+  const viewTemplate = viewBase?.config.templateId ? (templates.find((t) => t.id === viewBase.config.templateId) ?? null) : null;
+  const onBase = useMemo(
+    () => (product && main && viewBase ? withBase({ productId: product.id, config, regions: allRegions, main }, viewBase, viewTemplate) : null),
+    [product, main, viewBase, viewTemplate, config, allRegions],
+  );
+  const viewConfig = onBase?.config ?? config;
+  const viewRegions = onBase?.regions ?? allRegions;
+  // The khuôn vật liệu the shown version is cut to: its own, else the default version's — or the
+  // base's khuôn laid on the artwork.
+  const materialFrame = useMemo(
+    () => (main ? (onBase?.frame ?? frameRegionFor(design.state.regions.map(normalizeRegion), shownMainId, main.id)) : null),
+    [design.state.regions, shownMainId, main, onBase],
+  );
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
   /** Every version of the product as an artwork in its library folder (saved with the design). */
@@ -1106,7 +1131,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       if (id === product.base_product_id) return;
       try {
         setProduct(await ctApi.updateProduct(product.id, { base_product_id: id }));
-        flash("Đã đổi product base — giá và biến thể theo base mới");
+        setReloadKey((k) => k + 1);
+        flash("Đã đổi product base — giá, biến thể, khuôn và phôi theo base mới");
       } catch (e) {
         flash(e instanceof Error ? e.message : "Không đổi được");
       }
@@ -1174,8 +1200,24 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                   flash={flash}
                 />
               </div>
-              <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-1 flex-col">
+                {base?.config.cut.mode === "khuon" && (
+                  <PlacementBar
+                    key={product.id}
+                    value={config.placement}
+                    onChange={async (placement) => {
+                      try {
+                        setProduct(await ctApi.setPlacement(product.id, placement));
+                        setReloadKey((k) => k + 1);
+                      } catch (e) {
+                        flash(e instanceof Error ? e.message : "Không lưu được vị trí");
+                      }
+                    }}
+                  />
+                )}
+                <div className="min-h-0 flex-1">
                 <StorefrontPreview compact product={product} assets={assets} regions={allRegions} items={allItems} config={config} priceTableId={base?.config.priceTableId ?? null} />
+                </div>
               </div>
             </div>
           ) : (
@@ -1232,6 +1274,31 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               {label}
             </button>
           ))}
+        </div>
+        {/* The base the artwork is seen on (2026-11-08): its print area, khuôn, phôi and cut — the artwork stays usable
+            on any base (Tạo sản phẩm picks one). */}
+        <div className="ml-2 flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground" title="Artwork chỉ là thiết kế — khuôn in, phôi, cách cắt và silhouette lấy từ product base. Đổi base để xem artwork này trên loại sản phẩm khác (không đổi thiết kế).">
+          Xem trên base
+          <CtSelect<string>
+            className={cx("h-7 w-48 text-xs", !product.base_product_id && "ring-1 ring-amber-500")}
+            value={product.base_product_id ?? ""}
+            onChange={(id) =>
+              void ctApi
+                .updateProduct(product.id, { base_product_id: id })
+                .then((p) => {
+                  setProduct(p);
+                  flash(`Đang xem artwork trên base ${bases.find((b) => b.id === id)?.name ?? ""}`);
+                })
+                .catch((e: Error) => flash(e.message))
+            }
+            options={bases.map((b) => ({ value: b.id, label: b.name }))}
+            placeholder="Chọn base…"
+          />
+          {viewBase && (
+            <Link href={`/base-products/${viewBase.id}`} target="_blank" className="rounded p-1 hover:bg-accent" title="Mở product base (khuôn, phôi, cách cắt)">
+              <ExternalLink className="h-3 w-3" />
+            </Link>
+          )}
         </div>
         <ArtworkLinkBar productId={product.id} productName={product.name} dirty={design.dirty} savedTick={savedTick} onFlash={flash} />
         {charSets.map((cs) => (
@@ -1362,12 +1429,12 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                       if (on) setEditTarget("region");
                     }}
                     materialFrame={materialFrame}
-                    printSpec={config.print?.spec ?? null}
+                    printSpec={viewConfig.print?.spec ?? null}
                     mmPerPx={
-                      config.print?.spec.widthMm
-                        ? config.print.spec.widthMm / main.width
-                        : config.material.id !== "none" && config.material.widthMm
-                          ? config.material.widthMm / main.width
+                      viewConfig.print?.spec.widthMm
+                        ? viewConfig.print.spec.widthMm / main.width
+                        : viewConfig.material.id !== "none" && viewConfig.material.widthMm
+                          ? viewConfig.material.widthMm / main.width
                           : undefined
                     }
                   />
@@ -1398,19 +1465,20 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               product={product}
               main={main}
               assets={assets}
-              regions={allRegions}
+              regions={viewRegions}
               items={allItems}
               layouts={config.layouts}
-              material={config.material}
+              material={viewConfig.material}
               selection={selection}
               onOpenSettings={() => setMaterialOpen(true)}
-              print={config.print}
+              print={viewConfig.print}
+              baseName={viewBase?.name ?? null}
               printGuide={config.printGuide}
               onPrintGuide={(printGuide) => {
                 design.commit((st) => ({ ...st, config: { ...st.config, printGuide } }));
                 flash(printGuide ? "Đã đặt template — nhớ Lưu thiết kế" : "Đã bỏ template — nhớ Lưu thiết kế");
               }}
-              printSilhouette={config.printSilhouette}
+              printSilhouette={viewConfig.printSilhouette}
               onPrintSilhouette={(printSilhouette) => design.commit((st) => ({ ...st, config: { ...st.config, printSilhouette } }))}
             />
           ) : view === "preview" && !main ? (
@@ -1418,7 +1486,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           ) : null}
           {previewMounted && main && (
             <div className={cx("min-h-0 flex-1", view !== "preview" && "hidden")}>
-              <StorefrontPreview product={product} assets={assets} regions={allRegions} items={allItems} config={config} />
+              <StorefrontPreview product={product} assets={assets} regions={viewRegions} items={allItems} config={viewConfig} />
             </div>
           )}
         </main>
@@ -1450,7 +1518,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               onSaveArtwork={artworks.saveExtra}
               artworkBusy={artworks.busy}
               artworkFolder={artworks.folderName}
-              print={config.print}
+              print={viewConfig.print}
+              base={viewBase ? { id: viewBase.id, name: viewBase.name, phoiUrl: viewConfig.scene.url, khuon: viewBase.config.cut.mode === "alpha" ? `cắt theo viền hình + ${viewBase.config.cut.borderMm} mm` : viewBase.config.cut.mode === "khuon" ? (viewTemplate?.name ?? null) : "in phẳng, không cắt" } : null}
               onSampleText={(regionId, text) =>
                 setSelection((sel) => {
                   const cur = sel[regionId];

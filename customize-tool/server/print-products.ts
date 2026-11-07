@@ -145,8 +145,9 @@ export async function makeBlankArtwork(db: PrintDb, userId: string, name: string
 
 /**
  * POST products/artwork CtCreateArtworkBody (asked 2026-11-07: "tạo thủ công với size width height ngẫu nhiên và vùng
- * printarea custom"): on the base product's khuôn in (its sheet, cut line, phôi) when it has one, else a blank canvas
- * of the size given (or the base product's first print area).
+ * printarea custom"). Since 2026-11-08 the artwork holds only the design: made for a base, its canvas is the base's
+ * sheet (its khuôn's, else its first print area) and it is viewed on that base (base_product_id) — the khuôn, phôi
+ * and cut stay the base's (lib/base-fit). Without a base: a blank canvas of the size given.
  */
 export async function createArtwork(s: CtSession, raw: unknown): Promise<NextResponse> {
   const b = raw && typeof raw === "object" ? (raw as Partial<Record<keyof CtCreateArtworkBody, unknown>>) : {};
@@ -154,20 +155,19 @@ export async function createArtwork(s: CtSession, raw: unknown): Promise<NextRes
   if (!name) return jsonError("Artwork cần tên", 400);
   const base = typeof b.baseProductId === "string" ? await loadBaseProduct(s.supabase, b.baseProductId) : null;
   try {
-    if (base?.config.templateId) {
-      const template = await getTemplate(s, base.config.templateId);
-      if (!template) return jsonError("Khuôn in của product base không còn", 404);
-      return NextResponse.json({ product: await makeTemplateProduct(s.supabase, s.user.id, template, name) }, { status: 201 });
-    }
+    const template = base?.config.templateId ? await getTemplate(s, base.config.templateId) : null;
     const area = base?.config.printAreas[0];
     const size = (v: unknown, d: number) => {
       const n = Math.round(Number(v));
       return Number.isFinite(n) && n >= 16 && n <= 12000 ? n : d;
     };
-    const width = size(b.width, area?.width ?? 1000);
-    const height = size(b.height, area?.height ?? 1000);
+    const width = base ? (template?.spec.width ?? area?.width ?? 1000) : size(b.width, 1000);
+    const height = base ? (template?.spec.height ?? area?.height ?? 1000) : size(b.height, 1000);
     if (width * height > 80_000_000) return jsonError("Canvas quá lớn (tối đa 80 MP)", 400);
-    return NextResponse.json({ product: await makeBlankArtwork(s.supabase, s.user.id, name, width, height) }, { status: 201 });
+    const product = await makeBlankArtwork(s.supabase, s.user.id, name, width, height);
+    if (!base) return NextResponse.json({ product }, { status: 201 });
+    const { data } = await s.supabase.from(CT_TABLES.products).update({ base_product_id: base.id }).eq("id", product.id).select("*").single<CtProduct>();
+    return NextResponse.json({ product: data ?? product }, { status: 201 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không tạo được artwork", 500);
   }

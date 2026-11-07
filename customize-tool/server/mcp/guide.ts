@@ -27,13 +27,18 @@ this MCP. Everything you read here is live production data.
 ## Product base · Artwork · Sản phẩm (since 2026-11-07, like Teeinblue Product Base / Artwork / Campaign)
 - PRODUCT BASE (list_base_products): the blank product sold — name = kind of product (Acrylic Ornament 1 side,
   Glass Ornament 1 side, Ceramic Ornament 2 sides, Poseable Doll), its Notion price table (variants: sizes × packs
-  with prices), Shopify product type, the khuôn in + phôi of the piece, print areas. No design.
-- ARTWORK (ct_products kind "artwork"): ONE whole design — every version, layer, option, khuôn, phôi, preview and
-  print file. A finished bộ (drawn, imported) gives clipart + its artwork; char_add_product, create_artwork_product
-  and import builds make artworks. An artwork is never deployed.
+  with prices), Shopify product type, print areas, and (since 2026-11-08) the WHOLE physical piece: its khuôn in,
+  how it is cut (fixed khuôn / along the art + border mm / flat), the silhouette in the print file, the phôi or the
+  preview background. No design.
+- ARTWORK (ct_products kind "artwork"): ONE whole design — every version, layer, option. Its canvas is the print
+  area of the base it was made for; it holds NO khuôn and NO phôi: it is viewed on a base (base_product_id = "Xem
+  trên base") which lays its khuôn / phôi / cut on it, and can be used on any other base. A finished bộ (drawn,
+  imported) gives clipart + its artwork; char_add_product, create_artwork_product and import builds make artworks.
+  An artwork is never deployed.
 - SẢN PHẨM (kind "product"): what is sold = an artwork + a product base (make_product_from_artwork). It keeps a
-  snapshot of the artwork (later artwork edits never reach it; the editor updates by hand), takes variants + price +
-  product type from its base, and has its own title (theme), mockups and Shopify link. make_product_mockups,
+  snapshot of the artwork (later artwork edits never reach it; the editor updates by hand) with the base laid on it
+  (khuôn layer, phôi, silhouette — re-laid when the base changes), takes variants + price + product type from its
+  base, and has its own title (theme), placement in the khuôn, mockups and Shopify link. make_product_mockups,
   check_deploy and deploy_product work on the PRODUCT id.
 
 ## Tools

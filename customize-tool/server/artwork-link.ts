@@ -21,10 +21,13 @@
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../config";
 import type { CtArtworkLink, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtCreateFromArtworkBody, CtProduct, CtProductConfig, CtRegion, CtRegionItem } from "../types";
-import { normalizeProductConfig } from "../lib/design";
+import type { CtPrintTemplate } from "../types/print";
+import { normalizePlacement, normalizeProductConfig } from "../lib/design";
+import { withBase } from "../lib/base-fit";
 import { jsonError, ownedProduct } from "./handlers";
 import type { CtServiceClient, CtSession } from "./supabase";
 import { loadBaseProduct } from "./base-products";
+import { templateRow } from "./print-templates";
 
 /** What the snapshot copies from the artwork's config: the design. The rest (photos, mockups) is the product's own. */
 const DESIGN_KEYS = ["main", "layouts", "samples", "material", "print", "printGuide", "printSilhouette"] as const;
@@ -107,7 +110,61 @@ async function snapshot(db: Db, artwork: CtProduct, product: CtProduct): Promise
   const { data: mains } = await db.from(CT_TABLES.productMains).select("asset_id,sort_order").eq("product_id", artwork.id).returns<Array<{ asset_id: string; sort_order: number }>>();
   await db.from(CT_TABLES.productMains).delete().eq("product_id", product.id);
   if (mains?.length) await db.from(CT_TABLES.productMains).insert(mains.map((m) => ({ product_id: product.id, asset_id: m.asset_id, sort_order: m.sort_order })));
+  return applyBase(db, saved);
+}
+
+async function loadTemplate(db: Db, id: string | null): Promise<CtPrintTemplate | null> {
+  if (!id) return null;
+  const { data } = await db.from(CT_TABLES.printTemplates).select("*").eq("id", id).maybeSingle<CtPrintTemplate>();
+  return data ? templateRow(data) : null;
+}
+
+/**
+ * Lay the product's artwork on its base (lib/base-fit withBase), saved into the product: the base's khuôn as a khuôn
+ * layer (the previous one taken out), its material / mm / silhouette, its preview photo. Run after every snapshot,
+ * base change and placement change — so the storefront, the deploy and the server print read the product as it is.
+ */
+export async function applyBase(db: Db, product: CtProduct): Promise<CtProduct> {
+  if (product.kind !== "product") return product;
+  const config = normalizeProductConfig(product.config);
+  const base = product.base_product_id ? await loadBaseProduct(db, product.base_product_id) : null;
+  if (!base) return product;
+  const { data: main } = product.main_asset_id
+    ? await db.from(CT_TABLES.assets).select("width,height").eq("id", product.main_asset_id).maybeSingle<{ width: number; height: number }>()
+    : { data: null };
+  if (!main?.width || !main.height) return product;
+  const template = await loadTemplate(db, base.config.templateId);
+  const { regions, items } = await loadDesign(db, product.id);
+  const frameId = config.baseFrameId ?? crypto.randomUUID();
+  const fit = withBase({ productId: product.id, config, regions, main }, base, template, config.placement, frameId);
+  const hadFrame = regions.some((r) => r.id === frameId);
+  if (fit.frame || hadFrame) {
+    const { error } = await db.rpc("ct_save_design", {
+      p_product_id: product.id,
+      p_regions: fit.regions.map((r, i) => ({ ...r, product_id: product.id, sort_order: i })),
+      p_items: items.filter((i) => fit.regions.some((r) => r.id === i.region_id)),
+    });
+    if (error) throw new Error(error.message);
+  }
+  const next: CtProductConfig = { ...fit.config, baseFrameId: fit.frame ? frameId : null };
+  const { data: saved, error } = await db.from(CT_TABLES.products).update({ config: next }).eq("id", product.id).select("*").single<CtProduct>();
+  if (error || !saved) throw new Error(error?.message ?? "Không lưu được sản phẩm");
   return saved;
+}
+
+/** POST products/:id/placement CtBasePlacement — where the artwork sits in the base's khuôn (Teeinblue "Locate artwork"). */
+export async function setPlacement(s: CtSession, id: string, body: unknown): Promise<NextResponse> {
+  const product = await ownedProduct(s, id);
+  if (!product) return jsonError("Không tìm thấy sản phẩm", 404);
+  if (product.kind !== "product") return jsonError("Chỉ sản phẩm mới chỉnh vị trí trên khuôn", 400);
+  const config = { ...normalizeProductConfig(product.config), placement: normalizePlacement(body) };
+  const { data, error } = await s.supabase.from(CT_TABLES.products).update({ config }).eq("id", id).select("*").single<CtProduct>();
+  if (error || !data) return jsonError(error?.message ?? "Không lưu được", 500);
+  try {
+    return NextResponse.json({ product: await applyBase(s.supabase, data) });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không ghép được artwork lên base", 500);
+  }
 }
 
 async function linkedProducts(db: Db, artworkId: string): Promise<CtProduct[]> {

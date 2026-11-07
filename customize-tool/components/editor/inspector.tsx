@@ -91,6 +91,11 @@ export interface InspectorProps {
   onHoverRegion: (id: string | null) => void;
   /** The phôi trơn (Preview group's fixed row): opens the scene dialog — upload / place the design on the phôi. */
   onOpenScene?: () => void;
+  /**
+   * The product base the artwork is viewed on (2026-11-08: the base owns the phôi and the khuôn in — the two fixed rows
+   * show the base's and open its page). undefined = the old rows (the artwork's own phôi); null = no base picked.
+   */
+  base?: { id: string; name: string; phoiUrl: string | null; khuon: string | null } | null;
   /** Show an option on the canvas. */
   onPreviewOption: (regionId: string, assetId: string) => void;
   /** The text a text zone shows on the canvas (and in the Mockups samples). */
@@ -472,14 +477,31 @@ export function Inspector(props: InspectorProps) {
         {groupHead("preview", "Preview (preview only)", previewList.length + 1, "Chỉ hiện ở Xem trước / mockup — không bao giờ vào file in", "bg-sky-500")}
         {!closedGroups.has("preview") && (
           <>
-            {fixedRow(cfgNow.scene.url, "Phôi trơn (blank)", cfgNow.scene.url ? "nền sản phẩm khi xem trước" : null, "Chưa có phôi trơn — bấm để thêm / đặt thiết kế lên phôi", props.onOpenScene)}
+            {props.base !== undefined
+              ? fixedRow(
+                  props.base?.phoiUrl ?? null,
+                  "Phôi trơn",
+                  props.base?.phoiUrl ? `từ base ${props.base.name}` : null,
+                  props.base ? `Base ${props.base.name} chưa có phôi / nền xem trước — bấm để mở base và thêm` : "Chưa chọn base — chọn ở ô “Xem trên base” phía trên",
+                  props.base ? () => window.open(`/base-products/${props.base?.id}`, "_blank") : undefined,
+                )
+              : fixedRow(cfgNow.scene.url, "Phôi trơn (blank)", cfgNow.scene.url ? "nền sản phẩm khi xem trước" : null, "Chưa có phôi trơn — bấm để thêm / đặt thiết kế lên phôi", props.onOpenScene)}
             {previewList.map((r) => renderRow(r, ordered.indexOf(r), true))}
           </>
         )}
         {groupHead("print", "Print (Order only)", printList.length + (khuonLayer ? 0 : 1), "Chỉ có trong file in gửi xưởng — không hiện trên preview", "bg-orange-500")}
         {!closedGroups.has("print") && (
           <>
-            {!khuonLayer && fixedRow(null, "Khuôn in", khuonName, "Chưa có khuôn in — file in không có đường cắt / silhouette chuẩn")}
+            {!khuonLayer &&
+              (props.base !== undefined
+                ? fixedRow(
+                    null,
+                    "Khuôn in",
+                    props.base?.khuon ? `${props.base.khuon} · từ base` : null,
+                    props.base ? `Base ${props.base.name} chưa có khuôn / luật cắt — bấm để mở base` : "Chưa chọn base — chọn ở ô “Xem trên base” phía trên",
+                    props.base ? () => window.open(`/base-products/${props.base?.id}`, "_blank") : undefined,
+                  )
+                : fixedRow(null, "Khuôn in", khuonName, "Chưa có khuôn in — file in không có đường cắt / silhouette chuẩn"))}
             {printList.map((r) => renderRow(r, ordered.indexOf(r), true))}
           </>
         )}

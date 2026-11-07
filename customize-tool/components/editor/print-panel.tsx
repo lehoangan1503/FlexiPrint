@@ -76,6 +76,8 @@ export interface PrintPanelProps {
   onOpenSettings: () => void;
   /** The khuôn in the product is made on: its sizes (a print file per size). */
   print?: CtProductPrint | null;
+  /** The product base the artwork is viewed on: its khuôn / cut / silhouette rule the file (set on the base's page). */
+  baseName?: string | null;
   /** The fulfiller's template laid over the print file (CtProductConfig.printGuide). */
   printGuide: CtPrintGuide | null;
   onPrintGuide: (g: CtPrintGuide | null) => void;
@@ -319,7 +321,8 @@ export function PrintPanel(props: PrintPanelProps) {
           ))}
         </div>
         <span className="text-muted-foreground">
-          {frame ? `Toàn khung edit, cắt theo khuôn "${frame.name}"` : "Toàn khung edit (không có khuôn)"}
+          {props.baseName && `Trên base ${props.baseName} · `}
+          {frame ? `Toàn khung edit, cắt theo khuôn "${frame.name}"` : material.shape === "contour" ? "Cắt theo viền hình (alpha)" : "Toàn khung edit (không có khuôn)"}
           {cutPath && " · đường hồng = đường cắt (file cut.svg riêng, không in)"}
           {props.print?.spec.mirror && " · + nửa đối xứng"}
           {sil && " · nửa trên = silhouette, nửa dưới = bản in"}
@@ -392,11 +395,13 @@ export function PrintPanel(props: PrintPanelProps) {
             <input
               type="checkbox"
               className="accent-sky-500"
+              disabled={!!props.baseName}
               checked={!!sil}
               onChange={(e) => props.onPrintSilhouette(e.target.checked ? { enabled: true, offset: props.printSilhouette?.offset ?? 0, hole: props.printSilhouette?.hole ?? true, holeSize: props.printSilhouette?.holeSize ?? 9 } : null)}
             />
             Silhouette
           </label>
+          {props.baseName && <span className="text-muted-foreground">theo base {props.baseName}</span>}
           {sil && (
             <span className="text-muted-foreground" title={cutFrame ? "Silhouette lấy đúng hình khuôn của sản phẩm (đường cắt + lỗ)" : "Không có khuôn: silhouette lấy theo viền bản in"}>
               {cutFrame ? `theo khuôn "${cutFrame.name}"` : "theo viền bản in"}
@@ -405,7 +410,7 @@ export function PrintPanel(props: PrintPanelProps) {
           {sil && cutFrame && (cutFrame.config.cuts ?? []).length > 0 && <span className="text-muted-foreground">· lỗ treo lấy theo khuôn</span>}
           {sil && !(cutFrame && (cutFrame.config.cuts ?? []).length > 0) && (
             <label className="flex cursor-pointer items-center gap-1.5" title="Tai treo tròn có lỗ ở giữa mép trên của hình (ornament)">
-              <input type="checkbox" className="accent-sky-500" checked={sil.hole} onChange={(e) => props.onPrintSilhouette({ ...sil, hole: e.target.checked })} />
+              <input type="checkbox" className="accent-sky-500" disabled={!!props.baseName} checked={sil.hole} onChange={(e) => props.onPrintSilhouette({ ...sil, hole: e.target.checked })} />
               Lỗ treo
             </label>
           )}

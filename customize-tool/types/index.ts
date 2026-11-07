@@ -818,6 +818,23 @@ export interface CtProductConfig {
    * artwork's current design again (one product, or many at once). null = the product is its own artwork.
    */
   artworkLink: CtArtworkLink | null;
+  /**
+   * Product side (2026-11-08, like Teeinblue's "Locate artwork"): where the artwork sits in its base's khuôn — the
+   * khuôn is laid on the artwork canvas contain-fitted, then this moves / scales it. Default = { scale 1, x 0, y 0 }.
+   */
+  placement: CtBasePlacement;
+  /** Product side: the id of the khuôn layer its base put into it (lib/base-fit) — replaced when the base changes. */
+  baseFrameId: string | null;
+}
+
+/**
+ * CtProductConfig.placement — how the artwork sits in its base's khuôn. `scale` > 1 = the artwork bigger in the khuôn
+ * (the khuôn smaller on the artwork), x / y = the artwork moved by that fraction of the khuôn's width / height.
+ */
+export interface CtBasePlacement {
+  scale: number;
+  x: number;
+  y: number;
 }
 
 /** CtProductConfig.artworkLink */
@@ -962,7 +979,7 @@ export interface CtMockupEdit {
 }
 
 /** What a published template carries (no design samples). */
-export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink">;
+export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId">;
 
 /**
  * What a ct_products row is (migration 031, asked 2026-11-07 — Teeinblue's Artwork / Campaign):
@@ -1058,6 +1075,12 @@ export interface CtProductScene {
   width: number;
   height: number;
   box: { x: number; y: number; w: number; h: number };
+  /**
+   * A clear plate drawn under the design (2026-11-08: a cut-to-shape acrylic's phôi made from the design itself, for
+   * every version — Teeinblue draws one photo per version by hand). `border` = the plate's margin around the printed
+   * pixels, a fraction of the box's width. Absent = the photo is the phôi (or a plain background).
+   */
+  plate?: { border: number };
 }
 
 /**
@@ -1585,6 +1608,27 @@ export interface CtBaseProductFulfillment {
   catalogId: string;
 }
 
+/**
+ * How a base product's piece is cut, and what its print file looks like (2026-11-08: the base owns it, artworks only
+ * hold the design):
+ *   khuon  a fixed shape (round ceramic / glass): the khuôn in (templateId) is laid on the artwork, the print is cut to it
+ *   alpha  cut along the design's own outline + `borderMm` (acrylic): the silhouette is made per version
+ *   none   printed flat as designed (plush doll, clothes)
+ */
+export type CtBaseCutMode = "khuon" | "alpha" | "none";
+
+export interface CtBaseCut {
+  mode: CtBaseCutMode;
+  /** alpha: margin of plate around the printed pixels, mm. */
+  borderMm: number;
+  /** The print file carries the solid-black silhouette above the print (one file twice as tall — Merchize acrylic). */
+  silhouette: boolean;
+  /** alpha: a hanging tab with a hole at the top (ornaments). */
+  hole: boolean;
+  /** The tab's diameter, % of the shape's width. */
+  holeSize: number;
+}
+
 export interface CtBaseProductConfig {
   /** Shown on the product page until the product's own description replaces it. */
   description: string;
@@ -1599,6 +1643,14 @@ export interface CtBaseProductConfig {
   printAreas: CtPrintArea[];
   fulfillment: CtBaseProductFulfillment;
   notes: string;
+  /** How the piece is cut + the print file layout. */
+  cut: CtBaseCut;
+  /**
+   * The preview's photo: a phôi trơn with `box` = where the print sheet sits on it (khuon / none), or, alpha, the
+   * background the clear plate made from the design is drawn on (`box` = where the design canvas goes). url null =
+   * the khuôn's first phôi (khuon), else no photo.
+   */
+  preview: CtProductScene;
 }
 
 export interface CtBaseProduct {

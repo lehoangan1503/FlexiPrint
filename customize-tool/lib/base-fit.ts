@@ -173,10 +173,12 @@ export function withBase(
   const print = cut.mode !== "none" && tpl ? productPrintOfTemplate(tpl) : null;
   // An artwork made on a khuôn before 2026-11-08 has its own khuôn layer: it stays (it is that khuôn).
   const ownFrame = regions.some((r) => r.config?.materialFrame);
-  const place = cut.mode === "khuon" && print ? sheetPlace(main, print.spec, placement) : null;
+  // Where the khuôn's sheet sits on the canvas: placed by the product (a fixed khuôn), else just fitted (its guides).
+  const sheetBox = print ? sheetPlace(main, print.spec, cut.mode === "khuon" ? placement : DEFAULT_PLACEMENT) : null;
+  const place = cut.mode === "khuon" ? sheetBox : null;
   const frame = place && print && !ownFrame ? baseFrameRegion(input.productId, frameId, print, place) : null;
 
-  const widthMm = canvasWidthMm(base, print, place, main);
+  const widthMm = canvasWidthMm(base, print, sheetBox, main);
   const material: CtMaterialConfig = {
     ...config.material,
     id: base.config.material,
@@ -207,7 +209,7 @@ export function withBase(
   }
 
   return {
-    config: { ...config, print: print && place ? printOnCanvas(print, place, main) : (print ?? (ownFrame ? config.print : null)), material, printSilhouette, scene },
+    config: { ...config, print: print && sheetBox ? printOnCanvas(print, sheetBox, main) : ownFrame ? config.print : null, material, printSilhouette, scene },
     regions: frame ? [frame, ...regions] : regions,
     frame,
     place,

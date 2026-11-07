@@ -59,6 +59,12 @@ export interface CompositeInput {
   /** The product shown on its photo (preview / mockup): print-only layers (a background the photo shows) are left out. */
   display?: boolean;
   /**
+   * Only one part of the design (2026-11-08, a version's AI phôi — CtVersionPhoi): "static" = what the customer cannot
+   * change (the version's picture + layers with one fixed picture), drawn into the AI photo; "dynamic" = what they pick
+   * or type (options, texts, photos), laid on that photo live. Absent = everything.
+   */
+  part?: "static" | "dynamic";
+  /**
    * One size of a khuôn in (lib/print-template printSize): the canvas is that size's sheet, fill layers fill their
    * zone of that size (patterns keep their px size), everything else is stretched with the sheet.
    */
@@ -154,8 +160,20 @@ function drawPlan(input: CompositeInput): { selection: CtSelection; mainId: stri
     // Print only / preview only (Teeinblue's two groups): a picture of the product leaves out what only the factory
     // gets, the print file what only the customer sees.
     .filter((r) => (input.display ? !r.config.printOnly : !r.config.previewOnly))
+    .filter((r) => !input.part || (input.part === "static") === isStaticLayer(r, resolved.items))
     .sort((a, b) => a.sort_order - b.sort_order);
   return { selection, mainId, items: resolved.items, regions };
+}
+
+/**
+ * A layer the customer cannot change: a picture layer with one fixed picture (no options, no fill pattern). Texts,
+ * customer photos and layers with several pictures (options, linked followers) are theirs.
+ */
+export function isStaticLayer(r: CtRegion, items: CtRegionItem[]): boolean {
+  if (r.kind !== "image" || r.config.fill || r.config.materialFrame) return false;
+  let n = 0;
+  for (const i of items) if (i.region_id === r.id && ++n > 1) return false;
+  return n === 1;
 }
 
 /** One layer's visible pixels (alpha, row by row) on a pick map; id null = the version's picture. */
@@ -304,12 +322,14 @@ export async function drawComposite(ctx: CanvasRenderingContext2D, input: Compos
   const { f, pad: mainPad } = mainPictureBox(input);
   const px = (mainPad?.x ?? 0) * f.w;
   const py = (mainPad?.y ?? 0) * f.h;
-  ctx.save();
-  ctx.scale(kx, ky);
-  ctx.translate(f.x + f.w / 2, f.y + f.h / 2);
-  if (f.rotation) ctx.rotate((f.rotation * Math.PI) / 180);
-  ctx.drawImage(mainImg, -f.w / 2 - px, -f.h / 2 - py, f.w + 2 * px, f.h + 2 * py);
-  ctx.restore();
+  if (input.part !== "dynamic") {
+    ctx.save();
+    ctx.scale(kx, ky);
+    ctx.translate(f.x + f.w / 2, f.y + f.h / 2);
+    if (f.rotation) ctx.rotate((f.rotation * Math.PI) / 180);
+    ctx.drawImage(mainImg, -f.w / 2 - px, -f.h / 2 - py, f.w + 2 * px, f.h + 2 * py);
+    ctx.restore();
+  }
   for (const r of above) await draw(r);
 
   ctx.restore();

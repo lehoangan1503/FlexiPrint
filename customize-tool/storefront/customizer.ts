@@ -38,6 +38,7 @@
 import { optionThumb } from "../lib/option-thumb";
 import { CT_MAIN_KEY } from "../types";
 import type {
+  CtVersionPhoi,
   CtMockupEdit,
   CtOptionDisplay,
   CtPackFrameLayer,
@@ -593,6 +594,22 @@ export class Customizer {
       canvas.getContext("2d")?.drawImage(off, 0, 0);
       return;
     }
+    // The version's AI phôi (2026-11-08): its fixed parts are already in the photo as the real piece — only what the
+    // customer picks or types is laid on it.
+    const phoi = this.versionPhoi(this.selection);
+    if (phoi) {
+      const k = Math.min(1, side / Math.max(phoi.width, phoi.height));
+      const scale = Math.min(1, (phoi.box.w * k) / this.main.width);
+      const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection: this.selection, layouts: this.tpl.config.layouts };
+      const off = await renderComposite({ ...input, scale: Math.max(scale, 0.05), display: true, part: "dynamic" })
+        .then((c) => drawOnScene({ url: phoi.url, width: phoi.width, height: phoi.height, box: phoi.box }, c, side, { x: 0, y: 0 }, true))
+        .catch(() => null);
+      if (!off || token !== this.renderToken) return;
+      canvas.width = off.width;
+      canvas.height = off.height;
+      canvas.getContext("2d")?.drawImage(off, 0, 0);
+      return;
+    }
     // The design on the product's photo: the picked background's own photo (it already shows the print-only layers,
     // they are left out), else the phôi trơn (a blank piece: everything printed is drawn on it).
     const own = this.optionScene(this.selection);
@@ -658,6 +675,15 @@ export class Customizer {
     const b = cutToFrame ? { x: 0, y: 0 } : compositeBleed(input);
     const scale = Math.min(1, maxSide / Math.max(this.main.width + 2 * b.x, this.main.height + 2 * b.y));
     return renderComposite({ ...input, scale, bleed: !cutToFrame, display, cutToFrame });
+  }
+
+  /** The AI phôi of the shown version on the product's base (config.versionPhoi); null = none. */
+  private versionPhoi(selection: CtSelection): CtVersionPhoi | null {
+    const list = this.tpl.config.versionPhoi ?? [];
+    if (!list.length) return null;
+    const mainId = selectedMainId(selection, this.tpl.assets, this.tpl.mainAssetId);
+    const base = this.tpl.config.viewBaseId;
+    return list.find((v) => v.mainId === mainId && (!base || v.baseId === base)) ?? null;
   }
 
   /** The picked background's own product photo (config.mockupsByOption); null = none (the product's phôi is used). */

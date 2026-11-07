@@ -164,13 +164,27 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
   const body = JSON.stringify({ model, prompt, size, quality: "high", ...(transparent ? { background: "transparent", output_format: "png" } : {}), ...(images.length ? { images } : {}) });
   // The connection to cpa drops now and then (an-vm 2026-10-21: ETIMEDOUT after 1 s, ECONNRESET after ~30 s, a 524
   // from Cloudflare) while the API itself works: tried again a few times before the picture counts as failed.
+  // A second route to the same model (CPA_FALLBACK_BASE_URL + CPA_FALLBACK_API_KEY): taken when the first one refuses
+  // the connection (the office LAN cpa was down 2026-11-08 — every picture failed with ECONNREFUSED).
+  const routes = [{ base, key }];
+  const fbBase = process.env.CPA_FALLBACK_BASE_URL?.replace(/\/+$/, "");
+  const fbKey = process.env.CPA_FALLBACK_API_KEY;
+  if (fbBase && fbKey && fbBase !== base) routes.push({ base: fbBase, key: fbKey });
+  let route = 0;
   let res: Response | null = null;
   for (let attempt = 0; ; attempt++) {
     try {
-      res = await postLong(`${base}/images/${images.length ? "edits" : "generations"}`, { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body, 420_000);
+      const r = routes[route];
+      res = await postLong(`${r.base}/images/${images.length ? "edits" : "generations"}`, { Authorization: `Bearer ${r.key}`, "Content-Type": "application/json" }, body, 420_000);
       if ((res.status === 524 || res.status === 502 || res.status === 503) && attempt < 3) throw new Error(`cpa ${res.status}`);
       break;
     } catch (e) {
+      const code = e instanceof Error ? (e.cause as { code?: string } | undefined)?.code ?? (e as { code?: string }).code : undefined;
+      if ((code === "ECONNREFUSED" || code === "EHOSTUNREACH" || code === "ENOTFOUND") && route + 1 < routes.length) {
+        route++;
+        console.warn(`[ct] cpa ${code} — trying ${routes[route].base}`);
+        continue;
+      }
       const timedOut = e instanceof Error && e.name === "TimeoutError";
       if (timedOut || attempt >= 3) throw e;
       console.warn(`[ct] cpa again (${attempt + 1}): ${e instanceof Error ? ((e.cause as { code?: string } | undefined)?.code ?? e.message) : String(e)}`);

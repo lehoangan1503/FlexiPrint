@@ -117,6 +117,9 @@ export function buildTemplate(args: {
       zoneMockups: config.zoneMockups,
       // The print file made at add-to-cart carries the silhouette above it when the product asks for one.
       printSilhouette: config.printSilhouette,
+      // The customer's preview on each version's AI phôi of the product's base (only that base's, of the shown versions).
+      versionPhoi: config.versionPhoi.filter((v) => v.baseId === config.viewBaseId && mains.some((m) => m.id === v.mainId)),
+      viewBaseId: config.viewBaseId,
     },
     // Swatches (main versions, layer options) show the flat clipart; the design is drawn with its material.
     assets: Array.from(used.values()).map((a) => renderAsset(a, flatUrl.get(a.id))),

@@ -248,7 +248,8 @@ export async function saveDesign(s: CtSession, productId: string, body: CtSaveDe
   if (body.config) {
     const { error: cfgErr } = await s.supabase
       .from(CT_TABLES.products)
-      .update({ config: withArtworkRevision(normalizeProductConfig(body.config), owned) })
+      // The versions' AI phôi are written by the server alone (server/version-phoi.ts): the stored list stays.
+      .update({ config: withArtworkRevision({ ...normalizeProductConfig(body.config), versionPhoi: normalizeProductConfig(owned.config).versionPhoi }, owned) })
       .eq("id", productId);
     if (cfgErr) return jsonError(missingMigration(cfgErr.message) ?? cfgErr.message, 500);
   }

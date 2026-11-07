@@ -130,6 +130,7 @@ import { aiTemplateBlank, uploadTemplateBlank } from "./print-blanks";
 import { createArtwork, createProductFromTemplate } from "./print-products";
 import * as artworks from "./artworks";
 import * as artworkLink from "./artwork-link";
+import * as versionPhoi from "./version-phoi";
 import * as fonts from "./fonts";
 import * as productMockups from "./product-mockups";
 import * as packs from "./mockup-packs";
@@ -318,6 +319,13 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return artworkLink.syncManyFromArtwork(session, id, await readJson<unknown>(req));
     } else if (sub === "artwork-sync" && !path[3] && method === "POST") {
       return artworkLink.syncFromArtwork(session, id);
+    } else if (sub === "version-phoi" && !path[3] && method === "POST") {
+      return versionPhoi.makeVersionPhoi(session, id, await req.formData());
+    } else if (sub === "version-phoi" && !path[3] && method === "GET") {
+      return versionPhoi.versionPhoiStatus(session, id);
+    } else if (sub === "version-phoi" && !path[3] && method === "DELETE") {
+      const q = new URL(req.url).searchParams;
+      return versionPhoi.deleteVersionPhoi(session, id, q.get("mainId") ?? "", q.get("baseId") ?? "");
     } else if (sub === "placement" && !path[3] && method === "POST") {
       return artworkLink.setPlacement(session, id, await readJson<unknown>(req));
     } else if (sub === "artworks" && !path[3] && method === "GET") {

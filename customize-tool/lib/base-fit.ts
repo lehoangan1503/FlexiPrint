@@ -209,7 +209,7 @@ export function withBase(
   }
 
   return {
-    config: { ...config, print: print && sheetBox ? printOnCanvas(print, sheetBox, main) : ownFrame ? config.print : null, material, printSilhouette, scene },
+    config: { ...config, viewBaseId: base.id, print: print && sheetBox ? printOnCanvas(print, sheetBox, main) : ownFrame ? config.print : null, material, printSilhouette, scene },
     regions: frame ? [frame, ...regions] : regions,
     frame,
     place,

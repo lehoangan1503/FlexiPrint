@@ -30,7 +30,7 @@ import { loadBaseProduct } from "./base-products";
 import { templateRow } from "./print-templates";
 
 /** What the snapshot copies from the artwork's config: the design. The rest (photos, mockups) is the product's own. */
-const DESIGN_KEYS = ["main", "layouts", "samples", "material", "print", "printGuide", "printSilhouette"] as const;
+const DESIGN_KEYS = ["main", "layouts", "samples", "material", "print", "printGuide", "printSilhouette", "versionPhoi"] as const;
 
 type Db = CtSession["supabase"] | CtServiceClient;
 
@@ -133,6 +133,11 @@ export async function applyBase(db: Db, product: CtProduct): Promise<CtProduct> 
     ? await db.from(CT_TABLES.assets).select("width,height").eq("id", product.main_asset_id).maybeSingle<{ width: number; height: number }>()
     : { data: null };
   if (!main?.width || !main.height) return product;
+  // The artwork's AI phôi made after the snapshot reach the product too (preview only — the design stays the snapshot).
+  if (config.artworkLink) {
+    const { data: art } = await db.from(CT_TABLES.products).select("config").eq("id", config.artworkLink.artworkId).maybeSingle<Pick<CtProduct, "config">>();
+    if (art) config.versionPhoi = normalizeProductConfig(art.config).versionPhoi;
+  }
   const template = await loadTemplate(db, base.config.templateId);
   const { regions, items } = await loadDesign(db, product.id);
   const frameId = config.baseFrameId ?? crypto.randomUUID();

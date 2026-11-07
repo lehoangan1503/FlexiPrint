@@ -184,6 +184,51 @@ def align_edit(body: AlignBody, authorization: str | None = Header(default=None)
     return out
 
 
+def _similarity(ref: np.ndarray, img: np.ndarray) -> np.ndarray | None:
+    """The scale + turn + shift that puts `img` on `ref` (2x3, img → ref), from ORB features + RANSAC. For an AI
+    re-render of a whole picture (a version's phôi made into a real photo, 2026-11-08): gpt-image may move or zoom the
+    whole frame by far more than an in-place edit, which `register` alone (≤ 2 %, 15 px) cannot undo."""
+    g1 = cv2.cvtColor((ref * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+    g2 = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+    orb = cv2.ORB_create(4000)
+    k1, d1 = orb.detectAndCompute(g1, None)
+    k2, d2 = orb.detectAndCompute(g2, None)
+    if d1 is None or d2 is None or len(k1) < 20 or len(k2) < 20:
+        return None
+    matches = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(d2, d1, k=2)
+    good = [m for m, n in (p for p in matches if len(p) == 2) if m.distance < 0.75 * n.distance]
+    if len(good) < 20:
+        return None
+    src = np.float32([k2[m.queryIdx].pt for m in good])
+    dst = np.float32([k1[m.trainIdx].pt for m in good])
+    m, inliers = cv2.estimateAffinePartial2D(src, dst, method=cv2.RANSAC, ransacReprojThreshold=3.0, maxIters=4000)
+    if m is None or inliers is None or int(inliers.sum()) < 15:
+        return None
+    scale = float(np.hypot(m[0, 0], m[1, 0]))
+    return m if 0.6 < scale < 1.6 else None
+
+
+@app.post("/register-photo")
+def register_photo(body: AlignBody, authorization: str | None = Header(default=None)) -> dict:
+    """An AI re-render put back on the picture it was made from: the same canvas, every kept part where it was — the
+    caller knows where things are on `ref`, so it knows where they are on the answer (PNG, base64)."""
+    auth(authorization)
+    with _quick:
+        img = rgb_on_white(fetch(body.url))
+        h, w = img.shape[:2]
+        ref = fit(rgb_on_white(fetch(body.ref)), w, h)
+        sim = _similarity(ref, img)
+        moved = img
+        if sim is not None:
+            moved = np.clip(cv2.warpAffine(img, sim, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REPLICATE), 0, 1)
+        out, stats = register(ref, moved)
+        ok, png = cv2.imencode(".png", cv2.cvtColor((np.clip(out, 0, 1) * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+        if not ok:
+            raise HTTPException(500, "encode failed")
+    scale = float(np.hypot(sim[0, 0], sim[1, 0])) if sim is not None else 1.0
+    return {"png": base64.b64encode(png.tobytes()).decode(), "w": w, "h": h, "scale": round(scale, 4), "similarity": sim is not None, **stats}
+
+
 # ---- jobs ---------------------------------------------------------------------------------------------------
 # A job takes minutes (registration, matting, upscale) — longer than an HTTP client waits for headers (Node's
 # fetch: 300 s). POST starts it; GET /jobs/{id} answers {"status": "running"|"done"|"failed", ...}; the pictures a

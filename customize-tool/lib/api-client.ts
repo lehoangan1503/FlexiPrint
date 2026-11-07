@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtBasePlacement, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseProductRow, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind } from "../types";
+import type { CtBasePlacement, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseProductRow, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
   CtAgentStatus,
@@ -114,6 +114,18 @@ export const ctApi = {
     call<{ revision: number; source: (CtArtworkSource & { linkedRevision: number }) | null; products: CtArtworkProductRow[] }>(`products/${id}/artwork`),
   productFromArtwork: (artworkId: string, body: CtCreateFromArtworkBody) =>
     call<{ product: CtProduct }>(`products/${artworkId}/artwork-products`, json("POST", body)).then((r) => r.product),
+  /** The versions' AI phôi (server/version-phoi.ts). */
+  versionPhoi: (id: string) => call<CtVersionPhoiStatus>(`products/${id}/version-phoi`),
+  makeVersionPhoi: (id: string, ref: Blob, mainId: string, baseId: string, box: CtVersionPhoi["box"]) => {
+    const form = new FormData();
+    form.append("file", ref, "phoi-ref.png");
+    form.append("mainId", mainId);
+    form.append("baseId", baseId);
+    form.append("box", JSON.stringify(box));
+    return call<{ job: CtPackImage }>(`products/${id}/version-phoi`, { method: "POST", body: form }).then((r) => r.job);
+  },
+  deleteVersionPhoi: (id: string, mainId: string, baseId: string) =>
+    call<void>(`products/${id}/version-phoi?mainId=${encodeURIComponent(mainId)}&baseId=${encodeURIComponent(baseId)}`, { method: "DELETE" }),
   /** Where a product's artwork sits in its base's khuôn (Teeinblue "Locate artwork"). */
   setPlacement: (id: string, placement: CtBasePlacement) => call<{ product: CtProduct }>(`products/${id}/placement`, json("POST", placement)).then((r) => r.product),
   syncFromArtwork: (id: string) => call<{ product: CtProduct }>(`products/${id}/artwork-sync`, { method: "POST" }).then((r) => r.product),

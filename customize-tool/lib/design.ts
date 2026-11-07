@@ -7,6 +7,7 @@ import { CT_FONTS } from "../config";
 import { CT_BASE_OPTION, CT_MAIN_KEY } from "../types";
 import type {
   CtBasePlacement,
+  CtVersionPhoi,
   CtImageConfig,
   CtMainOptionConfig,
   CtMainSubOptions,
@@ -283,7 +284,25 @@ export function defaultProductConfig(): CtProductConfig {
     artworkLink: null,
     placement: { scale: 1, x: 0, y: 0 },
     baseFrameId: null,
+    versionPhoi: [],
+    viewBaseId: null,
   };
+}
+
+/** CtProductConfig.versionPhoi: well-formed entries, one per base × version (the last wins). */
+export function normalizeVersionPhoi(raw: unknown): CtVersionPhoi[] {
+  if (!Array.isArray(raw)) return [];
+  const out = new Map<string, CtVersionPhoi>();
+  for (const v of raw) {
+    if (!v || typeof v !== "object") continue;
+    const p = v as Partial<CtVersionPhoi>;
+    const b = p.box;
+    if (typeof p.baseId !== "string" || typeof p.mainId !== "string" || typeof p.url !== "string" || !b || typeof b !== "object") continue;
+    const n = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : 0);
+    if (!(n(p.width) > 0 && n(p.height) > 0 && n(b.w) > 0 && n(b.h) > 0)) continue;
+    out.set(`${p.baseId}|${p.mainId}`, { baseId: p.baseId, mainId: p.mainId, url: p.url, width: n(p.width), height: n(p.height), box: { x: n(b.x), y: n(b.y), w: n(b.w), h: n(b.h) }, at: typeof p.at === "string" ? p.at : "" });
+  }
+  return [...out.values()];
 }
 
 /** CtProductConfig.placement: scale 0.2–5, x / y −1…1. */
@@ -339,6 +358,8 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     artworkLink: normalizeArtworkLink(raw?.artworkLink),
     placement: normalizePlacement(raw?.placement),
     baseFrameId: typeof raw?.baseFrameId === "string" && raw.baseFrameId ? raw.baseFrameId : null,
+    versionPhoi: normalizeVersionPhoi(raw?.versionPhoi),
+    viewBaseId: typeof raw?.viewBaseId === "string" && raw.viewBaseId ? raw.viewBaseId : null,
   };
 }
 

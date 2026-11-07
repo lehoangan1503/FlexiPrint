@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import { CT_CONFIG, ctGoogleFontsHref } from "../../config";
 import { CT_BASE_OPTION, CT_MAIN_KEY } from "../../types";
-import type { CtAsset, CtBaseProductRow, CtProductCharSet, CtMainFrame, CtMainOptionConfig, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
+import type { CtVersionPhoiStatus, CtAsset, CtBaseProductRow, CtProductCharSet, CtMainFrame, CtMainOptionConfig, CtPhotoSelection, CtPoint, CtProductScene, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import { charApi, ctApi } from "../../lib/api-client";
 import {
   defaultProductConfig,
@@ -59,6 +59,7 @@ import { AiMockupsPanel } from "./ai-mockups";
 import { SceneDialog } from "./scene-dialog";
 import { StorefrontPreview } from "./storefront-preview";
 import { PlacementBar } from "./placement-bar";
+import { VersionPhoiDialog } from "./version-phoi-dialog";
 import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zoneOptionView } from "./use-design";
 import { PrintDialog } from "./print-dialog";
 import { PrintPanel } from "./print-panel";
@@ -300,7 +301,17 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     () => (product && main && viewBase ? withBase({ productId: product.id, config, regions: allRegions, main }, viewBase, viewTemplate) : null),
     [product, main, viewBase, viewTemplate, config, allRegions],
   );
-  const viewConfig = onBase?.config ?? config;
+  /** The versions' AI phôi (server-owned, server/version-phoi.ts) — the preview on the base uses them. */
+  const [phoiStatus, setPhoiStatus] = useState<CtVersionPhoiStatus>({ phoi: [], jobs: [] });
+  const [phoiOpen, setPhoiOpen] = useState(false);
+  useEffect(() => {
+    if (isProduct) return;
+    ctApi
+      .versionPhoi(productId)
+      .then(setPhoiStatus)
+      .catch(() => undefined);
+  }, [productId, isProduct]);
+  const viewConfig = onBase ? { ...onBase.config, versionPhoi: phoiStatus.phoi } : config;
   const viewRegions = onBase?.regions ?? allRegions;
   // The khuôn vật liệu the shown version is cut to: its own, else the default version's — or the
   // base's khuôn laid on the artwork.
@@ -1519,6 +1530,11 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               artworkBusy={artworks.busy}
               artworkFolder={artworks.folderName}
               print={viewConfig.print}
+              phoiAi={
+                viewBase && viewBase.config.cut.mode === "alpha"
+                  ? { done: mains.filter((m) => phoiStatus.phoi.some((v) => v.mainId === m.id && v.baseId === viewBase.id)).length, total: mains.length, onOpen: () => setPhoiOpen(true) }
+                  : null
+              }
               base={viewBase ? { id: viewBase.id, name: viewBase.name, phoiUrl: viewConfig.scene.url, khuon: viewBase.config.cut.mode === "alpha" ? `cắt theo viền hình + ${viewBase.config.cut.borderMm} mm` : viewBase.config.cut.mode === "khuon" ? (viewTemplate?.name ?? null) : "in phẳng, không cắt" } : null}
               onSampleText={(regionId, text) =>
                 setSelection((sel) => {
@@ -1605,6 +1621,24 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         </>
       )}
     </div>
+      {viewBase && main && viewBase.config.cut.mode === "alpha" && (
+        <VersionPhoiDialog
+          open={phoiOpen}
+          onClose={() => setPhoiOpen(false)}
+          product={product}
+          main={main}
+          mains={mains}
+          assets={assets}
+          regions={viewRegions}
+          items={allItems}
+          layouts={config.layouts}
+          selection={selection}
+          base={viewBase}
+          scene={viewConfig.scene}
+          status={phoiStatus}
+          onStatus={setPhoiStatus}
+        />
+      )}
     </CtTooltipProvider>
   );
 }

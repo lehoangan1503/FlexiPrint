@@ -96,6 +96,8 @@ export interface InspectorProps {
    * show the base's and open its page). undefined = the old rows (the artwork's own phôi); null = no base picked.
    */
   base?: { id: string; name: string; phoiUrl: string | null; khuon: string | null } | null;
+  /** A cut-to-shape base: the versions' AI phôi (the customer's preview) — how many are made, and the dialog. */
+  phoiAi?: { done: number; total: number; onOpen: () => void } | null;
   /** Show an option on the canvas. */
   onPreviewOption: (regionId: string, assetId: string) => void;
   /** The text a text zone shows on the canvas (and in the Mockups samples). */
@@ -486,6 +488,14 @@ export function Inspector(props: InspectorProps) {
                   props.base ? () => window.open(`/base-products/${props.base?.id}`, "_blank") : undefined,
                 )
               : fixedRow(cfgNow.scene.url, "Phôi trơn (blank)", cfgNow.scene.url ? "nền sản phẩm khi xem trước" : null, "Chưa có phôi trơn — bấm để thêm / đặt thiết kế lên phôi", props.onOpenScene)}
+            {props.phoiAi &&
+              fixedRow(
+                null,
+                "Phôi AI theo version",
+                props.phoiAi.done ? `${props.phoiAi.done}/${props.phoiAi.total} version · preview cho khách` : null,
+                `Chưa có — bấm để AI vẽ phôi thật cho ${props.phoiAi.total} version (preview đang dùng tấm acrylic tạm)`,
+                props.phoiAi.onOpen,
+              )}
             {previewList.map((r) => renderRow(r, ordered.indexOf(r), true))}
           </>
         )}

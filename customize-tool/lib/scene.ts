@@ -53,6 +53,8 @@ export async function drawOnScene(
   design: HTMLCanvasElement,
   maxSide: number,
   bleed: { x: number; y: number } = { x: 0, y: 0 },
+  /** Pasted as it is (layers laid on a version's AI phôi): not lit by the photo, no plate. */
+  flat = false,
 ): Promise<HTMLCanvasElement> {
   const scene = normalizeScene(raw);
   if (!scene.url) return design;
@@ -70,6 +72,10 @@ export async function drawOnScene(
   const dy = (scene.box.y - by) * k;
   const dw = (scene.box.w + 2 * bx) * k;
   const dh = (scene.box.h + 2 * by) * k;
+  if (flat) {
+    ctx.drawImage(design, dx, dy, dw, dh);
+    return out;
+  }
   if (scene.plate) {
     // A cut-to-shape clear plate: made from the design itself (its shadow, the clear plate, its bright rim), then
     // the print on it as it is — the background photo shows through the plate.
@@ -107,7 +113,7 @@ function grownShape(design: HTMLCanvasElement, w: number, h: number, pad: number
  * The clear acrylic plate under a cut-to-shape design (`r` px past its printed pixels): a soft shadow, the plate
  * lightly frosted, a bright rim on its cut edge.
  */
-function drawPlate(ctx: CanvasRenderingContext2D, design: HTMLCanvasElement, dx: number, dy: number, dw: number, dh: number, r: number): void {
+export function drawPlate(ctx: CanvasRenderingContext2D, design: HTMLCanvasElement, dx: number, dy: number, dw: number, dh: number, r: number): void {
   const border = Math.max(1, r);
   const pad = Math.ceil(border + 4);
   const plate = grownShape(design, dw, dh, pad, border, "#fff");

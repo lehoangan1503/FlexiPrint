@@ -825,6 +825,35 @@ export interface CtProductConfig {
   placement: CtBasePlacement;
   /** Product side: the id of the khuôn layer its base put into it (lib/base-fit) — replaced when the base changes. */
   baseFrameId: string | null;
+  /**
+   * The phôi AI of each version, per base (2026-11-08, asked: "preview của khách thì dùng ảnh AI gen phôi preview"): a
+   * photo of the version's fixed parts made into the real piece (a clear acrylic cut along it, hanging on the base's
+   * background) — the customer's picks and texts are laid on it live. Preview only: the print file never uses it.
+   * Written by the server only (POST products/:id/version-phoi); a design save keeps the stored list.
+   */
+  versionPhoi: CtVersionPhoi[];
+  /** The base this config is laid on (lib/base-fit withBase): which `versionPhoi` the preview uses. null = none. */
+  viewBaseId: string | null;
+}
+
+/** CtProductConfig.versionPhoi — one version's AI phôi on one base. */
+export interface CtVersionPhoi {
+  baseId: string;
+  /** The version (main asset id). */
+  mainId: string;
+  url: string;
+  width: number;
+  height: number;
+  /** Where the artwork canvas sits on the photo (photo px). */
+  box: { x: number; y: number; w: number; h: number };
+  at: string;
+}
+
+/** GET products/:id/version-phoi */
+export interface CtVersionPhoiStatus {
+  phoi: CtVersionPhoi[];
+  /** The AI jobs (newest first): description = the version id, status running / done / failed. */
+  jobs: CtPackImage[];
 }
 
 /**

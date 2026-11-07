@@ -422,6 +422,7 @@ export function PrintPanel(props: PrintPanelProps) {
                 min={2}
                 max={25}
                 step={0.5}
+                disabled={!!props.baseName}
                 value={sil.holeSize}
                 onChange={(e) => props.onPrintSilhouette({ ...sil, holeSize: Math.max(2, Math.min(25, Number(e.target.value) || 9)) })}
                 className="w-14 rounded border bg-background px-1.5 py-0.5 tabular-nums"
@@ -436,6 +437,7 @@ export function PrintPanel(props: PrintPanelProps) {
                 type="number"
                 min={0}
                 max={60}
+                disabled={!!props.baseName}
                 value={sil.offset}
                 onChange={(e) => props.onPrintSilhouette({ ...sil, offset: Math.max(0, Math.min(60, Math.round(Number(e.target.value) || 0))) })}
                 className="w-14 rounded border bg-background px-1.5 py-0.5 tabular-nums"

@@ -1,6 +1,13 @@
 # FlexiPrint (flexi2) — Cơ chế mới: Product base · Artwork · Sản phẩm
 
-> Bản có hình: https://flexi2.next.lc/huong-dan
+> Bản có hình (bản chính, luôn mới nhất): https://flexi2.next.lc/huong-dan
+
+> **Cập nhật 2026-11-08 — Product base nắm cả phần vật lý.** Khuôn in, cách cắt (khuôn cố định / theo viền thiết
+> kế + mm / in phẳng), silhouette trong file in và phôi / ảnh nền xem trước giờ nằm ở **Product base**. Artwork chỉ
+> còn thiết kế (layer, option, version), canvas = print area của base, và có ô **"Xem trên base"** để xem / xuất
+> file in trên base nào cũng được. Sản phẩm = artwork đặt lên base (+ "Vị trí artwork trong khuôn"). Acrylic: phôi
+> tự sinh (tấm acrylic trong vẽ theo hình từng version trên ảnh nền cây thông của base). Chỗ nào bên dưới nói
+> "artwork có khuôn / phôi" thì hiểu là "base có khuôn / phôi, artwork xem trên base đó".
 
 Ngày 2026-11-07. Áp dụng cho https://flexi2.next.lc. Viết cho cả team: người làm thiết kế, người lên sản phẩm, sếp.
 
@@ -12,8 +19,8 @@ Hệ thống giờ có **3 thứ**, giống hệt cách Teeinblue chia:
 
 | flexi2 | Teeinblue | Là gì | Giữ cái gì |
 |---|---|---|---|
-| **Product base** | Product Base | Loại sản phẩm trơn đem bán: *Acrylic Ornament 1 side*, *Glass Ornament 1 side*, *Ceramic Ornament 2 sides*, *Poseable Doll* | Biến thể (size × pack) + **giá** (bảng giá Notion), khuôn in + phôi trơn của loại đó, print area, xưởng |
-| **Artwork** | Artwork | **Một thiết kế hoàn chỉnh** | Mọi layer, clipart, option cho khách chọn (personalize), khuôn in, phôi trơn, preview, **file in** |
+| **Product base** | Product Base | Loại sản phẩm trơn đem bán: *Acrylic Ornament 1 side*, *Glass Ornament 1 side*, *Ceramic Ornament 2 sides*, *Poseable Doll* | Biến thể (size × pack) + **giá** (bảng giá Notion), print area, **khuôn in, cách cắt, silhouette, phôi / nền xem trước**, xưởng |
+| **Artwork** | Artwork | **Một thiết kế hoàn chỉnh** | Mọi layer, clipart, option cho khách chọn (personalize), version — xem trên 1 base để có preview + **file in** |
 | **Sản phẩm** | Campaign | Thứ lên Shopify | Artwork + Product base, tên theo chủ đề, mockup, link Shopify |
 
 ```

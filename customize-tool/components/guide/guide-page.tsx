@@ -291,7 +291,9 @@ export function GuidePage() {
               <span className="hidden text-muted-foreground md:block">·</span>
               <div className="rounded-xl border p-3 text-center text-sm">
                 <div className="mb-2 font-semibold">Silhouette</div>
-                <div className="mx-auto h-8 w-14 rounded-t-full bg-black" />
+                <div className="mx-auto flex w-24 justify-center rounded-md p-2" style={{ backgroundColor: "#fff", backgroundImage: "repeating-conic-gradient(#0000001a 0% 25%, transparent 0% 50%)", backgroundSize: "10px 10px" }}>
+                  <div className="h-8 w-14 rounded-t-full bg-black" />
+                </div>
                 <div className="mt-1 text-xs text-muted-foreground">khối khuôn full đen</div>
               </div>
             </div>

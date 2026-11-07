@@ -116,9 +116,10 @@ export const ctApi = {
     call<{ product: CtProduct }>(`products/${artworkId}/artwork-products`, json("POST", body)).then((r) => r.product),
   /** The versions' AI phôi (server/version-phoi.ts). */
   versionPhoi: (id: string) => call<CtVersionPhoiStatus>(`products/${id}/version-phoi`),
-  makeVersionPhoi: (id: string, ref: Blob, mainId: string, baseId: string, box: CtVersionPhoi["box"]) => {
+  makeVersionPhoi: (id: string, ref: Blob, mask: Blob, mainId: string, baseId: string, box: CtVersionPhoi["box"]) => {
     const form = new FormData();
     form.append("file", ref, "phoi-ref.png");
+    form.append("mask", mask, "phoi-mask.png");
     form.append("mainId", mainId);
     form.append("baseId", baseId);
     form.append("box", JSON.stringify(box));

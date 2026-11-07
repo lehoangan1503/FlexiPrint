@@ -18,7 +18,7 @@ import { AlertTriangle, Check, Loader2, RefreshCw, Sparkles, Trash2 } from "luci
 import type { CtAsset, CtBaseProductRow, CtMainLayout, CtProduct, CtProductScene, CtRegion, CtRegionItem, CtSelection, CtVersionPhoi, CtVersionPhoiStatus } from "../../types";
 import { CT_MAIN_KEY } from "../../types";
 import { canvasToBlob, loadImage, renderComposite } from "../../lib/compositor";
-import { drawPlate } from "../../lib/scene";
+import { drawPlate, grownShape } from "../../lib/scene";
 import { ctApi } from "../../lib/api-client";
 import { CHECKER_STYLE, CtButton, CtModal } from "../ui";
 
@@ -45,8 +45,56 @@ export interface VersionPhoiDialogProps {
   onStatus: (s: CtVersionPhoiStatus) => void;
 }
 
+/** Where the canvas has pixels (alpha > 8), canvas px; null = empty. */
+function alphaBounds(c: HTMLCanvasElement): { x: number; y: number; w: number; h: number } | null {
+  const ctx = c.getContext("2d");
+  if (!ctx) return null;
+  const { data, width, height } = ctx.getImageData(0, 0, c.width, c.height);
+  let x0 = width;
+  let y0 = height;
+  let x1 = -1;
+  let y1 = -1;
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++)
+      if (data[(y * width + x) * 4 + 3] > 8) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+  return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+/**
+ * Where the AI's photo is used (white): the piece with a margin for its shadow and edge, and a strip above its top
+ * centre for the hanging tab + cord. Elsewhere the base's own background stays — the AI now and then smears the far
+ * background (blocky grey patches, 2026-11-08).
+ */
+function maskOf(whole: HTMLCanvasElement, box: CtVersionPhoi["box"], border: number): HTMLCanvasElement {
+  const m = document.createElement("canvas");
+  m.width = SIDE;
+  m.height = SIDE;
+  const ctx = m.getContext("2d");
+  if (!ctx) return m;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, SIDE, SIDE);
+  const r = border + box.w * 0.06;
+  const pad = Math.ceil(r + 4);
+  ctx.drawImage(grownShape(whole, box.w, box.h, pad, r, "#fff"), box.x - pad, box.y - pad);
+  const b = alphaBounds(whole);
+  if (b) {
+    const k = box.w / whole.width;
+    const cx = box.x + (b.x + b.w / 2) * k;
+    const top = box.y + b.y * k;
+    const sw = Math.max(40, box.w * 0.14);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(cx - sw / 2, 0, sw, top + r);
+  }
+  return m;
+}
+
 /** The reference picture of one version: background, clear plate along everything, fixed parts printed. */
-async function referenceOf(p: VersionPhoiDialogProps, version: CtAsset): Promise<{ blob: Blob; box: CtVersionPhoi["box"] }> {
+async function referenceOf(p: VersionPhoiDialogProps, version: CtAsset): Promise<{ blob: Blob; mask: Blob; box: CtVersionPhoi["box"] }> {
   const scene = p.scene;
   if (!scene.url) throw new Error("Base chưa có ảnh nền xem trước");
   const bg = await loadImage(scene.url);
@@ -65,9 +113,10 @@ async function referenceOf(p: VersionPhoiDialogProps, version: CtAsset): Promise
   const ctx = c.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D không khả dụng");
   ctx.drawImage(bg, ox, oy, scene.width * k, scene.height * k);
-  drawPlate(ctx, whole, box.x, box.y, box.w, box.h, (scene.plate?.border ?? 0.025) * box.w);
+  const border = (scene.plate?.border ?? 0.025) * box.w;
+  drawPlate(ctx, whole, box.x, box.y, box.w, box.h, border);
   ctx.drawImage(fixed, box.x, box.y, box.w, box.h);
-  return { blob: await canvasToBlob(c, "image/png"), box };
+  return { blob: await canvasToBlob(c, "image/png"), mask: await canvasToBlob(maskOf(whole, box, border), "image/png"), box };
 }
 
 export function VersionPhoiDialog(props: VersionPhoiDialogProps) {
@@ -101,7 +150,7 @@ export function VersionPhoiDialog(props: VersionPhoiDialogProps) {
       try {
         const ref = await referenceOf(props, v);
         setRefs((r) => ({ ...r, [v.id]: URL.createObjectURL(ref.blob) }));
-        await ctApi.makeVersionPhoi(product.id, ref.blob, v.id, base.id, ref.box);
+        await ctApi.makeVersionPhoi(product.id, ref.blob, ref.mask, v.id, base.id, ref.box);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Không gửi được");
         break;

@@ -88,7 +88,7 @@ export async function drawOnScene(
 }
 
 /** The design's printed pixels as one solid shape grown by `r` px (a ring of shifted copies), in `color`. */
-function grownShape(design: HTMLCanvasElement, w: number, h: number, pad: number, r: number, color: string): HTMLCanvasElement {
+export function grownShape(design: HTMLCanvasElement, w: number, h: number, pad: number, r: number, color: string): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = Math.max(1, Math.round(w + 2 * pad));
   c.height = Math.max(1, Math.round(h + 2 * pad));

@@ -65,6 +65,17 @@ function promptFor(material: string, hole: boolean): string {
   ].join(" ");
 }
 
+/**
+ * The AI's photo where the mask is white (the piece, its shadow, the tab + cord), the reference's background elsewhere
+ * — blended over a soft edge. No mask: the AI's photo as it is.
+ */
+async function keepBackground(ref: Buffer, ai: Buffer, mask: Buffer | null, w: number, h: number): Promise<Buffer> {
+  if (!mask) return sharp(ai).jpeg({ quality: 90 }).toBuffer();
+  const alpha = await sharp(mask).resize(w, h, { fit: "fill" }).greyscale().blur(Math.max(2, w / 80)).extractChannel(0).toBuffer();
+  const piece = await sharp(ai).removeAlpha().joinChannel(alpha).png().toBuffer();
+  return sharp(ref).resize(w, h, { fit: "fill" }).removeAlpha().composite([{ input: piece }]).jpeg({ quality: 90 }).toBuffer();
+}
+
 /** POST products/:id/version-phoi */
 export async function makeVersionPhoi(s: CtSession, productId: string, form: FormData): Promise<NextResponse> {
   const product = await ownedProduct(s, productId);
@@ -83,6 +94,8 @@ export async function makeVersionPhoi(s: CtSession, productId: string, form: For
   const base = await loadBaseProduct(s.supabase, baseId);
   if (!base) return jsonError("Không tìm thấy product base", 404);
   const ref = await sharp(Buffer.from(await file.arrayBuffer())).png().toBuffer();
+  const maskFile = form.get("mask");
+  const mask = maskFile instanceof Blob ? Buffer.from(await maskFile.arrayBuffer()) : null;
   const meta = await sharp(ref).metadata();
   const width = meta.width ?? 1024;
   const height = meta.height ?? 1024;
@@ -106,7 +119,7 @@ export async function makeVersionPhoi(s: CtSession, productId: string, form: For
         const reg = await kitPost<{ png: string; w: number; h: number; scale: number; similarity: boolean; residual: number }>("/register-photo", { ref: refUrl, url: aiUrl }, 180_000);
         // The answer is on the reference's canvas (its own size: the AI's 1024²): the box scales with it.
         const k = reg.w / width;
-        const jpg = await sharp(Buffer.from(reg.png, "base64")).jpeg({ quality: 90 }).toBuffer();
+        const jpg = await keepBackground(ref, Buffer.from(reg.png, "base64"), mask, reg.w, reg.h);
         const url = await ctUpload(`${dir}/${mainId}-${crypto.randomUUID()}.jpg`, jpg, "image/jpeg");
         await savePhoi(db, productId, { baseId, mainId, url, width: reg.w, height: reg.h, box: { x: box.x * k, y: box.y * k, w: box.w * k, h: box.h * k }, at: new Date().toISOString() });
         await db.from(CT_TABLES.packImages).update({ status: "done", url, mime: "image/jpeg", width: reg.w, height: reg.h, error: "" }).eq("id", job.id);

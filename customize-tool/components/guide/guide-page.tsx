@@ -449,7 +449,7 @@ export function GuidePage() {
                 chọn base trong brief, canvas = print area của base.
               </p>
             </Step>
-            <Step n={3} title="Làm artwork + chọn “Xem trên base”" shot="fx-artwork-on-base.jpg">
+            <Step n={3} title="Làm artwork + chọn “Xem trên base”" shot="fx-safe-ok.jpg">
               <p>
                 <b>Thiết kế</b>: kéo clipart, thêm chữ, ảnh khách. Ô <b>Xem trên base</b>: đường khuôn + vùng an toàn của base hiện trên canvas. Cảnh báo <b>ngoài vùng an toàn</b> xét theo pixel thật của
                 clipart, không theo khung — clipart khung to bằng canvas nhưng hình nằm trong vùng an toàn thì không báo.

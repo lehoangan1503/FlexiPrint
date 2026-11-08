@@ -33,7 +33,9 @@ import type { CtSession } from "../supabase";
 import { fetchImage, saveCharRaw } from "./files";
 import { NOT_YOURS, canEditProject, jobDb, jsonError, loadImages, loadProject, projectRow, type Db } from "./projects";
 import { getTemplate } from "../print-templates";
-import { makeTemplateProduct, productPrintOf } from "../print-products";
+import { makeBaseArtwork, makeTemplateProduct, productPrintOf } from "../print-products";
+import { baseForSet } from "../base-products";
+import { baseCanvas, templateOnCanvas } from "../../lib/base-fit";
 import { safeShapes } from "../../lib/print-template";
 import { IDENTITY_PHOTO_FRAME, sameFrame, shapeBounds } from "../../lib/geometry";
 import type { CtPrintSpec } from "../../types/print";
@@ -614,9 +616,19 @@ export async function versionSetsOf(db: Db, parentId: string): Promise<CtCharPro
 
 async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: string, keptZones: Map<string, KeptZone> = new Map()): Promise<string> {
   const brief = p.brief;
-  // On a khuôn in (brief.product.templateId): the product's canvas is its sheet, the characters sit in its safe zone.
-  const template = brief.product.templateId ? await getTemplate(s, brief.product.templateId) : null;
-  const product = template ? await makeTemplateProduct(s.supabase, s.user.id, template, name) : (await body<{ product: CtProduct }>(await h.createProduct(s, { name }))).product;
+  // Made FOR a product base (2026-11-08, Teeinblue's flow): the artwork's canvas is the base's print area, the
+  // characters sit in its khuôn's safe zone, and the artwork is viewed on the base — the khuôn layer, the phôi and the
+  // cut stay the base's (lib/base-fit), never copied into the artwork. A set on a khuôn no base uses: as before.
+  const base = await baseForSet(s.supabase, brief.product);
+  const templateId = brief.product.templateId || base?.config.templateId || null;
+  const rawTemplate = templateId ? await getTemplate(s, templateId) : null;
+  const template = rawTemplate && base ? templateOnCanvas(rawTemplate, baseCanvas(base, rawTemplate)) : rawTemplate;
+  const product = base
+    ? await makeBaseArtwork(s.supabase, s.user.id, base, rawTemplate, name)
+    : template
+      ? await makeTemplateProduct(s.supabase, s.user.id, template, name)
+      : (await body<{ product: CtProduct }>(await h.createProduct(s, { name }))).product;
+  const baseSheet = base && !template ? baseCanvas(base, null) : null;
   // The product's clipart set: its folder in the library, named after it.
   const folder = await productFolder(s.supabase, s.user.id, { id: product.id, name });
   const clipart = (data: Buffer, assetName: string, parentId: string | null, meta: CtAsset["meta"]): Promise<CtAsset> =>
@@ -638,16 +650,18 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
   let H: number;
   let keep: CtRegion[] = [];
   let sheetPng: Buffer;
-  if (template) {
+  if (template || baseSheet) {
     const { data: sheet } = await s.supabase.from(CT_TABLES.assets).select("*").eq("id", product.main_asset_id ?? "").single<CtAsset>();
     if (!sheet) throw new Error("Không thấy tờ in của khuôn");
     main = sheet;
-    W = template.spec.width;
-    H = template.spec.height;
+    W = template?.spec.width ?? baseSheet!.width;
+    H = template?.spec.height ?? baseSheet!.height;
     sheetPng = await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer();
-    // The khuôn layer made with the product stays (saveDesign replaces the regions).
-    const { data: frames } = await s.supabase.from(CT_TABLES.regions).select("*").eq("product_id", product.id).returns<CtRegion[]>();
-    keep = frames ?? [];
+    // An old-style set (khuôn, no base): the khuôn layer made with the product stays (saveDesign replaces the regions).
+    if (!base) {
+      const { data: frames } = await s.supabase.from(CT_TABLES.regions).select("*").eq("product_id", product.id).returns<CtRegion[]>();
+      keep = frames ?? [];
+    }
   } else {
     // No khuôn in: the edit frame is the print file's frame — the set's canvas, bands for the texts around it.
     const has = (p: CtCharTextPlace) => brief.texts.some((t) => t.place === p);
@@ -1411,15 +1425,16 @@ async function build(s: CtSession, p: CtCharProject, set: CtCharLayerSet, name: 
   await Promise.all(fills);
   items.sort((a, b) => regions.findIndex((r) => r.id === a.region_id) - regions.findIndex((r) => r.id === b.region_id) || a.sort_order - b.sort_order);
 
-  const config = { ...defaultProductConfig(), print: template ? productPrintOf(template) : null };
+  // On a base the artwork keeps no khuôn (config.print) and no phôi (config.scene): both are the base's.
+  const config = { ...defaultProductConfig(), print: template && !base ? productPrintOf(template) : null };
   if (lineup && brief.lineup) config.main = { ...config.main, enabled: true, label: brief.lineup.label, display: "button", subOptions: [] };
-  // The brief's material (a ceramic ornament → "ceramic_gloss"), else by the cut: die-cut → white acrylic.
-  const material = brief.product.material && isMaterialId(brief.product.material) ? brief.product.material : brief.product.cut === "alpha" ? "acrylic_white" : null;
+  // The base's material, else the brief's (a ceramic ornament → "ceramic_gloss"), else by the cut: die-cut → white acrylic.
+  const material = base?.config.material ?? (brief.product.material && isMaterialId(brief.product.material) ? brief.product.material : brief.product.cut === "alpha" ? "acrylic_white" : null);
   config.material = { ...(material ? applyMaterialPreset(config.material, material) : config.material), widthMm: mmW };
   // The phôi trơn (uploaded, else the AI one): Xem trước, the storefront and the mockups draw the design on it. The
   // sheet's box is found on the photo when the piece has a fixed shape (or the AI drew it on its plain backdrop).
-  const blank: CtCharImage | null = projectBlank(p, images);
-  const kept = template?.spec.blanks[0];
+  const blank: CtCharImage | null = base ? null : projectBlank(p, images);
+  const kept = base ? undefined : template?.spec.blanks[0];
   if (blank?.role !== "blank" && kept) {
     // The khuôn's own phôi (Thư viện → Phôi) wins over one the set drew by AI: it is the one the team keeps.
     config.scene = { url: kept.url, width: kept.width, height: kept.height, box: kept.box };

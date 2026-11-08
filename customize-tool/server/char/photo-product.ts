@@ -26,7 +26,9 @@ import type { CtSession } from "../supabase";
 import { productFolder } from "../artworks";
 import { insertClipart } from "../library";
 import { getTemplate } from "../print-templates";
-import { makeTemplateProduct, productPrintOf } from "../print-products";
+import { makeBaseArtwork, makeTemplateProduct, productPrintOf } from "../print-products";
+import { baseForSet } from "../base-products";
+import { baseCanvas, templateOnCanvas } from "../../lib/base-fit";
 import { guessedBox, sceneForBlank } from "../product-mockups";
 import { latestBackdrops } from "./backdrops";
 import { AI_BLANK_ROLE, projectBlank } from "./blank";
@@ -89,8 +91,17 @@ export async function buildPhotoProduct(s: CtSession, p: CtCharProject, name: st
   if (missing.length) throw new Error(`Chưa vẽ xong: ${missing.slice(0, 6).join(", ")}${missing.length > 6 ? "…" : ""}`);
   const done = latestElementImages(images);
 
-  const template = brief.product.templateId ? await getTemplate(s, brief.product.templateId) : null;
-  const product = template ? await makeTemplateProduct(s.supabase, s.user.id, template, name) : (await body<{ product: CtProduct }>(await h.createProduct(s, { name }))).product;
+  // Made for a product base (2026-11-08): canvas = its print area, viewed on it; khuôn + phôi stay the base's.
+  const base = await baseForSet(s.supabase, brief.product);
+  const templateId = brief.product.templateId || base?.config.templateId || null;
+  const rawTemplate = templateId ? await getTemplate(s, templateId) : null;
+  const template = rawTemplate && base ? templateOnCanvas(rawTemplate, baseCanvas(base, rawTemplate)) : rawTemplate;
+  const product = base
+    ? await makeBaseArtwork(s.supabase, s.user.id, base, rawTemplate, name)
+    : template
+      ? await makeTemplateProduct(s.supabase, s.user.id, template, name)
+      : (await body<{ product: CtProduct }>(await h.createProduct(s, { name }))).product;
+  const baseSheet = base && !template ? baseCanvas(base, null) : null;
   const folder = await productFolder(s.supabase, s.user.id, { id: product.id, name });
   const clipart = (data: Buffer, assetName: string, parentId: string | null, meta: CtAsset["meta"]): Promise<CtAsset> =>
     insertClipart(s.supabase, s.user.id, { categoryId: folder.id, parentId, rendition: false, name: assetName, spec: "", tags: [], source: "ai", meta, generationId: null, data });
@@ -107,14 +118,16 @@ export async function buildPhotoProduct(s: CtSession, p: CtCharProject, name: st
   let W = FRAME;
   let H = FRAME;
   let keep: CtRegion[] = [];
-  if (template) {
+  if (template || baseSheet) {
     const { data: sheet } = await s.supabase.from(CT_TABLES.assets).select("*").eq("id", product.main_asset_id ?? "").single<CtAsset>();
     if (!sheet) throw new Error("Không thấy tờ in của khuôn");
     main = sheet;
-    W = template.spec.width;
-    H = template.spec.height;
-    const { data: frames } = await s.supabase.from(CT_TABLES.regions).select("*").eq("product_id", product.id).returns<CtRegion[]>();
-    keep = frames ?? [];
+    W = template?.spec.width ?? baseSheet!.width;
+    H = template?.spec.height ?? baseSheet!.height;
+    if (!base) {
+      const { data: frames } = await s.supabase.from(CT_TABLES.regions).select("*").eq("product_id", product.id).returns<CtRegion[]>();
+      keep = frames ?? [];
+    }
   } else {
     main = await upload(await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer(), "main", `Khung in ${W}×${H}`);
   }
@@ -237,12 +250,13 @@ export async function buildPhotoProduct(s: CtSession, p: CtCharProject, name: st
     if (at) regions.push(textRegion(product.id, main.id, t, at, false, 0));
   }
 
-  const config = { ...defaultProductConfig(), print: template ? productPrintOf(template) : null };
-  const material = brief.product.material && isMaterialId(brief.product.material) ? brief.product.material : null;
+  const config = { ...defaultProductConfig(), print: template && !base ? productPrintOf(template) : null };
+  const material = base?.config.material ?? (brief.product.material && isMaterialId(brief.product.material) ? brief.product.material : null);
   config.material = { ...(material ? applyMaterialPreset(config.material, material) : config.material), widthMm: template?.spec.widthMm || brief.product.widthMm || 76 };
   // The phôi: the khuôn's own, else the set's (uploaded / AI).
-  const blank: CtCharImage | null = projectBlank(p, images);
-  const keptBlank = template?.spec.blanks[0];
+  // On a base the phôi is the base's: the artwork keeps none.
+  const blank: CtCharImage | null = base ? null : projectBlank(p, images);
+  const keptBlank = base ? undefined : template?.spec.blanks[0];
   if (blank?.role !== "blank" && keptBlank) config.scene = { url: keptBlank.url, width: keptBlank.width, height: keptBlank.height, box: keptBlank.box };
   else if (blank?.width && blank.height) {
     const photo = await fetchImage(blank.url);

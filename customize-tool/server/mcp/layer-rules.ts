@@ -103,8 +103,8 @@ The parts line up to the pixel ONLY because they come out of one file at one siz
   it by hand in the file editor.
 - Option thumbnails: a part a hand partly hides (a glass, a cane) gets a 3b picture "thumb:<slot>:<option>" — the
   object alone and complete — used ONLY as the option's thumbnail in the shop (asset meta.thumb); its clipart stays the cut.
-- "Tạo bộ custom" = plan (regions) → cut → the cliparts in the product's library folder → ONE finished product, its
-  layers in the cut's order (a recoloured jacket lies over the dress).
+- "Tạo bộ custom" = plan (regions) → cut → the cliparts in the artwork's library folder → ONE finished ARTWORK (on
+  the brief's product base's print area; sold as products = artwork + base), its layers in the cut's order (a recoloured jacket lies over the dress).
 - Each picture adds exactly ONE part (2026-10-18): a gown picture with the stole drawn on it, a stole picture with the
   gown, pants that recolour the underwear top — each would carry the other part into its file and hide the customer's
   choice of it. Say "ONLY the <part>, the magenta underwear stays visible around it" and draw again.

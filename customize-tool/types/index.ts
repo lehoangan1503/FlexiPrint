@@ -847,6 +847,8 @@ export interface CtVersionPhoi {
   /** Where the artwork canvas sits on the photo (photo px). */
   box: { x: number; y: number; w: number; h: number };
   at: string;
+  /** "ai" = drawn by the AI (default), "folder" = the import folder's own preview (2026-11-08: never drawn again). */
+  source?: "ai" | "folder";
 }
 
 /** GET products/:id/version-phoi */

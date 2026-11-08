@@ -31,6 +31,7 @@ import {
 import { CT_FONTS } from "../../config";
 import type { CtProductPrint } from "../../types/print";
 import { outsideSafe } from "../print/layer-print-section";
+import { useLayerInk, type CtLayerInk } from "./use-layer-ink";
 import type {
   CtAsset,
   CtTextFormat,
@@ -154,6 +155,8 @@ export function Inspector(props: InspectorProps) {
   // customers see the options in.
   const ordered = formOrder(regions);
   const region = regions.find((r) => r.id === selectedRegionId);
+  /** Where each image layer really has pixels: a full-canvas clipart frame with the part inside is not "outside". */
+  const ink = useLayerInk(regions, design.state.items, props.assets, !!props.print);
   const [renaming, setRenaming] = useState<string | null>(null);
   // Drag-to-restack: the dragged layer and where it would land (index in `ordered`, 0..n).
   const [dragId, setDragId] = useState<string | null>(null);
@@ -352,7 +355,7 @@ export function Inspector(props: InspectorProps) {
               ) : (
                 <span className="flex-1 truncate" title={r.name} onDoubleClick={(e) => { e.stopPropagation(); setRenaming(r.id); }}>
                   {layerLabel(r.name)}
-                  {outsideSafe(props.print ?? null, r) && (
+                  {outsideSafe(props.print ?? null, r, ink.get(r.id)) && (
                     <span title="Ngoài safe zone — có thể bị cắt khi in">
                       <AlertTriangle className="ml-1 inline h-3 w-3 text-amber-500" />
                     </span>
@@ -535,7 +538,7 @@ export function Inspector(props: InspectorProps) {
 
       <div className="flex-1 overflow-y-auto">
         {region ? (
-          <RegionProps {...props} region={normalizeRegion(region)} />
+          <RegionProps {...props} region={normalizeRegion(region)} ink={ink} />
         ) : props.mainSelected && props.mainLayer ? (
           <MainFrameProps layer={props.mainLayer} onChange={props.onMainFrame} />
         ) : (
@@ -831,7 +834,7 @@ function LayerButton({
   );
 }
 
-function RegionProps(props: InspectorProps & { region: CtRegion }) {
+function RegionProps(props: InspectorProps & { region: CtRegion; ink: CtLayerInk }) {
   const { design, region } = props;
   const b = shapeBounds(region.shape);
   const set = (fn: (r: CtRegion) => CtRegion) => design.commit((s) => updateRegion(s, region.id, (r) => fn(normalizeRegion(r))));
@@ -894,7 +897,7 @@ function RegionProps(props: InspectorProps & { region: CtRegion }) {
           />
         </CtField>
       )}
-      {outsideSafe(props.print ?? null, region) && (
+      {outsideSafe(props.print ?? null, region, props.ink.get(region.id)) && (
         <p className="flex items-start gap-1.5 rounded bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-400">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Ngoài vùng in an toàn — có thể bị cắt khi in.
         </p>

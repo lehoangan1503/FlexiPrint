@@ -109,7 +109,9 @@ export async function deployImported(s: CtSession, setId: string, artworkId: str
     if (!artwork) throw new Error("Không thấy artwork của bộ");
 
     const word = materialWord(info.material);
-    const base = baseProductFor(await listBaseRows(db), info.material);
+    // The artwork's own base (set by the import from its material, or changed by hand), else the material's.
+    const bases = await listBaseRows(db);
+    const base = bases.find((b) => b.id === artwork.base_product_id) ?? baseProductFor(bases, info.material);
     if (!base) {
       throw new Error(
         word

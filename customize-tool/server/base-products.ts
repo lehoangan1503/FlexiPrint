@@ -26,7 +26,7 @@ import type {
   CtProduct,
 } from "../types";
 import type { CtPrintTemplate } from "../types/print";
-import { normalizePriceTableConfig } from "../lib/pricing";
+import { baseProductFor, normalizePriceTableConfig } from "../lib/pricing";
 import { normalizePrintSpec } from "../lib/print-template";
 import { normalizeBaseConfig } from "../lib/base-product";
 import { applyBase } from "./artwork-link";
@@ -70,6 +70,25 @@ function templateInfo(t: CtPrintTemplate): CtBaseProductTemplate {
 export async function loadBaseProduct(db: Db, id: string): Promise<CtBaseProduct | null> {
   const { data } = await db.from(CT_TABLES.baseProducts).select("*").eq("id", id).maybeSingle<CtBaseProduct>();
   return data ? normalizeRow(data) : null;
+}
+
+/**
+ * The base a bộ (set) is made for: brief.product.baseId, else the base built on its khuôn (templateId), else the one
+ * of its material (lib/pricing baseProductFor). null = none fits (an old-style set on a khuôn no base uses).
+ */
+export async function baseForSet(db: Db, product: { baseId?: string | null; templateId?: string | null; material?: string; cut?: string }): Promise<CtBaseProduct | null> {
+  if (product.baseId) {
+    const b = await loadBaseProduct(db, product.baseId);
+    if (b) return b;
+  }
+  const { data } = await db.from(CT_TABLES.baseProducts).select("*").order("sort_order").returns<CtBaseProduct[]>();
+  const bases = (data ?? []).map(normalizeRow);
+  if (product.templateId) {
+    const same = bases.find((b) => b.config.templateId === product.templateId);
+    if (same) return same;
+  }
+  const material = product.material || (product.cut === "alpha" ? "acrylic_clear" : "");
+  return material ? baseProductFor(bases, material) : null;
 }
 
 /** The base products with their khuôn, price table and how many products / mockups they have. */

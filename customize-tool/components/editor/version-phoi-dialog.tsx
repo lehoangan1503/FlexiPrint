@@ -173,7 +173,7 @@ export function VersionPhoiDialog(props: VersionPhoiDialogProps) {
           <CtButton size="sm" onClick={() => void make(missing)} disabled={!!busy || missing.length === 0}>
             <Sparkles className="h-3.5 w-3.5" /> Vẽ {missing.length} version chưa có
           </CtButton>
-          <CtButton size="sm" variant="outline" onClick={() => void make(mains.filter((m) => jobOf(m.id)?.status !== "running"))} disabled={!!busy || running}>
+          <CtButton size="sm" variant="outline" onClick={() => void make(mains.filter((m) => jobOf(m.id)?.status !== "running" && phoiOf(m.id)?.source !== "folder"))} disabled={!!busy || running} title="Phôi lấy từ folder import được giữ nguyên">
             <RefreshCw className="h-3.5 w-3.5" /> Vẽ lại tất cả
           </CtButton>
           <span className="text-xs text-muted-foreground">
@@ -210,6 +210,7 @@ export function VersionPhoiDialog(props: VersionPhoiDialogProps) {
                   <span className="min-w-0 flex-1 truncate" title={job?.status === "failed" ? job.error : m.name}>
                     {m.name || "Version"}
                   </span>
+                  {ph?.source === "folder" && <span className="shrink-0 rounded bg-emerald-500/15 px-1 text-[10px] text-emerald-700 dark:text-emerald-400" title="Preview có sẵn trong folder import — không vẽ AI">từ folder</span>}
                   <button className="rounded p-1 hover:bg-accent disabled:opacity-40" title="Vẽ lại version này" disabled={!!busy || job?.status === "running"} onClick={() => void make([m])}>
                     <RefreshCw className="h-3 w-3" />
                   </button>

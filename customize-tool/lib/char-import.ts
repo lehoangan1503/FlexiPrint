@@ -15,7 +15,7 @@
  * leader's groups mirrored, never a second customer choice.
  */
 
-import type { CtCharImportBox, CtCharImportFile, CtCharImportGroup, CtCharImportLayer, CtCharImportManifest, CtCharImportText, CtCharImportVariant, CtCharImportVersion } from "../types";
+import type { CtCharImportBox, CtCharImportFile, CtCharImportGroup, CtCharImportLayer, CtCharImportManifest, CtCharImportPreview, CtCharImportText, CtCharImportVariant, CtCharImportVersion } from "../types";
 import { CT_MATERIALS } from "./materials";
 
 type Obj = Record<string, unknown>;
@@ -200,6 +200,112 @@ export function importKeep<T extends { path: string }>(all: T[]): T[] {
   const cases = files.filter((f) => /(^|\/)teeinblue\.json$/i.test(f.path)).map((f) => f.path.split("/").slice(0, -1).join("/"));
   if (!cases.length) return files;
   return files.filter((f) => cases.some((d) => f.path.startsWith(`${d}/`)) || /\.(json|csv|md|txt)$/i.test(f.path) || !IMPORT_COPIES.test(f.path));
+}
+
+// ---------------------------------------------------------------------------
+// The folder's own preview (2026-11-08: "bộ import detect preview đã có phôi preview chưa — có thì không cần AI")
+// ---------------------------------------------------------------------------
+
+/** A background photo of the preview: "nen-preview(-trong).png", "preview-bg", "preview-background". */
+const PREVIEW_BG = /^(nen[-_ ]?preview|preview[-_ ]?(bg|background|nen))([-_ ].*)?\.(png|jpe?g|webp)$/i;
+/** A version already on the piece: "preview-scene-c2.png", "Preview scene 2.jpg", "phoi-preview-c3.png". */
+const PREVIEW_SCENE = /(preview[-_ ]?scene|scene[-_ ]?preview|phoi[-_ ]?preview)/i;
+
+/** One CSV line split on commas outside quotes. */
+function csvCells(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (q && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else q = !q;
+    } else if (ch === "," && !q) {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out.map((c) => c.trim());
+}
+
+const median = (xs: number[]) => {
+  const a = [...xs].sort((x, y) => x - y);
+  return a.length ? a[Math.floor(a.length / 2)] : 0;
+};
+
+/**
+ * Where the canvas sits in the preview, from the position tables ("bang-vi-tri-*.csv": every layer once in the Print
+ * group, once in the Preview group, left / top / width / height). Each Preview copy is its print copy scaled and moved
+ * by the same amount — the median of those gives the canvas box, in the preview's space (as wide as the canvas). A
+ * print sheet twice as tall (Teeinblue's acrylic: silhouette on top) has its prints in the lower half.
+ */
+export function previewBoxFromTables(texts: CtImportTexts, canvas: { width: number; height: number }): { x: number; y: number; w: number; h: number } | null {
+  const ks: number[] = [];
+  const xs: Array<[number, number, number]> = [];
+  const ys: Array<[number, number, number]> = [];
+  for (const [path, body] of texts) {
+    if (!/\.csv$/i.test(path)) continue;
+    const lines = body.split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length < 3) continue;
+    const head = csvCells(lines[0]).map((h) => h.toLowerCase());
+    const col = (re: RegExp) => head.findIndex((h) => re.test(h));
+    const cGroup = col(/^nhóm|^group/);
+    const cName = col(/tên lớp|layer/);
+    const cL = col(/trái|left/);
+    const cT = col(/trên|top/);
+    const cW = col(/rộng|width/);
+    const cH = col(/cao|height/);
+    if ([cGroup, cName, cL, cT, cW, cH].some((c) => c < 0)) continue;
+    const rows = lines.slice(1).map(csvCells);
+    const print = new Map<string, number[]>();
+    for (const r of rows) if (/print|file in/i.test(r[cGroup] ?? "")) print.set(r[cName], [cL, cT, cW, cH].map((c) => Number(r[c])));
+    const tall = [...print.values()].some(([, t, , h]) => t + h > canvas.height * 1.02);
+    for (const r of rows) {
+      if (!/preview|xem trước/i.test(r[cGroup] ?? "")) continue;
+      const p = print.get((r[cName] ?? "").replace(/^preview\s+/i, ""));
+      if (!p) continue;
+      const [l, t, w] = [cL, cT, cW].map((c) => Number(r[c]));
+      if (![l, t, w, ...p].every(Number.isFinite) || p[2] < 4 || w < 4) continue;
+      const k = w / p[2];
+      ks.push(k);
+      xs.push([l, p[0], k]);
+      ys.push([t, tall ? p[1] - canvas.height : p[1], k]);
+    }
+  }
+  if (ks.length < 3) return null;
+  const k = median(ks);
+  const x = median(xs.map(([pv, pr]) => pv - pr * k));
+  const y = median(ys.map(([pv, pr]) => pv - pr * k));
+  return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, w: Math.round(canvas.width * k * 10) / 10, h: Math.round(canvas.height * k * 10) / 10 };
+}
+
+/**
+ * The folder's preview: a background photo (outside the case folders) and / or per-version scene photos, matched to
+ * the versions by their source key ("c2"). null = the folder has none (the AI draws the phôi).
+ */
+function readPreview(files: CtCharImportFile[], texts: CtImportTexts, canvas: { width: number; height: number }, versionKeys: string[]): (Omit<CtCharImportPreview, "scenes"> & { scenesByKey: Record<string, string> }) | null {
+  const bg = files.filter((f) => PREVIEW_BG.test(base(f.path))).sort((a, b) => natural(a.path, b.path))[0];
+  const scenesByKey: Record<string, string> = {};
+  for (const f of files.filter((x) => isImage(x.path) && PREVIEW_SCENE.test(base(x.path)))) {
+    const name = base(f.path).toLowerCase();
+    const key = versionKeys.find((k) => new RegExp(`(^|[^a-z0-9])${k.toLowerCase()}([^a-z0-9]|$)`).test(name)) ?? versionKeys.find((k) => /\d+/.exec(k)?.[0] === /\d+/.exec(name)?.[0]);
+    if (key && !scenesByKey[key]) scenesByKey[key] = f.url;
+  }
+  if (!bg && !Object.keys(scenesByKey).length) return null;
+  const box = previewBoxFromTables(texts, canvas);
+  return { background: bg?.url ?? "", box, boxUnit: box ? "canvas" : "photo", scenesByKey };
+}
+
+/** One line for the import page: what the phôi of the versions will be made from. */
+export function previewSummary(p: CtCharImportPreview | null, versions: number): string {
+  if (!p) return `Phôi preview: folder chưa có → AI vẽ ${versions} version trên base (cắt theo viền)`;
+  const scenes = Object.keys(p.scenes).length;
+  const parts = [scenes ? `${scenes}/${versions} ảnh phôi version có sẵn` : "", p.background ? `ảnh nền preview${p.box ? " + vị trí từ bảng" : ""}` : ""].filter(Boolean);
+  return `Phôi preview: lấy từ folder (${parts.join(", ")}) — không vẽ AI${scenes < versions && !p.background ? `; ${versions - scenes} version còn lại AI vẽ` : ""}`;
 }
 
 /** Read a Teeinblue hand-off; null when the folder is not one. */
@@ -419,6 +525,9 @@ export function readTeeinblue(name: string, files: CtCharImportFile[], texts: Ct
   const countLine = line(/number of/i);
   const countWhat = /number of ([a-z ]+?)[:.]/i.exec(countLine)?.[1]?.trim() ?? "";
   const versionLabel = countWhat ? `Number of ${countWhat}` : "Version";
+  // The folder's own preview, matched to the versions while they still carry their source keys ("c2").
+  const previewRead = readPreview(files, texts, canvas, versions.map((v) => v.name));
+  const sourceKeys = versions.map((v) => v.name);
   for (const v of versions) {
     const n = /\d+/.exec(v.name)?.[0];
     const caseName = notes.caseNames.get(`${v.name}-${read.map(variantOf).find((x) => x.version === v.name)?.variant ?? ""}`) ?? "";
@@ -463,6 +572,14 @@ export function readTeeinblue(name: string, files: CtCharImportFile[], texts: Ct
     sampleUrl: sample?.url ?? "",
     // Copies of one picture are dropped when built (server/char/import.ts), so a few more are kept here.
     mockupUrls: mockups.map((f) => f.url).slice(0, 24),
+    preview: previewRead
+      ? {
+          background: previewRead.background,
+          box: previewRead.box,
+          boxUnit: previewRead.boxUnit,
+          scenes: Object.fromEntries(Object.entries(previewRead.scenesByKey).flatMap(([k, url]) => (sourceKeys.indexOf(k) >= 0 ? [[versions[sourceKeys.indexOf(k)].name, url]] : []))),
+        }
+      : null,
   };
   const layersOf = (x: CtCharImportVariant) => x.layers.length;
   const optionsOf = (x: CtCharImportVariant) => x.layers.reduce((n, l) => n + l.groups.reduce((k, g) => k + g.options.length, 0), 0);
@@ -473,8 +590,29 @@ export function readTeeinblue(name: string, files: CtCharImportFile[], texts: Ct
     `${variants.reduce((n, x) => n + layersOf(x), 0)} lớp, ${variants.reduce((n, x) => n + optionsOf(x), 0)} file, ${variants.reduce((n, x) => n + x.texts.length, 0)} ô tên`,
     `Lớp liên kết: ${[...new Set(variants.flatMap((x) => x.layers.filter((l) => l.kind === "linked").map((l) => `${l.key.replace(/^\d+-/, "")} theo ${l.follows.replace(/^\d+-/, "")}`)))].slice(0, 8).join(", ") || "không"}`,
     `Vật liệu: ${material || "không rõ"}${cut === "alpha" ? ", cắt theo dáng" : ""} · ${mockups.length} ảnh mockup · ảnh mẫu: ${sample ? base(sample.path) : "không có"}`,
+    previewSummary(manifest.preview ?? null, versions.length),
   ];
   return { manifest, summary, problems: [...new Set(problems)] };
+}
+
+/** manifest.preview as @flexiprint wrote it: {background?, box?, box_unit?, scenes?: {version name: file}}. */
+function previewOf(raw: unknown, url: (v: unknown, where: string) => string, versionNames: string[], problems: string[]): CtCharImportPreview | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = rec(raw);
+  const b = o.box && typeof o.box === "object" ? rec(o.box) : null;
+  const box = b ? { x: num(b.x), y: num(b.y), w: num(b.w ?? b.width), h: num(b.h ?? b.height) } : null;
+  const scenes: Record<string, string> = {};
+  for (const [name, file] of Object.entries(rec(o.scenes))) {
+    if (!versionNames.includes(name)) {
+      problems.push(`preview.scenes: không có version "${name}"`);
+      continue;
+    }
+    const u = url(file, `preview scene ${name}`);
+    if (u) scenes[name] = u;
+  }
+  const background = o.background ? url(o.background, "preview background") : "";
+  if (!background && !Object.keys(scenes).length) return null;
+  return { background, box: box && box.w > 0 && box.h > 0 ? box : null, boxUnit: o.box_unit === "canvas" || o.boxUnit === "canvas" ? "canvas" : "photo", scenes };
 }
 
 /** A manifest @flexiprint wrote (MCP char_import_build) → checked, with the files it names resolved against the upload. */
@@ -577,6 +715,7 @@ export function parseManifest(raw: unknown, files: CtCharImportFile[]): { manife
     versions,
     sampleUrl: url(o.sample ?? o.sampleUrl, "sample"),
     mockupUrls: arr(o.mockups ?? o.mockupUrls).map((m, i) => url(m, `mockup ${i + 1}`)).filter(Boolean).slice(0, 12),
+    preview: previewOf(o.preview, url, versions.map((v) => v.name), problems),
   };
   if (!manifest.canvas.width || !manifest.canvas.height) problems.unshift("canvas {width, height} (px) là bắt buộc");
   if (!versions.length || versions.some((v) => !v.variants.length)) problems.unshift("versions[].variants[] trống");

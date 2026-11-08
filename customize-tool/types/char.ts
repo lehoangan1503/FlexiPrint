@@ -18,7 +18,13 @@ export interface CtCharProduct {
   heightMm: number;
   /** Blank product photo shot straight on (ct_char_images kind "blank"); null = AI makes one later. */
   blankId: string | null;
-  /** The khuôn in (types/print.ts) the set is made for; its safe zone decides the composition. */
+  /**
+   * The product base the set is made for (2026-11-08, Teeinblue's flow): the set's artwork has the base's print area as
+   * its canvas and is viewed on it; the khuôn, cut and phôi stay the base's. Absent = the base of `templateId`, else of
+   * `material` (server/base-products baseForSet).
+   */
+  baseId?: string | null;
+  /** The khuôn in (types/print.ts) the set is made for; its safe zone decides the composition. Set from the base. */
   templateId?: string | null;
   /** How the picture must sit on that piece, for the image model (lib/print-template layoutHint). */
   layout?: string;
@@ -470,6 +476,11 @@ export interface CtCharImported {
   summary: string[];
   /** Files that did not fit (another size than the canvas…): left out, named here. */
   problems: string[];
+  /**
+   * The versions' phôi on the artwork's base (2026-11-08): "folder" = the folder's own preview was used (no AI),
+   * "ai" = the AI is drawing them, "none" = the base needs none (a khuôn's phôi) / has no background. + a line for people.
+   */
+  phoi?: { from: "folder" | "ai" | "none"; note: string };
   /** The product being built (a build cut off by a restart leaves it half made: the next build removes it). */
   productId?: string;
   /** Last sign of life of the build (ISO) — none for minutes = cut off (the app restarted). */
@@ -554,6 +565,25 @@ export interface CtCharImportManifest {
   /** The finished look (a sample / master) and the sales photos. */
   sampleUrl: string;
   mockupUrls: string[];
+  /** The folder's own preview, when it has one (2026-11-08): the versions' phôi come from it, the AI draws nothing. */
+  preview?: CtCharImportPreview | null;
+}
+
+/**
+ * An import folder's preview (Teeinblue's "Preview" group): a background photo the design is shown on, and / or one
+ * photo per version that already shows that version on the piece ("Preview scene N"). Made into the artwork's phôi on
+ * its base (CtVersionPhoi, source "folder"); a folder without one gets AI phôi instead.
+ */
+export interface CtCharImportPreview {
+  /** The background ("nen-preview"): each version's FIXED parts are printed flat on it at `box`. "" = none. */
+  background: string;
+  /** Where the artwork canvas sits on the photos; null = the whole photo. */
+  box: { x: number; y: number; w: number; h: number } | null;
+  /** "photo" = `box` in the photo's px; "canvas" = in a space as wide as the canvas (Teeinblue's preview group), scaled
+   * to the photo's width when built. */
+  boxUnit: "photo" | "canvas";
+  /** Version name → a photo of that version already on the piece (its fixed parts in it): used as it is. */
+  scenes: Record<string, string>;
 }
 
 export interface CtCharImportVersion {

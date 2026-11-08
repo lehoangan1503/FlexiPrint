@@ -406,6 +406,7 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
       widthMm: num(p.widthMm),
       heightMm: num(p.heightMm),
       blankId: uuidOrNull(p.blankId),
+      baseId: uuidOrNull(p.baseId),
       templateId: uuidOrNull(p.templateId),
       layout: s(p.layout, 600),
       material: s(p.material, 40),

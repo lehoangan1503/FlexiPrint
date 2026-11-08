@@ -81,6 +81,9 @@ export function ImportPanel(ctx: CharCtx) {
               ))}
             </ul>
           )}
+          {imp.phoi && (
+            <p className={`rounded-md border p-2 text-xs ${imp.phoi.from === "folder" ? "border-emerald-500/40 bg-emerald-500/5" : imp.phoi.from === "ai" ? "border-sky-500/40 bg-sky-500/5" : "bg-muted/40"}`}>{imp.phoi.note}</p>
+          )}
           <div className="flex flex-wrap gap-2 pt-1">
             {project.product_ids.length > 0 && (
               <CtButton variant="primary" onClick={() => ctx.goto("product")}>

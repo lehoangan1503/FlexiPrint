@@ -9,12 +9,12 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_TABLES } from "../../config";
-import type { CtAsset, CtCharProject, CtProduct, CtProductBundle, CtProductCharSet, CtRegion, CtRegionItem } from "../../types";
+import type { CtAsset, CtBaseProduct, CtCharProject, CtProduct, CtProductBundle, CtProductCharSet, CtRegion, CtRegionItem } from "../../types";
 import { parseCharBrief } from "../../lib/char-brief";
 import type { CtPrintTemplate } from "../../types/print";
 import { charSetDrop } from "../../lib/char-set-layers";
 import { normalizeProductConfig } from "../../lib/design";
-import { makeTemplateProduct } from "../print-products";
+import { makeBaseArtwork } from "../print-products";
 import { inChunks } from "../in-chunks";
 import { insertClipart, loadProductAssets } from "../library";
 import type { CtSession } from "../supabase";
@@ -40,27 +40,23 @@ function chooserMaker(db: CtSession["supabase"], userId: string): (names: string
 }
 
 /**
- * Another product from the set (asked 2026-10-29: no "Tạo sản phẩm custom" button — a new product, e.g. the glass
- * ornament's set as a ceramic one, is asked in the set's chat): a product on khuôn in `template` with the whole set
- * dropped on it as the editor's library drop does (CtRegionConfig.charSet — so it is listed in the set's step 4 and
- * follows the set when it is remade). `material` = a CT_MATERIALS id for its phôi / mockups. → the new product id.
+ * Another artwork from the set (asked 2026-10-29: no "Tạo sản phẩm custom" button — a new piece, e.g. the glass
+ * ornament's set as a rug, is asked in the set's chat), made FOR product base `base` (2026-11-08): a blank canvas of
+ * the base's print area, viewed on it, with the whole set dropped on it as the editor's library drop does
+ * (CtRegionConfig.charSet — so it is listed in the set's step 4 and follows the set when it is remade). No khuôn layer,
+ * no phôi: the base's. The same artwork on another base needs no new artwork — make_product_from_artwork does it.
  */
-export async function addSetProduct(db: CtSession["supabase"], userId: string, p: CtCharProject, template: CtPrintTemplate, name: string, material: string): Promise<string> {
+export async function addSetProduct(db: CtSession["supabase"], userId: string, p: CtCharProject, base: CtBaseProduct, template: CtPrintTemplate | null, name: string): Promise<string> {
   const sourceId = p.product_ids[0];
   const source = sourceId ? await bundleOf(db, sourceId) : null;
-  if (!source) throw new Error("The set has no product yet — wait for step 3 / char_remake_product first");
-  const product = await makeTemplateProduct(db, userId, template, name);
+  if (!source) throw new Error("The set has no artwork yet — wait for step 3 / char_remake_product first");
+  const product = await makeBaseArtwork(db, userId, base, template, name);
   try {
-    if (material) {
-      const config = normalizeProductConfig(product.config);
-      await db.from(CT_TABLES.products).update({ config: { ...config, material: { ...config.material, id: material } } }).eq("id", product.id);
-    }
     const b = await bundleOf(db, product.id);
     const board = b?.assets.find((a) => a.id === b.product.main_asset_id);
     if (!b || !board) throw new Error("The new product has no print sheet");
     const got = await charSetDrop(source, { productId: product.id, mainId: board.id, board: { w: board.width, h: board.height }, firstOrder: 0 }, { projectId: p.id, name: p.name }, chooserMaker(db, userId));
     if (!got.regions.length) throw new Error("The set's product has no layer another product can use");
-    // The khuôn layer first, as create_artwork_product saves it; the set above it.
     const regions = [...b.regions, ...got.regions];
     const { error } = await db.rpc("ct_save_design", { p_product_id: product.id, p_regions: regions.map((r, i) => ({ ...r, sort_order: i })), p_items: [...b.items, ...got.items] });
     if (error) throw new Error(error.message);

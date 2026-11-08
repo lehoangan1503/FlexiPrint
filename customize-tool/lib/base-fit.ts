@@ -129,7 +129,7 @@ function canvasWidthMm(base: CtBaseProduct, print: CtProductPrint | null, place:
  * the canvas): what the editor's guides, the safe-zone check and the print file read. Sizes are dropped (a khuôn with
  * sizes makes its own sheets), the guide picture only kept when the sheet is the canvas.
  */
-function printOnCanvas(print: CtProductPrint, place: FitBox, main: { width: number; height: number }): CtProductPrint {
+export function printOnCanvas(print: CtProductPrint, place: FitBox, main: { width: number; height: number }): CtProductPrint {
   const { spec } = print;
   const same = Math.abs(place.x) < 0.5 && Math.abs(place.y) < 0.5 && Math.abs(place.w - main.width) < 0.5 && Math.abs(place.h - main.height) < 0.5;
   if (same && spec.width === main.width && spec.height === main.height) return print;
@@ -151,6 +151,24 @@ function printOnCanvas(print: CtProductPrint, place: FitBox, main: { width: numb
       frameUrl: same ? spec.frameUrl : null,
     },
   };
+}
+
+/**
+ * The canvas of an artwork made for a base (Teeinblue: "set the artwork size the same as the print area"): its first
+ * print area, else its khuôn's sheet, else 1000².
+ */
+export function baseCanvas(base: CtBaseProduct, template: CtPrintTemplate | null): { width: number; height: number } {
+  const area = base.config.printAreas[0];
+  if (area?.width && area.height) return { width: area.width, height: area.height };
+  if (template) return { width: template.spec.width, height: template.spec.height };
+  return { width: 1000, height: 1000 };
+}
+
+/** A khuôn whose sheet is not the canvas, redrawn on it (contain-fitted, centred) — its safe zone, outline, holes. */
+export function templateOnCanvas(t: CtPrintTemplate, canvas: { width: number; height: number }): CtPrintTemplate {
+  if (t.spec.width === canvas.width && t.spec.height === canvas.height) return t;
+  const print = printOnCanvas(productPrintOfTemplate(t), sheetPlace(canvas, t.spec, DEFAULT_PLACEMENT), canvas);
+  return { ...t, spec: { ...print.spec, blanks: [] } };
 }
 
 export function productPrintOfTemplate(t: CtPrintTemplate): CtProductPrint {

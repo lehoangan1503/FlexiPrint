@@ -9,7 +9,7 @@ import type { CtFillConfig, CtMainFrame, CtMainLayout, CtPrintSilhouette, CtRegi
 import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, textBand } from "./geometry";
 
 export { textBand };
-import { activeRegions, normalizeRegion, regionChoices, regionForSelection, resolveLinked, selectedMainId, textColorFromOption, selectedMainImageId, textMode, zoneText } from "./design";
+import { activeRegions, isStaticLayer, normalizeRegion, regionChoices, regionForSelection, resolveLinked, selectedMainId, textColorFromOption, selectedMainImageId, textMode, zoneText } from "./design";
 import { mainFrameFor, resolveLayout } from "./layout";
 import { frameRegionFor, frameSvgPath, renditionFrameBox, traceFrame } from "./material-frame";
 import { scaleShape } from "./print-template";
@@ -165,17 +165,8 @@ function drawPlan(input: CompositeInput): { selection: CtSelection; mainId: stri
   return { selection, mainId, items: resolved.items, regions };
 }
 
-/**
- * A layer the customer cannot change: a picture layer with one fixed picture (no options, no fill pattern). Texts,
- * customer photos and layers with several pictures (options, linked followers) are theirs.
- */
-export function isStaticLayer(r: CtRegion, items: CtRegionItem[], assets: CtRenderAsset[]): boolean {
-  if (r.kind !== "image" || r.config.fill || r.config.materialFrame) return false;
-  const img = r.config.image;
-  if (img.follows || img.allowNone) return false;
-  // Its options: every group's picture and that picture's variants (an imported set: 1 item, 8 riders as variants).
-  return regionChoices(r, items, assets).length === 1;
-}
+// isStaticLayer lives in lib/design (the server's phôi reference uses it too).
+export { isStaticLayer };
 
 /** One layer's visible pixels (alpha, row by row) on a pick map; id null = the version's picture. */
 export interface CtPickLayer {

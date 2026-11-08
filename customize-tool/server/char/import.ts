@@ -35,7 +35,7 @@ import yauzl from "yauzl";
 import { NextResponse } from "next/server";
 import sharp, { type OverlayOptions } from "sharp";
 import { CT_FONTS, CT_TABLES } from "../../config";
-import type { CtAsset, CtCharImportBox, CtCharImported, CtCharImportFile, CtCharImportRow, CtCharImportLayer, CtCharImportManifest, CtCharImportText, CtCharProject, CtProduct, CtRegion, CtRegionItem } from "../../types";
+import type { CtAsset, CtBaseProduct, CtCharImportBox, CtCharImported, CtCharImportFile, CtCharImportRow, CtCharImportLayer, CtCharImportManifest, CtCharImportText, CtCharProject, CtProduct, CtRegion, CtRegionItem } from "../../types";
 import { defaultCharBrief, parseCharBrief } from "../../lib/char-brief";
 import { importKeep, manifestFiles, manifestPlacements, parseManifest, readTeeinblue, type CtImportTexts } from "../../lib/char-import";
 import { defaultProductConfig, defaultRegionConfig } from "../../lib/design";
@@ -59,6 +59,8 @@ import { siteUrl } from "../site-url";
 import { makeVersionThumbs } from "../version-thumbs";
 import { listBaseRows } from "../base-products";
 import { baseProductFor } from "../../lib/pricing";
+import { ensureVersionPhoi, savePhoiPicture } from "../version-phoi";
+import { phoiOnBackground } from "../version-phoi-ref";
 import { NOT_YOURS, canEditProject, jobDb, jsonError, loadProject, projectRow, type Db } from "./projects";
 
 /** One upload request's files at most (the page sends a few MB at a time). */
@@ -797,6 +799,14 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
       if (thumbs.failed.length) console.warn("[ct] import version thumbs", thumbs.failed.join("; "));
     }
 
+    // The versions' phôi on the base (2026-11-08): the folder's own preview when it has one — never drawn again —
+    // else the AI draws them (a cut-to-shape base). Preview only: the print file never reads them.
+    if (viewOn) {
+      const phoi = await importPhoi(db, userId, product.id, viewOn, m, mains, root).catch((e: Error) => ({ from: "none" as const, note: `Phôi preview: lỗi — ${e.message}` }));
+      await setImported(db, p.id, { phoi });
+      console.info(`[ct] import ${p.id}: ${phoi.note}`);
+    }
+
     // A hand-off often keeps the same sales picture twice (at the top and in anh-ban-hang/): each goes once.
     const seen = new Set<string>();
     for (const [i, url] of m.mockupUrls.entries()) {
@@ -840,6 +850,59 @@ async function buildNow(db: Db, userId: string, projectId: string, m: CtCharImpo
     await dropProduct(s, product.id).catch(() => undefined);
     throw e;
   }
+}
+
+/**
+ * The phôi of every version of an imported artwork on its base: a scene photo of the folder for that version (used as
+ * it is), else the folder's preview background with the version's fixed parts printed on it (server/version-phoi-ref
+ * phoiOnBackground) — both exactly the folder's own preview, no AI. Versions the folder has nothing for go to the AI
+ * when the base is cut to shape (ensureVersionPhoi); a khuôn base shows its khuôn's phôi and needs none.
+ */
+async function importPhoi(db: Db, userId: string, artworkId: string, base: CtBaseProduct, m: CtCharImportManifest, mains: CtAsset[], root: string): Promise<NonNullable<CtCharImported["phoi"]>> {
+  const pv = m.preview ?? null;
+  const fromFolder: string[] = [];
+  const missing: string[] = [];
+  const read = async (url: string) => {
+    const key = keyOf(root, url);
+    return key ? await readKey(key) : null;
+  };
+  const photoBox = async (photo: Buffer): Promise<{ x: number; y: number; w: number; h: number }> => {
+    const meta = await sharp(photo).metadata();
+    const W = meta.width ?? m.canvas.width;
+    const H = meta.height ?? m.canvas.height;
+    if (pv?.box) {
+      const k = pv.boxUnit === "canvas" ? W / m.canvas.width : 1;
+      return { x: pv.box.x * k, y: pv.box.y * k, w: pv.box.w * k, h: pv.box.h * k };
+    }
+    // No position given: the canvas contain-fitted in the photo, centred.
+    const k = Math.min(W / m.canvas.width, H / m.canvas.height);
+    return { x: (W - m.canvas.width * k) / 2, y: (H - m.canvas.height * k) / 2, w: m.canvas.width * k, h: m.canvas.height * k };
+  };
+  const bg = pv?.background ? await read(pv.background) : null;
+  for (const [vi, v] of m.versions.entries()) {
+    const main = mains[vi];
+    if (!main) continue;
+    const sceneUrl = pv?.scenes[v.name];
+    const scene = sceneUrl ? await read(sceneUrl) : null;
+    if (scene) {
+      await savePhoiPicture(db, userId, artworkId, base.id, main.id, scene, await photoBox(scene));
+      fromFolder.push(v.name);
+    } else if (bg) {
+      const box = await photoBox(bg);
+      await savePhoiPicture(db, userId, artworkId, base.id, main.id, await phoiOnBackground(db, artworkId, main.id, bg, box), box);
+      fromFolder.push(v.name);
+    } else missing.push(main.id);
+  }
+  if (!missing.length) return { from: "folder", note: `Phôi preview: lấy từ folder cho ${fromFolder.length} version — không vẽ AI` };
+  if (base.config.cut.mode !== "alpha" || !base.config.preview.url) {
+    return { from: fromFolder.length ? "folder" : "none", note: fromFolder.length ? `Phôi preview: ${fromFolder.length} version từ folder; còn lại dùng phôi của base ${base.name}` : `Phôi preview: dùng phôi của base ${base.name} (không cần AI)` };
+  }
+  const started = await ensureVersionPhoi(db, userId, artworkId, base, { mainIds: missing });
+  const failed = started.filter((x) => x.status === "failed");
+  return {
+    from: "ai",
+    note: `Phôi preview: ${fromFolder.length ? `${fromFolder.length} version từ folder, ` : "folder chưa có — "}AI đang vẽ ${started.filter((x) => x.status === "started").length} version trên base ${base.name}${failed.length ? ` (lỗi ${failed.length}: ${failed[0].error})` : ""}`,
+  };
 }
 
 /** An option picture (thumb): the file's pixels cropped close, centred on a square with a margin, 240 px — null when empty. */

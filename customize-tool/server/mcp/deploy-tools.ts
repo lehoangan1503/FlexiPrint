@@ -22,6 +22,8 @@ import { listCollections, previewLinks, shopifyConfigured, shopifyInfo } from ".
 import { siteUrl } from "../site-url";
 import { listBaseRows, loadBaseProduct } from "../base-products";
 import { makeProductFromArtwork } from "../artwork-link";
+import { ensureVersionPhoi, jobName } from "../version-phoi";
+import { normalizeProductConfig } from "../../lib/design";
 import { CT_CONFIG, CT_TABLES } from "../../config";
 import type { CtServiceClient, CtSession } from "../supabase";
 import { TASK_ARG, json, liveStatus, loadTask } from "./task-common";
@@ -232,7 +234,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "list_base_products",
     description:
-      "Product bases (2026-11-07, like Teeinblue): the blank products sold — name = kind of product (Acrylic Ornament 1 side, Glass Ornament 1 side, Ceramic Ornament 2 sides, Poseable Doll), material, Shopify product type, the price table that makes the variants (sizes × packs with prices), the khuôn in an artwork is drawn for (sheet px), print areas, how many products use each. A product (what is sold) = an artwork + one of these.",
+      "Product bases (like Teeinblue): the blank products sold — they OWN the physical piece: print area (= the canvas of an artwork made for it), khuôn in (fixed shape) or cut along the design (cut.mode khuon | alpha | none, border mm, silhouette, hanging hole), the preview photo / phôi (preview), material, Shopify product type, the price table (variants sizes × packs with prices), how many products use each. An artwork is only the design; a product (what is sold) = an artwork + one of these.",
     inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
     callers: ["agent"],
     run: async (ctx, args) => {
@@ -246,6 +248,8 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
           productType: b.config.productType,
           khuon: b.template ? { id: b.template.id, name: b.template.name, width: b.template.width, height: b.template.height, phoi: b.template.blankUrl } : null,
           printAreas: b.config.printAreas,
+          cut: b.config.cut,
+          preview: b.config.preview.url ? { url: b.config.preview.url, kind: b.config.cut.mode === "alpha" ? "background (AI phôi per version: make_version_phoi)" : "phôi photo" } : null,
           variants: b.priceTable ? priceCells(b.priceTable.config).map((c) => ({ size: c.size?.label ?? "", pack: c.pack?.label ?? "", price: c.price, compareAt: c.compareAt })) : [],
           priceTable: b.priceTable?.name ?? null,
           products: b.products,
@@ -256,7 +260,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "make_product_from_artwork",
     description:
-      "A product (what is sold) from a finished artwork on a product base: the product holds a snapshot of the artwork (layers, options, versions, khuôn, print settings — later artwork edits never change it; the editor updates it by hand) and takes its variants + prices + product type from the base. Its name starts as the artwork's (the theme), or `name`. → product_id, editor link. Then make_product_mockups / wait_product_mockups, then check_deploy / deploy_product on THIS product id (never on the artwork).",
+      "A product (what is sold) from a finished artwork on a product base: the product holds a snapshot of the artwork's DESIGN (layers, options, versions, texts — later artwork edits never change it; the editor updates it by hand) and the base lays its khuôn / cut / silhouette / phôi on it and gives variants + prices + product type. The same artwork can make products on several bases. Its name starts as the artwork's (the theme), or `name`. → product_id, editor link. Then make_product_mockups / wait_product_mockups, then check_deploy / deploy_product on THIS product id (never on the artwork).",
     inputSchema: {
       type: "object",
       properties: {
@@ -281,6 +285,107 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       const product = await makeProductFromArtwork(db, task.user_id, artwork, base, str(args.name) || undefined);
       await progress(db, task.id, `Đã tạo sản phẩm “${product.name}” từ artwork “${artwork.name}” trên ${base.name}`);
       return json({ product_id: product.id, editor: `${siteUrl()}${CT_CONFIG.basePath}/${product.id}`, next: "make_product_mockups on product_id, then check_deploy / deploy_product." });
+    },
+  },
+  {
+    name: "set_artwork_base",
+    description:
+      "The base an ARTWORK is viewed on (the editor's \"Xem trên base\"): render_artwork / check_artwork then draw and check it on that base's khuôn + safe zone, the AI phôi (make_version_phoi) are made for it. Changes nothing in the design; products keep their own base. base_product_id empty = none.",
+    inputSchema: {
+      type: "object",
+      properties: { ...TASK_ARG, artwork_id: { type: "string", description: "The artwork." }, base_product_id: { type: "string", description: "From list_base_products ('' = none)." } },
+      required: ["task_id", "artwork_id"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task } = await loadTask(ctx, args.task_id);
+      if (!task.user_id) throw new Error("The task has no user");
+      const s = await serviceSession(db, task.user_id);
+      const artwork = await ownedProduct(s, str(args.artwork_id));
+      if (!artwork) throw new Error("No such artwork, or the task's user may not edit it");
+      if (artwork.kind === "product") throw new Error("That is a product — its base is set on the product page (make_product_from_artwork picks it)");
+      const baseId = str(args.base_product_id);
+      const base = baseId ? await loadBaseProduct(db, baseId) : null;
+      if (baseId && !base) throw new Error("No such product base — list_base_products");
+      const { error } = await db.from(CT_TABLES.products).update({ base_product_id: base?.id ?? null }).eq("id", artwork.id);
+      if (error) throw new Error(error.message);
+      return json({ artwork_id: artwork.id, base: base ? { id: base.id, name: base.name, cut: base.config.cut.mode } : null, next: base?.config.cut.mode === "alpha" ? "render_artwork; make_version_phoi for the customer's preview." : "render_artwork." });
+    },
+  },
+  {
+    name: "make_version_phoi",
+    description:
+      "The customer's preview photo of every version of an ARTWORK on a cut-to-shape base (acrylic): the version's fixed parts made into the real piece by the AI on the base's background (Teeinblue's hand-drawn \"Preview scene N\"); the customer's picks / texts are laid on it live. Preview only — the print file never uses it. Versions that already have one (an import folder's own preview, or drawn before) are LEFT ALONE; redo = draw again the named version_ids (or all AI ones). Runs in the background (~2 min each, in parallel) → per version: have | running | started | failed. Then version_phoi_status. Products made from the artwork get them by themselves. A khuôn base (ceramic, glass) needs none: its phôi is the khuôn's.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...TASK_ARG,
+        artwork_id: { type: "string", description: "The artwork." },
+        base_product_id: { type: "string", description: "Default: the artwork's base (set_artwork_base)." },
+        version_ids: { type: "array", items: { type: "string" }, description: "Only these versions (main asset ids from version_phoi_status)." },
+        redo: { type: "boolean", description: "Draw again even when they have one." },
+      },
+      required: ["task_id", "artwork_id"],
+    },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task } = await loadTask(ctx, args.task_id);
+      if (!task.user_id) throw new Error("The task has no user");
+      const s = await serviceSession(db, task.user_id);
+      const artwork = await ownedProduct(s, str(args.artwork_id));
+      if (!artwork) throw new Error("No such artwork, or the task's user may not edit it");
+      if (artwork.kind === "product") throw new Error("Phôi are made on the ARTWORK (its products take them): pass the artwork id (config.artworkLink of the product)");
+      const base = await loadBaseProduct(db, str(args.base_product_id) || artwork.base_product_id || "");
+      if (!base) throw new Error("The artwork has no base — set_artwork_base or pass base_product_id");
+      const ids = Array.isArray(args.version_ids) ? args.version_ids.map(str).filter(Boolean) : [];
+      const versions = await ensureVersionPhoi(db, task.user_id, artwork.id, base, { redo: args.redo === true, mainIds: ids });
+      await progress(db, task.id, `Phôi preview “${artwork.name}” trên ${base.name}: ${versions.filter((v) => v.status === "started").length} version gửi AI, ${versions.filter((v) => v.status === "have").length} đã có`);
+      return json({ artwork_id: artwork.id, base: base.name, versions, next: "version_phoi_status after ~2 min; view_image the urls." });
+    },
+  },
+  {
+    name: "version_phoi_status",
+    description: "The preview photos (phôi) of an artwork's versions per base: url, source (ai | folder = the import folder's own), and the AI jobs (running / failed with error).",
+    inputSchema: { type: "object", properties: { ...TASK_ARG, artwork_id: { type: "string", description: "The artwork." } }, required: ["task_id", "artwork_id"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db, task } = await loadTask(ctx, args.task_id);
+      if (!task.user_id) throw new Error("The task has no user");
+      const s = await serviceSession(db, task.user_id);
+      const artwork = await ownedProduct(s, str(args.artwork_id));
+      if (!artwork) throw new Error("No such artwork, or the task's user may not edit it");
+      const { data: mains } = await db.from(CT_TABLES.assets).select("id,name").eq("product_id", artwork.id).eq("role", "main").order("sort_order").returns<Array<{ id: string; name: string }>>();
+      const { data: jobs } = await db.from(CT_TABLES.packImages).select("description,status,error,created_at").eq("name", jobName(artwork.id)).order("created_at", { ascending: false }).limit(60).returns<Array<{ description: string; status: string; error: string | null; created_at: string }>>();
+      const phoi = normalizeProductConfig(artwork.config).versionPhoi;
+      return json({
+        artwork_id: artwork.id,
+        versions: (mains ?? []).map((m) => {
+          const job = (jobs ?? []).find((j) => j.description === m.id);
+          return { version_id: m.id, name: m.name, phoi: phoi.filter((p) => p.mainId === m.id).map((p) => ({ base_id: p.baseId, url: p.url, source: p.source ?? "ai", at: p.at })), job: job ? { status: job.status, error: job.error || undefined, at: job.created_at } : null };
+        }),
+      });
+    },
+  },
+  {
+    name: "list_artwork_products",
+    description: "The products (what is sold) made from an artwork: id, name, base, whether it still holds the artwork's latest design (\"Có bản artwork mới\" = outdated), Shopify link.",
+    inputSchema: { type: "object", properties: { ...TASK_ARG, artwork_id: { type: "string", description: "The artwork." } }, required: ["task_id", "artwork_id"] },
+    callers: ["agent"],
+    run: async (ctx, args) => {
+      const { db } = await loadTask(ctx, args.task_id);
+      const id = str(args.artwork_id);
+      if (!UUID.test(id)) throw new Error("artwork_id is not a valid id");
+      const { data: art } = await db.from(CT_TABLES.products).select("config").eq("id", id).maybeSingle<Pick<CtProduct, "config">>();
+      if (!art) throw new Error("No such artwork");
+      const revision = normalizeProductConfig(art.config).artworkRevision;
+      const { data } = await db.from(CT_TABLES.products).select("id,name,base_product_id,config,shopify").eq("kind", "product").eq("config->artworkLink->>artworkId", id).order("created_at").returns<Array<Pick<CtProduct, "id" | "name" | "base_product_id" | "config" | "shopify">>>();
+      const bases = new Map((await listBaseRows(db)).map((b) => [b.id, b.name]));
+      return json({
+        products: (data ?? []).map((p) => {
+          const link = normalizeProductConfig(p.config).artworkLink;
+          return { product_id: p.id, name: p.name, base: p.base_product_id ? (bases.get(p.base_product_id) ?? p.base_product_id) : null, outdated: !!link && link.revision < revision, shopify: p.shopify ? { handle: p.shopify.handle, status: p.shopify.status } : null, editor: `${siteUrl()}${CT_CONFIG.basePath}/${p.id}` };
+        }),
+      });
     },
   },
   {

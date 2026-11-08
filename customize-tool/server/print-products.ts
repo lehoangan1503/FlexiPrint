@@ -12,10 +12,11 @@
 import sharp from "sharp";
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../config";
-import type { CtCreateArtworkBody, CtProduct, CtRegion } from "../types";
+import type { CtBaseProduct, CtCreateArtworkBody, CtProduct, CtRegion } from "../types";
 import type { CtPrintFace, CtProductPrint, CtPrintTemplate } from "../types/print";
-import { defaultProductConfig, defaultRegionConfig } from "../lib/design";
+import { defaultProductConfig, defaultRegionConfig, normalizeProductConfig } from "../lib/design";
 import { newId } from "../lib/geometry";
+import { baseCanvas } from "../lib/base-fit";
 import { insertAssetAs } from "./handlers";
 import { getTemplate } from "./print-templates";
 import { loadBaseProduct } from "./base-products";
@@ -144,6 +145,25 @@ export async function makeBlankArtwork(db: PrintDb, userId: string, name: string
 }
 
 /**
+ * An artwork made FOR a base (2026-11-08, Teeinblue's flow): a blank canvas of the base's print area, viewed on it
+ * (base_product_id). No khuôn layer, no config.print, no phôi — they stay the base's (lib/base-fit withBase lays them
+ * on in the editor, server/artwork-link applyBase bakes them into each product), so the artwork can go on any base.
+ */
+export async function makeBaseArtwork(db: PrintDb, userId: string, base: CtBaseProduct, template: CtPrintTemplate | null, name: string): Promise<CtProduct> {
+  const { width, height } = baseCanvas(base, template);
+  const product = await makeBlankArtwork(db, userId, name, width, height);
+  const config = normalizeProductConfig(product.config);
+  const material = { ...config.material, id: base.config.material, widthMm: template?.spec.widthMm || config.material.widthMm };
+  const { data } = await db
+    .from(CT_TABLES.products)
+    .update({ base_product_id: base.id, config: { ...config, material } })
+    .eq("id", product.id)
+    .select("*")
+    .single<CtProduct>();
+  return data ?? product;
+}
+
+/**
  * POST products/artwork CtCreateArtworkBody (asked 2026-11-07: "tạo thủ công với size width height ngẫu nhiên và vùng
  * printarea custom"). Since 2026-11-08 the artwork holds only the design: made for a base, its canvas is the base's
  * sheet (its khuôn's, else its first print area) and it is viewed on that base (base_product_id) — the khuôn, phôi
@@ -155,19 +175,18 @@ export async function createArtwork(s: CtSession, raw: unknown): Promise<NextRes
   if (!name) return jsonError("Artwork cần tên", 400);
   const base = typeof b.baseProductId === "string" ? await loadBaseProduct(s.supabase, b.baseProductId) : null;
   try {
-    const template = base?.config.templateId ? await getTemplate(s, base.config.templateId) : null;
-    const area = base?.config.printAreas[0];
+    if (base) {
+      const template = base.config.templateId ? await getTemplate(s, base.config.templateId) : null;
+      return NextResponse.json({ product: await makeBaseArtwork(s.supabase, s.user.id, base, template, name) }, { status: 201 });
+    }
     const size = (v: unknown, d: number) => {
       const n = Math.round(Number(v));
       return Number.isFinite(n) && n >= 16 && n <= 12000 ? n : d;
     };
-    const width = base ? (template?.spec.width ?? area?.width ?? 1000) : size(b.width, 1000);
-    const height = base ? (template?.spec.height ?? area?.height ?? 1000) : size(b.height, 1000);
+    const width = size(b.width, 1000);
+    const height = size(b.height, 1000);
     if (width * height > 80_000_000) return jsonError("Canvas quá lớn (tối đa 80 MP)", 400);
-    const product = await makeBlankArtwork(s.supabase, s.user.id, name, width, height);
-    if (!base) return NextResponse.json({ product }, { status: 201 });
-    const { data } = await s.supabase.from(CT_TABLES.products).update({ base_product_id: base.id }).eq("id", product.id).select("*").single<CtProduct>();
-    return NextResponse.json({ product: data ?? product }, { status: 201 });
+    return NextResponse.json({ product: await makeBlankArtwork(s.supabase, s.user.id, name, width, height) }, { status: 201 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không tạo được artwork", 500);
   }

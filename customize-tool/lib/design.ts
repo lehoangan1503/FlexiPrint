@@ -300,7 +300,7 @@ export function normalizeVersionPhoi(raw: unknown): CtVersionPhoi[] {
     if (typeof p.baseId !== "string" || typeof p.mainId !== "string" || typeof p.url !== "string" || !b || typeof b !== "object") continue;
     const n = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : 0);
     if (!(n(p.width) > 0 && n(p.height) > 0 && n(b.w) > 0 && n(b.h) > 0)) continue;
-    out.set(`${p.baseId}|${p.mainId}`, { baseId: p.baseId, mainId: p.mainId, url: p.url, width: n(p.width), height: n(p.height), box: { x: n(b.x), y: n(b.y), w: n(b.w), h: n(b.h) }, at: typeof p.at === "string" ? p.at : "" });
+    out.set(`${p.baseId}|${p.mainId}`, { baseId: p.baseId, mainId: p.mainId, url: p.url, width: n(p.width), height: n(p.height), box: { x: n(b.x), y: n(b.y), w: n(b.w), h: n(b.h) }, at: typeof p.at === "string" ? p.at : "", ...(p.source === "folder" ? { source: "folder" as const } : {}) });
   }
   return [...out.values()];
 }
@@ -589,6 +589,20 @@ export interface CtChoice<A extends CtRenderAsset = CtRenderAsset> {
 
 export function regionChoices<A extends CtRenderAsset>(region: CtRegion, items: CtRegionItem[], assets: A[]): Array<CtChoice<A>> {
   return regionGroups(region, items, assets).flatMap((g) => g.options.map((asset) => ({ asset, item: g.item })));
+}
+
+/**
+ * A layer the customer cannot change: a picture layer with one fixed picture (no options, no fill pattern), shown
+ * whatever is picked. Texts, customer photos, layers with several pictures (options, linked followers) and layers that
+ * only show under one option of another (config.parent — an imported set's layout: its background changes with the
+ * layout) are theirs. The AI phôi of a version holds only static layers (lib/compositor part "static").
+ */
+export function isStaticLayer<A extends CtRenderAsset>(r: CtRegion, items: CtRegionItem[], assets: A[]): boolean {
+  if (r.kind !== "image" || r.config.fill || r.config.materialFrame || r.config.parent) return false;
+  const img = r.config.image;
+  if (img.follows || img.allowNone) return false;
+  // Its options: every group's picture and that picture's variants (an imported set: 1 item, 8 riders as variants).
+  return regionChoices(r, items, assets).length === 1;
 }
 
 /** Group index + option index of an asset inside a region; -1 when not offered. */

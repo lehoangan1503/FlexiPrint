@@ -113,7 +113,7 @@ async function snapshot(db: Db, artwork: CtProduct, product: CtProduct): Promise
   return applyBase(db, saved);
 }
 
-async function loadTemplate(db: Db, id: string | null): Promise<CtPrintTemplate | null> {
+export async function loadTemplate(db: Db, id: string | null): Promise<CtPrintTemplate | null> {
   if (!id) return null;
   const { data } = await db.from(CT_TABLES.printTemplates).select("*").eq("id", id).maybeSingle<CtPrintTemplate>();
   return data ? templateRow(data) : null;

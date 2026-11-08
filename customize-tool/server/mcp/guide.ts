@@ -48,9 +48,14 @@ this MCP. Everything you read here is live production data.
   of the set's page, any tab, with screenshots): char_update_brief, char_cut, char_status besides
   the master / edits tools; char_approve_master (only when the editor hands you the whole set), char_draw_backdrops
   and char_remake_product for step 4 — get_task gives the whole set.
-- Products: list_print_templates / get_print_template (khuôn in), create_artwork_product / set_artwork_layers /
-  check_artwork (a product laid out from library cliparts), render_artwork (guides, or the print file with chosen
-  options), list_product_options, make_product_mockups → wait_product_mockups (the print on the phôi + AI photos).
+- Bases: list_base_products (print area, khuôn, cut, preview photo, variants + price).
+- Artworks: create_artwork_product {base_product_id} / set_artwork_layers / check_artwork (an artwork laid out from
+  library cliparts on a base's print area), set_artwork_base (the base it is viewed on), render_artwork (on its base:
+  guides, or the print file with chosen options), list_product_options, make_version_phoi → version_phoi_status (the
+  customer's preview photo per version on an acrylic base; an import folder's own preview is kept, never redrawn).
+- Products: make_product_from_artwork {artwork_id, base_product_id} → make_product_mockups → wait_product_mockups →
+  check_deploy → deploy_product, all on the PRODUCT id; list_artwork_products (an artwork's products, outdated ones).
+- Khuôn in (the base's physical shape, rarely touched): list_print_templates / get_print_template.
 
 ## The 3 kinds of bộ (kiểu 1 / 2 / 3)
 People in the company name a set by its kind ("làm bộ kiểu 1…"); the library's Clipart tab filters by it and the
@@ -66,12 +71,16 @@ there a customer photo? does the customer pick clipart?) → ask once, briefly, 
 Never turn one kind into another on your own (no photo zone added to a kiểu 1, no clipart choices in a kiểu 2).
 
 ## A bộ nhân vật from idea to Shopify
-1 Brief (idea, product = khuôn in + material, style, references, subjects + slots, photo zones, texts, backdrops,
+1 Brief (idea, product = a PRODUCT BASE: brief.product.baseId from list_base_products — its print area is the
+canvas, its khuôn's safe zone the composition; style, references, subjects + slots, photo zones, texts, backdrops,
 mockup scenes) → 2 Master (one picture, approved) → 3 Layer: 3a the master at print size, 3b the pictures the files
-are cut from (the paper doll + every option drawn on it), 3c regions (what each option drew anew) → files ("Tạo bộ custom" cuts them AND builds the product: clipart
-folder + layers + texts + background + phôi) → 4 Sản phẩm: phôi / khuôn, backgrounds, mockups → the editor
-(Thiết kế / Xem trước = flexi2-product.liquid / File in / Mockups) → Deploy (Shopify product + template).
-Deploy by tool (asked 2026-10-29): check_deploy (what is missing) → fill it → deploy_product (ACTIVE by default).
+are cut from (the paper doll + every option drawn on it), 3c regions (what each option drew anew) → files ("Tạo bộ
+custom" cuts them AND builds the ARTWORK: clipart folder + layers + texts + background, viewed on the base — no
+khuôn, no phôi in it) → 4 backgrounds, the artwork's preview (acrylic base: make_version_phoi) → SẢN PHẨM:
+make_product_from_artwork {artwork_id, base_product_id} (the same artwork can go on several bases) → mockups on the
+product → Deploy the product (Shopify product + template).
+Deploy by tool (asked 2026-10-29): check_deploy {product_id} (what is missing) → fill it → deploy_product (ACTIVE by
+default) — never on an artwork.
 
 ## Tasks from the web app
 kind "content" (deploy page: Shopify title + description) and kind "char" (a step of a v2 bộ nhân vật, or a chat
@@ -104,8 +113,10 @@ English. Read flexiprint://guide/layer-rules first.
 2. char_create_set {name, kind, idea} (kiểu 1 and 3 → kind "character", kiểu 3 also gets brief.photoZones; kiểu 2 →
    kind "photo") → PRINT the set url it returns (this server's own address, https://flexi2.next.lc/v2/<id>). Their pictures →
    char_add_reference (url, or image_base64 of a file in the session; use sample/style/…; note = what to take).
-3. Khuôn in: list_print_templates. None at the real size → create_print_template (a 120×40 cm rug at 150 dpi, a
-   die-cut acrylic square…) — never a small khuôn for a big product.
+3. Product base: list_base_products → the base of the piece they want (Acrylic Ornament, Ceramic, Glass, Poseable
+   Doll…) → char_update_brief {product: {baseId}}: the artwork's canvas = its print area, its khuôn decides the safe
+   zone. No base fits the product → ask them (a new base is made on the Product base page with its khuôn, price table
+   and phôi) — never put a khuôn or a phôi into the set.
 4. Brief: get_task (its briefRules say how) → char_update_brief: subjects + slots (hair / top / pants / glasses…, mode
    color / texture / shape), lineup (the customer picks one character / how many people), choosers (boy/girl per
    grandchild, hat / no hat…) + shownWhen, slot follows (sweater and hat follow the Theme), optional (a NO choice),
@@ -117,9 +128,10 @@ English. Read flexiprint://guide/layer-rules first.
 6. After approval do all of step "auto" (get_task instructions): 3b char_run_edits → check every picture (exactly one
    part added to the doll; no background; no magenta left; thin parts bold) → 3c char_cut what "plan" → char_status
    (every check passes) → step 4 char_draw_backdrops + char_draw_elements → char_remake_product → render_artwork a few
-   combinations → fix the layout (boxes) if it does not look like the reference → make_product_mockups → look.
+   combinations → fix the layout (boxes) if it does not look like the reference → acrylic base: make_version_phoi →
+   make_product_from_artwork {artwork_id, base_product_id} → make_product_mockups on the PRODUCT → look.
    A short progress line (with the url) at each stage. Something wrong at a stage: fix it at that stage.
-7. Done: the set url + the product (list_product_options has the editor url) + a few mockups, and what is still worth
+7. Done: the set url + the artwork + the product made from it (editor urls) + a few mockups, and what is still worth
    a second look. submit_result on the open task. They want changes later: char_open_task (or the open task).
 `;
 

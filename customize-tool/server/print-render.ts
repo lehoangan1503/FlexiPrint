@@ -19,6 +19,10 @@ import { onVersion } from "../lib/layout";
 import { loadFont, textSvg } from "./print-text";
 import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, textBand, translateShape } from "../lib/geometry";
 import { boundsInSafe, safeShapes } from "../lib/print-template";
+import { inkBoxOfPixels, regionInkBounds, type CtImageInk } from "../lib/ink-bounds";
+import { withBase } from "../lib/base-fit";
+import { loadBaseProduct } from "./base-products";
+import { loadTemplate } from "./artwork-link";
 import type { PrintDb } from "./print-products";
 
 export interface ArtworkBundle {
@@ -44,18 +48,64 @@ export async function loadArtwork(db: PrintDb, productId: string): Promise<Artwo
   const owners = [productId, ...(config.artworkLink ? [config.artworkLink.artworkId] : [])];
   const { data: mains } = await db.from(CT_TABLES.assets).select("*").in("product_id", owners).eq("role", "main").returns<CtAsset[]>();
   const all = new Map([...(subs ?? []), ...(variants ?? []), ...(mains ?? [])].map((a) => [a.id, a]));
-  return { product, regions: (regions ?? []).map(normalizeRegion), items: items ?? [], assets: [...all.values()], spec: config.print?.spec ?? null };
+  const normalized = (regions ?? []).map(normalizeRegion);
+  let spec = config.print?.spec ?? null;
+  // An artwork made for a base (2026-11-08) has no khuôn of its own: it is checked / drawn on its base's — the khuôn's
+  // safe zone, outline and holes laid on its canvas like the editor's "Xem trên base" (lib/base-fit withBase).
+  if (!spec && product.kind !== "product" && product.base_product_id) {
+    const base = await loadBaseProduct(db, product.base_product_id);
+    const main = all.get(product.main_asset_id ?? "");
+    if (base && main) {
+      const fit = withBase({ productId, config, regions: normalized, main: { width: main.width, height: main.height } }, base, await loadTemplate(db, base.config.templateId));
+      spec = fit.config.print?.spec ?? null;
+    }
+  }
+  return { product, regions: normalized, items: items ?? [], assets: [...all.values()], spec };
 }
 
-/** Where every main element (placed picture, text, photo) sits, and whether it is inside the safe zone. */
-export function safeReport(b: ArtworkBundle): Array<{ layer: string; kind: string; box: { x: number; y: number; w: number; h: number }; inSafe: boolean }> {
+const inkCache = new Map<string, Promise<CtImageInk | null>>();
+
+/** A picture's ink read with sharp on a ≤ 512 px copy (cached per url for the process). */
+function serverInk(url: string): Promise<CtImageInk | null> {
+  let p = inkCache.get(url);
+  if (!p) {
+    p = (async () => {
+      const buf = await fetchBuffer(url);
+      if (!buf) return null;
+      try {
+        const meta = await sharp(buf).metadata();
+        if (!meta.width || !meta.height) return null;
+        const { data, info } = await sharp(buf).ensureAlpha().resize(512, 512, { fit: "inside", withoutEnlargement: true }).raw().toBuffer({ resolveWithObject: true });
+        return { width: meta.width, height: meta.height, box: inkBoxOfPixels(data, info.width, info.height, info.channels, info.channels - 1) };
+      } catch {
+        return null;
+      }
+    })();
+    inkCache.set(url, p);
+    if (inkCache.size > 2000) inkCache.delete(inkCache.keys().next().value as string);
+  }
+  return p;
+}
+
+/**
+ * Where every main element (placed picture, text, photo) sits, and whether it is inside the safe zone. A picture
+ * layer is judged by its visible pixels over all options (lib/ink-bounds), not by its frame: a full-canvas clipart
+ * file with the part in the middle is inside (2026-11-08). `box` = the frame, `ink` = the visible pixels.
+ */
+export async function safeReport(b: ArtworkBundle): Promise<Array<{ layer: string; kind: string; box: { x: number; y: number; w: number; h: number }; ink?: { x: number; y: number; w: number; h: number } | null; inSafe: boolean }>> {
   if (!b.spec) return [];
-  return b.regions
-    .filter((r) => !r.config.materialFrame && !r.config.fill && !r.config.printOnly && !r.config.previewOnly)
-    .map((r) => {
-      const box = shapeBounds(r.shape);
-      return { layer: r.name, kind: r.kind, box: { x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h) }, inSafe: boundsInSafe(b.spec as CtPrintSpec, box) };
-    });
+  const spec = b.spec;
+  const round = (x: { x: number; y: number; w: number; h: number }) => ({ x: Math.round(x.x), y: Math.round(x.y), w: Math.round(x.w), h: Math.round(x.h) });
+  return Promise.all(
+    b.regions
+      .filter((r) => !r.config.materialFrame && !r.config.fill && !r.config.printOnly && !r.config.previewOnly)
+      .map(async (r) => {
+        const box = shapeBounds(r.shape);
+        const ink = await regionInkBounds(r, b.items, b.assets, serverInk);
+        const inSafe = ink === null ? true : boundsInSafe(spec, ink ?? box);
+        return { layer: r.name, kind: r.kind, box: round(box), ...(ink !== undefined ? { ink: ink && round(ink) } : {}), inSafe };
+      }),
+  );
 }
 
 const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -189,8 +239,8 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
       const zb = shapeBounds(z.shape);
       svgs.push(`<path d="${shapeToSvgPath(z.shape)}" fill="none" stroke="#6366f1" stroke-width="${sw * 0.6}" stroke-dasharray="${sw * 2} ${sw * 2}"/><text x="${zb.x + zb.w / 2}" y="${zb.y + 24}" font-family="sans-serif" font-size="${Math.max(18, W / 60)}" fill="#4338ca" text-anchor="middle">${esc(z.name)} (${esc(z.id)})</text>`);
     }
-    for (const rep of safeReport(b).filter((x) => !x.inSafe))
-      svgs.push(`<rect x="${rep.box.x}" y="${rep.box.y}" width="${rep.box.w}" height="${rep.box.h}" fill="none" stroke="#dc2626" stroke-width="${sw * 1.5}"/>`);
+    for (const rep of (await safeReport(b)).filter((x) => !x.inSafe))
+      svgs.push(`<rect x="${(rep.ink ?? rep.box).x}" y="${(rep.ink ?? rep.box).y}" width="${(rep.ink ?? rep.box).w}" height="${(rep.ink ?? rep.box).h}" fill="none" stroke="#dc2626" stroke-width="${sw * 1.5}"/>`);
   }
   if (svgs.length) layers.push({ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${svgs.join("")}</svg>`), left: 0, top: 0 });
 

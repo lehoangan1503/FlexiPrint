@@ -17,7 +17,7 @@
 import sharp from "sharp";
 import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
-import type { CtPackImage, CtProduct, CtVersionPhoi, CtVersionPhoiStatus } from "../types";
+import type { CtBaseProduct, CtPackImage, CtProduct, CtVersionPhoi, CtVersionPhoiStatus } from "../types";
 import { normalizeProductConfig, normalizeVersionPhoi } from "../lib/design";
 import { CT_IMAGE_MODEL } from "../lib/image-models";
 import { drawImage } from "./pack-images";
@@ -26,11 +26,12 @@ import { ctUpload } from "./storage";
 import { loadBaseProduct } from "./base-products";
 import { jsonError, ownedProduct } from "./handlers";
 import { applyBase } from "./artwork-link";
+import { phoiReference } from "./version-phoi-ref";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 
 type Db = CtSession["supabase"] | CtServiceClient;
 
-const jobName = (productId: string) => `phoi:${productId}`;
+export const jobName = (productId: string) => `phoi:${productId}`;
 
 /** One write at a time per artwork: several versions finish together, each adds its own entry to the stored list. */
 const chains = new Map<string, Promise<void>>();
@@ -78,6 +79,129 @@ async function keepBackground(ref: Buffer, ai: Buffer, mask: Buffer | null, w: n
   return sharp(ref).resize(w, h, { fit: "fill" }).removeAlpha().composite([{ input: piece }]).jpeg({ quality: 90 }).toBuffer();
 }
 
+/** What one AI phôi job needs: the reference + mask (1024², made by the editor or server/version-phoi-ref.ts). */
+export interface CtPhoiJobInput {
+  userId: string;
+  productId: string;
+  base: CtBaseProduct;
+  mainId: string;
+  ref: Buffer;
+  mask: Buffer | null;
+  /** Where the artwork canvas is on the reference (its px). */
+  box: CtVersionPhoi["box"];
+}
+
+/** Starts the AI for one version (background job: AI → register → keep background → saved) — returns the job row. */
+export async function startPhoiJob(db: Db, input: CtPhoiJobInput): Promise<CtPackImage> {
+  const { userId, productId, base, mainId, mask, box } = input;
+  const ref = await sharp(input.ref).png().toBuffer();
+  const meta = await sharp(ref).metadata();
+  const width = meta.width ?? 1024;
+  const dir = `${userId}/${CT_CONFIG.storagePrefix}/${productId}/phoi`;
+  const refUrl = await ctUpload(`${dir}/ref-${crypto.randomUUID()}.png`, ref, "image/png");
+  const prompt = promptFor(base.config.material, base.config.cut.hole);
+  const { data: job, error } = await db
+    .from(CT_TABLES.packImages)
+    .insert({ user_id: userId, name: jobName(productId), source: "ai", status: "running", listed: false, description: mainId, prompt, refs: [refUrl], aspect: "1:1", model: CT_IMAGE_MODEL })
+    .select("*")
+    .single<CtPackImage>();
+  if (error || !job) throw new Error(error?.message ?? "Không tạo được việc");
+
+  void (async () => {
+    let last = "";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const ai = await drawImage(CT_IMAGE_MODEL, prompt, [refUrl], "1:1", "crop");
+        const aiUrl = await ctUpload(`${dir}/ai-${crypto.randomUUID()}.png`, ai.data, "image/png");
+        const reg = await kitPost<{ png: string; w: number; h: number; scale: number; similarity: boolean; residual: number }>("/register-photo", { ref: refUrl, url: aiUrl }, 180_000);
+        // The answer is on the reference's canvas (its own size: the AI's 1024²): the box scales with it.
+        const k = reg.w / width;
+        const jpg = await keepBackground(ref, Buffer.from(reg.png, "base64"), mask, reg.w, reg.h);
+        const url = await ctUpload(`${dir}/${mainId}-${crypto.randomUUID()}.jpg`, jpg, "image/jpeg");
+        await savePhoi(db, productId, { baseId: base.id, mainId, url, width: reg.w, height: reg.h, box: { x: box.x * k, y: box.y * k, w: box.w * k, h: box.h * k }, at: new Date().toISOString(), source: "ai" });
+        await db.from(CT_TABLES.packImages).update({ status: "done", url, mime: "image/jpeg", width: reg.w, height: reg.h, error: "" }).eq("id", job.id);
+        await refreshProductsOf(db, productId);
+        console.info(`[ct] phôi AI ${productId}/${mainId}: scale ${reg.scale}${reg.similarity ? "" : " (no features)"}, residual ${reg.residual}px`);
+        return;
+      } catch (e) {
+        last = e instanceof Error ? e.message : String(e);
+      }
+    }
+    await db.from(CT_TABLES.packImages).update({ status: "failed", error: last.slice(0, 1000) }).eq("id", job.id);
+  })();
+  return job;
+}
+
+/** The products made from this artwork show a new phôi at once (their preview, not their design). */
+async function refreshProductsOf(db: Db, artworkId: string): Promise<void> {
+  const { data: made } = await db.from(CT_TABLES.products).select("*").eq("kind", "product").eq("config->artworkLink->>artworkId", artworkId).returns<CtProduct[]>();
+  for (const p of made ?? []) await applyBase(db, p).catch((e: Error) => console.warn(`[ct] phôi → ${p.name}: ${e.message}`));
+}
+
+/**
+ * A phôi that needs no AI (2026-11-08, asked: an import whose folder already has its preview must not be drawn again):
+ * the folder's own picture of the version on the piece, saved as it is.
+ */
+export async function savePhoiPicture(db: Db, userId: string, productId: string, baseId: string, mainId: string, picture: Buffer, box: CtVersionPhoi["box"] | null): Promise<CtVersionPhoi> {
+  const jpg = await sharp(picture).flatten({ background: "#ffffff" }).jpeg({ quality: 90 }).toBuffer();
+  const meta = await sharp(jpg).metadata();
+  const width = meta.width ?? 1024;
+  const height = meta.height ?? 1024;
+  const url = await ctUpload(`${userId}/${CT_CONFIG.storagePrefix}/${productId}/phoi/${mainId}-${crypto.randomUUID()}.jpg`, jpg, "image/jpeg");
+  const entry: CtVersionPhoi = { baseId, mainId, url, width, height, box: box ?? { x: 0, y: 0, w: width, h: height }, at: new Date().toISOString(), source: "folder" };
+  await savePhoi(db, productId, entry);
+  await refreshProductsOf(db, productId);
+  return entry;
+}
+
+/** One version's phôi state after ensureVersionPhoi. */
+export interface CtPhoiVersionState {
+  mainId: string;
+  name: string;
+  /** have = already has one (AI or the folder's) · running = an AI job is on it · started = sent to the AI now · failed */
+  status: "have" | "running" | "started" | "failed";
+  source?: "ai" | "folder";
+  error?: string;
+}
+
+/**
+ * Every version of an artwork gets its phôi on a cut-to-shape base: the ones that have one (drawn before, or the import
+ * folder's own preview) are left alone, the others go to the AI (reference made on the server). `redo` = draw these
+ * versions again even when they have one (never a folder's picture unless named in `mainIds`).
+ */
+export async function ensureVersionPhoi(db: Db, userId: string, artworkId: string, base: CtBaseProduct, opts: { redo?: boolean; mainIds?: string[] } = {}): Promise<CtPhoiVersionState[]> {
+  if (base.config.cut.mode !== "alpha") throw new Error(`Base ${base.name} không cắt theo viền thiết kế — preview dùng phôi của khuôn, không cần phôi AI`);
+  if (!base.config.preview.url) throw new Error(`Base ${base.name} chưa có ảnh nền xem trước (trang base → Phôi / nền xem trước)`);
+  const { data: art } = await db.from(CT_TABLES.products).select("config").eq("id", artworkId).maybeSingle<Pick<CtProduct, "config">>();
+  if (!art) throw new Error("Không tìm thấy artwork");
+  const have = normalizeProductConfig(art.config).versionPhoi.filter((v) => v.baseId === base.id);
+  const { data: mains } = await db.from(CT_TABLES.assets).select("id,name,sort_order").eq("product_id", artworkId).eq("role", "main").order("sort_order").returns<Array<{ id: string; name: string }>>();
+  const { data: jobs } = await db.from(CT_TABLES.packImages).select("description,status").eq("name", jobName(artworkId)).eq("status", "running").returns<Array<{ description: string; status: string }>>();
+  const running = new Set((jobs ?? []).map((j) => j.description));
+  const out: CtPhoiVersionState[] = [];
+  for (const m of mains ?? []) {
+    if (opts.mainIds?.length && !opts.mainIds.includes(m.id)) continue;
+    const own = have.find((v) => v.mainId === m.id);
+    const named = !!opts.mainIds?.includes(m.id);
+    if (running.has(m.id)) {
+      out.push({ mainId: m.id, name: m.name, status: "running" });
+      continue;
+    }
+    if (own && (!opts.redo || (own.source === "folder" && !named))) {
+      out.push({ mainId: m.id, name: m.name, status: "have", source: own.source ?? "ai" });
+      continue;
+    }
+    try {
+      const ref = await phoiReference(db, artworkId, base, m.id);
+      await startPhoiJob(db, { userId, productId: artworkId, base, mainId: m.id, ref: ref.ref, mask: ref.mask, box: ref.box });
+      out.push({ mainId: m.id, name: m.name, status: "started" });
+    } catch (e) {
+      out.push({ mainId: m.id, name: m.name, status: "failed", error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return out;
+}
+
 /** POST products/:id/version-phoi */
 export async function makeVersionPhoi(s: CtSession, productId: string, form: FormData): Promise<NextResponse> {
   const product = await ownedProduct(s, productId);
@@ -95,48 +219,15 @@ export async function makeVersionPhoi(s: CtSession, productId: string, form: For
   if (!(file instanceof Blob) || !mainId || !baseId || !box) return jsonError("Thiếu ảnh mẫu / version / base / khung", 400);
   const base = await loadBaseProduct(s.supabase, baseId);
   if (!base) return jsonError("Không tìm thấy product base", 404);
-  const ref = await sharp(Buffer.from(await file.arrayBuffer())).png().toBuffer();
   const maskFile = form.get("mask");
   const mask = maskFile instanceof Blob ? Buffer.from(await maskFile.arrayBuffer()) : null;
-  const meta = await sharp(ref).metadata();
-  const width = meta.width ?? 1024;
-  const height = meta.height ?? 1024;
-  const dir = `${s.user.id}/${CT_CONFIG.storagePrefix}/${productId}/phoi`;
-  const refUrl = await ctUpload(`${dir}/ref-${crypto.randomUUID()}.png`, ref, "image/png");
-  const prompt = promptFor(base.config.material, base.config.cut.hole);
   const db = ctServiceClient() ?? s.supabase;
-  const { data: job, error } = await db
-    .from(CT_TABLES.packImages)
-    .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: mainId, prompt, refs: [refUrl], aspect: "1:1", model: CT_IMAGE_MODEL })
-    .select("*")
-    .single<CtPackImage>();
-  if (error || !job) return jsonError(error?.message ?? "Không tạo được việc", 500);
-
-  void (async () => {
-    let last = "";
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const ai = await drawImage(CT_IMAGE_MODEL, prompt, [refUrl], "1:1", "crop");
-        const aiUrl = await ctUpload(`${dir}/ai-${crypto.randomUUID()}.png`, ai.data, "image/png");
-        const reg = await kitPost<{ png: string; w: number; h: number; scale: number; similarity: boolean; residual: number }>("/register-photo", { ref: refUrl, url: aiUrl }, 180_000);
-        // The answer is on the reference's canvas (its own size: the AI's 1024²): the box scales with it.
-        const k = reg.w / width;
-        const jpg = await keepBackground(ref, Buffer.from(reg.png, "base64"), mask, reg.w, reg.h);
-        const url = await ctUpload(`${dir}/${mainId}-${crypto.randomUUID()}.jpg`, jpg, "image/jpeg");
-        await savePhoi(db, productId, { baseId, mainId, url, width: reg.w, height: reg.h, box: { x: box.x * k, y: box.y * k, w: box.w * k, h: box.h * k }, at: new Date().toISOString() });
-        await db.from(CT_TABLES.packImages).update({ status: "done", url, mime: "image/jpeg", width: reg.w, height: reg.h, error: "" }).eq("id", job.id);
-        // The products made from this artwork show it at once (their preview, not their design).
-        const { data: made } = await db.from(CT_TABLES.products).select("*").eq("kind", "product").eq("config->artworkLink->>artworkId", productId).returns<CtProduct[]>();
-        for (const p of made ?? []) await applyBase(db, p).catch((e: Error) => console.warn(`[ct] phôi AI → ${p.name}: ${e.message}`));
-        console.info(`[ct] phôi AI ${productId}/${mainId}: scale ${reg.scale}${reg.similarity ? "" : " (no features)"}, residual ${reg.residual}px`);
-        return;
-      } catch (e) {
-        last = e instanceof Error ? e.message : String(e);
-      }
-    }
-    await db.from(CT_TABLES.packImages).update({ status: "failed", error: last.slice(0, 1000) }).eq("id", job.id);
-  })();
-  return NextResponse.json({ job }, { status: 202 });
+  try {
+    const job = await startPhoiJob(db, { userId: s.user.id, productId, base, mainId, ref: Buffer.from(await file.arrayBuffer()), mask, box });
+    return NextResponse.json({ job }, { status: 202 });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không tạo được việc", 500);
+  }
 }
 
 /** GET products/:id/version-phoi */

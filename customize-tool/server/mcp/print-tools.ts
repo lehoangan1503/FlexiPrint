@@ -20,18 +20,19 @@
 
 import sharp from "sharp";
 import { CT_CONFIG, CT_FONTS, CT_TABLES } from "../../config";
-import type { CtAiStyleParams, CtAsset, CtBounds, CtRegion, CtRegionItem, CtShape } from "../../types";
+import type { CtAiStyleParams, CtAsset, CtBounds, CtProduct, CtRegion, CtRegionItem, CtShape } from "../../types";
 import type { CtPrintBlank, CtPrintSpec, CtPrintTemplate } from "../../types/print";
 import { defaultRegionConfig } from "../../lib/design";
 import { newId, shapeBounds } from "../../lib/geometry";
-import { safeShapes, sizedTemplateSpec } from "../../lib/print-template";
+import { normalizePrintSpec, safeShapes, sizedTemplateSpec } from "../../lib/print-template";
 import { str } from "../ai/llm";
 import { aiStyleRef, isAiStyleRef, withAiStyles } from "../../lib/photo-styles";
 import { normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { ctLibraryPath, ctUpload } from "../storage";
 import { siteUrl } from "../site-url";
-import { frameRegion, makeTemplateProduct, productPrintOf, type PrintDb } from "../print-products";
-import { loadArtwork, renderArtwork, safeReport } from "../print-render";
+import { frameRegion, makeBaseArtwork, makeTemplateProduct, productPrintOf, type PrintDb } from "../print-products";
+import { loadBaseProduct } from "../base-products";
+import { loadArtwork, renderArtwork, safeReport, type ArtworkBundle } from "../print-render";
 import { productOptions, selectionFromNames } from "../product-options";
 import { makeProductBlank, productMockups } from "../product-mockups";
 import { serviceSession } from "../char/product";
@@ -245,6 +246,14 @@ async function buildLayers(db: PrintDb, productId: string, spec: CtPrintSpec, ra
   return { regions, items };
 }
 
+/** The sheet layers are placed on: the artwork's khuôn on its base (loadArtwork), else its plain canvas. */
+function specOf(b: ArtworkBundle | null): CtPrintSpec {
+  if (!b) throw new Error("No such artwork");
+  if (b.spec) return b.spec;
+  const main = b.assets.find((a) => a.id === b.product.main_asset_id);
+  return normalizePrintSpec({ width: main?.width ?? 1000, height: main?.height ?? 1000 });
+}
+
 async function saveLayers(db: PrintDb, productId: string, frame: CtRegion | null, built: { regions: CtRegion[]; items: CtRegionItem[] }): Promise<void> {
   const regions = frame ? [frame, ...built.regions] : built.regions;
   const { error } = await db.rpc("ct_save_design", { p_product_id: productId, p_regions: regions.map((r, i) => ({ ...r, sort_order: i })), p_items: built.items });
@@ -448,40 +457,54 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
   },
   {
     name: "create_artwork_product",
-    description: `Make a product on a khuôn in from library cliparts: its canvas is the template's sheet, its print file is cut to the template. Returns the product id, its editor url and where each main element sits against the safe zone (fix outside ones with set_artwork_layers). Look at it with render_artwork. ${LAYERS_DOC}`,
+    description: `Make an ARTWORK from library cliparts, FOR a product base (base_product_id from list_base_products — Teeinblue's flow): its canvas is the base's print area, it is viewed on the base (the base's khuôn, safe zone, cut and phôi are laid on it — never copied in), so it can later go on other bases too. template_id (a khuôn alone, no base) is the old way, only when no base fits. Returns the artwork id, its editor url and where each main element's visible pixels sit against the safe zone (fix outside ones with set_artwork_layers). Look at it with render_artwork; sell it with make_product_from_artwork. ${LAYERS_DOC}`,
     inputSchema: {
       type: "object",
       properties: {
-        template_id: { type: "string", description: "From list_print_templates." },
-        name: { type: "string", description: "Product name." },
+        base_product_id: { type: "string", description: "From list_base_products (preferred)." },
+        template_id: { type: "string", description: "Old way: a khuôn of list_print_templates when no base fits." },
+        name: { type: "string", description: "Artwork name." },
         layers: { type: "array", items: { type: "object" }, description: LAYERS_DOC },
-        task_id: { type: "string", description: "Agent: the task the product is for (its user owns the product)." },
+        task_id: { type: "string", description: "Agent: the task the artwork is for (its user owns it)." },
       },
-      required: ["template_id", "name", "layers"],
+      required: ["name", "layers"],
     },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
-      const t = await templateOf(ctx.db, args.template_id);
-      const owner = await ownerOf(ctx, args, t.user_id);
-      const product = await makeTemplateProduct(ctx.db, owner, t, str(args.name) || t.name);
+      const base = str(args.base_product_id) ? await loadBaseProduct(ctx.db, str(args.base_product_id)) : null;
+      if (str(args.base_product_id) && !base) throw new Error("No such product base — list_base_products");
+      if (!base && !str(args.template_id)) throw new Error("base_product_id (list_base_products) is needed");
+      let product: CtProduct;
+      let frame: CtRegion | null = null;
+      if (base) {
+        const owner = await ownerOf(ctx, args, base.user_id);
+        const tpl = base.config.templateId ? await templateOf(ctx.db, base.config.templateId).catch(() => null) : null;
+        product = await makeBaseArtwork(ctx.db, owner, base, tpl, str(args.name) || base.name);
+      } else {
+        const t = await templateOf(ctx.db, args.template_id);
+        const owner = await ownerOf(ctx, args, t.user_id);
+        product = await makeTemplateProduct(ctx.db, owner, t, str(args.name) || t.name);
+        frame = frameRegion(product.id, productPrintOf(t));
+      }
       try {
-        const built = await buildLayers(ctx.db, product.id, t.spec, args.layers, 1);
-        await saveLayers(ctx.db, product.id, frameRegion(product.id, productPrintOf(t)), built);
+        const loaded = await loadArtwork(ctx.db, product.id);
+        const built = await buildLayers(ctx.db, product.id, specOf(loaded), args.layers, 1);
+        await saveLayers(ctx.db, product.id, frame, built);
       } catch (e) {
         await ctx.db.from(CT_TABLES.products).delete().eq("id", product.id);
         throw e;
       }
       const bundle = await loadArtwork(ctx.db, product.id);
-      return json({ product_id: product.id, editor: editorUrl(product.id), safeZone: bundle ? safeReport(bundle) : [], next: "render_artwork to look at it; set_artwork_layers to fix." });
+      return json({ artwork_id: product.id, product_id: product.id, base: base ? { id: base.id, name: base.name } : null, editor: editorUrl(product.id), safeZone: bundle ? await safeReport(bundle) : [], next: "render_artwork to look at it; set_artwork_layers to fix; make_product_from_artwork {artwork_id, base_product_id} to sell it." });
     },
   },
   {
     name: "set_artwork_layers",
-    description: `Replace every layer of a product made on a khuôn in (its khuôn layer stays). ${LAYERS_DOC}`,
+    description: `Replace every layer of an artwork made by create_artwork_product (an old-style khuôn layer stays). Positions are canvas px (the base's print area). ${LAYERS_DOC}`,
     inputSchema: {
       type: "object",
       properties: {
-        product_id: { type: "string", description: "From create_artwork_product." },
+        product_id: { type: "string", description: "The artwork (from create_artwork_product)." },
         layers: { type: "array", items: { type: "object" }, description: LAYERS_DOC },
       },
       required: ["product_id", "layers"],
@@ -489,23 +512,24 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
     callers: ["agent", "user"],
     run: async (ctx, args) => {
       const bundle = await loadArtwork(ctx.db, str(args.product_id));
-      if (!bundle?.spec) throw new Error("Not a product made on a khuôn in");
+      if (!bundle) throw new Error("No such artwork");
+      if (bundle.product.kind === "product") throw new Error("That is a product (a snapshot of its artwork): change the artwork, then update the product from it");
       const frame = bundle.regions.find((r) => r.config.materialFrame) ?? null;
-      const built = await buildLayers(ctx.db, bundle.product.id, bundle.spec, args.layers, 1);
+      const built = await buildLayers(ctx.db, bundle.product.id, specOf(bundle), args.layers, 1);
       await saveLayers(ctx.db, bundle.product.id, frame, built);
       const next = await loadArtwork(ctx.db, bundle.product.id);
-      return json({ product_id: bundle.product.id, safeZone: next ? safeReport(next) : [] });
+      return json({ product_id: bundle.product.id, safeZone: next ? await safeReport(next) : [] });
     },
   },
   {
     name: "check_artwork",
-    description: "Where each main element (placed clipart, text, photo zone) of a khuôn in product sits, and whether it is inside the safe zone.",
+    description: "Where each main element (placed clipart, text, photo zone) of an artwork / product sits, and whether its VISIBLE pixels are inside the safe zone (a full-canvas clipart file whose part is in the middle is inside). An artwork is checked on its base's khuôn.",
     inputSchema: { type: "object", properties: { product_id: { type: "string", description: "The product." } }, required: ["product_id"] },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
       const bundle = await loadArtwork(ctx.db, str(args.product_id));
       if (!bundle) throw new Error("No such product");
-      const report = safeReport(bundle);
+      const report = await safeReport(bundle);
       return json({ product_id: bundle.product.id, sheet: bundle.spec ? { width: bundle.spec.width, height: bundle.spec.height } : null, layers: report, allInside: report.every((r) => r.inSafe) });
     },
   },
@@ -612,7 +636,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
   {
     name: "make_product_mockups",
     description:
-      "Mockups of a product, one set per entry: one AI lifestyle photo per scene (~1 min, in the background), drawn from the print with those options (rendered on the server exactly, text in its font) laid on the product's phôi — that front picture (front) is only the AI's reference, not a product picture. The photos are added to the product (editor → Mockups) and are what Deploy sends to Shopify. → job ids; then wait_product_mockups and view_image every photo.",
+      "Mockups of a PRODUCT (kind product — an artwork has none: make_product_from_artwork first, the mockups are of artwork + base), one set per entry: one AI lifestyle photo per scene (~1 min, in the background), drawn from the print with those options (rendered on the server exactly, text in its font) laid on the product's phôi — that front picture (front) is only the AI's reference, not a product picture. The photos are added to the product (editor → Mockups) and are what Deploy sends to Shopify. → job ids; then wait_product_mockups and view_image every photo.",
     inputSchema: {
       type: "object",
       properties: {
@@ -630,6 +654,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
     run: async (ctx, args) => {
       const bundle = await loadArtwork(ctx.db, str(args.product_id));
       if (!bundle) throw new Error("No such product");
+      if (bundle.product.kind !== "product") throw new Error("That is an ARTWORK: mockups are of a product (artwork + base) — make_product_from_artwork {artwork_id, base_product_id}, then make_product_mockups on the product id");
       const list = (Array.isArray(args.mockups) ? args.mockups : []).slice(0, 4).map((x) => (x && typeof x === "object" ? (x as Record<string, unknown>) : {}));
       if (!list.length) throw new Error('"mockups" must list at least one {label, options, scenes}');
       const s = await sessionFor(ctx, bundle.product.user_id);
@@ -649,7 +674,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
   {
     name: "make_product_blank",
     description:
-      "Draw a phôi trơn (the blank piece, nothing printed) for a product from its khuôn in and material (the team's image model, ~1 min in the background) — for a product whose khuôn has no phôi of its material (char_add_product → blank null, or a glass phôi on a ceramic product). It becomes the product's phôi (Xem trước, Mockups) and the khuôn keeps it for the next product. check: true → is it done, and the product's phôi url; view_image it before make_product_mockups.",
+      "Old-style products only (a khuôn copied into the row, no product base): draw a phôi trơn (the blank piece, nothing printed) from its khuôn in and material. On the base model the phôi is the BASE's (its preview photo / its khuôn's phôi — set on the base page; an acrylic base's per-version preview = make_version_phoi), so this refuses artworks and products made on a base. (the team's image model, ~1 min in the background) — for a product whose khuôn has no phôi of its material (char_add_product → blank null, or a glass phôi on a ceramic product). It becomes the product's phôi (Xem trước, Mockups) and the khuôn keeps it for the next product. check: true → is it done, and the product's phôi url; view_image it before make_product_mockups.",
     inputSchema: {
       type: "object",
       properties: { product_id: { type: "string", description: "The product." }, check: { type: "boolean", description: "true = only report the state." }, task_id: { type: "string", description: "Agent: the task it is for." } },
@@ -658,8 +683,9 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
     callers: ["agent", "user"],
     run: async (ctx, args) => {
       const productId = str(args.product_id);
-      const { data: product } = await ctx.db.from(CT_TABLES.products).select("id, user_id, config").eq("id", productId).maybeSingle<{ id: string; user_id: string | null; config: { scene?: { url?: string } } }>();
+      const { data: product } = await ctx.db.from(CT_TABLES.products).select("id, user_id, config, base_product_id, kind").eq("id", productId).maybeSingle<{ id: string; user_id: string | null; config: { scene?: { url?: string } }; base_product_id: string | null; kind: string | null }>();
       if (!product) throw new Error("No such product");
+      if (product.base_product_id && args.check !== true) throw new Error("This row is on a product base: its phôi is the base's (list_base_products → preview; fix it on the base page). Per-version preview of an acrylic artwork: make_version_phoi.");
       const state = BLANK_JOBS.get(productId);
       if (args.check === true || state?.status === "running")
         return json({ status: state?.status ?? "idle", error: state?.error || undefined, blank: product.config?.scene?.url || null, ...(state?.status === "running" ? { message: "still drawing — call again with check: true in ~30 s." } : {}) });

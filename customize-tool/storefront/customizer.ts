@@ -1114,7 +1114,8 @@ export class Customizer {
     const stored: CtStoredTask = {
       id: json.task.id,
       poll: this.tasksUrl.replace(/[^/]+$/, json.task.id),
-      productUrl: location.pathname,
+      // The page as opened (a preview link needs its query), without a task to restore.
+      productUrl: ((u) => (u.searchParams.delete(TASK_PARAM), u.pathname + u.search))(new URL(location.href)),
       productTitle: this.root.dataset.ctProductTitle || document.title,
       productImage: this.root.dataset.ctProductImage || og,
       styleName: styleLabel(style, this.tpl.aiStyles),
@@ -1272,7 +1273,7 @@ export class Customizer {
     const list = el("div", { class: "ct-wait__list" });
     const panel = el("div", { class: "ct-wait", hidden: true }, [
       el("div", { class: "ct-wait__head" }, [
-        el("p", { class: "ct-wait__text", text: this.t("waitText", "This takes about a minute. Feel free to keep browsing — it carries on in the background and pops up in the top corner when it's ready.") }),
+        el("p", { class: "ct-wait__text", text: this.t("waitText", "This takes a minute or two. Feel free to keep browsing — it carries on in the background and pops up in the top corner when it's ready.") }),
         keep,
       ]),
       list,

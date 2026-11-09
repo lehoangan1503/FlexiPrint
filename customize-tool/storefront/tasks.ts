@@ -171,7 +171,7 @@ function card(t: CtStoredTask): HTMLElement {
       ? "Couldn't finish — tap to try again"
       : working
         ? t.task.stage === "style"
-          ? `Creating ${t.styleName || "your design"}… about a minute`
+          ? `Creating ${t.styleName || "your design"}…`
           : "Making your realistic preview…"
         : "Your design is ready ✨ Tap to view",
   });

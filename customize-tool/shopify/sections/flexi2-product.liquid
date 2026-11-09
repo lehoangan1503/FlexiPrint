@@ -75,6 +75,8 @@
     data-ct-upload-url="{{ api_base }}/api/customize-tool/public/uploads/{{ ct_id | url_encode }}"
     data-ct-photo-url="{{ api_base }}/api/customize-tool/public/photo/{{ ct_id | url_encode }}"
     data-ct-shopify-product-id="{{ product.id }}"
+    data-ct-product-handle="{{ product.handle }}"
+    data-ct-collections="{{ product.collections | map: 'handle' | join: ',' }}"
     data-ct-product-title="{{ product.title | escape }}"
     data-ct-product-image="{% if product.featured_image %}{{ product.featured_image | image_url: width: 300 }}{% endif %}"
   {% endif %}

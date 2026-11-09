@@ -44,6 +44,7 @@ import type {
   CtPackFrameLayer,
   CtPhotoSelection,
   CtPhotoTask,
+  CtPhotoTaskPhoi,
   CtPhotoStyleRef,
   CtProductScene,
   CtRegion,
@@ -89,8 +90,8 @@ import { IDENTITY_TRANSFORM, itemPlacement, photoFrameBox, resolvePhotoFrame, sh
 import { filterBlob, processPhoto, shrinkImage } from "../lib/photo-process";
 import { isAiStyleRef, styleEngine, styleFamily, styleFilter, styleLabel } from "../lib/photo-styles";
 import { phoiPicks, phoiTaskKey } from "../lib/photo-task-key";
-import { addTask, getTask, onTasks, TASK_PARAM, updateTask, type CtStoredTask } from "./tasks";
-import { createMagicLoader } from "./magic-loader";
+import { addTask, getTask, latestForPage, onTasks, TASK_PARAM, taskWorking, updateTask, type CtStoredTask } from "./tasks";
+import { createMagicLoader, type MagicLoader } from "./magic-loader";
 
 interface VariantInfo {
   price: string;
@@ -193,6 +194,16 @@ interface CtRecoProduct {
   url: string;
   featured_image: string;
   available?: boolean;
+  /** Cents. */
+  price?: number;
+}
+
+/** A product of /collections/<handle>/products.json. */
+interface CtCollectionProduct {
+  title: string;
+  handle: string;
+  images?: Array<{ src: string }>;
+  variants?: Array<{ price: string; available?: boolean }>;
 }
 
 interface CtShopifyWindow extends Window {
@@ -348,6 +359,8 @@ export class Customizer {
   private recos: Promise<CtRecoProduct[]> | null = null;
   /** "Making your realistic preview…" over the stage while the shown design's phôi is drawn. */
   private badge: HTMLElement | null = null;
+  /** A task whose photo is not in the design yet (restored / left early): the stage says it is coming. */
+  private waitingTask: string | null = null;
 
   private readonly stage: HTMLElement | null;
   private readonly gallery: HTMLElement | null;
@@ -620,18 +633,23 @@ export class Customizer {
       return;
     }
     // The customer's own phôi (2026-11-09, server/photo-tasks.ts): the piece photographed WITH their photo and picks —
-    // only the texts they type are laid on it. While it is drawn, the version's phôi below + the badge.
+    // only the texts they type are laid on it. 2026-11-10 ("muốn chỉ upload ảnh, bước acrylic sẽ là cuối cùng show
+    // luôn"): while it is drawn the flat photo is never shown — the last phôi of that version stays under an "updating"
+    // badge, else the piece without that photo.
     const want = this.wantedPhoi(this.selection);
-    const mine = want && want.stored.task.phoi?.key === want.key ? want.stored.task.phoi : null;
-    this.showBadge(!!want && !mine && (want.stored.task.phoiPending === want.key || want.stored.task.stage === "style"));
+    const task = want?.stored.task ?? null;
+    const working = !!task && taskWorking(task);
+    const done = want && task?.phoi?.key === want.key ? task.phoi : null;
+    const stale = !done && want && working && task?.phoi?.mainId === want.mainId ? task.phoi : null;
+    const waitedOn = this.waitingTask ? getTask(this.waitingTask)?.task : null;
+    const waiting = !!waitedOn && taskWorking(waitedOn);
+    this.showBadge(
+      waiting || (!!want && working && !done),
+      stale ? this.t("updating", "Updating your realistic preview…") : this.t("realistic", "Making your realistic preview…"),
+    );
+    const mine = done ?? stale;
     if (mine) {
-      const k = Math.min(1, side / Math.max(mine.width, mine.height));
-      const scale = Math.min(1, (mine.box.w * k) / this.main.width);
-      const texts = this.regions.filter((r) => r.kind === "text");
-      const input = { main: this.main, assets: this.tpl.assets, regions: texts, items: this.tpl.items, selection: this.selection, layouts: this.tpl.config.layouts };
-      const off = await renderComposite({ ...input, scale: Math.max(scale, 0.05), display: true, part: "dynamic" })
-        .then((c) => drawOnScene({ url: mine.url, width: mine.width, height: mine.height, box: mine.box }, c, side, { x: 0, y: 0 }, true))
-        .catch(() => null);
+      const off = await this.phoiCanvas(mine, this.selection, side).catch(() => null);
       if (off && token === this.renderToken) {
         canvas.width = off.width;
         canvas.height = off.height;
@@ -640,13 +658,14 @@ export class Customizer {
       }
       if (token !== this.renderToken) return;
     }
+    const shown: CtSelection = want && working ? { ...this.selection, [want.regionId]: { ...want.photo, url: null } } : this.selection;
     // The version's AI phôi (2026-11-08): its fixed parts are already in the photo as the real piece — only what the
     // customer picks or types is laid on it.
-    const phoi = this.versionPhoi(this.selection);
+    const phoi = this.versionPhoi(shown);
     if (phoi) {
       const k = Math.min(1, side / Math.max(phoi.width, phoi.height));
       const scale = Math.min(1, (phoi.box.w * k) / this.main.width);
-      const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection: this.selection, layouts: this.tpl.config.layouts };
+      const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection: shown, layouts: this.tpl.config.layouts };
       const off = await renderComposite({ ...input, scale: Math.max(scale, 0.05), display: true, part: "dynamic" })
         .then((c) => drawOnScene({ url: phoi.url, width: phoi.width, height: phoi.height, box: phoi.box }, c, side, { x: 0, y: 0 }, true))
         .catch(() => null);
@@ -658,13 +677,13 @@ export class Customizer {
     }
     // The design on the product's photo: the picked background's own photo (it already shows the print-only layers,
     // they are left out), else the phôi trơn (a blank piece: everything printed is drawn on it).
-    const own = this.optionScene(this.selection);
+    const own = this.optionScene(shown);
     const scene = own ?? this.tpl.config.scene;
     // On the phôi photo a piece with a khuôn shows only the piece (cut to it, the hanging hole open), like it is made.
-    const cut = !!scene.url && !!printFrame({ main: this.main, assets: this.tpl.assets, regions: this.regions, selection: this.selection });
-    const b = cut ? { x: 0, y: 0 } : compositeBleed({ main: this.main, assets: this.tpl.assets, regions: this.regions, selection: this.selection, layouts: this.tpl.config.layouts });
+    const cut = !!scene.url && !!printFrame({ main: this.main, assets: this.tpl.assets, regions: this.regions, selection: shown });
+    const b = cut ? { x: 0, y: 0 } : compositeBleed({ main: this.main, assets: this.tpl.assets, regions: this.regions, selection: shown, layouts: this.tpl.config.layouts });
     const bleed = { x: b.x / this.main.width, y: b.y / this.main.height };
-    const off = await this.product(this.selection, side, !!own, cut)
+    const off = await this.product(shown, side, !!own, cut)
       .then((c) => drawOnScene(scene, c, side, bleed))
       .catch(() => null);
     if (!off || token !== this.renderToken) return;
@@ -1131,21 +1150,58 @@ export class Customizer {
 
   /** The finished photo of a task (it goes on drawing its phôi after). */
   private taskPhoto(id: string): Promise<string> {
+    return this.untilTask(id, (t) => (t.photoUrl ? t.photoUrl : null));
+  }
+
+  /**
+   * The task's photo once ALL of it is done — the phôi too (2026-11-10: the customer sees the acrylic piece at once,
+   * not the flat photo first). A phôi that could not be drawn still gives the photo (its error stays on the task).
+   */
+  private taskResult(id: string, onStage?: (stage: CtPhotoTask["stage"]) => void): Promise<string> {
+    let last: CtPhotoTask["stage"] | null = null;
+    return this.untilTask(id, (t) => {
+      if (t.stage !== last) {
+        last = t.stage;
+        onStage?.(t.stage);
+      }
+      return t.photoUrl && !taskWorking(t) ? t.photoUrl : null;
+    });
+  }
+
+  /** The phôi `key` of a task drawn (resolves) or given up (rejects with why). */
+  private waitPhoi(id: string, key: string): Promise<string> {
+    return this.untilTask(id, (t) => {
+      if (t.phoi?.key === key) return t.phoi.url;
+      if (t.phoiPending !== key) throw new Error(t.error || this.t("phoiFailed", "We couldn't update the preview — please try again."));
+      return null;
+    });
+  }
+
+  /** Resolves with `done(task)` once it is not null; a failed / forgotten task (or `done` throwing) rejects. */
+  private untilTask<T>(id: string, done: (t: CtPhotoTask) => T | null): Promise<T> {
     return new Promise((resolve, reject) => {
       let off: () => void = () => undefined;
       let settled = false;
+      const end = () => {
+        settled = true;
+        off();
+      };
       const check = () => {
         if (settled) return;
         const t = getTask(id)?.task;
-        if (t?.photoUrl) {
-          settled = true;
-          off();
-          this.taskByPhoto.set(t.photoUrl, id);
-          resolve(t.photoUrl);
-        } else if (!t || t.stage === "failed") {
-          settled = true;
-          off();
-          reject(new Error(t?.error || this.t("taskFailed", "We couldn't finish this photo — please try again.")));
+        try {
+          const out = t && t.stage !== "failed" ? done(t) : null;
+          if (out !== null) {
+            end();
+            if (t?.photoUrl) this.taskByPhoto.set(t.photoUrl, id);
+            resolve(out);
+          } else if (!t || t.stage === "failed") {
+            end();
+            reject(new Error(t?.error || this.t("taskFailed", "We couldn't finish this photo — please try again.")));
+          }
+        } catch (e) {
+          end();
+          reject(e instanceof Error ? e : new Error(String(e)));
         }
       };
       off = onTasks(check);
@@ -1154,21 +1210,29 @@ export class Customizer {
   }
 
   /**
-   * The customer left the dialog before the photo was ready ("Keep browsing"): it goes in by itself when it is,
-   * as big as its zone allows — unless they put another photo there meanwhile.
+   * The customer left the dialog before the photo was ready ("Keep browsing"), or the page was reloaded meanwhile:
+   * it goes in by itself when it is, as big as its zone allows — unless they put another photo there meanwhile.
    */
   private autoApply(r: CtRegion, id: string, style: CtPhotoStyleRef, optionId: string | null, design = this.active): void {
+    this.waitingTask = id;
+    this.scheduleRender();
     void this.taskPhoto(id)
       .then((url) => {
         if (this.destroyed) return;
         const sel = this.designs[design];
         const cur = sel?.[r.id];
         if (!sel || (cur?.kind === "photo" && cur.url && cur.url !== url)) return;
-        const value: CtPhotoSelection = { kind: "photo", url, transform: { ...IDENTITY_TRANSFORM }, style, sourceUrl: getTask(id)?.task.sourceUrl ?? null, optionId };
+        const stored = getTask(id);
+        const value: CtPhotoSelection = { kind: "photo", url, transform: { ...(stored?.transform ?? IDENTITY_TRANSFORM) }, style, sourceUrl: stored?.task.sourceUrl ?? null, optionId };
         if (design === this.active) this.change(r.id, value);
         else this.designs[design] = { ...sel, [r.id]: value };
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.waitingTask !== id) return;
+        this.waitingTask = null;
+        this.scheduleRender();
+      });
   }
 
   /** After a change: the stored design of each photo task follows it, and the phôi of what is shown is asked for. */
@@ -1186,7 +1250,7 @@ export class Customizer {
   }
 
   /** The photo task of the design shown and the phôi it needs; null = none (no task photo, a version without phôi). */
-  private wantedPhoi(sel: CtSelection): { stored: CtStoredTask; key: string; body: object } | null {
+  private wantedPhoi(sel: CtSelection): { stored: CtStoredTask; key: string; body: object; regionId: string; mainId: string; photo: CtPhotoSelection } | null {
     if (this.previewMode || !this.taskByPhoto.size) return null;
     const mainId = selectedMainId(sel, this.tpl.assets, this.tpl.mainAssetId);
     if (!this.tpl.config.versionPhoi.some((v) => v.mainId === mainId)) return null;
@@ -1201,44 +1265,68 @@ export class Customizer {
         stored,
         key: phoiTaskKey(mainId, r.id, p.transform, sel, optionId),
         body: { mainId, transform: p.transform, selection: phoiPicks(sel), optionId },
+        regionId: r.id,
+        mainId,
+        photo: p,
       };
     }
     return null;
   }
 
-  private async askPhoi(): Promise<void> {
-    const want = this.wantedPhoi(this.selection);
-    if (!want) return;
+  /** Asks the server for the phôi of `sel` (nothing when it is drawn or being drawn); the key wanted, null = none. */
+  private async askPhoi(sel: CtSelection = this.selection): Promise<string | null> {
+    const want = this.wantedPhoi(sel);
+    if (!want) return null;
     const t = want.stored.task;
-    if (!t.photoUrl || t.phoi?.key === want.key || t.phoiPending === want.key) return;
+    if (!t.photoUrl || t.phoi?.key === want.key || t.phoiPending === want.key) return want.key;
     const res = await fetch(`${want.stored.poll}/phoi`, { method: "POST", mode: "cors", headers: { "Content-Type": "application/json" }, body: JSON.stringify(want.body) }).catch(() => null);
-    const json = res ? ((await res.json().catch(() => null)) as { task?: CtPhotoTask } | null) : null;
+    const json = res ? ((await res.json().catch(() => null)) as { task?: CtPhotoTask; error?: string } | null) : null;
     if (json?.task) updateTask(want.stored.id, { task: json.task });
+    else throw new Error(json?.error || this.t("phoiFailed", "We couldn't update the preview — please try again."));
+    return want.key;
+  }
+
+  /** A customer phôi with the typed texts laid on it, `side` px. */
+  private async phoiCanvas(phoi: CtPhotoTaskPhoi, sel: CtSelection, side: number): Promise<HTMLCanvasElement> {
+    const k = Math.min(1, side / Math.max(phoi.width, phoi.height));
+    const scale = Math.min(1, (phoi.box.w * k) / this.main.width);
+    const texts = this.regions.filter((r) => r.kind === "text");
+    const input = { main: this.main, assets: this.tpl.assets, regions: texts, items: this.tpl.items, selection: sel, layouts: this.tpl.config.layouts };
+    const c = await renderComposite({ ...input, scale: Math.max(scale, 0.05), display: true, part: "dynamic" });
+    return drawOnScene({ url: phoi.url, width: phoi.width, height: phoi.height, box: phoi.box }, c, side, { x: 0, y: 0 }, true);
   }
 
   private onTasksChanged(): void {
-    if (this.wantedPhoi(this.selection)) this.scheduleRender();
+    if (this.waitingTask || this.wantedPhoi(this.selection)) this.scheduleRender();
   }
 
-  private showBadge(on: boolean): void {
+  private showBadge(on: boolean, text = ""): void {
     if (!this.stage) return;
     if (on && !this.badge) {
-      this.badge = el("div", { class: "ct-stage__badge", role: "status" }, [el("span", { class: "ct-stage__badge-dot" }), this.t("realistic", "Making your realistic preview…")]);
+      this.badge = el("div", { class: "ct-stage__badge", role: "status" }, [el("span", { class: "ct-stage__badge-dot" }), el("span", { class: "ct-stage__badge-text" })]);
       this.stage.append(this.badge);
     }
-    if (this.badge) this.badge.hidden = !on;
+    if (!this.badge) return;
+    this.badge.hidden = !on;
+    const label = this.badge.querySelector(".ct-stage__badge-text");
+    if (on && label && label.textContent !== text) label.textContent = text;
   }
 
-  /** ?flexi2_task=<id> (a card of storefront/tasks.ts): the design of that task, filled in again. */
+  /**
+   * ?flexi2_task=<id> (a card of storefront/tasks.ts), else the newest task of this product (2026-11-10: a reload,
+   * Shift+R, coming back later — the design and its preview are still there): its design filled in again.
+   */
   private restoreTask(): void {
     const url = new URL(location.href);
-    const id = url.searchParams.get(TASK_PARAM);
-    if (!id) return;
-    url.searchParams.delete(TASK_PARAM);
-    history.replaceState(history.state, "", url.toString());
-    const stored = getTask(id);
+    const fromLink = url.searchParams.get(TASK_PARAM);
+    if (fromLink) {
+      url.searchParams.delete(TASK_PARAM);
+      history.replaceState(history.state, "", url.toString());
+    }
+    const stored = fromLink ? getTask(fromLink) : latestForPage();
     const r = stored ? this.regions.find((x) => x.id === stored.task.regionId && x.kind === "photo") : undefined;
     if (!stored || !r) return;
+    const id = stored.id;
     const style = stored.task.style as CtPhotoStyleRef;
     const sel = this.carryOver({ ...stored.selection });
     const photoUrl = stored.task.photoUrl;
@@ -1251,46 +1339,107 @@ export class Customizer {
     this.showStage();
     if (!photoUrl) this.autoApply(r, id, style, stored.optionId);
     else this.syncTasks();
-    updateTask(id, { dismissed: true });
+    if (!stored.notified && !taskWorking(stored.task)) updateTask(id, { notified: true });
   }
 
-  /** Shopify's own suggestions for this product (shown while the AI works). */
+  /**
+   * What to look at while the AI works (2026-11-10: "list các sản phẩm tương tự cùng collections"): the products of
+   * this product's collections, else Shopify's own suggestions.
+   */
   private loadRecos(): Promise<CtRecoProduct[]> {
-    const id = this.root.dataset.ctShopifyProductId;
-    if (!id) return Promise.resolve([]);
     const base = (window as CtShopifyWindow).Shopify?.routes?.root ?? "/";
-    this.recos ??= fetch(`${base}recommendations/products.json?product_id=${encodeURIComponent(id)}&limit=8&intent=related`)
-      .then((r) => (r.ok ? (r.json() as Promise<{ products?: CtRecoProduct[] }>) : { products: [] }))
-      .then((j) => (j.products ?? []).filter((p) => p.available !== false && !!p.featured_image))
-      .catch(() => []);
+    const self = this.root.dataset.ctProductHandle ?? "";
+    const handles = (this.root.dataset.ctCollections ?? "")
+      .split(",")
+      .map((h) => h.trim())
+      .filter((h) => h && h !== "all" && h !== "frontpage")
+      .slice(0, 3);
+    const fromCollections = (): Promise<CtRecoProduct[]> =>
+      Promise.all(
+        handles.map((h) =>
+          fetch(`${base}collections/${encodeURIComponent(h)}/products.json?limit=24`)
+            .then((r) => (r.ok ? (r.json() as Promise<{ products?: CtCollectionProduct[] }>) : { products: [] }))
+            .catch(() => ({ products: [] as CtCollectionProduct[] })),
+        ),
+      ).then((lists) => {
+        const seen = new Set<string>([self]);
+        const out: CtRecoProduct[] = [];
+        for (const p of lists.flatMap((l) => l.products ?? [])) {
+          const img = p.images?.[0]?.src;
+          if (seen.has(p.handle) || !img) continue;
+          seen.add(p.handle);
+          const price = Number.parseFloat(p.variants?.[0]?.price ?? "");
+          const available = (p.variants ?? []).some((v) => v.available !== false);
+          out.push({ title: p.title, url: `${base}products/${p.handle}`, featured_image: img, available, price: Number.isFinite(price) ? Math.round(price * 100) : undefined });
+        }
+        // Availability follows the visitor's market: the ones they can buy first, never an empty list because of it.
+        return out.sort((a, b) => Number(b.available) - Number(a.available)).slice(0, 12);
+      });
+    const fromShopify = (): Promise<CtRecoProduct[]> => {
+      const id = this.root.dataset.ctShopifyProductId;
+      if (!id) return Promise.resolve([]);
+      return fetch(`${base}recommendations/products.json?product_id=${encodeURIComponent(id)}&limit=10&intent=related`)
+        .then((r) => (r.ok ? (r.json() as Promise<{ products?: CtRecoProduct[] }>) : { products: [] }))
+        .then((j) => (j.products ?? []).filter((p) => !!p.featured_image).sort((a, b) => Number(b.available !== false) - Number(a.available !== false)))
+        .catch(() => []);
+    };
+    this.recos ??= fromCollections().then((list) => (list.length ? list : fromShopify()));
     return this.recos;
   }
 
-  /** "While you wait": a line, the button to leave the dialog, and products to look at. */
-  private waitPanel(onKeepBrowsing: () => void): HTMLElement {
-    const keep = el("button", { type: "button", class: "ct-btn ct-btn--ghost ct-wait__keep", text: this.t("keepBrowsing", "Keep browsing") });
-    keep.addEventListener("click", onKeepBrowsing);
-    const list = el("div", { class: "ct-wait__list" });
-    const panel = el("div", { class: "ct-wait", hidden: true }, [
-      el("div", { class: "ct-wait__head" }, [
-        el("p", { class: "ct-wait__text", text: this.t("waitText", "This takes a minute or two. Feel free to keep browsing — it carries on in the background and pops up in the top corner when it's ready.") }),
-        keep,
-      ]),
-      list,
-    ]);
-    void this.loadRecos().then((products) => {
-      if (!products.length) return;
+  /**
+   * The wait of an AI style (2026-11-10: "layer loading sẽ là 1 dialog stack trên dialog upload ảnh, nửa trên loading
+   * như hiện tại, nửa dưới list các sản phẩm tương tự cùng collections"): a second dialog over the photo dialog.
+   * In the background (a server task) "Keep browsing" leaves; else the products open in a new tab and "Cancel" stops
+   * waiting.
+   */
+  private waitDialog(magic: MagicLoader, on: { keep: () => void; cancel: () => void }): { show: (background: boolean) => void; hide: () => void; remove: () => void } {
+    const dialog = el("dialog", { class: "ct-dialog ct-waitdlg" });
+    dialog.style.setProperty("--ct-accent", getComputedStyle(this.root).getPropertyValue("--ct-accent"));
+    const top = el("div", { class: "ct-waitdlg__top" });
+    const text = el("p", { class: "ct-wait__text" });
+    const keep = el("button", { type: "button", class: "ct-btn ct-btn--primary ct-wait__keep", text: this.t("keepBrowsing", "Keep browsing") });
+    const cancel = el("button", { type: "button", class: "ct-btn ct-btn--ghost ct-wait__keep", text: this.t("cancel", "Cancel") });
+    keep.addEventListener("click", on.keep);
+    cancel.addEventListener("click", on.cancel);
+    const label = el("div", { class: "ct-wait__label", text: this.t("moreLikeThis", "More from this collection"), hidden: true });
+    const grid = el("div", { class: "ct-waitdlg__grid" });
+    dialog.append(top, el("div", { class: "ct-waitdlg__bottom" }, [el("div", { class: "ct-wait__head" }, [text, keep, cancel]), label, grid]));
+    // Esc never drops the wait (the buttons say what happens).
+    dialog.addEventListener("cancel", (e) => e.preventDefault());
+    const money = this.root.dataset.ctMoneyFormat || "${{amount}}";
+    let background = false;
+    const fill = (products: CtRecoProduct[]) => {
+      label.hidden = !products.length;
       const src = (u: string) => (u.startsWith("//") ? `https:${u}` : u);
-      list.replaceChildren(
-        el("div", { class: "ct-wait__label", text: this.t("youMayLike", "You may also like") }),
-        el(
-          "div",
-          { class: "ct-wait__row" },
-          products.map((p) => el("a", { class: "ct-wait__card", href: p.url }, [el("img", { src: src(p.featured_image), alt: "", loading: "lazy" }), el("span", { text: p.title })])),
+      grid.replaceChildren(
+        ...products.map((p) =>
+          el("a", { class: "ct-wait__card", href: p.url, target: background ? undefined : "_blank", rel: background ? undefined : "noopener" }, [
+            el("img", { src: src(p.featured_image), alt: "", loading: "lazy" }),
+            el("span", { class: "ct-wait__name", text: p.title }),
+            ...(typeof p.price === "number" ? [el("span", { class: "ct-wait__price", text: formatMoney(p.price, money) })] : []),
+          ]),
         ),
       );
-    });
-    return panel;
+    };
+    return {
+      show: (bg) => {
+        background = bg;
+        text.textContent = bg
+          ? this.t("waitText", "This takes a minute or two. Feel free to keep browsing — it carries on in the background and pops up in the corner when it's ready.")
+          : this.t("waitTextHere", "This takes about a minute. Meanwhile, have a look at these (they open in a new tab).");
+        keep.hidden = !bg;
+        cancel.hidden = bg;
+        top.append(magic.root);
+        if (!dialog.isConnected) document.body.append(dialog);
+        if (!dialog.open) dialog.showModal();
+        void this.loadRecos().then(fill);
+      },
+      hide: () => {
+        if (dialog.open) dialog.close();
+      },
+      remove: () => dialog.remove(),
+    };
   }
 
   // ------------------------------------------------------------- photo dialog
@@ -1306,13 +1455,21 @@ export class Customizer {
     // The dialog lives on <body>, outside the section that sets the accent.
     dialog.style.setProperty("--ct-accent", getComputedStyle(this.root).getPropertyValue("--ct-accent"));
     const canvas = el("canvas", { class: "ct-dialog__canvas" });
-    const empty = el("div", { class: "ct-dialog__empty", text: this.t("dropPhoto", "Choose a photo to start") });
+    // 2026-11-10: the upload button opens the dialog only; the photo is chosen here (a tap, or dropped on it).
+    const empty = el("button", { type: "button", class: "ct-dialog__drop" }, [
+      el("strong", { text: this.t("choosePhoto", "Choose photo") }),
+      el("span", { text: this.t("dropPhoto", "JPG or PNG · or drop it here") }),
+    ]);
     // The wait: a sky of RGB-twinkling constellations and the store's name shimmering (storefront/magic-loader.ts).
     const magic = createMagicLoader(this.t("magic", "Cherivia magic"));
     const busy = magic.root;
+    const stageBox = el("div", { class: "ct-dialog__stage" }, [canvas, empty, busy]);
     const file = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp", hidden: true });
     const pick = el("button", { type: "button", class: "ct-btn ct-btn--ghost", text: this.t("choosePhoto", "Choose photo") });
     const hint = el("span", { class: "ct-dialog__hint", text: this.t("placeHint", "Drag to move · corner to resize · ↻ to rotate") });
+    // On the realistic piece (a task's phôi) the photo is not dragged: "Adjust position" shows the flat design to place
+    // it, "Done" draws the piece again with it there.
+    const adjust = el("button", { type: "button", class: "ct-btn ct-btn--ghost", text: this.t("adjust", "Adjust position"), hidden: true });
     const apply = el("button", { type: "button", class: "ct-btn ct-btn--primary", text: this.t("apply", "Apply") });
     const cancel = el("button", { type: "button", class: "ct-btn ct-btn--ghost", text: this.t("cancel", "Cancel") });
     const status = el("span", { class: "ct-dialog__status" });
@@ -1332,6 +1489,13 @@ export class Customizer {
     let job = 0;
     /** Style → the server task drawing it (usesTasks). */
     const taskOf = new Map<CtPhotoStyleRef, string>();
+    /** The flat design with handles (placing the photo) instead of the task's realistic piece. */
+    let placing = false;
+    /** The canvas shows the task's phôi now (no handles, nothing to drag). */
+    let showingPhoi = false;
+    /** What "Keep browsing" leaves running: a style's task (its photo goes in when ready) or a new placement's piece. */
+    let leaving: "task" | "placement" = "task";
+    const dialogSel = (): CtSelection => ({ ...this.selection, [r.id]: { kind: "photo", url: photoUrl, transform: t, style, sourceUrl, optionId } });
 
     const keep = (blob: Blob): string => {
       const url = URL.createObjectURL(blob);
@@ -1452,7 +1616,21 @@ export class Customizer {
           const img = await loadImage(photoUrl).catch(() => null);
           if (img) imgSize = { w: img.naturalWidth, h: img.naturalHeight };
         }
-        const sel: CtSelection = { ...this.selection, [r.id]: { kind: "photo", url: photoUrl, transform: t, style, sourceUrl, optionId } };
+        const sel = dialogSel();
+        // A task's photo: the realistic piece drawn with it (when drawn for this placement).
+        const want = photoUrl && !placing ? this.wantedPhoi(sel) : null;
+        const ready = want && want.stored.task.phoi?.key === want.key ? want.stored.task.phoi : null;
+        const phoiOff = ready ? await this.phoiCanvas(ready, sel, 1000).catch(() => null) : null;
+        showingPhoi = !!phoiOff;
+        adjust.hidden = !(phoiOff || placing);
+        hint.hidden = !!phoiOff;
+        if (phoiOff) {
+          canvas.width = phoiOff.width;
+          canvas.height = phoiOff.height;
+          canvas.getContext("2d")?.drawImage(phoiOff, 0, 0);
+          canvas.style.cursor = "default";
+          return;
+        }
         // The product as the customer sees it: material version, plate / cord included (bleed).
         const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection: sel, layouts: this.tpl.config.layouts };
         const b = compositeBleed(input);
@@ -1509,13 +1687,29 @@ export class Customizer {
       }
     };
 
-    const setBusy = (on: boolean, text = "", steps?: string[], background = false) => {
-      if (on) magic.show(text, steps);
-      else magic.hide();
+    /** wait: "stage" = the loader over the picture (a quick cut-out), "here" / "background" = the wait dialog on top. */
+    const setBusy = (on: boolean, text = "", steps?: string[], wait: "stage" | "here" | "background" = "stage") => {
+      if (on) {
+        if (wait === "stage") {
+          waitDlg.hide();
+          stageBox.append(busy);
+        } else waitDlg.show(wait === "background");
+        magic.show(text, steps);
+      } else {
+        magic.hide();
+        waitDlg.hide();
+      }
       apply.disabled = on;
+      adjust.disabled = on;
       empty.hidden = on || Boolean(photoUrl);
-      wait.hidden = !(on && background);
     };
+    const phoiSteps = [
+      this.t("phoiStep0", "Crafting your acrylic piece…"),
+      this.t("phoiStep1", "Cutting the acrylic around your design…"),
+      this.t("phoiStep2", "Polishing the edges and the shine…"),
+      this.t("phoiStep3", "Hanging it up for its photo…"),
+      this.t("phoiStep4", "Almost there — good things take a moment ✨"),
+    ];
 
     const render = (next: CtPhotoStyleRef): Promise<string> => {
       const cached = renders.get(next);
@@ -1531,7 +1725,10 @@ export class Customizer {
             source = blob;
             const stored = await this.startPhotoTask(r, blob, next, optionId);
             taskOf.set(next, stored.id);
-            return this.taskPhoto(stored.id);
+            // Ready when the acrylic piece is drawn too; the loader's lines follow the task's step.
+            return this.taskResult(stored.id, (stage) => {
+              if (stage === "phoi" && style === next && !magic.root.hidden) magic.show(phoiSteps[0], phoiSteps);
+            });
           })()
         : engine === "none" && !cfg.cutout
           ? Promise.resolve(src) // untouched photo: nothing to compute
@@ -1577,15 +1774,25 @@ export class Customizer {
               this.t("magicStep5", "Almost there — good things take a moment ✨"),
             ]
           : undefined;
-        setBusy(true, cutoutOnly || faceFirst ? this.t("removingBg", "Removing background…") : `${this.t("creating", "Creating")} ${name}…`, steps, this.usesTasks(r, next));
+        setBusy(
+          true,
+          cutoutOnly || faceFirst ? this.t("removingBg", "Removing background…") : `${this.t("creating", "Creating")} ${name}…`,
+          steps,
+          !ai ? "stage" : this.usesTasks(r, next) ? "background" : "here",
+        );
+        leaving = "task";
       }
       try {
         const url = await render(next);
         if (token !== job) return;
         photoUrl = url;
+        placing = false;
         setThumb(next, url);
         await draw();
         warmThumbs();
+        const tid = this.taskByPhoto.get(url);
+        const err = tid ? getTask(tid)?.task.error : null;
+        if (err) status.textContent = err;
       } catch (e) {
         if (token !== job) return;
         status.textContent = e instanceof Error ? e.message : String(e);
@@ -1595,9 +1802,12 @@ export class Customizer {
     };
 
     pick.addEventListener("click", () => file.click());
-    file.addEventListener("change", () => {
-      const f = file.files?.[0];
-      if (!f) return;
+    empty.addEventListener("click", () => file.click());
+    const useFile = (f: File) => {
+      if (!/^image\/(png|jpeg|webp)$/.test(f.type)) {
+        status.textContent = this.t("badFile", "Please choose a JPG, PNG or WEBP photo.");
+        return;
+      }
       source = f;
       sourceUrl = keep(f);
       renders = new Map();
@@ -1606,8 +1816,57 @@ export class Customizer {
       pick.textContent = this.t("changePhoto", "Change photo");
       // The frame stays empty behind the spinner until the processed photo (cut-out + style) is ready.
       photoUrl = null;
+      placing = false;
       void draw();
       void show(style);
+    };
+    file.addEventListener("change", () => {
+      const f = file.files?.[0];
+      file.value = "";
+      if (f) useFile(f);
+    });
+    stageBox.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      stageBox.classList.add("is-drop");
+    });
+    stageBox.addEventListener("dragleave", () => stageBox.classList.remove("is-drop"));
+    stageBox.addEventListener("drop", (e) => {
+      e.preventDefault();
+      stageBox.classList.remove("is-drop");
+      const f = e.dataTransfer?.files?.[0];
+      if (f) useFile(f);
+    });
+
+    // "Adjust position" ↔ "Done": a new placement is drawn on the real piece again (the wait dialog, in the background).
+    adjust.addEventListener("click", () => {
+      if (!placing) {
+        placing = true;
+        adjust.textContent = this.t("adjustDone", "Done");
+        void draw();
+        return;
+      }
+      placing = false;
+      adjust.textContent = this.t("adjust", "Adjust position");
+      const sel = dialogSel();
+      const want = this.wantedPhoi(sel);
+      if (!want || want.stored.task.phoi?.key === want.key) {
+        void draw();
+        return;
+      }
+      const token = ++job;
+      leaving = "placement";
+      status.textContent = "";
+      setBusy(true, phoiSteps[0], phoiSteps, "background");
+      void this.askPhoi(sel)
+        .then((key) => (key ? this.waitPhoi(want.stored.id, key) : null))
+        .catch((e: unknown) => {
+          if (token === job) status.textContent = e instanceof Error ? e.message : String(e);
+        })
+        .finally(() => {
+          if (token !== job) return;
+          setBusy(false);
+          void draw();
+        });
     });
 
     // ---- hand placement: drag = move, corner = resize, ↻ = rotate, two fingers = pinch, wheel = zoom
@@ -1621,7 +1880,7 @@ export class Customizer {
     canvas.style.touchAction = "none";
     canvas.addEventListener("pointerdown", (e) => {
       const g = geom();
-      if (!photoUrl || !g) return;
+      if (!photoUrl || !g || showingPhoi) return;
       canvas.setPointerCapture(e.pointerId);
       const w = toMain(e);
       touches.set(e.pointerId, w);
@@ -1645,7 +1904,7 @@ export class Customizer {
       if (!touches.has(e.pointerId)) {
         // Hover: which handle is under the pointer.
         const g = geom();
-        if (!g) return;
+        if (!g || showingPhoi) return;
         const w = toMain(e);
         const hit = 14 * screenPx();
         const rh = rotateHandle(g);
@@ -1688,7 +1947,7 @@ export class Customizer {
     canvas.addEventListener(
       "wheel",
       (e) => {
-        if (!photoUrl) return;
+        if (!photoUrl || showingPhoi) return;
         e.preventDefault();
         t = { ...t, scale: Math.min(8, Math.max(0.1, t.scale * Math.exp(-e.deltaY * 0.0015))) };
         void draw();
@@ -1706,6 +1965,8 @@ export class Customizer {
     };
     const close = () => {
       magic.hide();
+      waitDlg.hide();
+      waitDlg.remove();
       dialog.close();
       dialog.remove();
     };
@@ -1713,14 +1974,7 @@ export class Customizer {
       free([]);
       close();
     });
-    // "Keep browsing": the dialog closes, the task goes on; its photo goes in by itself when it is ready.
-    const wait = this.waitPanel(() => {
-      const id = taskOf.get(style);
-      if (id) this.autoApply(r, id, style, optionId);
-      free([]);
-      close();
-    });
-    apply.addEventListener("click", () => {
+    const applyNow = () => {
       if (!photoUrl) return;
       free([photoUrl, sourceUrl]);
       // A task's photo is public already; its upload too (kept for fulfilment).
@@ -1730,16 +1984,35 @@ export class Customizer {
       close();
       // Start uploading now so Add to cart finds them done.
       for (const url of new Set([photoUrl, sourceUrl])) if (url) void this.uploadLocal(url).catch(() => undefined);
+    };
+    apply.addEventListener("click", applyNow);
+
+    // "Keep browsing": the dialogs close, the task goes on; its photo goes in by itself when it is ready (a photo
+    // already there with a new placement goes in now, its piece is drawn again in the background).
+    const waitDlg = this.waitDialog(magic, {
+      keep: () => {
+        if (leaving === "placement" && photoUrl) {
+          applyNow();
+          return;
+        }
+        const id = taskOf.get(style);
+        if (id) this.autoApply(r, id, style, optionId);
+        free([]);
+        close();
+      },
+      cancel: () => {
+        job++;
+        setBusy(false);
+      },
     });
 
     const controls: HTMLElement[] = [];
     if (cfg.styles.length > 1) controls.push(el("div", { class: "ct-dialog__style" }, [el("span", { class: "ct-dialog__style-label", text: cfg.styleLabel || this.t("filter", "Filter") }), styleRow]));
-    controls.push(el("div", { class: "ct-dialog__tools" }, [pick, file, hint]));
+    controls.push(el("div", { class: "ct-dialog__tools" }, [pick, adjust, file, hint]));
     if (photoUrl) pick.textContent = this.t("changePhoto", "Change photo");
     dialog.append(
       el("div", { class: "ct-dialog__head" }, [el("strong", { text: cfg.label }), status]),
-      el("div", { class: "ct-dialog__stage" }, [canvas, empty, busy]),
-      wait,
+      stageBox,
       el("div", { class: "ct-dialog__controls" }, controls),
       el("div", { class: "ct-dialog__foot" }, [cancel, apply]),
     );
@@ -1749,13 +2022,13 @@ export class Customizer {
       if (e.target !== dialog) return;
       free([]);
       magic.hide();
+      waitDlg.remove();
       dialog.remove();
     });
     markStyle();
     document.body.append(dialog);
     dialog.showModal();
-    if (!photoUrl) file.click();
-    else warmThumbs();
+    if (photoUrl) warmThumbs();
     void draw();
   }
 

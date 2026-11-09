@@ -396,14 +396,34 @@ html.ct-drawer-lock { overflow: hidden; }
 .ct-stage__badge[hidden] { display: none; }
 .ct-stage__badge-dot { width: 8px; height: 8px; border-radius: 50%; background: #ffc371; box-shadow: 0 0 0 0 rgba(255, 195, 113, .7); animation: ct-badge-pulse 1.4s ease-out infinite; }
 @keyframes ct-badge-pulse { to { box-shadow: 0 0 0 10px rgba(255, 195, 113, 0); } }
-.ct-wait { padding: 14px 18px 4px; border-top: 1px solid #eee; }
-.ct-wait[hidden] { display: none; }
-.ct-wait__head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+/* 2026-11-10: the wait of an AI style = a dialog over the photo dialog — the loader on top, products of the same
+   collections under it. */
+.ct-waitdlg { width: min(760px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow: hidden; }
+.ct-waitdlg[open] { display: flex; flex-direction: column; }
+.ct-waitdlg::backdrop { background: rgba(0, 0, 0, .35); }
+.ct-waitdlg__top { position: relative; flex: none; height: min(42vh, 340px); background: #0b0d22; }
+.ct-waitdlg__bottom { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 16px 18px 18px; }
+.ct-waitdlg__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 14px; }
+.ct-wait__head { display: flex; align-items: center; gap: 12px 14px; flex-wrap: wrap; }
 .ct-wait__text { flex: 1 1 260px; margin: 0; font-size: 14px; line-height: 1.45; color: #444; }
 .ct-wait__keep { flex: none; }
-.ct-wait__label { margin: 14px 0 8px; font-size: 13px; font-weight: 600; color: #222; }
-.ct-wait__row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
-.ct-wait__card { flex: none; width: 128px; scroll-snap-align: start; color: inherit; text-decoration: none; font-size: 12px; line-height: 1.35; }
-.ct-wait__card img { width: 128px; height: 128px; object-fit: cover; border-radius: 10px; display: block; margin-bottom: 6px; background: #f3f3f3; }
-.ct-wait__card span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ct-wait__keep[hidden] { display: none; }
+.ct-wait__label { margin: 16px 0 10px; font-size: 14px; font-weight: 700; color: #222; }
+.ct-wait__label[hidden] { display: none; }
+.ct-wait__card { display: flex; flex-direction: column; gap: 3px; min-width: 0; color: inherit; text-decoration: none; font-size: 12px; line-height: 1.35; }
+.ct-wait__card img { width: 100%; aspect-ratio: 1; height: auto; object-fit: cover; border-radius: 10px; display: block; margin-bottom: 4px; background: #f3f3f3; }
+.ct-wait__name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ct-wait__price { font-weight: 700; color: #111; }
 .ct-wait__card:hover img { opacity: .9; }
+/* The photo is chosen inside the dialog (a tap or a drop). */
+.ct-dialog__drop {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 18px 30px; border: 2px dashed var(--ct-accent, #e5793b); border-radius: 14px; background: rgba(255, 255, 255, .94);
+  color: var(--ct-accent, #e5793b); font: inherit; cursor: pointer; box-shadow: 0 6px 20px rgba(0, 0, 0, .08);
+}
+.ct-dialog__drop strong { font-size: 16px; }
+.ct-dialog__drop span { font-size: 12px; color: rgba(0, 0, 0, .55); }
+.ct-dialog__drop:hover { background: #fff; }
+.ct-dialog__drop[hidden] { display: none; }
+.ct-dialog__stage.is-drop { outline: 3px dashed var(--ct-accent, #e5793b); outline-offset: -8px; }
+.ct-dialog__hint[hidden], .ct-dialog .ct-btn[hidden] { display: none; }

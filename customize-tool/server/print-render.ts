@@ -14,8 +14,9 @@ import sharp, { type OverlayOptions } from "sharp";
 import { CT_TABLES } from "../config";
 import type { CtAsset, CtProduct, CtRegion, CtRegionItem, CtSelection, CtShape } from "../types";
 import type { CtPrintSpec } from "../types/print";
-import { activeRegions, defaultRegionSelection, normalizeProductConfig, normalizeRegion, resolveLinked, selectedMainId, textColorFromOption, textMode } from "../lib/design";
-import { onVersion } from "../lib/layout";
+import { activeRegions, defaultRegionSelection, normalizeProductConfig, normalizeRegion, resolveLinked, selectedMainId, selectedMainImageId, textColorFromOption, textMode } from "../lib/design";
+import { mainFrameFor, onVersion } from "../lib/layout";
+import { renditionFrameBox } from "../lib/material-frame";
 import { loadFont, textSvg } from "./print-text";
 import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, textBand, translateShape } from "../lib/geometry";
 import { boundsInSafe, safeShapes } from "../lib/print-template";
@@ -122,7 +123,44 @@ function maskSvg(w: number, h: number, shape: CtShape): Buffer {
 
 /** The artwork (default options, or `selection`) at long side ≤ maxSide, with the khuôn in drawn over it ("guides"),
  * or as the print file ("print": transparent, cut to the khuôn's outline, nothing over it). */
-export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {}, maxSide = 1400, mode: "guides" | "print" = "guides"): Promise<Buffer> {
+/**
+ * The version's own picture (the main asset: an imported design's vehicle / scene) where lib/compositor draws it — its
+ * frame on the artboard, its rendition's padding around — as one overlay; null = none to draw.
+ */
+async function mainPictureLayer(b: ArtworkBundle, selection: CtSelection, W: number, H: number): Promise<OverlayOptions | null> {
+  const mainAssetId = b.product.main_asset_id;
+  if (!mainAssetId) return null;
+  const mainId = selectedMainId(selection, b.assets, mainAssetId);
+  const shown = b.assets.find((a) => a.id === selectedMainImageId(selection, b.assets, mainAssetId)) ?? b.assets.find((a) => a.id === mainId);
+  if (!shown?.url) return null;
+  const buf = await fetchBuffer(shown.url);
+  if (!buf) return null;
+  const meta = shown.meta as { frame?: { regionId: string; box: { x: number; y: number; w: number; h: number } }; pad?: { x: number; y: number } } | null;
+  const f = meta?.frame
+    ? { ...renditionFrameBox(b.regions, meta.frame), rotation: 0 }
+    : mainFrameFor(normalizeProductConfig(b.product.config).layouts, mainId, W, H);
+  const px = (meta?.pad?.x ?? 0) * f.w;
+  const py = (meta?.pad?.y ?? 0) * f.h;
+  let pic = await sharp(buf).resize(Math.max(1, Math.round(f.w + 2 * px)), Math.max(1, Math.round(f.h + 2 * py)), { fit: "fill" }).png().toBuffer();
+  if (Math.abs(f.rotation) > 0.05) pic = await sharp(pic).rotate(f.rotation, { background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+  const m = await sharp(pic).metadata();
+  const left = Math.round(f.x + f.w / 2 - (m.width ?? 0) / 2);
+  const top = Math.round(f.y + f.h / 2 - (m.height ?? 0) / 2);
+  // sharp refuses an overlay past the canvas: cut it to the artboard.
+  const x0 = Math.max(0, -left);
+  const y0 = Math.max(0, -top);
+  const x1 = Math.min(m.width ?? 0, W - left);
+  const y1 = Math.min(m.height ?? 0, H - top);
+  if (x1 <= x0 || y1 <= y0) return null;
+  const input = await sharp(pic).extract({ left: x0, top: y0, width: x1 - x0, height: y1 - y0 }).png().toBuffer();
+  return { input, left: left + x0, top: top + y0 };
+}
+
+/**
+ * `opts.withMain`: also draw the version's own picture between the layers below and above it, like the storefront
+ * (the AI phôi references, server/version-phoi-ref.ts). Off by default: the other callers keep drawing layers only.
+ */
+export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {}, maxSide = 1400, mode: "guides" | "print" = "guides", opts: { withMain?: boolean } = {}): Promise<Buffer> {
   const main = b.assets.find((a) => a.id === b.product.main_asset_id);
   const W = b.spec?.width ?? main?.width ?? 1000;
   const H = b.spec?.height ?? main?.height ?? 1000;
@@ -139,7 +177,15 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
   for (const r of b.regions) picked[r.id] = selection[r.id] ?? defaultRegionSelection(r, b.items, b.assets);
   const chosen = resolveLinked(b.regions, b.items, b.assets, picked);
   // A child layer only while its parent shows its option (a boy's hair while "Grandchild 1" is "Boy").
-  for (const r of activeRegions([...b.regions].sort((x, y) => x.sort_order - y.sort_order), chosen)) {
+  const ordered = activeRegions([...b.regions].sort((x, y) => x.sort_order - y.sort_order), chosen);
+  // With the version's picture: every layer below it first, then it, then the layers above (lib/compositor's order).
+  const run = opts.withMain ? [...ordered.filter((r) => !r.config.aboveMain), ...ordered.filter((r) => r.config.aboveMain)] : ordered;
+  let mainLayer = opts.withMain ? await mainPictureLayer(b, selection, W, H) : null;
+  for (const r of run) {
+    if (mainLayer && r.config.aboveMain) {
+      layers.push(mainLayer);
+      mainLayer = null;
+    }
     if (r.config.materialFrame) continue;
     // The print file never has a preview-only layer (a blank scene, a sample text the photo shows).
     if (!guides && r.config.previewOnly) continue;
@@ -229,6 +275,7 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
     }
   }
 
+  if (mainLayer) layers.push(mainLayer);
   // The khuôn in over the artwork.
   if (b.spec && guides) {
     const sw = Math.max(2, Math.min(W, H) / 300);

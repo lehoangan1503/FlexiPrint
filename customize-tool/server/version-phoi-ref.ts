@@ -119,7 +119,9 @@ export async function phoiReference(db: PrintDb, artworkId: string, base: CtBase
     // A customer's: everything but the texts they type (fixed texts are drawn like a picture).
     regions: bundle.regions.filter((r) => (customer ? r.kind !== "text" || isStaticLayer(r, bundle.items, bundle.assets) : isStaticLayer(r, bundle.items, bundle.assets))),
   };
-  const [wholePng, fixedPng] = await Promise.all([renderArtwork(bundle, selection, side, "print"), renderArtwork(fixedBundle, selection, side, "print")]);
+  // The version's own picture (an imported design's vehicle) is part of both (2026-11-09: without it the AI drew the
+  // customer's photo alone on an empty plate).
+  const [wholePng, fixedPng] = await Promise.all([renderArtwork(bundle, selection, side, "print", { withMain: true }), renderArtwork(fixedBundle, selection, side, "print", { withMain: true })]);
   const at = (png: Buffer) => sharp(png).resize(bw, bh, { fit: "fill" }).ensureAlpha().raw().toBuffer();
   const [whole, fixed] = await Promise.all([at(wholePng), at(fixedPng)]);
 
@@ -207,8 +209,8 @@ export async function phoiOnBackground(db: PrintDb, artworkId: string, mainId: s
   const bh = Math.max(1, Math.round(box.h));
   const bg = sharp(background).removeAlpha();
   const meta = await sharp(background).metadata();
-  if (!bundle.regions.length) return bg.png().toBuffer();
-  const fixed = await sharp(await renderArtwork(bundle, { [CT_MAIN_KEY]: { kind: "main", assetId: mainId } }, side, "print"))
+  if (!bundle.regions.length && !bundle.product.main_asset_id) return bg.png().toBuffer();
+  const fixed = await sharp(await renderArtwork(bundle, { [CT_MAIN_KEY]: { kind: "main", assetId: mainId } }, side, "print", { withMain: true }))
     .resize(bw, bh, { fit: "fill" })
     .png()
     .toBuffer();

@@ -20,6 +20,7 @@ import { canvasToBlob } from "./compositor";
 import { removeBackgroundFrom, trimTransparent } from "./image-tools";
 import { needsServer, styleEngine, styleFamily, styleFilter, type CtPhotoFilter } from "./photo-styles";
 import { jobFetch } from "./job-fetch";
+import { fadeCroppedEdgesData } from "./pixel-ops";
 
 const isFaceStyle = (style: CtPhotoStyleRef) => styleFamily(style) === "face";
 
@@ -176,78 +177,10 @@ export function colorFilter(src: HTMLCanvasElement, filter: CtPhotoFilter): HTML
  * near the top are never faded.
  */
 export function fadeCroppedEdges(src: HTMLCanvasElement): HTMLCanvasElement {
-  const w = src.width;
-  const h = src.height;
   const ctx = src.getContext("2d", { willReadFrequently: true });
-  if (!ctx || w < 8 || h < 8) return src;
-  const img = ctx.getImageData(0, 0, w, h);
-  const d = img.data;
-  const alphaAt = (x: number, y: number) => d[(y * w + x) * 4 + 3];
-
-  let top = 0;
-  let bottom = 0;
-  let left = 0;
-  let right = 0;
-  for (let x = 0; x < w; x++) {
-    if (alphaAt(x, 0) > 128) top++;
-    if (alphaAt(x, h - 1) > 128) bottom++;
-  }
-  for (let y = 0; y < h; y++) {
-    if (alphaAt(0, y) > 128) left++;
-    if (alphaAt(w - 1, y) > 128) right++;
-  }
-  // A few stray pixels (a whisker tip) don't count as a crop.
-  const cropped = { top: top > w * 0.04, bottom: bottom > w * 0.04, left: left > h * 0.04, right: right > h * 0.04 };
-  if (!cropped.top && !cropped.bottom && !cropped.left && !cropped.right) return src;
-
-  const size = Math.min(w, h);
-  const reach = Math.max(10, size * 0.12);
-  // Smooth, deterministic wobble of the reach along an edge (0.7..1.3).
-  const wobble = (t: number, seed: number) => {
-    const u = (t / size) * Math.PI * 2;
-    return 1 + 0.18 * Math.sin(u * 2.3 + seed) + 0.12 * Math.sin(u * 5.7 + seed * 1.7);
-  };
-  // Deterministic value noise along an edge: brush-width clumps (~2% of the image) plus finer bristles.
-  const bristle = Math.max(3, size * 0.02);
-  const hash = (i: number, seed: number) => {
-    const v = Math.sin(i * 127.1 + seed * 311.7) * 43758.5453;
-    return v - Math.floor(v);
-  };
-  const octave = (t: number, seed: number) => {
-    const p = t / bristle;
-    const i = Math.floor(p);
-    const f = p - i;
-    const a = hash(i, seed);
-    return a + (hash(i + 1, seed) - a) * f * f * (3 - 2 * f);
-  };
-  const streaks = (t: number, seed: number) => 0.65 * octave(t, seed) + 0.35 * octave(t * 2.9, seed + 7);
-  const ease = (e: number) => (e >= 1 ? 1 : e <= 0 ? 0 : e * e * (3 - 2 * e));
-  const rowTop = new Float32Array(w);
-  const rowBottom = new Float32Array(w);
-  for (let x = 0; x < w; x++) {
-    rowTop[x] = reach * wobble(x, 1.3) * (0.8 + 0.4 * streaks(x, 1.3));
-    rowBottom[x] = reach * wobble(x, 4.1) * (0.8 + 0.4 * streaks(x, 4.1));
-  }
-  const colLeft = new Float32Array(h);
-  const colRight = new Float32Array(h);
-  for (let y = 0; y < h; y++) {
-    colLeft[y] = reach * wobble(y, 2.2) * (0.8 + 0.4 * streaks(y, 2.2));
-    colRight[y] = reach * wobble(y, 5.9) * (0.8 + 0.4 * streaks(y, 5.9));
-  }
-
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4 + 3;
-      if (d[i] === 0) continue;
-      let f = 1;
-      if (cropped.top) f = Math.min(f, ease(y / rowTop[x]));
-      if (cropped.bottom) f = Math.min(f, ease((h - 1 - y) / rowBottom[x]));
-      if (cropped.left) f = Math.min(f, ease(x / colLeft[y]));
-      if (cropped.right) f = Math.min(f, ease((w - 1 - x) / colRight[y]));
-      if (f < 1) d[i] = Math.round(d[i] * f);
-    }
-  }
-  ctx.putImageData(img, 0, 0);
+  if (!ctx || src.width < 8 || src.height < 8) return src;
+  const img = ctx.getImageData(0, 0, src.width, src.height);
+  if (fadeCroppedEdgesData(img.data, src.width, src.height)) ctx.putImageData(img, 0, 0);
   return src;
 }
 

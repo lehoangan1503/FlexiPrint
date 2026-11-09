@@ -44,6 +44,14 @@ function loadBrandFont(): void {
   document.head.append(link);
 }
 
+/**
+ * The brand is drawn in a script font, where capitals run into each other ("CHERIVIA" is unreadable): a word written
+ * all in capitals is shown as "Cherivia". Mixed-case words are left as they are.
+ */
+function scriptCase(text: string): string {
+  return text.replace(/\p{L}{2,}/gu, (w) => (w === w.toUpperCase() && w !== w.toLowerCase() ? w[0] + w.slice(1).toLowerCase() : w));
+}
+
 export function createMagicLoader(brand: string): MagicLoader {
   loadBrandFont();
   const root = document.createElement("div");
@@ -53,7 +61,7 @@ export function createMagicLoader(brand: string): MagicLoader {
   canvas.className = "ct-magic__sky";
   const title = document.createElement("div");
   title.className = "ct-magic__brand";
-  title.textContent = brand;
+  title.textContent = scriptCase(brand);
   const line = document.createElement("div");
   line.className = "ct-magic__line";
   root.append(canvas, title, line);

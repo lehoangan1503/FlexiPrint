@@ -84,8 +84,12 @@ function topCentre(rgba: Buffer, w: number, h: number): { cx: number; top: numbe
   return x1 < 0 ? null : { cx: (x0 + x1) / 2, top };
 }
 
-/** The reference + mask of one version of an artwork on a cut-to-shape base. */
-export async function phoiReference(db: PrintDb, artworkId: string, base: CtBaseProduct, mainId: string): Promise<CtPhoiReference> {
+/**
+ * The reference + mask of one version of an artwork on a cut-to-shape base. `customer` (storefront photo tasks,
+ * server/photo-tasks.ts): a customer's design instead of the defaults — their photo and picks are printed on the plate
+ * too (only the texts are left for the storefront to lay on, so typing a name never needs a new picture).
+ */
+export async function phoiReference(db: PrintDb, artworkId: string, base: CtBaseProduct, mainId: string, customer?: { selection: CtSelection }): Promise<CtPhoiReference> {
   const loaded = await loadArtwork(db, artworkId);
   if (!loaded) throw new Error("Không tìm thấy artwork");
   // The design only: an artwork carries no khuôn (the base's), so nothing is cut to one here.
@@ -108,9 +112,13 @@ export async function phoiReference(db: PrintDb, artworkId: string, base: CtBase
   const bx = Math.round(box.x);
   const by = Math.round(box.y);
 
-  const selection: CtSelection = { [CT_MAIN_KEY]: { kind: "main", assetId: mainId } };
+  const selection: CtSelection = { ...(customer?.selection ?? {}), [CT_MAIN_KEY]: { kind: "main", assetId: mainId } };
   const side = Math.max(main.width, main.height);
-  const fixedBundle: ArtworkBundle = { ...bundle, regions: bundle.regions.filter((r) => isStaticLayer(r, bundle.items, bundle.assets)) };
+  const fixedBundle: ArtworkBundle = {
+    ...bundle,
+    // A customer's: everything but the texts they type (fixed texts are drawn like a picture).
+    regions: bundle.regions.filter((r) => (customer ? r.kind !== "text" || isStaticLayer(r, bundle.items, bundle.assets) : isStaticLayer(r, bundle.items, bundle.assets))),
+  };
   const [wholePng, fixedPng] = await Promise.all([renderArtwork(bundle, selection, side, "print"), renderArtwork(fixedBundle, selection, side, "print")]);
   const at = (png: Buffer) => sharp(png).resize(bw, bh, { fit: "fill" }).ensureAlpha().raw().toBuffer();
   const [whole, fixed] = await Promise.all([at(wholePng), at(fixedPng)]);

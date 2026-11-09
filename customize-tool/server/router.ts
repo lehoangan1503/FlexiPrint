@@ -36,6 +36,9 @@
  *   GET    public/templates/:productId[?version=N]   → CtTemplate
  *   POST   public/uploads/:productId     multipart: file, kind=photo|preview|print
  *   POST   public/photo/:productId       multipart: file, region, style, cutout=0|1 → processed image bytes
+ *   POST   public/tasks/:productId       multipart: file, region, style, cutout, mainId, selection → 202 { task } (server/photo-tasks.ts)
+ *   GET    public/tasks/:taskId          → { task: CtPhotoTask }
+ *   POST   public/tasks/:taskId/phoi     { mainId, transform, selection, optionId } → { task } (the phôi again for that design)
  *
  * Jobs (server/jobs.ts) — any POST sent with ?async=1 that runs longer than a few seconds answers 202 CtJobPending:
  *   GET    jobs/:id · public/jobs/:id    202 while it runs, then the POST's own response
@@ -131,6 +134,7 @@ import { createArtwork, createProductFromTemplate } from "./print-products";
 import * as artworks from "./artworks";
 import * as artworkLink from "./artwork-link";
 import * as versionPhoi from "./version-phoi";
+import * as photoTasks from "./photo-tasks";
 import * as fonts from "./fonts";
 import * as productMockups from "./product-mockups";
 import * as packs from "./mockup-packs";
@@ -174,9 +178,13 @@ async function dispatchPublic(req: NextRequest, path: string[]): Promise<NextRes
     return h.publicTemplate(id, Number.isInteger(v) && v > 0 ? v : null);
   }
   if (resource === "uploads" && req.method === "POST") return h.publicUpload(id, await req.formData());
-  if (resource === "photo" && req.method === "POST") {
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
-    return h.publicPhoto(id, await req.formData(), ip, req.headers.get("origin"));
+  const ip = () => req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
+  if (resource === "photo" && req.method === "POST") return h.publicPhoto(id, await req.formData(), ip(), req.headers.get("origin"));
+  // Photo tasks (server/photo-tasks.ts): POST tasks/:productId starts one, GET tasks/:taskId, POST tasks/:taskId/phoi.
+  if (resource === "tasks") {
+    if (req.method === "GET" && path.length === 3) return photoTasks.photoTaskStatus(id);
+    if (req.method === "POST" && path.length === 3) return photoTasks.createPhotoTask(id, await req.formData(), ip(), req.headers.get("origin"));
+    if (req.method === "POST" && path[3] === "phoi") return photoTasks.requestTaskPhoi(id, await readJson<unknown>(req), req.headers.get("origin"));
   }
   return h.jsonError("Not found", 404);
 }

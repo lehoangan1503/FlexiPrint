@@ -11,8 +11,11 @@
 import { drawComposite } from "../lib/compositor";
 import { Customizer, initGallery, initVariants } from "./customizer";
 import { initCart, initExtras, initQuantity, initSticky } from "./shop-extras";
+import { startTaskCenter } from "./tasks";
 
 function boot(): void {
+  // The customer's background photo tasks (also on pages without the section, via flexi2-tasks.js).
+  if (document.querySelector("[data-ct-template-url]")) startTaskCenter();
   for (const root of Array.from(document.querySelectorAll<HTMLElement>("[data-ct-product]"))) {
     if (root.dataset.ctBooted) continue;
     root.dataset.ctBooted = "1";

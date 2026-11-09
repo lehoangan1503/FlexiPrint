@@ -11,6 +11,10 @@
 //   assets/flexi2-customizer.{js,css}
 //   templates/product.flexi2.json    (section flexi2-product, api_base = API_BASE, default flexi2) — the template every
 //                                    deployed product uses (server/shopify.ts CT_SHOPIFY_TEMPLATE_SUFFIX = "flexi2")
+//   assets/flexi2-tasks.js           the cards of the customer's background photo tasks (storefront/tasks.ts), on EVERY
+//                                    page — loaded by ONE line added to layout/theme.liquid before </body> (asked
+//                                    2026-11-09 "khắp store"): the line is added once (marker FLEXI2_TASKS), the theme's
+//                                    own layout is backed up to backups/ first, nothing else in it is touched.
 // Any other filename is refused (ALLOWED below), so a later edit of this script cannot overwrite a theme file by mistake.
 // The template copies the live theme's product page (read only, asked 2026-11-02 "cho giống store chính"): its info blocks
 // the section knows (sale, delivery date, benefits, collapsible rows — Description shows the product description —,
@@ -32,7 +36,10 @@ const ALLOWED = new Set([
   "assets/flexi2-customizer.js",
   "assets/flexi2-customizer.css",
   "templates/product.flexi2.json",
+  "assets/flexi2-tasks.js",
 ]);
+const TASKS_MARK = "FLEXI2_TASKS";
+const TASKS_LINE = `{%- comment -%}${TASKS_MARK}: FlexiPrint photo task cards (scripts/push-theme.mjs){%- endcomment -%}<script src="{{ 'flexi2-tasks.js' | asset_url }}" defer="defer"></script>`;
 
 if (!STORE || !process.env.SHOPIFY_CLIENT_ID || !process.env.SHOPIFY_CLIENT_SECRET) {
   console.error("Thiếu SHOPIFY_STORE_DOMAIN / SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET (node --env-file=.env.local …)");
@@ -107,6 +114,7 @@ const batches = [
       : [
           ["assets/flexi2-customizer.js", src("assets/flexi2-customizer.js")],
           ["assets/flexi2-customizer.css", src("assets/flexi2-customizer.css")],
+          ["assets/flexi2-tasks.js", src("assets/flexi2-tasks.js")],
         ]),
   ],
   [["templates/product.flexi2.json", JSON.stringify(template, null, 2)]],
@@ -123,5 +131,32 @@ for (const files of batches) {
   );
   if (r.userErrors.length) throw new Error(`Shopify: ${JSON.stringify(r.userErrors)}`);
   for (const f of r.upsertedThemeFiles) console.log(`✓ ${f.filename}`);
+}
+// The one line in the theme's layout that loads the task cards on every page — added once, the original backed up.
+{
+  const { theme: t } = await gql(
+    `query($id: ID!) { theme(id: $id) { files(filenames: ["layout/theme.liquid"]) { nodes { checksumMd5 body { ... on OnlineStoreThemeFileBodyText { content } } } } } }`,
+    { id: theme.id },
+  );
+  const layout = t?.files.nodes[0]?.body?.content ?? "";
+  if (!layout) console.log("! layout/theme.liquid không đọc được — card tác vụ chỉ hiện trên trang sản phẩm FlexiPrint");
+  else if (layout.includes(TASKS_MARK)) console.log("= layout/theme.liquid đã có dòng flexi2-tasks.js");
+  else {
+    const at = layout.lastIndexOf("</body>");
+    if (at < 0) throw new Error("layout/theme.liquid không có </body> — không chèn");
+    const dir = path.join(root, "backups");
+    fs.mkdirSync(dir, { recursive: true });
+    const backup = path.join(dir, `theme-liquid-${theme.id.split("/").pop()}-${new Date().toISOString().replace(/[:.]/g, "-")}.liquid`);
+    fs.writeFileSync(backup, layout);
+    const next = `${layout.slice(0, at)}  ${TASKS_LINE}\n${layout.slice(at)}`;
+    const { themeFilesUpsert: r } = await gql(
+      `mutation($t: ID!, $f: [OnlineStoreThemeFilesUpsertFileInput!]!) {
+        themeFilesUpsert(themeId: $t, files: $f) { upsertedThemeFiles { filename } userErrors { filename code message } }
+      }`,
+      { t: theme.id, f: [{ filename: "layout/theme.liquid", body: { type: "TEXT", value: next } }] },
+    );
+    if (r.userErrors.length) throw new Error(`Shopify: ${JSON.stringify(r.userErrors)}`);
+    console.log(`✓ layout/theme.liquid (+1 dòng flexi2-tasks.js; bản gốc: ${path.relative(root, backup)})`);
+  }
 }
 console.log(`Theme "${theme.name}" (${theme.id.split("/").pop()}, ${theme.role}) trên ${STORE}, api_base = ${API_BASE}`);

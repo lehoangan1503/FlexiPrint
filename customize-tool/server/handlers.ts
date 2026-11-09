@@ -536,11 +536,11 @@ export const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Expose-Headers": "X-Ct-Backdrop",
 };
 
-function publicJson(body: object, status = 200, extra: Record<string, string> = {}): NextResponse {
+export function publicJson(body: object, status = 200, extra: Record<string, string> = {}): NextResponse {
   return NextResponse.json(body, { status, headers: { ...CORS_HEADERS, ...extra } });
 }
 
-function publicError(message: string, status: number): NextResponse {
+export function publicError(message: string, status: number): NextResponse {
   return publicJson({ error: message }, status);
 }
 
@@ -604,7 +604,7 @@ const PHOTO_PROCESS_BYTES = 8 * 1024 * 1024;
 const photoHits = new Map<string, number[]>();
 const PHOTO_LIMIT = { windowMs: 10 * 60 * 1000, max: 30 };
 
-function photoRateLimited(ip: string): boolean {
+export function photoRateLimited(ip: string): boolean {
   const now = Date.now();
   const hits = (photoHits.get(ip) ?? []).filter((t) => now - t < PHOTO_LIMIT.windowMs);
   if (hits.length >= PHOTO_LIMIT.max) {
@@ -617,7 +617,7 @@ function photoRateLimited(ip: string): boolean {
   return false;
 }
 
-interface PhotoRequest {
+export interface PhotoRequest {
   data: Buffer;
   mime: string;
   style: string;
@@ -625,7 +625,7 @@ interface PhotoRequest {
   regionId: string;
 }
 
-async function readPhotoRequest(form: FormData): Promise<PhotoRequest | string> {
+export async function readPhotoRequest(form: FormData): Promise<PhotoRequest | string> {
   const file = form.get("file");
   if (!(file instanceof Blob)) return "Thiếu file";
   if (file.size > PHOTO_PROCESS_BYTES) return "Ảnh quá lớn (tối đa 8MB)";

@@ -851,6 +851,40 @@ export interface CtVersionPhoi {
   source?: "ai" | "folder";
 }
 
+/**
+ * A customer's photo on the storefront, worked on the server (server/photo-tasks.ts, 2026-11-09): the AI style → the
+ * finished cut-out → on an acrylic base, the AI phôi WITH that photo (a real photo of the piece as it will be made).
+ * Runs on with the page closed; the storefront polls it from any page (storefront/tasks.ts).
+ */
+export interface CtPhotoTask {
+  id: string;
+  productId: string;
+  regionId: string;
+  style: string;
+  /** style = the AI style is running · phoi = the photo is ready, its phôi is being drawn · done · failed */
+  stage: "style" | "phoi" | "done" | "failed";
+  /** The finished photo (style + cut-out + trim), public. */
+  photoUrl: string | null;
+  /** The customer's upload as sent, public (kept for fulfilment). */
+  sourceUrl: string | null;
+  /** The latest phôi drawn with the photo (lib/photo-task-key phoiTaskKey says which design it shows). */
+  phoi: CtPhotoTaskPhoi | null;
+  /** The key of the phôi being drawn now, null = none. */
+  phoiPending: string | null;
+  error: string | null;
+  updatedAt: string;
+}
+
+export interface CtPhotoTaskPhoi {
+  key: string;
+  mainId: string;
+  url: string;
+  width: number;
+  height: number;
+  /** Where the artwork canvas sits on the photo (photo px). */
+  box: { x: number; y: number; w: number; h: number };
+}
+
 /** GET products/:id/version-phoi */
 export interface CtVersionPhoiStatus {
   phoi: CtVersionPhoi[];

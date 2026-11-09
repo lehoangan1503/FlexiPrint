@@ -55,7 +55,7 @@ async function savePhoi(db: Db, productId: string, entry: CtVersionPhoi | { remo
   return next;
 }
 
-function promptFor(material: string, hole: boolean): string {
+export function promptFor(material: string, hole: boolean): string {
   const white = material === "acrylic_white";
   return [
     "This picture is a rough mock-up: a flat printed artwork on a die-cut acrylic ornament, pasted on a photo of a Christmas tree.",
@@ -79,6 +79,32 @@ async function keepBackground(ref: Buffer, ai: Buffer, mask: Buffer | null, w: n
   return sharp(ref).resize(w, h, { fit: "fill" }).removeAlpha().composite([{ input: piece }]).jpeg({ quality: 90 }).toBuffer();
 }
 
+/** One AI phôi picture made from a reference: where it is stored, its size and the canvas box on it. */
+export interface CtPhoiPicture {
+  url: string;
+  width: number;
+  height: number;
+  box: CtVersionPhoi["box"];
+}
+
+/**
+ * The AI makes the reference a real photo, layer-kit puts it back on the reference's pixels, the AI is kept only
+ * inside the mask (the reference's background elsewhere) — stored as a JPEG under `dir`. One try; throws on failure.
+ */
+export async function drawPhoi(input: { ref: Buffer; refUrl: string; mask: Buffer | null; box: CtVersionPhoi["box"]; prompt: string; dir: string; name: string }): Promise<CtPhoiPicture> {
+  const { ref, refUrl, mask, box, prompt, dir, name } = input;
+  const width = (await sharp(ref).metadata()).width ?? 1024;
+  const ai = await drawImage(CT_IMAGE_MODEL, prompt, [refUrl], "1:1", "crop");
+  const aiUrl = await ctUpload(`${dir}/ai-${crypto.randomUUID()}.png`, ai.data, "image/png");
+  const reg = await kitPost<{ png: string; w: number; h: number; scale: number; similarity: boolean; residual: number }>("/register-photo", { ref: refUrl, url: aiUrl }, 180_000);
+  // The answer is on the reference's canvas (its own size: the AI's 1024²): the box scales with it.
+  const k = reg.w / width;
+  const jpg = await keepBackground(ref, Buffer.from(reg.png, "base64"), mask, reg.w, reg.h);
+  const url = await ctUpload(`${dir}/${name}-${crypto.randomUUID()}.jpg`, jpg, "image/jpeg");
+  console.info(`[ct] phôi AI ${dir}/${name}: scale ${reg.scale}${reg.similarity ? "" : " (no features)"}, residual ${reg.residual}px`);
+  return { url, width: reg.w, height: reg.h, box: { x: box.x * k, y: box.y * k, w: box.w * k, h: box.h * k } };
+}
+
 /** What one AI phôi job needs: the reference + mask (1024², made by the editor or server/version-phoi-ref.ts). */
 export interface CtPhoiJobInput {
   userId: string;
@@ -95,8 +121,6 @@ export interface CtPhoiJobInput {
 export async function startPhoiJob(db: Db, input: CtPhoiJobInput): Promise<CtPackImage> {
   const { userId, productId, base, mainId, mask, box } = input;
   const ref = await sharp(input.ref).png().toBuffer();
-  const meta = await sharp(ref).metadata();
-  const width = meta.width ?? 1024;
   const dir = `${userId}/${CT_CONFIG.storagePrefix}/${productId}/phoi`;
   const refUrl = await ctUpload(`${dir}/ref-${crypto.randomUUID()}.png`, ref, "image/png");
   const prompt = promptFor(base.config.material, base.config.cut.hole);
@@ -111,17 +135,10 @@ export async function startPhoiJob(db: Db, input: CtPhoiJobInput): Promise<CtPac
     let last = "";
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const ai = await drawImage(CT_IMAGE_MODEL, prompt, [refUrl], "1:1", "crop");
-        const aiUrl = await ctUpload(`${dir}/ai-${crypto.randomUUID()}.png`, ai.data, "image/png");
-        const reg = await kitPost<{ png: string; w: number; h: number; scale: number; similarity: boolean; residual: number }>("/register-photo", { ref: refUrl, url: aiUrl }, 180_000);
-        // The answer is on the reference's canvas (its own size: the AI's 1024²): the box scales with it.
-        const k = reg.w / width;
-        const jpg = await keepBackground(ref, Buffer.from(reg.png, "base64"), mask, reg.w, reg.h);
-        const url = await ctUpload(`${dir}/${mainId}-${crypto.randomUUID()}.jpg`, jpg, "image/jpeg");
-        await savePhoi(db, productId, { baseId: base.id, mainId, url, width: reg.w, height: reg.h, box: { x: box.x * k, y: box.y * k, w: box.w * k, h: box.h * k }, at: new Date().toISOString(), source: "ai" });
-        await db.from(CT_TABLES.packImages).update({ status: "done", url, mime: "image/jpeg", width: reg.w, height: reg.h, error: "" }).eq("id", job.id);
+        const out = await drawPhoi({ ref, refUrl, mask, box, prompt, dir, name: mainId });
+        await savePhoi(db, productId, { baseId: base.id, mainId, ...out, at: new Date().toISOString(), source: "ai" });
+        await db.from(CT_TABLES.packImages).update({ status: "done", url: out.url, mime: "image/jpeg", width: out.width, height: out.height, error: "" }).eq("id", job.id);
         await refreshProductsOf(db, productId);
-        console.info(`[ct] phôi AI ${productId}/${mainId}: scale ${reg.scale}${reg.similarity ? "" : " (no features)"}, residual ${reg.residual}px`);
         return;
       } catch (e) {
         last = e instanceof Error ? e.message : String(e);

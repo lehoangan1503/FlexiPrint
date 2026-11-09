@@ -386,3 +386,24 @@ html.ct-drawer-lock { overflow: hidden; }
 .ct-drawer__checkout:hover { background: #000; }
 .ct-drawer__view { background: #fff; color: var(--ct-ink); border: 1.5px solid var(--ct-ink); }
 .ct-drawer__view:hover { background: var(--ct-panel); }
+
+/* Photo tasks (2026-11-09): the realistic preview being drawn, and the "while you wait" panel of the photo dialog. */
+.ct-stage__badge {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-radius: 999px; background: rgba(28, 22, 52, .78); color: #fff; font-size: 13px; font-weight: 500;
+  backdrop-filter: blur(6px); box-shadow: 0 6px 18px rgba(0, 0, 0, .2); white-space: nowrap; pointer-events: none;
+}
+.ct-stage__badge[hidden] { display: none; }
+.ct-stage__badge-dot { width: 8px; height: 8px; border-radius: 50%; background: #ffc371; box-shadow: 0 0 0 0 rgba(255, 195, 113, .7); animation: ct-badge-pulse 1.4s ease-out infinite; }
+@keyframes ct-badge-pulse { to { box-shadow: 0 0 0 10px rgba(255, 195, 113, 0); } }
+.ct-wait { padding: 14px 18px 4px; border-top: 1px solid #eee; }
+.ct-wait[hidden] { display: none; }
+.ct-wait__head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.ct-wait__text { flex: 1 1 260px; margin: 0; font-size: 14px; line-height: 1.45; color: #444; }
+.ct-wait__keep { flex: none; }
+.ct-wait__label { margin: 14px 0 8px; font-size: 13px; font-weight: 600; color: #222; }
+.ct-wait__row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
+.ct-wait__card { flex: none; width: 128px; scroll-snap-align: start; color: inherit; text-decoration: none; font-size: 12px; line-height: 1.35; }
+.ct-wait__card img { width: 128px; height: 128px; object-fit: cover; border-radius: 10px; display: block; margin-bottom: 6px; background: #f3f3f3; }
+.ct-wait__card span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ct-wait__card:hover img { opacity: .9; }

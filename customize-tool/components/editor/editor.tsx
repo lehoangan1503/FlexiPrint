@@ -59,7 +59,6 @@ import { AssetPanel } from "./asset-panel";
 import { AiMockupsPanel } from "./ai-mockups";
 import { SceneDialog } from "./scene-dialog";
 import { StorefrontPreview } from "./storefront-preview";
-import { PlacementBar } from "./placement-bar";
 import { VersionPhoiDialog } from "./version-phoi-dialog";
 import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zoneOptionView } from "./use-design";
 import { PrintPanel } from "./print-panel";
@@ -1212,20 +1211,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                 />
               </div>
               <div className="flex min-w-0 flex-1 flex-col">
-                {base?.config.cut.mode === "khuon" && (
-                  <PlacementBar
-                    key={product.id}
-                    value={config.placement}
-                    onChange={async (placement) => {
-                      try {
-                        setProduct(await ctApi.setPlacement(product.id, placement));
-                        setReloadKey((k) => k + 1);
-                      } catch (e) {
-                        flash(e instanceof Error ? e.message : "Không lưu được vị trí");
-                      }
-                    }}
-                  />
-                )}
                 <div className="min-h-0 flex-1">
                 <StorefrontPreview compact product={product} assets={assets} regions={allRegions} items={allItems} config={config} priceTableId={base?.config.priceTableId ?? null} />
                 </div>

@@ -463,9 +463,9 @@ export function GuidePage() {
                 Tab <b>Sản phẩm</b> → <b>Tạo sản phẩm</b>: chọn artwork, chọn base, đặt tên theo chủ đề. 1 artwork làm được nhiều sản phẩm trên nhiều base.
               </p>
             </Step>
-            <Step n={5} title="Vị trí trong khuôn + mockup" shot="fx-product-locate.jpg">
+            <Step n={5} title="Mockup" shot="fx-product-locate.jpg">
               <p>
-                Base có khuôn cố định (sứ, kính): thanh <b>Vị trí artwork trong khuôn</b> — Cỡ, Ngang, Dọc. Trái: <b>Tạo mockup</b> AI hoặc <b>Import mockup</b>. Phải: giá + form như khách thấy.
+                Sản phẩm không chỉnh gì: artwork đặt đúng vào khuôn của base. Trái: <b>Tạo mockup</b> AI hoặc <b>Import mockup</b>. Phải: giá + form như khách thấy.
               </p>
             </Step>
             <Step n={6} title="Deploy">

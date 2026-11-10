@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtBasePlacement, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseProductRow, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind } from "../types";
+import type { CtBasePlacement, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseProductRow, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind, CtStoreList } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
   CtAgentStatus,
@@ -93,6 +93,11 @@ export const ctApi = {
   /** Opens the product on the store with a link made at click time (stored preview links expire). */
   shopifyOpenUrl: (productId: string) => `${CT_CONFIG.apiBase}/products/${productId}/shopify/open`,
 
+  /** Shopify stores (server/stores.ts) + the one the user works on; the /dashboard switch sets it. */
+  listStores: () => call<CtStoreList>("stores"),
+  setCurrentStore: (id: string) => call<CtStoreList>("stores/current", json("PUT", { id })),
+
+  /** Of the user's current store (migration 032). */
   listProducts: (q: string, kind?: CtProductKind) =>
     call<{ products: CtProductListRow[] }>(`products?q=${encodeURIComponent(q)}${kind ? `&kind=${kind}` : ""}`).then((r) => r.products),
   /** A hand-made artwork: on a base product's khuôn, or a blank canvas of any size. */
@@ -136,11 +141,13 @@ export const ctApi = {
   publish: (id: string) => call<{ product: CtProduct; publish: CtPublishResponse }>(`products/${id}/publish`, { method: "POST" }),
   deploy: (id: string, body: CtDeployBody) => call<CtDeployResponse>(`products/${id}/deploy`, json("POST", body)),
   shopifyInfo: (id: string) => call<CtShopifyInfo>(`products/${id}/shopify`),
-  searchShopifyProducts: (q: string) =>
-    call<{ products: CtShopifyProductSummary[] }>(`shopify/products?q=${encodeURIComponent(q)}`).then((r) => r.products),
+  /** `store`: the product's store (CtProduct.store_id); omitted = the user's current store. */
+  searchShopifyProducts: (q: string, store?: string) =>
+    call<{ products: CtShopifyProductSummary[] }>(`shopify/products?q=${encodeURIComponent(q)}${store ? `&store=${encodeURIComponent(store)}` : ""}`).then((r) => r.products),
 
-  listCollections: () => call<{ collections: CtShopifyCollection[] }>("shopify/collections").then((r) => r.collections),
-  createCollection: (title: string) => call<{ collection: CtShopifyCollection }>("shopify/collections", json("POST", { title })).then((r) => r.collection),
+  listCollections: (store?: string) => call<{ collections: CtShopifyCollection[] }>(`shopify/collections${store ? `?store=${encodeURIComponent(store)}` : ""}`).then((r) => r.collections),
+  createCollection: (title: string, store?: string) =>
+    call<{ collection: CtShopifyCollection }>(`shopify/collections${store ? `?store=${encodeURIComponent(store)}` : ""}`, json("POST", { title })).then((r) => r.collection),
 
 
   listPriceTables: () => call<{ tables: CtPriceTable[] }>("price-tables").then((r) => r.tables),

@@ -1072,6 +1072,8 @@ export interface CtProduct {
   kind?: CtProductKind;
   /** A "product" row: the base product it is made on (variants, price, product type). */
   base_product_id?: string | null;
+  /** The Shopify store the artwork / product belongs to (migration 032, CtStore.id); absent before it ran. */
+  store_id?: string;
   status: CtProductStatus;
   main_asset_id: string | null;
   thumbnail_url: string | null;
@@ -2230,6 +2232,28 @@ export interface CtShopifyProductSummary {
   collectionIds: string[];
   /** customize_tool.breadcrumb_collection. */
   primaryCollectionId: string | null;
+}
+
+/**
+ * A Shopify store FlexiPrint sells on (ct_stores, migration 032). Artworks and products belong to one; product bases,
+ * price tables and the library are shared by all.
+ */
+export interface CtStore {
+  id: string;
+  name: string;
+  /** xxx.myshopify.com — the Admin API host. */
+  shopDomain: string;
+  /** The public site, e.g. https://cherivia.com. */
+  publicUrl: string;
+  /** The app's credentials are set on the server (env) — without them deploys to the store fail. */
+  configured: boolean;
+}
+
+/** GET stores. */
+export interface CtStoreList {
+  stores: CtStore[];
+  /** The store the signed-in user works on now (the /dashboard switch). */
+  current: string;
 }
 
 export interface CtShopifyInfo {

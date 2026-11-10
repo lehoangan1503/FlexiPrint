@@ -10,11 +10,14 @@ import { ImportStatus } from "../../../customize-tool/components/char/import-sta
 import { LibraryTab } from "../../../customize-tool/components/library/library-tab";
 import { BaseProductsTab } from "../../../customize-tool/components/base/base-products-tab";
 import { ImportButton } from "../../../customize-tool/components/char/import-button";
+import { StoreSwitch } from "../../../customize-tool/components/store-switch";
 
 /**
  * The dashboard's tabs (asked 2026-11-07, like Teeinblue): Sản phẩm (what is sold = artwork + product base: mockups,
  * price, Shopify) · Artwork (whole designs: layers, options, khuôn, preview, print file) · Product base (the blank
  * products: variants + price, khuôn + phôi) · Thư viện (clipart sets, fonts). The tab is in the address (?tab=…).
+ * The store switch (2026-11-10, migration 032): Sản phẩm + Artwork are the picked store's; Product base + Thư viện are
+ * shared by every store.
  */
 type DashboardTab = "products" | "artwork" | "bases" | "library";
 const TABS: Array<[DashboardTab, string]> = [
@@ -29,6 +32,8 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
   const [askNickname, setAskNickname] = useState(!profile.nickname);
   const [current, setCurrent] = useState(profile);
   const [tab, setTab] = useState<DashboardTab>("products");
+  /** The store the user works on — null until the server said which (the lists wait for it). */
+  const [store, setStore] = useState<string | null>(null);
   // After the first paint: the address is only known in the browser.
   useEffect(() => {
     const id = setTimeout(() => {
@@ -53,6 +58,7 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.svg" alt="" className="h-7 w-7" />
           <h1 className="text-lg font-semibold">FlexiPrint</h1>
+          <StoreSwitch onChange={(st) => setStore(st.id)} />
           <div className="ml-auto flex items-center gap-2">
             <ImportStatus />
             <ThemeToggle />
@@ -73,9 +79,9 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
           ))}
         </nav>
         {tab === "products" ? (
-          <CustomizeProductList key="products" kind="product" currentUserId={profile.user_id} admin={admin} />
+          store !== null && <CustomizeProductList key={`products-${store}`} kind="product" currentUserId={profile.user_id} admin={admin} />
         ) : tab === "artwork" ? (
-          <CustomizeProductList key="artwork" kind="artwork" currentUserId={profile.user_id} admin={admin} actions={<ImportButton />} />
+          store !== null && <CustomizeProductList key={`artwork-${store}`} kind="artwork" currentUserId={profile.user_id} admin={admin} actions={<ImportButton />} />
         ) : tab === "bases" ? (
           <BaseProductsTab admin={admin} />
         ) : (

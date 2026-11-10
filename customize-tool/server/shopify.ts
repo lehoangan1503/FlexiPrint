@@ -1,8 +1,9 @@
 /**
  * Shopify Admin API (GraphQL) — Deploy sản phẩm.
  *
- * Auth: the Dev Dashboard app's client credentials (SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET on
- * SHOPIFY_STORE_DOMAIN) are exchanged for a 24 h token, cached in memory. Scopes in use: write_products
+ * Several stores (migration 032, server/stores.ts): every call names the store (ShopifyStore). Auth: that store's
+ * Dev Dashboard app client credentials (env SHOPIFY_<ID>_CLIENT_ID / _CLIENT_SECRET, server/stores.ts storeCredentials)
+ * are exchanged for a 24 h token, cached in memory per store. Scopes in use: write_products
  * (product, variants, metafields, media). Publishing to the Online Store channel needs read/write_publications —
  * without them a deploy warns instead.
  *
@@ -21,22 +22,28 @@ import type {
   CtShopifyLink,
   CtShopifyProductSummary,
   CtShopifyStatus,
+  CtStore,
 } from "../types";
 import { sameCollection } from "../lib/collections";
 import { priceCells, shopifyPricing, usesPacks, usesSizes } from "../lib/pricing";
+import { CT_DEFAULT_STORE, storeCredentials } from "./stores";
 
 const API_VERSION = () => process.env.SHOPIFY_API_VERSION || "2026-07";
-const DOMAIN = () => process.env.SHOPIFY_STORE_DOMAIN ?? "";
-/** Optional: a theme the product links open in (preview_theme_id). Unset since 2026-11-03 — links open the live theme,
- * which carries the flexi2 template. */
-const PREVIEW_THEME = () => process.env.SHOPIFY_PREVIEW_THEME_ID ?? "";
+
+/** The store a call goes to (CtStore, server/stores.ts). */
+export type ShopifyStore = Pick<CtStore, "id" | "name" | "shopDomain">;
+
+/** Optional: a theme the product links open in (preview_theme_id) — SHOPIFY_<ID>_PREVIEW_THEME_ID. Unset since
+ * 2026-11-03 — links open the live theme, which carries the flexi2 template. */
+const previewTheme = (st: ShopifyStore) =>
+  process.env[`SHOPIFY_${st.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_PREVIEW_THEME_ID`] || (st.id === CT_DEFAULT_STORE ? process.env.SHOPIFY_PREVIEW_THEME_ID : "") || "";
 
 /** The theme template the deployed product uses (templates/product.flexi2.json → section flexi2-product, on the live theme — scripts/push-theme.mjs). */
 export const CT_SHOPIFY_TEMPLATE_SUFFIX = "flexi2";
 export const CT_METAFIELD_NS = "customize_tool";
 
-export function shopifyConfigured(): boolean {
-  return Boolean(DOMAIN() && process.env.SHOPIFY_CLIENT_ID && process.env.SHOPIFY_CLIENT_SECRET);
+export function shopifyConfigured(st: ShopifyStore): boolean {
+  return Boolean(st.shopDomain && storeCredentials(st.id));
 }
 
 export class ShopifyError extends Error {}
@@ -64,24 +71,30 @@ async function shopifyFetch(url: string, init: RequestInit): Promise<Response> {
   }
 }
 
-let token: { value: string; until: number } | null = null;
+/** One token per store. */
+const tokens = new Map<string, { value: string; until: number }>();
 
-async function accessToken(): Promise<string> {
-  if (token && token.until > Date.now()) return token.value;
-  if (!shopifyConfigured()) throw new ShopifyError("Chưa cấu hình Shopify (SHOPIFY_STORE_DOMAIN, SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET)");
-  const res = await shopifyFetch(`https://${DOMAIN()}/admin/oauth/access_token`, {
+async function accessToken(st: ShopifyStore): Promise<string> {
+  const have = tokens.get(st.id);
+  if (have && have.until > Date.now()) return have.value;
+  const cred = storeCredentials(st.id);
+  if (!st.shopDomain || !cred) {
+    const k = st.id.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+    throw new ShopifyError(`Store ${st.name} chưa cấu hình app Shopify trên server (SHOPIFY_${k}_CLIENT_ID / SHOPIFY_${k}_CLIENT_SECRET)`);
+  }
+  const res = await shopifyFetch(`https://${st.shopDomain}/admin/oauth/access_token`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: process.env.SHOPIFY_CLIENT_ID ?? "",
-      client_secret: process.env.SHOPIFY_CLIENT_SECRET ?? "",
-    }),
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: new URLSearchParams({ grant_type: "client_credentials", client_id: cred.clientId, client_secret: cred.clientSecret }),
   });
-  const body = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error_description?: string };
-  if (!res.ok || !body.access_token) throw new ShopifyError(`Shopify từ chối đăng nhập app: ${body.error_description ?? `HTTP ${res.status}`}`);
+  const body = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error?: string; error_description?: string };
+  if (!res.ok || !body.access_token) {
+    const why = body.error === "app_not_installed" ? `app chưa được cài trên store ${st.name} (${st.shopDomain})` : (body.error_description ?? `HTTP ${res.status}`);
+    throw new ShopifyError(`Shopify từ chối đăng nhập app: ${why}`);
+  }
   // Renewed 10 minutes early.
-  token = { value: body.access_token, until: Date.now() + Math.max(60, (body.expires_in ?? 3600) - 600) * 1000 };
+  const token = { value: body.access_token, until: Date.now() + Math.max(60, (body.expires_in ?? 3600) - 600) * 1000 };
+  tokens.set(st.id, token);
   return token.value;
 }
 
@@ -96,13 +109,13 @@ interface UserError {
   code?: string | null;
 }
 
-async function gql<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
-  const res = await shopifyFetch(`https://${DOMAIN()}/admin/api/${API_VERSION()}/graphql.json`, {
+async function gql<T>(st: ShopifyStore, query: string, variables: Record<string, unknown> = {}): Promise<T> {
+  const res = await shopifyFetch(`https://${st.shopDomain}/admin/api/${API_VERSION()}/graphql.json`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": await accessToken() },
+    headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": await accessToken(st) },
     body: JSON.stringify({ query, variables }),
   });
-  if (res.status === 401) token = null;
+  if (res.status === 401) tokens.delete(st.id);
   const body = (await res.json().catch(() => ({}))) as { data?: T; errors?: GqlError[] | string };
   if (!res.ok || body.errors) {
     const msg = Array.isArray(body.errors) ? body.errors.map((e) => e.message).join("; ") : (body.errors ?? `HTTP ${res.status}`);
@@ -169,12 +182,13 @@ function summary(p: ProductNode): CtShopifyProductSummary {
   };
 }
 
-export async function shopifyInfo(productGid: string | null): Promise<CtShopifyInfo> {
-  if (!shopifyConfigured()) return { configured: false, shop: null, product: null };
+export async function shopifyInfo(st: ShopifyStore, productGid: string | null): Promise<CtShopifyInfo> {
+  if (!shopifyConfigured(st)) return { configured: false, shop: null, product: null };
   const data = await gql<{
     shop: { name: string; myshopifyDomain: string; currencyCode: string; currencyFormats: { moneyFormat: string } };
     product: ProductNode | null;
   }>(
+    st,
     `query($id: ID!, $has: Boolean!) {
       shop { name myshopifyDomain currencyCode currencyFormats { moneyFormat } }
       product(id: $id) @include(if: $has) { ${PRODUCT_FIELDS} }
@@ -188,9 +202,10 @@ export async function shopifyInfo(productGid: string | null): Promise<CtShopifyI
   };
 }
 
-export async function searchShopifyProducts(q: string): Promise<CtShopifyProductSummary[]> {
+export async function searchShopifyProducts(st: ShopifyStore, q: string): Promise<CtShopifyProductSummary[]> {
   const clean = q.replace(/["\\]/g, " ").trim();
   const data = await gql<{ products: { nodes: ProductNode[] } }>(
+    st,
     `query($q: String) { products(first: 20, query: $q, sortKey: UPDATED_AT, reverse: true) { nodes { ${PRODUCT_FIELDS} } } }`,
     { q: clean ? `title:*${clean}* OR handle:*${clean}*` : null },
   );
@@ -238,12 +253,13 @@ function variantKey(options: Array<{ name: string; value: string }>): string {
     .join("|");
 }
 
-export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link: CtShopifyLink; warnings: string[]; previewUrl: string | null }> {
+export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInput): Promise<{ link: CtShopifyLink; warnings: string[]; previewUrl: string | null }> {
   const warnings: string[] = [];
   const targetId = input.targetId ?? input.link?.productId ?? null;
   let existing: ExistingProduct | null = null;
   if (targetId) {
     const data = await gql<{ product: ExistingProduct | null }>(
+      st,
       `query($id: ID!) { product(id: $id) {
         id handle
         variants(first: 250) { nodes { id selectedOptions { name value } } }
@@ -299,7 +315,7 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
   const manageMedia = input.media.length > 0 || Object.keys(known).length > 0;
 
   // Collections: a manual one takes the product; a smart one gets it through the tags / type its rules ask.
-  const all = input.collectionIds.length ? await listCollections() : [];
+  const all = input.collectionIds.length ? await listCollections(st) : [];
   const picked = all.filter((c) => input.collectionIds.includes(c.id));
   const needs = smartNeeds(picked, { tags: input.tags, productType: input.productType, vendor: input.vendor });
   if (needs.unmet.length) warnings.push(`Chưa vào được collection tự động: ${needs.unmet.join(", ")} (luật của nó không gắn tự động được).`);
@@ -338,6 +354,7 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
       userErrors: UserError[];
     };
   }>(
+    st,
     `mutation($input: ProductSetInput!, $identifier: ProductSetIdentifiers) {
       productSet(input: $input, identifier: $identifier, synchronous: true) {
         product { id handle title status onlineStoreUrl onlineStorePreviewUrl media(first: 100) { nodes { id } } }
@@ -352,6 +369,7 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
 
   if (!input.primaryCollectionId && existing) {
     await gql<{ metafieldsDelete: { userErrors: UserError[] } }>(
+      st,
       `mutation($m: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $m) { userErrors { field message } } }`,
       { m: [{ ownerId: p.id, namespace: CT_METAFIELD_NS, key: "breadcrumb_collection" }] },
     ).catch(() => undefined);
@@ -366,7 +384,7 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
   if (manageMedia && p.media.nodes.length < input.media.length) warnings.push("Một số ảnh chưa lên Shopify (URL ảnh không tải được từ Shopify?).");
 
   if (p.status === "ACTIVE" && !p.onlineStoreUrl) {
-    const published = await publishToOnlineStore(p.id).catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+    const published = await publishToOnlineStore(st, p.id).catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
     if (published !== true) {
       warnings.push(
         `Chưa tự bật kênh Online Store (${published}). Nếu sản phẩm chưa hiện trên store: Shopify admin → sản phẩm → Sales channels → Online Store, hoặc cấp thêm scope read_publications + write_publications cho app.`,
@@ -375,11 +393,12 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
   }
 
   const numericId = p.id.split("/").pop() ?? "";
-  const shopDomain = DOMAIN();
+  const shopDomain = st.shopDomain;
+  const theme = previewTheme(st);
   return {
     warnings,
     // Staff preview (passes the store password, works for a draft; expires) — not stored.
-    previewUrl: themePreview(p.onlineStorePreviewUrl),
+    previewUrl: themePreview(st, p.onlineStorePreviewUrl),
     link: {
       productId: p.id,
       handle: p.handle,
@@ -389,7 +408,7 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
       media,
       deployedAt: new Date().toISOString(),
       templateVersion: input.templateVersion,
-      url: `${p.onlineStoreUrl ?? `https://${shopDomain}/products/${p.handle}`}${PREVIEW_THEME() ? `?preview_theme_id=${PREVIEW_THEME()}` : ""}`,
+      url: `${p.onlineStoreUrl ?? `https://${shopDomain}/products/${p.handle}`}${theme ? `?preview_theme_id=${theme}` : ""}`,
       adminUrl: `https://admin.shopify.com/store/${shopDomain.replace(/\.myshopify\.com$/, "")}/products/${numericId}`,
     },
   };
@@ -400,15 +419,16 @@ export async function deployToShopify(input: ShopifyDeployInput): Promise<{ link
  * always renders the live theme; the same path on the shop's domain with _sc=1&preview_theme_id=… renders the given
  * one, draft product included (verified 2026-10-30).
  */
-function themePreview(url: string | null): string | null {
-  if (!url || !PREVIEW_THEME()) return url;
+function themePreview(st: ShopifyStore, url: string | null): string | null {
+  const theme = previewTheme(st);
+  if (!url || !theme) return url;
   const u = new URL(url);
   u.protocol = "https:";
-  u.host = DOMAIN();
+  u.host = st.shopDomain;
   u.searchParams.set("_ab", "0");
   u.searchParams.set("_fd", "0");
   u.searchParams.set("_sc", "1");
-  u.searchParams.set("preview_theme_id", PREVIEW_THEME());
+  u.searchParams.set("preview_theme_id", theme);
   return u.toString();
 }
 
@@ -424,26 +444,30 @@ export interface ShopifyPreview {
 }
 
 /** Fresh preview links of these Shopify products (missing ones left out). */
-export async function previewLinks(productGids: string[]): Promise<ShopifyPreview[]> {
+export async function previewLinks(st: ShopifyStore, productGids: string[]): Promise<ShopifyPreview[]> {
   if (!productGids.length) return [];
   const data = await gql<{ nodes: Array<{ id: string; title: string; status: CtShopifyStatus; onlineStoreUrl: string | null; onlineStorePreviewUrl: string | null } | null> }>(
+    st,
     `query($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id title status onlineStoreUrl onlineStorePreviewUrl } } }`,
     { ids: productGids },
   );
-  const theme = PREVIEW_THEME() ? `?preview_theme_id=${PREVIEW_THEME()}` : "";
+  const t = previewTheme(st);
+  const theme = t ? `?preview_theme_id=${t}` : "";
   return data.nodes
     .filter((n): n is NonNullable<typeof n> => Boolean(n?.id))
-    .map((n) => ({ id: n.id, title: n.title, status: n.status, previewUrl: themePreview(n.onlineStorePreviewUrl), storeUrl: n.onlineStoreUrl ? `${n.onlineStoreUrl}${theme}` : null }));
+    .map((n) => ({ id: n.id, title: n.title, status: n.status, previewUrl: themePreview(st, n.onlineStorePreviewUrl), storeUrl: n.onlineStoreUrl ? `${n.onlineStoreUrl}${theme}` : null }));
 }
 
 /** Publish on the Online Store channel. true, or why not (missing scope…). */
-async function publishToOnlineStore(productId: string): Promise<true | string> {
+async function publishToOnlineStore(st: ShopifyStore, productId: string): Promise<true | string> {
   const pubs = await gql<{ publications: { nodes: Array<{ id: string; name: string; catalog: { title: string } | null }> } }>(
+    st,
     `{ publications(first: 20) { nodes { id name catalog { title } } } }`,
   );
   const store = pubs.publications.nodes.find((n) => /online store/i.test(n.name) || /online store/i.test(n.catalog?.title ?? ""));
   if (!store) return "không thấy kênh Online Store";
   const res = await gql<{ publishablePublish: { userErrors: UserError[] } }>(
+    st,
     `mutation($id: ID!, $input: [PublicationInput!]!) { publishablePublish(id: $id, input: $input) { userErrors { field message } } }`,
     { id: productId, input: [{ publicationId: store.id }] },
   );
@@ -474,11 +498,12 @@ const collectionOf = (c: CollectionNode): CtShopifyCollection => ({
 });
 
 /** Every collection, with a smart one's rules (it is joined by them, not by hand). */
-export async function listCollections(): Promise<CtShopifyCollection[]> {
+export async function listCollections(st: ShopifyStore): Promise<CtShopifyCollection[]> {
   const out: CtShopifyCollection[] = [];
   let after: string | null = null;
   for (let page = 0; page < 10; page++) {
     const data: { collections: { nodes: CollectionNode[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } } } = await gql(
+      st,
       `query($after: String) { collections(first: 250, after: $after, sortKey: TITLE) { nodes { ${COLLECTION_FIELDS} } pageInfo { hasNextPage endCursor } } }`,
       { after },
     );
@@ -490,10 +515,11 @@ export async function listCollections(): Promise<CtShopifyCollection[]> {
 }
 
 /** A collection with that title — the one already there when there is one (no twins, 2026-10-30). */
-export async function createCollection(title: string): Promise<CtShopifyCollection> {
-  const same = sameCollection(await listCollections(), title);
+export async function createCollection(st: ShopifyStore, title: string): Promise<CtShopifyCollection> {
+  const same = sameCollection(await listCollections(st), title);
   if (same) return same;
   const data = await gql<{ collectionCreate: { collection: CollectionNode | null; userErrors: UserError[] } }>(
+    st,
     `mutation($input: CollectionInput!) { collectionCreate(input: $input) { collection { ${COLLECTION_FIELDS} } userErrors { field message } } }`,
     { input: { title } },
   );

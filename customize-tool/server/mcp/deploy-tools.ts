@@ -19,6 +19,7 @@ import { str } from "../ai/llm";
 import { serviceSession } from "../char/product";
 import { ownedProduct, productTemplate, readDeployBody, runDeploy } from "../handlers";
 import { listCollections, previewLinks, shopifyConfigured, shopifyInfo } from "../shopify";
+import { loadStores, storeOfProduct } from "../stores";
 import { siteUrl } from "../site-url";
 import { listBaseRows, loadBaseProduct } from "../base-products";
 import { makeProductFromArtwork } from "../artwork-link";
@@ -69,9 +70,10 @@ interface DeployState {
 
 /** Everything a deploy of the product reads. */
 async function deployState(db: CtServiceClient, s: CtSession, product: CtProduct): Promise<DeployState> {
+  const store = await storeOfProduct(db, product);
   const [base, info, tables, mockups, built, content] = await Promise.all([
     product.base_product_id ? loadBaseProduct(db, product.base_product_id) : Promise.resolve(null),
-    shopifyInfo(product.shopify?.productId ?? null).catch((e: Error): CtShopifyInfo => ({ configured: shopifyConfigured(), shop: null, product: null, error: e.message })),
+    shopifyInfo(store, product.shopify?.productId ?? null).catch((e: Error): CtShopifyInfo => ({ configured: shopifyConfigured(store), shop: null, product: null, error: e.message })),
     db
       .from(CT_TABLES.priceTables)
       .select("*")
@@ -167,19 +169,26 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
     run: async (ctx, args) => {
       const ids = strings(args.product_ids).filter((id) => UUID.test(id));
       const limit = Math.min(30, Math.max(1, Math.round(Number(args.limit) || 10)));
-      let q = ctx.db.from(CT_TABLES.products).select("id, name, shopify").not("shopify", "is", null);
+      let q = ctx.db.from(CT_TABLES.products).select("id, name, shopify, store_id").not("shopify", "is", null);
       q = ids.length ? q.in("id", ids) : q.order("updated_at", { ascending: false }).limit(limit);
-      const { data, error } = await q.returns<Array<Pick<CtProduct, "id" | "name" | "shopify">>>();
+      const { data, error } = await q.returns<Array<Pick<CtProduct, "id" | "name" | "shopify" | "store_id">>>();
       if (error) throw new Error(error.message);
       const rows = (data ?? []).filter((p) => p.shopify?.productId);
       if (!rows.length) return json({ products: [], note: ids.length ? "Các sản phẩm này chưa deploy lên Shopify." : "Chưa có sản phẩm nào deploy lên Shopify." });
-      const live = new Map((await previewLinks(rows.map((p) => p.shopify!.productId))).map((x) => [x.id, x]));
+      // Each product on its own store (migration 032).
+      const stores = await loadStores(ctx.db);
+      const live = new Map<string, Awaited<ReturnType<typeof previewLinks>>[number]>();
+      for (const store of stores) {
+        const gids = rows.filter((p) => (p.store_id ?? stores[0]?.id) === store.id).map((p) => p.shopify!.productId);
+        if (gids.length) for (const x of await previewLinks(store, gids).catch(() => [])) live.set(x.id, x);
+      }
+      const storeName = (id: string | undefined) => stores.find((x) => x.id === id)?.name ?? id ?? "";
       return json({
         products: rows.map((p) => {
           const x = live.get(p.shopify!.productId);
           return x
-            ? { product_id: p.id, name: p.name, title: x.title, status: x.status, preview: x.previewUrl, store: x.storeUrl, admin: p.shopify!.adminUrl }
-            : { product_id: p.id, name: p.name, error: "Sản phẩm Shopify không còn (đã xoá?) — deploy lại" };
+            ? { product_id: p.id, name: p.name, shop: storeName(p.store_id), title: x.title, status: x.status, preview: x.previewUrl, store: x.storeUrl, admin: p.shopify!.adminUrl }
+            : { product_id: p.id, name: p.name, shop: storeName(p.store_id), error: "Sản phẩm Shopify không còn (đã xoá?) — deploy lại" };
         }),
         note: "preview = link xem thử theme nháp (sản phẩm DRAFT: hết hạn sau một thời gian — gọi lại để lấy link đang dùng được; không thêm vào giỏ được). store = trang cố định khi sản phẩm ACTIVE + bật Online Store.",
       });
@@ -198,7 +207,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
     run: async (ctx, args) => {
       const { db, s, product } = await openProduct(ctx, args);
       const st = await deployState(db, s, product);
-      const collections = await listCollections().catch((): CtShopifyCollection[] => []);
+      const collections = await listCollections(await storeOfProduct(db, product)).catch((): CtShopifyCollection[] => []);
       const linked = st.info.product;
       const tableId = defaultTable(st, product);
       const title = linked?.title || st.content?.title || "";
@@ -418,7 +427,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       const named = strings(args.media_asset_ids).filter((id) => st.mockups.some((a) => a.id === id));
       const mediaIds = named.length ? named : defaultMedia(st, product);
       const namedCollections = strings(args.collection_ids);
-      const collectionIds = namedCollections.length ? namedCollections : suggestCollections(await listCollections().catch((): CtShopifyCollection[] => []), { title: str(args.title), description: str(args.description_html), tags: strings(args.tags) }).map((c) => c.id);
+      const collectionIds = namedCollections.length ? namedCollections : suggestCollections(await listCollections(await storeOfProduct(db, product)).catch((): CtShopifyCollection[] => []), { title: str(args.title), description: str(args.description_html), tags: strings(args.tags) }).map((c) => c.id);
       const body = readDeployBody({
         priceTableId: tableId ?? "",
         title: str(args.title),

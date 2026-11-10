@@ -15,6 +15,7 @@ import { listBaseRows } from "../base-products";
 import { ensureProductFor } from "../artwork-link";
 import { runDeploy } from "../handlers";
 import { createCollection, listCollections, shopifyConfigured } from "../shopify";
+import { storeOfProduct } from "../stores";
 import { siteUrl } from "../site-url";
 import type { CtSession } from "../supabase";
 
@@ -103,10 +104,12 @@ export function savedDeployInfo(p: CtCharProject, product: CtProduct | null): Im
 export async function deployImported(s: CtSession, setId: string, artworkId: string, info: ImportDeployInfo): Promise<void> {
   try {
     await saveImportShopify(s, setId, { status: "deploying", error: "", ...info });
-    if (!shopifyConfigured()) throw new Error("Chưa cấu hình Shopify trên server");
     const db = s.supabase;
     const { data: artwork } = await db.from(CT_TABLES.products).select("*").eq("id", artworkId).single<CtProduct>();
     if (!artwork) throw new Error("Không thấy artwork của bộ");
+    // The artwork's store (migration 032): its product is made and sold there.
+    const store = await storeOfProduct(db, artwork);
+    if (!shopifyConfigured(store)) throw new Error(`Store ${store.name} chưa cấu hình app Shopify trên server`);
 
     const word = materialWord(info.material);
     // The artwork's own base (set by the import from its material, or changed by hand), else the material's.
@@ -128,7 +131,7 @@ export async function deployImported(s: CtSession, setId: string, artworkId: str
     const title = (info.title || product.name).trim();
     if (title && title !== product.name) await db.from(CT_TABLES.products).update({ name: title }).eq("id", productId);
     const ornament = /ornament/i.test(title);
-    const collections = await listCollections();
+    const collections = await listCollections(store);
     // The product type a type rule of the store already names (CHERIVIA ships "Acrylic Ornament" / "Christmas
     // Ornament" as ornaments — a "Glass Ornament" would fall in the other shipping group).
     const types = new Set(collections.flatMap((c) => c.rules.filter((r) => r.column === "TYPE" && r.relation === "EQUALS").map((r) => r.condition)));
@@ -136,7 +139,7 @@ export async function deployImported(s: CtSession, setId: string, artworkId: str
     const tags = ["personalized", ...(ornament ? ["ornament", "christmas"] : [])];
     // The store's collections that fit; a new one only when none does (no twins — 2026-10-30).
     let fit = suggestCollections(collections, { title, description: info.description, tags });
-    if (!fit.length && productType) fit = [await createCollection(`${productType}s`)];
+    if (!fit.length && productType) fit = [await createCollection(store, `${productType}s`)];
     const r = await runDeploy(
       s,
       product,

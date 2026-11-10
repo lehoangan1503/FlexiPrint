@@ -4,6 +4,9 @@
 //
 //   node --env-file=.env.local scripts/push-theme.mjs                 # the live theme (role MAIN)
 //   THEME=<id or name> node --env-file=.env.local scripts/push-theme.mjs   # another theme, e.g. "Copy of Cherivia Ornament (nháp)"
+//   STORE=caridora node --env-file=.env.local scripts/push-theme.mjs  # another store (migration 032): its app is
+//                                    SHOPIFY_CARIDORA_CLIENT_ID / _CLIENT_SECRET / _STORE_DOMAIN (default: CHERIVIA =
+//                                    SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET / SHOPIFY_STORE_DOMAIN)
 //
 // Since 2026-11-03 it goes to the LIVE theme, but only as files of its own — every file the theme already
 // has is left as it is (the theme's product.json, its sections, snippets, assets, the other product.* templates):
@@ -26,7 +29,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const STORE = process.env.SHOPIFY_STORE_DOMAIN;
+// The store (server/stores.ts): its app's credentials are SHOPIFY_<ID>_*; CHERIVIA also reads the older names.
+const STORE_ID = (process.env.STORE || "cherivia").toLowerCase();
+const K = STORE_ID.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+const legacy = STORE_ID === "cherivia";
+const KNOWN_DOMAINS = { cherivia: "v5bpim-cd.myshopify.com", caridora: "v1ebmg-u1.myshopify.com" };
+const STORE = process.env[`SHOPIFY_${K}_STORE_DOMAIN`] || (legacy ? process.env.SHOPIFY_STORE_DOMAIN : "") || KNOWN_DOMAINS[STORE_ID];
+const CLIENT_ID = process.env[`SHOPIFY_${K}_CLIENT_ID`] || (legacy ? process.env.SHOPIFY_CLIENT_ID : "");
+const CLIENT_SECRET = process.env[`SHOPIFY_${K}_CLIENT_SECRET`] || (legacy ? process.env.SHOPIFY_CLIENT_SECRET : "");
 const API = process.env.SHOPIFY_API_VERSION || "2026-07";
 // Not APP_URL: .env.local carries the local one. Every deploy goes through flexi2.
 const API_BASE = process.env.API_BASE || "https://flexi2.next.lc";
@@ -41,14 +51,15 @@ const ALLOWED = new Set([
 const TASKS_MARK = "FLEXI2_TASKS";
 const TASKS_LINE = `{%- comment -%}${TASKS_MARK}: FlexiPrint photo task cards (scripts/push-theme.mjs){%- endcomment -%}<script src="{{ 'flexi2-tasks.js' | asset_url }}" defer="defer"></script>`;
 
-if (!STORE || !process.env.SHOPIFY_CLIENT_ID || !process.env.SHOPIFY_CLIENT_SECRET) {
-  console.error("Thiếu SHOPIFY_STORE_DOMAIN / SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET (node --env-file=.env.local …)");
+if (!STORE || !CLIENT_ID || !CLIENT_SECRET) {
+  console.error(`Thiếu app của store ${STORE_ID}: SHOPIFY_${K}_CLIENT_ID / SHOPIFY_${K}_CLIENT_SECRET (node --env-file=.env.local …)`);
   process.exit(1);
 }
 
 const auth = await fetch(`https://${STORE}/admin/oauth/access_token`, {
   method: "POST",
-  body: new URLSearchParams({ grant_type: "client_credentials", client_id: process.env.SHOPIFY_CLIENT_ID, client_secret: process.env.SHOPIFY_CLIENT_SECRET }),
+  headers: { Accept: "application/json" },
+  body: new URLSearchParams({ grant_type: "client_credentials", client_id: CLIENT_ID, client_secret: CLIENT_SECRET }),
 }).then((r) => r.json());
 if (!auth.access_token) throw new Error(`Shopify từ chối đăng nhập app: ${JSON.stringify(auth)}`);
 

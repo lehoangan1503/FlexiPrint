@@ -66,6 +66,8 @@ export const CT_TABLES = {
   packCollections: "ct_pack_collections",
   priceTables: "ct_price_tables",
   baseProducts: "ct_base_products",
+  stores: "ct_stores",
+  userStores: "ct_user_stores",
   settings: "ct_settings",
   printTemplates: "ct_print_templates",
 } as const;

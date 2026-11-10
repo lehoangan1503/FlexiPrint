@@ -204,13 +204,14 @@ export async function artworkStatus(s: CtSession, id: string): Promise<NextRespo
 
 /**
  * A product (what is sold) made from `artwork` on `base` — the snapshot + its base product. Its name starts as the
- * artwork's (the theme), renamed freely. The service client (MCP) passes the owner's id.
+ * artwork's (the theme), renamed freely. The service client (MCP) passes the owner's id. It is sold on the artwork's
+ * store (migration 032).
  */
 export async function makeProductFromArtwork(db: Db, userId: string, artwork: CtProduct, base: CtBaseProduct, name?: string): Promise<CtProduct> {
   if ((artwork.kind ?? "artwork") !== "artwork" || normalizeProductConfig(artwork.config).artworkLink) throw new Error(`"${artwork.name}" là sản phẩm, không phải artwork — tạo từ artwork gốc của nó`);
   const title = (name?.trim() || artwork.name).slice(0, 200);
   const { count: before } = await db.from(CT_TABLES.products).select("id", { count: "exact", head: true }).eq("kind", "product").eq("config->artworkLink->>artworkId", artwork.id);
-  const { data: product, error } = await db.from(CT_TABLES.products).insert({ user_id: userId, name: title, kind: "product", base_product_id: base.id }).select("*").single<CtProduct>();
+  const { data: product, error } = await db.from(CT_TABLES.products).insert({ user_id: userId, name: title, kind: "product", base_product_id: base.id, ...(artwork.store_id ? { store_id: artwork.store_id } : {}) }).select("*").single<CtProduct>();
   if (error || !product) throw new Error(error?.message ?? "Không tạo được sản phẩm");
   let made: CtProduct;
   try {

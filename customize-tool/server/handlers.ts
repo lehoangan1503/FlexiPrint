@@ -50,6 +50,7 @@ import { loadPriceTable } from "./price-tables";
 import { loadBaseProduct } from "./base-products";
 import { applyBase } from "./artwork-link";
 import { createCollection, deployToShopify, listCollections, previewLinks, searchShopifyProducts, shopifyConfigured, shopifyInfo } from "./shopify";
+import { currentStoreId, storeFor, storeOfProduct } from "./stores";
 import { priceTableProblems } from "../lib/pricing";
 
 const ROLES: CtAssetRole[] = ["main", "sub", "variant", "rendition", "composite", "mockup", "reference"];
@@ -69,7 +70,9 @@ export async function ownedProduct(s: CtSession, productId: string): Promise<CtP
 // Products
 // ---------------------------------------------------------------------------
 
-export async function listProducts(s: CtSession, search: string, kind: CtProductKind | null = null): Promise<NextResponse> {
+export async function listProducts(s: CtSession, search: string, kind: CtProductKind | null = null, store: string | null = null): Promise<NextResponse> {
+  // One store's artworks / products (migration 032): the asked one, else the user's current store; "all" = every store.
+  const storeId = store === "all" ? null : store?.trim() || (await currentStoreId(s.supabase, s.user.id));
   let q = s.supabase
     .from(CT_TABLES.products)
     .select("*, main_asset:ct_assets!ct_products_main_asset_fk(url,width,height), base_product:ct_base_products(id,name)")
@@ -78,6 +81,7 @@ export async function listProducts(s: CtSession, search: string, kind: CtProduct
     .limit(200);
   if (search) q = q.ilike("name", `%${search}%`);
   if (kind) q = q.eq("kind", kind);
+  if (storeId) q = q.eq("store_id", storeId);
   const { data, error } = await q.returns<Omit<CtProductListRow, "mockup_url">[]>();
   if (error) return jsonError(error.message, 500);
   // The card shows the product as it is sold: its first mockup (oldest = the straight-on one).
@@ -415,7 +419,10 @@ export async function deploy(s: CtSession, productId: string, raw: unknown, orig
 /** Deploy a product the caller may edit: the template, then the Shopify product (the page's route and the MCP deploy_product). */
 export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeployBody, origin: string): Promise<CtDeployResponse | { error: string; status: number }> {
   const productId = product.id;
-  if (!shopifyConfigured()) return { error: "Chưa cấu hình Shopify (SHOPIFY_STORE_DOMAIN / SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET)", status: 501 };
+  // The product's own store (migration 032), whatever store the user has picked now.
+  const store = await storeOfProduct(s.supabase, product).catch(() => null);
+  if (!store) return { error: `Không thấy store "${product.store_id ?? ""}" của sản phẩm`, status: 404 };
+  if (!shopifyConfigured(store)) return { error: `Store ${store.name} chưa cấu hình app Shopify trên server`, status: 501 };
   // Only a product is sold (migration 031): an artwork is made into one first, on a base product.
   if ((product.kind ?? "artwork") !== "product") return { error: "Đây là artwork — tạo sản phẩm từ artwork (chọn product base) rồi deploy sản phẩm đó", status: 400 };
   // The base product owns the variants + prices and the product type.
@@ -449,7 +456,7 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
   // 2. The Shopify product: options + priced variants + metafields + images.
   let result: Awaited<ReturnType<typeof deployToShopify>>;
   try {
-    result = await deployToShopify({
+    result = await deployToShopify(store, {
       ctProductId: productId,
       link: product.shopify ?? null,
       targetId: body.shopifyProductId ?? null,
@@ -486,10 +493,12 @@ function missingShopifyColumn(message: string): string {
 export async function shopifyStatus(s: CtSession, productId: string): Promise<NextResponse> {
   const product = await ownedProduct(s, productId);
   if (!product) return jsonError("Không có quyền xem sản phẩm này", 403);
+  const store = await storeOfProduct(s.supabase, product).catch(() => null);
+  if (!store) return NextResponse.json({ configured: false, shop: null, product: null, error: `Không thấy store "${product.store_id ?? ""}"` } satisfies CtShopifyInfo);
   try {
-    return NextResponse.json(await shopifyInfo(product.shopify?.productId ?? null));
+    return NextResponse.json(await shopifyInfo(store, product.shopify?.productId ?? null));
   } catch (e) {
-    const info: CtShopifyInfo = { configured: shopifyConfigured(), shop: null, product: null, error: e instanceof Error ? e.message : String(e) };
+    const info: CtShopifyInfo = { configured: shopifyConfigured(store), shop: null, product: null, error: e instanceof Error ? e.message : String(e) };
     return NextResponse.json(info);
   }
 }
@@ -504,7 +513,7 @@ export async function shopifyOpen(s: CtSession, productId: string): Promise<Next
   const gid = product.shopify?.productId;
   if (!gid) return jsonError("Sản phẩm chưa lên Shopify", 404);
   try {
-    const [link] = await previewLinks([gid]);
+    const [link] = await previewLinks(await storeOfProduct(s.supabase, product), [gid]);
     const url = (link?.status === "ACTIVE" ? link.storeUrl : null) ?? link?.previewUrl ?? link?.storeUrl ?? product.shopify?.url;
     if (!url) return jsonError("Shopify không trả link sản phẩm", 502);
     return NextResponse.redirect(url, 302);
@@ -513,27 +522,27 @@ export async function shopifyOpen(s: CtSession, productId: string): Promise<Next
   }
 }
 
-export async function shopifyCollections(): Promise<NextResponse> {
+export async function shopifyCollections(s: CtSession, store: string | null): Promise<NextResponse> {
   try {
-    return NextResponse.json({ collections: await listCollections() });
+    return NextResponse.json({ collections: await listCollections(await storeFor(s, store)) });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : String(e), 502);
   }
 }
 
-export async function shopifyCreateCollection(raw: unknown): Promise<NextResponse> {
+export async function shopifyCreateCollection(s: CtSession, store: string | null, raw: unknown): Promise<NextResponse> {
   const title = raw && typeof raw === "object" && typeof (raw as { title?: unknown }).title === "string" ? (raw as { title: string }).title.trim().slice(0, 255) : "";
   if (!title) return jsonError("Thiếu tên collection", 400);
   try {
-    return NextResponse.json({ collection: await createCollection(title) }, { status: 201 });
+    return NextResponse.json({ collection: await createCollection(await storeFor(s, store), title) }, { status: 201 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : String(e), 502);
   }
 }
 
-export async function shopifySearch(q: string): Promise<NextResponse> {
+export async function shopifySearch(s: CtSession, store: string | null, q: string): Promise<NextResponse> {
   try {
-    return NextResponse.json({ products: await searchShopifyProducts(q) });
+    return NextResponse.json({ products: await searchShopifyProducts(await storeFor(s, store), q) });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : String(e), 502);
   }

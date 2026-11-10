@@ -26,6 +26,7 @@ import type {
   CtShopifyInfo,
   CtShopifyProductSummary,
   CtShopifyStatus,
+  CtStore,
   CtTemplate,
 } from "../../types";
 import { ctApi } from "../../lib/api-client";
@@ -60,6 +61,8 @@ export function DeployPage({ productId }: { productId: string }) {
   const [bundle, setBundle] = useState<CtProductBundle | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [info, setInfo] = useState<CtShopifyInfo | null>(null);
+  /** The product's store (migration 032): it is deployed there, its collections are that shop's. */
+  const [store, setStore] = useState<CtStore | null>(null);
   const [tables, setTables] = useState<CtPriceTable[]>([]);
   const [tableId, setTableId] = useState<string>("");
   /** The product's base product: its price table is the one deployed, not picked here. */
@@ -92,16 +95,22 @@ export function DeployPage({ productId }: { productId: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      ctApi.getBundle(productId),
-      ctApi.listPriceTables().catch(() => [] as CtPriceTable[]),
-      ctApi.shopifyInfo(productId).catch((e: Error) => ({ configured: true, shop: null, product: null, error: e.message })),
-      ctApi.listCollections().catch(() => [] as CtShopifyCollection[]),
-      ctApi.listBaseProducts().catch(() => [] as CtBaseProductRow[]),
-    ])
-      .then(([b, list, shop, cols, bases]) => {
+    ctApi
+      .getBundle(productId)
+      .then((b) =>
+        Promise.all([
+          b,
+          ctApi.listPriceTables().catch(() => [] as CtPriceTable[]),
+          ctApi.shopifyInfo(productId).catch((e: Error) => ({ configured: true, shop: null, product: null, error: e.message })),
+          ctApi.listCollections(b.product.store_id).catch(() => [] as CtShopifyCollection[]),
+          ctApi.listBaseProducts().catch(() => [] as CtBaseProductRow[]),
+          ctApi.listStores().catch(() => null),
+        ]),
+      )
+      .then(([b, list, shop, cols, bases, stores]) => {
         if (cancelled) return;
         setBundle(b);
+        setStore(stores?.stores.find((x) => x.id === (b.product.store_id ?? stores.stores[0]?.id)) ?? null);
         setCustomerPhoi(b.product.config?.customerPhoi === true);
         setTables(list);
         setInfo(shop);
@@ -220,7 +229,10 @@ export function DeployPage({ productId }: { productId: string }) {
           </Link>
           <div className="min-w-0">
             <h1 className="truncate text-base font-semibold">{product.name}</h1>
-            <div className="text-[11px] text-muted-foreground">{link ? `Deploy lần cuối ${new Date(link.deployedAt).toLocaleString("vi-VN")}` : "Chưa deploy"}</div>
+            <div className="text-[11px] text-muted-foreground">
+              {store && <span className="mr-1.5 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-600">Store {store.name}</span>}
+              {link ? `Deploy lần cuối ${new Date(link.deployedAt).toLocaleString("vi-VN")}` : "Chưa deploy"}
+            </div>
           </div>
           <span className="ml-auto" />
           <ImportStatus />
@@ -309,6 +321,7 @@ export function DeployPage({ productId }: { productId: string }) {
                 </CtField>
               </div>
               <CollectionPicker
+                store={product.store_id}
                 collections={collections}
                 picked={picked}
                 primary={primary}
@@ -468,12 +481,15 @@ function ruleText(c: CtShopifyCollection): string {
 }
 
 function CollectionPicker({
+  store,
   collections,
   picked,
   primary,
   onChange,
   onCreated,
 }: {
+  /** The product's store: a new collection is made there. */
+  store?: string;
   collections: CtShopifyCollection[];
   picked: string[];
   primary: string | null;
@@ -496,7 +512,7 @@ function CollectionPicker({
     setBusy(true);
     setError(null);
     try {
-      const c = await ctApi.createCollection(t);
+      const c = await ctApi.createCollection(t, store);
       onCreated(c);
       add(c.id);
       setName("");

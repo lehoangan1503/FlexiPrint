@@ -3,7 +3,7 @@
  * route shim (src/app/api/customize-tool/[...path]/route.ts):
  *
  *   GET    ai/providers
- *   GET    products?q=&kind=artwork|product
+ *   GET    products?q=&kind=artwork|product&store=id|all   (default: the user's current store)
  *   GET    print-templates               → { templates }   khuôn in (server/print-templates.ts)
  *   POST   print-templates               { name, kind, spec }
  *   PATCH  print-templates/:id           { name?, kind?, spec? }
@@ -22,8 +22,10 @@
  *   POST   products/:id/deploy           CtDeployBody → publish + Shopify product with the price table's variants (server/shopify.ts)
  *   GET    products/:id/shopify          → CtShopifyInfo (shop + the linked Shopify product now)
  *   GET    products/:id/shopify/open     → 302 to the product on the store, link made now (page when on sale, else a fresh preview)
- *   GET    shopify/products?q=           → { products } Shopify products to deploy onto
- *   GET    shopify/collections · POST {title}  → collections (deploy page badges; the starred one = breadcrumb)
+ *   GET    stores                        → CtStoreList (Shopify stores + the user's current one, server/stores.ts)
+ *   PUT    stores/current                { id } — the /dashboard store switch
+ *   GET    shopify/products?q=&store=    → { products } Shopify products to deploy onto
+ *   GET    shopify/collections?store= · POST {title}  → collections (deploy page badges; the starred one = breadcrumb)
  *   GET    price-tables · POST CtPriceTableBody · PATCH :id · DELETE :id   bảng giá (server/price-tables.ts)
  *   GET    base-products · POST CtBaseProductBody · GET/PATCH/DELETE :id   product base (server/base-products.ts)
  *   POST   products/artwork              CtCreateArtworkBody → { product } a hand-made artwork (server/print-products.ts)
@@ -142,6 +144,7 @@ import { dispatchChar } from "./char/router";
 import * as packImages from "./pack-images";
 import * as prices from "./price-tables";
 import * as bases from "./base-products";
+import * as stores from "./stores";
 import { mcpEndpoint } from "./mcp/server";
 import { asJob, pollJob } from "./jobs";
 import { agentStatus, answerAgentTask, cancelAgentTask, createAgentTask, getAgentTask, listAgentTasks } from "./agent/tasks";
@@ -234,9 +237,12 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     return artworks.listAllArtworks(session, product && UUID.test(product) ? product : null);
   }
   if (head === "char") return dispatchChar(req, session, path);
-  if (head === "shopify" && id === "products" && !sub && method === "GET") return h.shopifySearch(req.nextUrl.searchParams.get("q")?.trim() ?? "");
-  if (head === "shopify" && id === "collections" && !sub && method === "GET") return h.shopifyCollections();
-  if (head === "shopify" && id === "collections" && !sub && method === "POST") return h.shopifyCreateCollection(await readJson<unknown>(req));
+  if (head === "stores" && !id && method === "GET") return stores.listStores(session);
+  if (head === "stores" && id === "current" && !sub && method === "PUT") return stores.setCurrentStore(session, await readJson<unknown>(req));
+  const storeParam = req.nextUrl.searchParams.get("store");
+  if (head === "shopify" && id === "products" && !sub && method === "GET") return h.shopifySearch(session, storeParam, req.nextUrl.searchParams.get("q")?.trim() ?? "");
+  if (head === "shopify" && id === "collections" && !sub && method === "GET") return h.shopifyCollections(session, storeParam);
+  if (head === "shopify" && id === "collections" && !sub && method === "POST") return h.shopifyCreateCollection(session, storeParam, await readJson<unknown>(req));
   // Khuôn in (server/print-templates.ts) and products made on one (server/print-products.ts).
   if (head === "print-templates" && id === "images" && !sub && method === "POST") return printTpl.uploadTemplateImage(session, await req.formData());
   if (head === "print-templates" && id === "ai" && !sub && method === "POST") return khuonAi(session, await readJson<unknown>(req));
@@ -289,7 +295,7 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     if (!id) {
       if (method === "GET") {
         const kind = req.nextUrl.searchParams.get("kind");
-        return h.listProducts(session, req.nextUrl.searchParams.get("q")?.trim() ?? "", kind === "artwork" || kind === "product" ? kind : null);
+        return h.listProducts(session, req.nextUrl.searchParams.get("q")?.trim() ?? "", kind === "artwork" || kind === "product" ? kind : null, req.nextUrl.searchParams.get("store"));
       }
       if (method === "POST") {
         const body = await readJson<CtCreateProductBody>(req);

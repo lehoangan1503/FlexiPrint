@@ -40,6 +40,10 @@ this MCP. Everything you read here is live production data.
   (khuôn layer, phôi, silhouette — re-laid when the base changes), takes variants + price + product type from its
   base, and has its own title (theme), placement in the khuôn, mockups and Shopify link. make_product_mockups,
   check_deploy and deploy_product work on the PRODUCT id.
+- STORES (since 2026-11-10): several Shopify stores (CHERIVIA, Caridora…). Product bases, price tables and the library
+  (bộ clipart, khuôn, phôi, fonts, AI styles) are SHARED; every artwork and product belongs to ONE store. A new
+  artwork lands in the store its owner picked on /dashboard (nothing to pass); a product made from an artwork is on
+  the artwork's store, and deploy_product always sends it to the product's own store.
 
 ## Tools
 - Library reads: list_categories, get_category, list_cliparts, get_history, view_image.

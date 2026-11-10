@@ -52,6 +52,7 @@ import {
 } from "../../lib/design";
 import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, shapeBounds, translateShape } from "../../lib/geometry";
 import { CtAutoWidthInput, CtButton, CtSelect, CtTooltip, CtTooltipProvider, cx } from "../ui";
+import { StoreTag } from "../store-switch";
 import { Stage, type EditTarget, type StageTool } from "./stage";
 import { Inspector } from "./inspector";
 import { AssetPanel } from "./asset-panel";
@@ -1158,6 +1159,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               </Link>
             </CtTooltip>
             <span className="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-sky-600">Sản phẩm</span>
+            <StoreTag storeId={product.store_id} />
             <CtAutoWidthInput className="text-sm font-semibold" value={nameDraft} maxWidth={380} onChange={setNameDraft} onCommit={(v) => void renameProduct(v)} />
             <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
               Product base
@@ -1264,6 +1266,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
           </Link>
         </CtTooltip>
         <span className="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-violet-600">Artwork</span>
+        <StoreTag storeId={product.store_id} />
         <CtAutoWidthInput
           className="text-sm font-semibold"
           value={nameDraft}

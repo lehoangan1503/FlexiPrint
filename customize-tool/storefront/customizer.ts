@@ -1094,11 +1094,12 @@ export class Customizer {
 
   // ------------------------------------------------------------- photo tasks (server/photo-tasks.ts)
   /**
-   * An AI style on a product that has AI phôi goes through a server task (2026-11-09): style → finished photo → the
-   * phôi drawn with it, all on the server, so the customer may leave and come back (storefront/tasks.ts).
+   * An AI style goes through a server task (2026-11-09): style → finished photo → (with the deploy's "Phôi AI có ảnh
+   * khách" tick) the phôi drawn with it, all on the server, so the customer may leave and come back (storefront/tasks.ts).
+   * 2026-11-10: the task, its loader, "Buy More" and the persisted card stay whether the tick is on or off.
    */
   private usesTasks(r: CtRegion, style: CtPhotoStyleRef): boolean {
-    return !this.previewMode && this.tpl.config.versionPhoi.length > 0 && r.config.photo.cutout && isAiStyleRef(style);
+    return !this.previewMode && r.config.photo.cutout && isAiStyleRef(style);
   }
 
   private get tasksUrl(): string {
@@ -1399,7 +1400,7 @@ export class Customizer {
     dialog.style.setProperty("--ct-accent", getComputedStyle(this.root).getPropertyValue("--ct-accent"));
     const top = el("div", { class: "ct-waitdlg__top" });
     const text = el("p", { class: "ct-wait__text" });
-    const keep = el("button", { type: "button", class: "ct-btn ct-btn--primary ct-wait__keep", text: this.t("keepBrowsing", "Keep browsing") });
+    const keep = el("button", { type: "button", class: "ct-btn ct-btn--primary ct-wait__keep", text: this.t("keepBrowsing", "Buy More") });
     const cancel = el("button", { type: "button", class: "ct-btn ct-btn--ghost ct-wait__keep", text: this.t("cancel", "Cancel") });
     keep.addEventListener("click", on.keep);
     cancel.addEventListener("click", on.cancel);
@@ -1427,7 +1428,7 @@ export class Customizer {
       show: (bg) => {
         background = bg;
         text.textContent = bg
-          ? this.t("waitText", "This takes a minute or two. Feel free to keep browsing — it carries on in the background and pops up in the corner when it's ready.")
+          ? this.t("waitText", "This takes a minute or two. Feel free to buy more — it carries on in the background and pops up in the corner when it's ready.")
           : this.t("waitTextHere", "This takes about a minute. Meanwhile, have a look at these (they open in a new tab).");
         keep.hidden = !bg;
         cancel.hidden = bg;

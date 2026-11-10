@@ -186,7 +186,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                 <div className="mt-3 rounded-md border bg-muted/30 p-2.5 text-xs text-muted-foreground">
                   <div>
                     Import từ <span className="font-medium text-foreground">{cfg.fulfillment.provider || cfg.source.provider}</span> · {cfg.source.catalogId}
-                    {cfg.source.via === "teeinblue" && cfg.source.teeinblueId ? ` · qua Teeinblue (base #${cfg.source.teeinblueId}, Archived)` : " · API Printbelle"}
+                    {cfg.source.via === "teeinblue" && cfg.source.teeinblueId ? ` · qua Teeinblue (base #${cfg.source.teeinblueId})` : " · API Printbelle"}
                     {cfg.source.importedAt && ` · ${cfg.source.importedAt.slice(0, 10)}`}
                   </div>
                   {cfg.source.photos.length > 0 && (

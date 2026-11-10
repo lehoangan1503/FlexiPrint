@@ -9,7 +9,8 @@
  *   Cắt + file in    fixed khuôn / along the art / flat, the silhouette (2026-11-08, base-cut-preview.tsx)
  *   Phôi / nền       the preview photo (a phôi, or a background for the acrylic plate made from the design)
  *   Print areas      the file(s) the factory takes (name, px, dpi)
- *   Biến thể + giá   the Notion price table (sizes × packs): edited here, every product on this base deploys with it
+ *   Biến thể + giá   the fulfiller's variants + base cost (imported bases, read-only) and the Notion price table (sizes ×
+ *                    packs): edited here, every product on this base deploys with it
  *   Mockups          none of its own: the mockups of every product made on it, by product
  */
 
@@ -181,6 +182,25 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                   </div>
                 </CtField>
               </div>
+              {cfg.source && (
+                <div className="mt-3 rounded-md border bg-muted/30 p-2.5 text-xs text-muted-foreground">
+                  <div>
+                    Import từ <span className="font-medium text-foreground">{cfg.fulfillment.provider || cfg.source.provider}</span> · {cfg.source.catalogId}
+                    {cfg.source.via === "teeinblue" && cfg.source.teeinblueId ? ` · qua Teeinblue (base #${cfg.source.teeinblueId}, Archived)` : " · API Printbelle"}
+                    {cfg.source.importedAt && ` · ${cfg.source.importedAt.slice(0, 10)}`}
+                  </div>
+                  {cfg.source.photos.length > 0 && (
+                    <div className="mt-2 flex gap-1.5 overflow-x-auto">
+                      {cfg.source.photos.map((u) => (
+                        <a key={u} href={u} target="_blank" rel="noreferrer" className="h-16 w-16 shrink-0 overflow-hidden rounded border bg-white">
+                          {/* eslint-disable-next-line @next/next/no-img-element -- our R2 copy of the fulfiller's photo */}
+                          <img src={u} alt="" className="h-full w-full object-contain" loading="lazy" />
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="mt-3 space-y-3">
                 <CtField label="Mô tả mặc định (sản phẩm tự viết đè khi deploy)">
                   <CtTextarea rows={4} value={cfg.description} onChange={(e) => patch({ description: e.target.value })} />
@@ -250,6 +270,38 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                 )
               }
             >
+              {cfg.variants.length > 0 && (
+                <div className="mb-3">
+                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">Biến thể nhà in ({cfg.variants.length}) · giá vốn</div>
+                  <div className="max-h-60 overflow-auto rounded-md border">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-muted text-left text-[11px] text-muted-foreground">
+                        <tr>
+                          <th className="px-2 py-1 font-medium">Size</th>
+                          <th className="px-2 py-1 font-medium">Màu</th>
+                          <th className="px-2 py-1 font-medium">Mã nhà in</th>
+                          <th className="px-2 py-1 text-right font-medium">Giá vốn</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cfg.variants.map((v) => (
+                          <tr key={v.id} className="border-t">
+                            <td className="px-2 py-1">{v.size || "—"}</td>
+                            <td className="px-2 py-1">
+                              <span className="inline-flex items-center gap-1">
+                                {v.colorHex && <span className="inline-block h-3 w-3 rounded-sm border" style={{ background: v.colorHex }} />}
+                                {v.color || "—"}
+                              </span>
+                            </td>
+                            <td className="px-2 py-1 font-mono text-[11px]">{v.sku || "—"}</td>
+                            <td className="px-2 py-1 text-right font-medium">{v.cost !== null ? formatUsd(v.cost) : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
               <CtField label="Bảng giá (Notion)">
                 <CtSelect<string> value={cfg.priceTableId ?? ""} onChange={(priceTableId) => patch({ priceTableId })} options={tables.map((t) => ({ value: t.id, label: t.name }))} placeholder="Chọn bảng giá…" />
               </CtField>

@@ -191,3 +191,22 @@ export function baseProductFor<T extends { name: string; config: { material: str
   const word = materialWord(material);
   return (word && bases.find((b) => word.find.test(b.name))) || null;
 }
+
+/** Words of a name, lower case, plural "s" dropped ("Ornaments-2 Side" → ornament, 2, side). */
+function nameWords(name: string): string[] {
+  return (name.toLowerCase().match(/[a-z0-9]+/g) ?? []).map((w) => (w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w));
+}
+
+/**
+ * The Notion price table an imported fulfiller product fits (2026-11-11: "đã có bảng giá thì lấy luôn, chưa có thì
+ * để trống"): the table whose own name — before " · " — has every word in the product's title ("Glass Ornament 1
+ * side · Cherivia" ↔ "Round Glass Ornament-1 Side Print"). Strict on purpose: no fit = null, picked later by hand.
+ */
+export function priceTableForTitle<T extends Pick<CtPriceTable, "id" | "name">>(tables: T[], title: string): T | null {
+  const have = new Set(nameWords(title));
+  const fits = tables
+    .map((t) => ({ t, words: nameWords(t.name.split("·")[0] ?? "") }))
+    .filter((x) => x.words.length > 0 && x.words.every((w) => have.has(w)))
+    .sort((a, b) => b.words.length - a.words.length);
+  return fits[0]?.t ?? null;
+}

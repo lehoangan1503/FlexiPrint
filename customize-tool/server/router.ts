@@ -28,6 +28,8 @@
  *   GET    shopify/collections?store= · POST {title}  → collections (deploy page badges; the starred one = breadcrumb)
  *   GET    price-tables · POST CtPriceTableBody · PATCH :id · DELETE :id   bảng giá (server/price-tables.ts)
  *   GET    base-products · POST CtBaseProductBody · GET/PATCH/DELETE :id   product base (server/base-products.ts)
+ *   GET    base-import/catalog?provider=&q=&page= · POST base-import/import · GET/POST base-import/teeinblue
+ *                                         import a product base from Printbelle / Merchize (server/base-import.ts)
  *   POST   products/artwork              CtCreateArtworkBody → { product } a hand-made artwork (server/print-products.ts)
  *   POST   products/:id/assets           multipart: file, role, parent_id?, name?, meta?
  *   PATCH  assets/:id                    CtUpdateAssetBody
@@ -144,6 +146,7 @@ import { dispatchChar } from "./char/router";
 import * as packImages from "./pack-images";
 import * as prices from "./price-tables";
 import * as bases from "./base-products";
+import * as baseImport from "./base-import";
 import * as stores from "./stores";
 import { mcpEndpoint } from "./mcp/server";
 import { asJob, pollJob } from "./jobs";
@@ -239,6 +242,14 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
   if (head === "char") return dispatchChar(req, session, path);
   if (head === "stores" && !id && method === "GET") return stores.listStores(session);
   if (head === "stores" && id === "current" && !sub && method === "PUT") return stores.setCurrentStore(session, await readJson<unknown>(req));
+  // Import product base from a fulfiller (server/base-import.ts): Printbelle's API, Merchize through Teeinblue.
+  if (head === "base-import" && id === "catalog" && !sub && method === "GET") {
+    const sp = req.nextUrl.searchParams;
+    return baseImport.importCatalog(session, sp.get("provider"), sp.get("q")?.trim() ?? "", sp.get("page"));
+  }
+  if (head === "base-import" && id === "import" && !sub && method === "POST") return baseImport.importBase(session, await readJson<unknown>(req));
+  if (head === "base-import" && id === "teeinblue" && !sub && method === "GET") return baseImport.getTeeinblueStatus();
+  if (head === "base-import" && id === "teeinblue" && !sub && method === "POST") return baseImport.setTeeinblue(session, await readJson<unknown>(req));
   const storeParam = req.nextUrl.searchParams.get("store");
   if (head === "shopify" && id === "products" && !sub && method === "GET") return h.shopifySearch(session, storeParam, req.nextUrl.searchParams.get("q")?.trim() ?? "");
   if (head === "shopify" && id === "collections" && !sub && method === "GET") return h.shopifyCollections(session, storeParam);

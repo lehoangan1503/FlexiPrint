@@ -3,7 +3,7 @@
  * (base product page) and on the server (server/base-products.ts).
  */
 
-import type { CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtMaterialId, CtPrintArea } from "../types";
+import type { CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseSource, CtBaseVariant, CtMaterialId, CtPrintArea } from "../types";
 import { newId } from "./geometry";
 import { normalizeScene } from "./scene";
 
@@ -45,6 +45,46 @@ function normalizeCut(raw: unknown, material: CtMaterialId, templateId: string |
   };
 }
 
+function money(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN;
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
+}
+
+function normalizeVariants(raw: unknown): CtBaseVariant[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((v): v is Record<string, unknown> => !!v && typeof v === "object")
+    .map(
+      (v): CtBaseVariant => ({
+        id: str(v.id, 64) || newId(),
+        size: str(v.size, 120),
+        color: str(v.color, 80),
+        colorHex: /^#[0-9a-f]{3,8}$/i.test(str(v.colorHex, 9)) ? str(v.colorHex, 9) : null,
+        sku: str(v.sku, 160),
+        cost: money(v.cost),
+        weightG: money(v.weightG),
+        printArea: str(v.printArea, 60),
+      }),
+    )
+    .slice(0, 500);
+}
+
+function normalizeSource(raw: unknown): CtBaseSource | null {
+  if (!raw || typeof raw !== "object") return null;
+  const s = raw as Partial<Record<keyof CtBaseSource, unknown>>;
+  const provider = s.provider === "printbelle" || s.provider === "merchize" ? s.provider : null;
+  const catalogId = str(s.catalogId, 120);
+  if (!provider || !catalogId) return null;
+  return {
+    provider,
+    catalogId,
+    via: s.via === "teeinblue" ? "teeinblue" : "printbelle",
+    teeinblueId: typeof s.teeinblueId === "number" && Number.isFinite(s.teeinblueId) ? s.teeinblueId : null,
+    importedAt: str(s.importedAt, 40),
+    photos: Array.isArray(s.photos) ? s.photos.filter((u): u is string => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 12) : [],
+  };
+}
+
 export function normalizeBaseConfig(raw: unknown): CtBaseProductConfig {
   const c = raw && typeof raw === "object" ? (raw as Partial<Record<keyof CtBaseProductConfig, unknown>>) : {};
   const areas = Array.isArray(c.printAreas) ? c.printAreas : [];
@@ -72,6 +112,8 @@ export function normalizeBaseConfig(raw: unknown): CtBaseProductConfig {
     fulfillment: { provider: str(ful.provider, 80), catalogId: str(ful.catalogId, 120) },
     notes: str(c.notes, 4000),
     cut: normalizeCut(c.cut, material, templateId),
+    variants: normalizeVariants(c.variants),
+    source: normalizeSource(c.source),
     preview: normalizeScene(c.preview && typeof c.preview === "object" ? c.preview : null),
   };
 }

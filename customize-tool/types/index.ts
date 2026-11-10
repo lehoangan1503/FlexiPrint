@@ -1685,6 +1685,40 @@ export interface CtBaseProductFulfillment {
 }
 
 /**
+ * Fulfillers a product base can be imported from (asked 2026-11-11, like Teeinblue's "Import products from
+ * API-integrated Fulfillment"): Printbelle through its public catalog API, Merchize through Teeinblue (Merchize has
+ * no public catalog API; flexi2 imports it on the Teeinblue portal, reads it, then archives that Teeinblue copy).
+ */
+export type CtFulfillProvider = "printbelle" | "merchize";
+
+/** One variant of the fulfiller's product: what the factory sells it as and what it costs us. */
+export interface CtBaseVariant {
+  id: string;
+  size: string;
+  color: string;
+  colorHex: string | null;
+  /** The fulfiller's code put on an order ("URGOP/7CM", "LFBKUS000000AA10"). */
+  sku: string;
+  /** Base cost, USD (the fulfiller's price to us). null = it does not say. */
+  cost: number | null;
+  weightG: number | null;
+  /** The print area this variant prints on (CtPrintArea.name). */
+  printArea: string;
+}
+
+/** Where an imported base came from (config.source); null on bases made by hand. */
+export interface CtBaseSource {
+  provider: CtFulfillProvider;
+  catalogId: string;
+  /** "printbelle" = Printbelle's own API · "teeinblue" = read off a Teeinblue product base (teeinblueId). */
+  via: "printbelle" | "teeinblue";
+  teeinblueId: number | null;
+  importedAt: string;
+  /** The fulfiller's product photos, copied to our storage. */
+  photos: string[];
+}
+
+/**
  * How a base product's piece is cut, and what its print file looks like (2026-11-08: the base owns it, artworks only
  * hold the design):
  *   khuon  a fixed shape (round ceramic / glass): the khuôn in (templateId) is laid on the artwork, the print is cut to it
@@ -1722,6 +1756,10 @@ export interface CtBaseProductConfig {
   notes: string;
   /** How the piece is cut + the print file layout. */
   cut: CtBaseCut;
+  /** The fulfiller's variants + base cost (imported bases). The selling prices stay in the Notion price table. */
+  variants: CtBaseVariant[];
+  /** Imported from a fulfiller: which product, how. null = made by hand. */
+  source: CtBaseSource | null;
   /**
    * The preview's photo: a phôi trơn with `box` = where the print sheet sits on it (khuon / none), or, alpha, the
    * background the clear plate made from the design is drawn on (`box` = where the design canvas goes). url null =
@@ -1783,6 +1821,47 @@ export interface CtBaseProductUse {
 export interface CtBaseProductDetail {
   base: CtBaseProductRow;
   uses: CtBaseProductUse[];
+}
+
+/** One product of a fulfiller's catalog, as the Import dialog lists it. */
+export interface CtFulfillCatalogItem {
+  catalogId: string;
+  title: string;
+  image: string | null;
+  /** Lowest base cost, USD. */
+  cost: number | null;
+  /** Printbelle tells these in the list; Merchize only once imported. */
+  variants: number | null;
+  printArea: { width: number; height: number } | null;
+  /** A flexi2 base already made from this product (never imported twice). */
+  existing: { id: string; name: string } | null;
+  /** The Notion price table its name fits — the new base gets it; null = left empty. */
+  priceTable: { id: string; name: string } | null;
+}
+
+/** GET base-import/catalog?provider=&q=&page= */
+export interface CtFulfillCatalogPage {
+  provider: CtFulfillProvider;
+  items: CtFulfillCatalogItem[];
+  total: number;
+  page: number;
+  perPage: number;
+}
+
+/** GET base-import/teeinblue — whether flexi2 holds a working Teeinblue login (needed for Merchize). */
+export interface CtTeeinblueStatus {
+  connected: boolean;
+  /** Who the login acts for (the Teeinblue account's shop). */
+  account: string | null;
+  /** When the session cookie runs out unless used (each call renews it; a daily keep-alive runs). */
+  expiresAt: string | null;
+  error: string | null;
+}
+
+/** POST base-import/import */
+export interface CtBaseImportBody {
+  provider: CtFulfillProvider;
+  catalogId: string;
 }
 
 export interface CtUpdateProductBody {

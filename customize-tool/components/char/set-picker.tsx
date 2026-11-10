@@ -11,6 +11,9 @@
  *   right  the characters (one click = all their layers), then every layer with its options (click a picture to see
  *          it on the left; click the layer's name to pick it, Shift-click a range, ⌘-click one more).
  *   button "Tạo bộ clipart con" → server/char/extract-set.ts (same canvas, same place, every option), its parent noted.
+ *
+ * A bộ con itself (brief.extracted) only shows its clipart and options — nothing to pick, no bộ con of a bộ con
+ * (asked 2026-11-10).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -83,6 +86,8 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
   const [view, setView] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const anchor = useRef<string | null>(null);
+  /** Picking parts to take out: not on a bộ con (it IS the part taken out). */
+  const pickable = !project.brief.extracted;
 
   useEffect(() => {
     if (!productId) return;
@@ -196,6 +201,7 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
     [data, view],
   );
   const onDown = (e: React.PointerEvent) => {
+    if (!pickable) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     const p = toCanvas(e.clientX, e.clientY);
     setDrag({ x0: p.x, y0: p.y, x1: p.x, y1: p.y, add: e.shiftKey || e.metaKey || e.ctrlKey, moved: false });
@@ -304,7 +310,7 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
         <div className="w-full lg:sticky lg:top-4 lg:w-[55%]">
           <div
             ref={box}
-            className="relative w-full cursor-crosshair touch-none select-none overflow-hidden rounded-lg border"
+            className={cx("relative w-full touch-none select-none overflow-hidden rounded-lg border", pickable && "cursor-crosshair")}
             style={{ ...CHECKER_STYLE, aspectRatio: `${v.w} / ${v.h}`, width: `min(100%, calc(70vh * ${v.w / v.h}))` }}
             onPointerDown={onDown}
             onPointerMove={onMove}
@@ -334,43 +340,45 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
               />
             )}
           </div>
-          <p className="mt-1.5 text-[11px] text-muted-foreground">Bấm vào 1 nhân vật để chọn cả nhân vật · nhấn giữ kéo khung để gom · Shift: chọn thêm</p>
+          {pickable && <p className="mt-1.5 text-[11px] text-muted-foreground">Bấm vào 1 nhân vật để chọn cả nhân vật · nhấn giữ kéo khung để gom · Shift: chọn thêm</p>}
         </div>
 
         {/* ---- characters, layers, options ---- */}
         <div className="min-w-[300px] flex-1 space-y-4">
-          <div className="sticky top-0 z-10 space-y-2 rounded-lg border bg-card p-2.5">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold">{picked.length ? `${picked.length} layer đã chọn` : "Chọn phần muốn tách"}</span>
-              {picked.length > 0 && (
-                <button onClick={() => setPicked([])} className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground hover:text-foreground">
-                  <X className="h-3 w-3" /> Bỏ chọn
-                </button>
-              )}
-              {editable && (
-                <CtButton size="sm" variant="primary" className="ml-auto" disabled={!picked.length || busy} onClick={() => void create()}>
-                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Scissors className="h-3.5 w-3.5" />} Tạo bộ clipart con
-                </CtButton>
+          {pickable && (
+            <div className="sticky top-0 z-10 space-y-2 rounded-lg border bg-card p-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold">{picked.length ? `${picked.length} layer đã chọn` : "Chọn phần muốn tách"}</span>
+                {picked.length > 0 && (
+                  <button onClick={() => setPicked([])} className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground hover:text-foreground">
+                    <X className="h-3 w-3" /> Bỏ chọn
+                  </button>
+                )}
+                {editable && (
+                  <CtButton size="sm" variant="primary" className="ml-auto" disabled={!picked.length || busy} onClick={() => void create()}>
+                    {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Scissors className="h-3.5 w-3.5" />} Tạo bộ clipart con
+                  </CtButton>
+                )}
+              </div>
+              {groups.length > 1 && (
+                <div className="flex flex-wrap gap-1">
+                  {groups.map((g) => {
+                    const on = g.ids.every((id) => pickedSet.has(id));
+                    return (
+                      <button
+                        key={g.key}
+                        onClick={(e) => pickGroup(g.ids[0], e.shiftKey || e.metaKey || e.ctrlKey)}
+                        title={`${g.label} — ${g.ids.length} layer · Shift / ⌘: chọn thêm`}
+                        className={cx("max-w-full truncate rounded-full border px-2 py-0.5 text-[11px]", on ? "border-sky-500 bg-sky-500 font-medium text-white" : "bg-background hover:bg-accent")}
+                      >
+                        {g.label} <span className={on ? "opacity-80" : "text-muted-foreground"}>({g.ids.length})</span>
+                      </button>
+                    );
+                  })}
+                </div>
               )}
             </div>
-            {groups.length > 1 && (
-              <div className="flex flex-wrap gap-1">
-                {groups.map((g) => {
-                  const on = g.ids.every((id) => pickedSet.has(id));
-                  return (
-                    <button
-                      key={g.key}
-                      onClick={(e) => pickGroup(g.ids[0], e.shiftKey || e.metaKey || e.ctrlKey)}
-                      title={`${g.label} — ${g.ids.length} layer · Shift / ⌘: chọn thêm`}
-                      className={cx("max-w-full truncate rounded-full border px-2 py-0.5 text-[11px]", on ? "border-sky-500 bg-sky-500 font-medium text-white" : "bg-background hover:bg-accent")}
-                    >
-                      {g.label} <span className={on ? "opacity-80" : "text-muted-foreground"}>({g.ids.length})</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          )}
 
           {shown.map((r) => {
             const on = pickedSet.has(r.id);
@@ -379,8 +387,12 @@ export function SetPicker({ project, editable }: { project: CtCharProject; edita
             const follows = r.kind === "image" && r.config.image.follows;
             return (
               <section key={r.id} className={cx("rounded-lg border p-2", on ? "border-sky-500 bg-sky-500/5" : "border-transparent")}>
-                <button onClick={(e) => clickLayer(e, r.id)} className="mb-1.5 flex w-full items-center gap-1.5 text-left" title="Bấm để chọn / bỏ layer này · Shift-click: chọn liền một dải">
-                  <span className={cx("flex h-4 w-4 shrink-0 items-center justify-center rounded border", on ? "border-sky-500 bg-sky-500 text-white" : "border-muted-foreground/40")}>{on && <Check className="h-3 w-3" />}</span>
+                <button
+                  onClick={(e) => pickable && clickLayer(e, r.id)}
+                  className={cx("mb-1.5 flex w-full items-center gap-1.5 text-left", !pickable && "cursor-default")}
+                  title={pickable ? "Bấm để chọn / bỏ layer này · Shift-click: chọn liền một dải" : undefined}
+                >
+                  {pickable && <span className={cx("flex h-4 w-4 shrink-0 items-center justify-center rounded border", on ? "border-sky-500 bg-sky-500 text-white" : "border-muted-foreground/40")}>{on && <Check className="h-3 w-3" />}</span>}
                   {r.kind === "text" ? <Type className="h-3.5 w-3.5 text-muted-foreground" /> : r.kind === "photo" ? <UserSquare className="h-3.5 w-3.5 text-muted-foreground" /> : null}
                   <span className="truncate text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     {shortName(r.kind === "image" ? r.config.image.label || r.name : r.name)}

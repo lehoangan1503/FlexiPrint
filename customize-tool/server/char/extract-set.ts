@@ -9,8 +9,10 @@
  * pixel-registered with the others. Dropped into another product it lands like any bộ (lib/char-set-layers.ts) and is
  * moved / scaled as a whole.
  *
- * Only what another product can reference comes along — library clipart (product_id null) and text / photo zones —
- * the same rule as a bộ dropped into a product; a layer showing the product's own pictures is left out and counted.
+ * Library clipart (product_id null) and text / photo zones come along as they are. A layer showing the product's OWN
+ * pictures (an imported / artwork product's clipart live on the product) is not left out (it was until 2026-11-10: the
+ * bộ con's card showed the clipart, its page only the text): those pictures — with their đa sắc — are copied into the
+ * new bộ's library folder, same size, and the layer points at the copies. Only the khuôn vật liệu stays behind.
  */
 
 import { NextResponse } from "next/server";
@@ -22,6 +24,8 @@ import { defaultProductConfig, normalizeRegion } from "../../lib/design";
 import { cloneLayers } from "../../lib/layout";
 import * as h from "../handlers";
 import type { CtSession } from "../supabase";
+import { productFolder } from "../artworks";
+import { ctDownload, ctLibraryPath, ctRemove, ctUpload } from "../storage";
 import { saveCharFile } from "./files";
 import { jsonError, projectRow } from "./projects";
 
@@ -63,9 +67,9 @@ export async function extractCharSet(s: CtSession, raw: unknown): Promise<NextRe
   const regions = b.regions.map((r) => normalizeRegion(r as CtRegion));
   const assetIds = [...new Set(b.items.map((i) => i.asset_id))];
   const { data: assetRows } = assetIds.length
-    ? await s.supabase.from(CT_TABLES.assets).select("id, product_id").in("id", assetIds).returns<Array<Pick<CtAsset, "id" | "product_id">>>()
-    : { data: [] as Array<Pick<CtAsset, "id" | "product_id">> };
-  const library = new Set((assetRows ?? []).filter((a) => a.product_id === null).map((a) => a.id));
+    ? await s.supabase.from(CT_TABLES.assets).select("id, product_id, role").in("id", assetIds).returns<Array<Pick<CtAsset, "id" | "product_id" | "role">>>()
+    : { data: [] as Array<Pick<CtAsset, "id" | "product_id" | "role">> };
+  const found = new Map((assetRows ?? []).map((a) => [a.id, a]));
   let skipped = 0;
   const keep: CtRegion[] = [];
   for (const r of regions) {
@@ -75,7 +79,8 @@ export async function extractCharSet(s: CtSession, raw: unknown): Promise<NextRe
     }
     if (r.kind === "image") {
       const own = b.items.filter((i) => i.region_id === r.id);
-      if (!own.length || own.some((i) => !library.has(i.asset_id))) {
+      // A picture that is gone, or a version's own canvas, cannot be a clipart.
+      if (!own.length || own.some((i) => !found.has(i.asset_id) || found.get(i.asset_id)?.role === "main")) {
         skipped++;
         continue;
       }
@@ -90,14 +95,16 @@ export async function extractCharSet(s: CtSession, raw: unknown): Promise<NextRe
 
   // ---- the bộ's product: a blank canvas of the same size, the layers on it ----
   const product = (await body<{ product: CtProduct }>(await h.createProduct(s, { name: b.name }))).product;
+  const copiedPaths: string[] = [];
   try {
+    const own = await copyOwnPictures(s, { id: product.id, name: b.name }, loose, keptItems, found, copiedPaths);
     const sheet = await sharp({ create: { width: b.width, height: b.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer();
     const form = new FormData();
     form.set("file", new Blob([new Uint8Array(sheet)], { type: "image/png" }), "canvas.png");
     form.set("role", "main");
     form.set("name", `Khung ${b.width}×${b.height}`);
     const main = (await body<{ asset: CtAsset }>(await h.uploadAsset(s, product.id, form))).asset;
-    const cloned = cloneLayers(loose, keptItems, main.id);
+    const cloned = cloneLayers(own.regions, own.items, main.id);
     const outRegions = cloned.regions.map((r, i): CtRegion => {
       const config = { ...r.config };
       delete config.charSet;
@@ -135,7 +142,90 @@ export async function extractCharSet(s: CtSession, raw: unknown): Promise<NextRe
     const result: CtExtractSetResult = { project, productId: product.id, layers: outRegions.length, skipped };
     return NextResponse.json(result, { status: 201 });
   } catch (e) {
+    await ctRemove(copiedPaths);
     await h.deleteProduct(s, product.id).catch(() => undefined);
     return jsonError(e instanceof Error ? e.message : "Không tạo được bộ", 500);
   }
+}
+
+/** A zone's references to pictures (its options' ids) pointed at their copies. */
+function remapRegion(r: CtRegion, ids: Map<string, string>): CtRegion {
+  if (!ids.size) return r;
+  const to = (id: string) => ids.get(id) ?? id;
+  const config = { ...r.config };
+  if (config.parent && ids.has(config.parent.optionId)) config.parent = { ...config.parent, optionId: to(config.parent.optionId) };
+  if (r.kind === "image") {
+    const img = config.image;
+    config.image = {
+      ...img,
+      hiddenAssetIds: img.hiddenAssetIds.map(to),
+      extraOptions: Object.fromEntries(Object.entries(img.extraOptions ?? {}).map(([k, v]) => [to(k), to(v)])),
+      defaultAssetId: img.defaultAssetId ? to(img.defaultAssetId) : null,
+    };
+  }
+  return { ...r, config };
+}
+
+/**
+ * The product's own pictures the kept layers show (their gốc, their đa sắc, extra options) copied into the new bộ's
+ * library folder — the files copied too, so deleting either product never takes the other's pictures. Library clipart
+ * stay shared. The layers and items come back pointing at the copies; every stored file's path is pushed to `made`.
+ */
+async function copyOwnPictures(
+  s: CtSession,
+  product: Pick<CtProduct, "id" | "name">,
+  regions: CtRegion[],
+  items: CtRegionItem[],
+  found: Map<string, Pick<CtAsset, "id" | "product_id" | "role">>,
+  made: string[],
+): Promise<{ regions: CtRegion[]; items: CtRegionItem[] }> {
+  const ownSubs = [...new Set(items.map((i) => i.asset_id))].filter((id) => found.get(id)?.product_id);
+  const extra = regions.flatMap((r) => (r.kind === "image" ? Object.keys(r.config.image.extraOptions ?? {}) : []));
+  if (!ownSubs.length && !extra.length) return { regions, items };
+  const none = { data: [] as CtAsset[] };
+  const [{ data: subs }, { data: variants }, { data: extras }] = await Promise.all([
+    ownSubs.length ? s.supabase.from(CT_TABLES.assets).select("*").in("id", ownSubs).returns<CtAsset[]>() : Promise.resolve(none),
+    ownSubs.length ? s.supabase.from(CT_TABLES.assets).select("*").in("parent_id", ownSubs).returns<CtAsset[]>() : Promise.resolve(none),
+    extra.length ? s.supabase.from(CT_TABLES.assets).select("*").in("id", extra).not("product_id", "is", null).returns<CtAsset[]>() : Promise.resolve(none),
+  ]);
+  const all = [...new Map([...(subs ?? []), ...(variants ?? []), ...(extras ?? [])].map((a) => [a.id, a])).values()];
+  if (!all.length) return { regions, items };
+  const folder = await productFolder(s.supabase, s.user.id, product);
+  const ids = new Map(all.map((a) => [a.id, crypto.randomUUID()]));
+  const rows = await Promise.all(
+    all.map(async (a) => {
+      const file = await ctDownload(a.url);
+      const mime = a.mime || file.mime;
+      const path = ctLibraryPath(s.user.id, folder.id, a.role, mime);
+      const url = await ctUpload(path, file.data, mime);
+      made.push(path);
+      return {
+        id: ids.get(a.id),
+        user_id: s.user.id,
+        product_id: null,
+        category_id: folder.id,
+        role: a.role,
+        parent_id: a.parent_id ? (ids.get(a.parent_id) ?? null) : null,
+        generation_id: null,
+        name: a.name,
+        spec: a.spec ?? "",
+        tags: a.tags ?? [],
+        source: a.source,
+        license: a.license ?? "",
+        url,
+        storage_path: path,
+        width: a.width,
+        height: a.height,
+        mime,
+        meta: a.meta ?? {},
+        sort_order: a.sort_order,
+      };
+    }),
+  );
+  const { error } = await s.supabase.from(CT_TABLES.assets).insert(rows);
+  if (error) throw new Error(`Không chép được clipart của sản phẩm: ${error.message}`);
+  return {
+    regions: regions.map((r) => remapRegion(r, ids)),
+    items: items.map((i) => ({ ...i, asset_id: ids.get(i.asset_id) ?? i.asset_id })),
+  };
 }

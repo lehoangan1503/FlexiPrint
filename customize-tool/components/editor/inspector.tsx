@@ -19,7 +19,9 @@ import {
   ImageIcon,
   Loader2,
   Move,
+  Pencil,
   Plus,
+  RefreshCw,
   Scissors,
   Trash2,
   Type,
@@ -34,6 +36,7 @@ import { outsideSafe } from "../print/layer-print-section";
 import { useLayerInk, type CtLayerInk } from "./use-layer-ink";
 import type {
   CtAsset,
+  CtOptionDisplay,
   CtTextFormat,
   CtMainFrame,
   CtPhotoCapabilities,
@@ -64,6 +67,7 @@ import { useAiStyles } from "./ai-styles-store";
 import { processPhoto } from "../../lib/photo-process";
 import { ctApi } from "../../lib/api-client";
 import { OptionThumb } from "./option-thumb";
+import { dominantColor } from "../../lib/dominant-color";
 import { ColorLayerTexts, TextColorBy } from "./text-color-by";
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtNumber, CtSelect, CtTextarea, CtTooltip, cx } from "../ui";
 import type { DesignApi } from "./use-design";
@@ -1680,6 +1684,87 @@ function GroupCard(props: InspectorProps & { region: CtRegion; item: CtRegionIte
  * design content), never the product's defaults. The whole artwork is one (every version inside, 2026-11-07): no
  * extra artwork per combination any more.
  */
+/**
+ * One customer choice of the artwork: its pictures, and how the site shows them (asked 2026-11-10): "Clipart" = the
+ * pictures, "Màu" = a square of each clipart's colour (config.image.display "swatch", the colour in asset.meta.swatch —
+ * read from the clipart when it has none, changed with the pen on each square).
+ */
+function OptionRow(props: InspectorProps & { region: CtRegion; options: CtAsset[]; shown: string | null }) {
+  const { design, region: r, options, shown } = props;
+  const swatch = r.config.image.display === "swatch";
+  const [reading, setReading] = useState(false);
+  const setDisplay = (display: CtOptionDisplay) =>
+    design.commit((st) => updateRegion(st, r.id, (x) => { const n = normalizeRegion(x); return { ...n, config: { ...n.config, image: { ...n.config.image, display } } }; }));
+  /** Each clipart's colour from its picture — only the ones with none, unless `all`. */
+  const readColours = async (all: boolean) => {
+    setReading(true);
+    try {
+      for (const o of options) {
+        if (!all && o.meta.swatch) continue;
+        const c = await dominantColor(o.meta.thumb ?? o.url).catch(() => null);
+        if (c) props.onSetSwatch(o, c);
+      }
+    } finally {
+      setReading(false);
+    }
+  };
+  const pick = (display: CtOptionDisplay) => {
+    if (display === r.config.image.display) return;
+    setDisplay(display);
+    if (display === "swatch") void readColours(false);
+  };
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-1 text-[11px]">
+        <span className="truncate font-medium">{layerLabel(r.name)}</span>
+        <span className="text-muted-foreground">({options.length})</span>
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          {swatch && (
+            <CtTooltip label="Lấy lại màu từ clipart (mọi ô)">
+              <button className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50" disabled={reading} onClick={() => void readColours(true)}>
+                {reading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+              </button>
+            </CtTooltip>
+          )}
+          <span className="flex overflow-hidden rounded border" title="Khách thấy gì ở lựa chọn này trên site">
+            {(
+              [
+                ["image", "Clipart"],
+                ["swatch", "Màu"],
+              ] as Array<[CtOptionDisplay, string]>
+            ).map(([d, label]) => (
+              <button key={d} className={cx("px-1.5 py-0.5 text-[10px] font-medium", (d === "swatch") === swatch ? "bg-sky-500 text-white" : "text-muted-foreground hover:bg-accent")} onClick={() => pick(d)}>
+                {label}
+              </button>
+            ))}
+          </span>
+        </span>
+      </div>
+      <div className="grid grid-cols-6 gap-1">
+        {options.map((o) => (
+          <div key={o.id} className="group relative">
+            <CtTooltip label={o.name || "(không tên)"}>
+              <button
+                className={cx("block aspect-square w-full overflow-hidden rounded border", shown === o.id && "ring-2 ring-sky-500")}
+                style={swatch && o.meta.swatch ? { background: o.meta.swatch } : CHECKER_STYLE}
+                onClick={() => props.onPreviewOption(r.id, o.id)}
+              >
+                {!(swatch && o.meta.swatch) && <OptionThumb url={o.meta.thumb ?? o.url} label={o.name} className="h-full w-full object-contain" />}
+              </button>
+            </CtTooltip>
+            {swatch && (
+              <label className="absolute bottom-0.5 right-0.5 hidden cursor-pointer rounded bg-black/60 p-0.5 text-white group-hover:block" title="Đổi màu ô này">
+                <Pencil className="h-2.5 w-2.5" />
+                <input type="color" className="sr-only" value={o.meta.swatch ?? "#cccccc"} onChange={(e) => props.onSetSwatch(o, e.target.value)} />
+              </label>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ArtworkOptions(props: InspectorProps) {
   const { design, assets, selection } = props;
   const regions = formOrder(design.state.regions).filter((r) => !r.config.materialFrame && !isLinkedLayer(r, design.state.regions));
@@ -1716,23 +1801,7 @@ function ArtworkOptions(props: InspectorProps) {
             </CtField>
           );
         const shown = cur?.kind === "image" ? cur.assetId : null;
-        return (
-          <div key={r.id}>
-            <div className="mb-1 flex items-center gap-1 text-[11px]">
-              <span className="truncate font-medium">{layerLabel(r.name)}</span>
-              <span className="text-muted-foreground">({options.length})</span>
-            </div>
-            <div className="grid grid-cols-6 gap-1">
-              {options.map((o) => (
-                <CtTooltip key={o.id} label={o.name || "(không tên)"}>
-                  <button className={cx("block aspect-square w-full overflow-hidden rounded border", shown === o.id && "ring-2 ring-sky-500")} style={CHECKER_STYLE} onClick={() => props.onPreviewOption(r.id, o.id)}>
-                    <OptionThumb url={o.meta.thumb ?? o.url} label={o.name} className="h-full w-full object-contain" />
-                  </button>
-                </CtTooltip>
-              ))}
-            </div>
-          </div>
-        );
+        return <OptionRow key={r.id} {...props} region={r} options={options} shown={shown} />;
       })}
     </div>
   );

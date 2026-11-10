@@ -1697,7 +1697,8 @@ export interface CtBaseCut {
   mode: CtBaseCutMode;
   /** alpha: margin of plate around the printed pixels, mm. */
   borderMm: number;
-  /** The print file carries the solid-black silhouette above the print (one file twice as tall — Merchize acrylic). */
+  /** The print file carries the solid-black silhouette above the print (one file twice as tall — Merchize acrylic).
+   * Always true since 2026-11-10 (every print file has it); kept for old rows. */
   silhouette: boolean;
   /** alpha: a hanging tab with a hole at the top (ornaments). */
   hole: boolean;

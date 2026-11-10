@@ -62,7 +62,6 @@ import { StorefrontPreview } from "./storefront-preview";
 import { PlacementBar } from "./placement-bar";
 import { VersionPhoiDialog } from "./version-phoi-dialog";
 import { activeZoneOptions, updateItem, updateRegion, useDesign, versionView, zoneOptionView } from "./use-design";
-import { PrintDialog } from "./print-dialog";
 import { PrintPanel } from "./print-panel";
 import { ArtworkLinkBar } from "./artwork-link-bar";
 import { CLIPART_DRAG, SETS_CHANGED, isCharSetDrag, type CtCharSetDrag, type CtClipartDrag, type CtLibraryDrag } from "./library-panel";
@@ -145,7 +144,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const [showOverlay, setShowOverlay] = useState(true);
   /** The layer the mouse is over in Layers: its frame shows on the canvas (other frames stay hidden). */
   const [hoverRegionId, setHoverRegionId] = useState<string | null>(null);
-  const [materialOpen, setMaterialOpen] = useState(false);
   const [sceneOpen, setSceneOpen] = useState(false);
 
   const [saving, setSaving] = useState(false);
@@ -1484,16 +1482,9 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               layouts={config.layouts}
               material={viewConfig.material}
               selection={selection}
-              onOpenSettings={() => setMaterialOpen(true)}
               print={viewConfig.print}
               baseName={viewBase?.name ?? null}
-              printGuide={config.printGuide}
-              onPrintGuide={(printGuide) => {
-                design.commit((st) => ({ ...st, config: { ...st.config, printGuide } }));
-                flash(printGuide ? "Đã đặt template — nhớ Lưu thiết kế" : "Đã bỏ template — nhớ Lưu thiết kế");
-              }}
               printSilhouette={viewConfig.printSilhouette}
-              onPrintSilhouette={(printSilhouette) => design.commit((st) => ({ ...st, config: { ...st.config, printSilhouette } }))}
             />
           ) : view === "preview" && !main ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
@@ -1620,7 +1611,6 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             selection={selection}
             layouts={config.layouts}
           />
-          <PrintDialog open={materialOpen} onOpenChange={setMaterialOpen} design={design} product={product} main={main} assets={assets} selection={selection} />
         </>
       )}
     </div>

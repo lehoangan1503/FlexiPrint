@@ -26,7 +26,7 @@ function uuidOrNull(v: unknown): string | null {
 export function defaultBaseCut(material: CtMaterialId, templateId: string | null): CtBaseCut {
   const alpha = material.startsWith("acrylic") || material === "wood";
   const mode: CtBaseCutMode = alpha ? "alpha" : templateId ? "khuon" : "none";
-  return { mode, borderMm: alpha ? 2.5 : 0, silhouette: alpha, hole: alpha, holeSize: 9 };
+  return { mode, borderMm: alpha ? 2.5 : 0, silhouette: true, hole: alpha, holeSize: 9 };
 }
 
 function normalizeCut(raw: unknown, material: CtMaterialId, templateId: string | null): CtBaseCut {
@@ -38,7 +38,8 @@ function normalizeCut(raw: unknown, material: CtMaterialId, templateId: string |
   return {
     mode,
     borderMm: f(c.borderMm, 0, 20, d.borderMm),
-    silhouette: typeof c.silhouette === "boolean" ? c.silhouette : d.silhouette,
+    // Every print file carries its silhouette (2026-11-10: "file in ra luôn phải có silhouette") — no switch.
+    silhouette: true,
     hole: typeof c.hole === "boolean" ? c.hole : d.hole,
     holeSize: f(c.holeSize, 3, 30, d.holeSize),
   };

@@ -3,7 +3,8 @@
 /**
  * /base-products/:id — one product base (asked 2026-11-07, Teeinblue's "Edit product"):
  *
- *   Thông tin        name (= kind of product), Shopify product type, material, description, fulfiller + catalog id
+ *   Thông tin        name (= kind of product), Shopify product type, description, fulfiller + catalog id (no material
+ *                    field since 2026-11-10: the khuôn + phôi say what the piece is; config.material stays for old data)
  *   Khuôn in + phôi  the piece an artwork is drawn for (ct_print_templates) and its blank photos
  *   Cắt + file in    fixed khuôn / along the art / flat, the silhouette (2026-11-08, base-cut-preview.tsx)
  *   Phôi / nền       the preview photo (a phôi, or a background for the acrylic plate made from the design)
@@ -16,8 +17,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { CT_CONFIG } from "../../config";
-import { CT_MATERIALS } from "../../lib/materials";
-import type { CtBaseProductConfig, CtBaseProductDetail, CtMaterialId, CtPriceTable, CtPrintArea } from "../../types";
+import type { CtBaseProductConfig, CtBaseProductDetail, CtPriceTable, CtPrintArea } from "../../types";
 import type { CtPrintTemplate } from "../../types/print";
 import { ctApi } from "../../lib/api-client";
 import { printApi } from "../../lib/print-api";
@@ -174,9 +174,6 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                 <CtField label="Shopify product type">
                   <CtInput value={cfg.productType} onChange={(e) => patch({ productType: e.target.value })} placeholder="Acrylic Ornament" />
                 </CtField>
-                <CtField label="Chất liệu">
-                  <CtSelect<CtMaterialId> value={cfg.material} onChange={(material) => patch({ material })} options={CT_MATERIALS.map((m) => ({ value: m.id, label: m.label }))} />
-                </CtField>
                 <CtField label="Fulfillment (xưởng · catalog ID)">
                   <div className="flex gap-2">
                     <CtInput value={cfg.fulfillment.provider} onChange={(e) => patch({ fulfillment: { ...cfg.fulfillment, provider: e.target.value } })} placeholder="Merchize" />
@@ -293,7 +290,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
               }
             >
               <CtField label="Khuôn in">
-                <CtSelect<string> value={cfg.templateId ?? ""} onChange={(templateId) => patch({ templateId })} options={templates.map((t) => ({ value: t.id, label: `${t.name} · ${t.spec.width}×${t.spec.height}` }))} placeholder="Chưa có khuôn (canvas = print area)" />
+                <CtSelect<string> value={cfg.templateId ?? ""} onChange={(templateId) => patch({ templateId, cut: templateId && cfg.cut.mode === "none" ? { ...cfg.cut, mode: "khuon" } : cfg.cut })} options={templates.map((t) => ({ value: t.id, label: `${t.name} · ${t.spec.width}×${t.spec.height}` }))} placeholder="Chưa có khuôn (canvas = print area)" />
               </CtField>
               {template ? (
                 <div className="mt-3 space-y-3">

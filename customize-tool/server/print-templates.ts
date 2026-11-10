@@ -8,11 +8,13 @@
  *   POST   print-templates/images      multipart file → { url, width, height }   (guide sheet, blank photo)
  */
 
+import sharp from "sharp";
 import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
 import type { CtPrintKind, CtPrintSpec, CtPrintTemplate } from "../types/print";
 import { PRINT_PRESETS, isPrintKind, normalizePrintSpec } from "../lib/print-template";
 import { readImageInfo } from "./image-size";
+import { readKhuonPicture } from "./print-khuon-read";
 import { ctLibraryPath, ctUpload } from "./storage";
 import type { CtSession } from "./supabase";
 
@@ -53,6 +55,39 @@ function clean(body: TemplateBody, partial: boolean): { name?: string; kind?: Ct
   return out;
 }
 
+/**
+ * Faces given only as a picture (an uploaded khuôn): read the picture once — its solid lines = the piece (mask: the
+ * print is cut to it, the silhouette is it), its dashed lines = the safe zones, its lines = the guide over the editor
+ * (server/print-khuon-read.ts). A face read before has a guide, so nothing is read twice.
+ */
+async function readUploadedFaces(userId: string, spec: CtPrintSpec): Promise<CtPrintSpec> {
+  if (!spec.faces.some((f) => f.imageUrl && !f.maskUrl && !f.guideUrl)) return spec;
+  let safe = spec.safe;
+  const faces = await Promise.all(
+    spec.faces.map(async (f, i) => {
+      if (!f.imageUrl || f.maskUrl || f.guideUrl) return f;
+      try {
+        const res = await fetch(f.imageUrl, { signal: AbortSignal.timeout(60_000) });
+        if (!res.ok) return f;
+        const read = await readKhuonPicture(Buffer.from(await res.arrayBuffer()), spec.width, spec.height);
+        const put = (data: Buffer) => ctUpload(ctLibraryPath(userId, null, "print-template", "image/png"), data, "image/png");
+        const guideUrl = await put(read.guide);
+        let maskUrl: string | null = null;
+        if (read.mask) {
+          const alpha = await sharp(read.mask, { raw: { width: spec.width, height: spec.height, channels: 1 } }).png().toBuffer();
+          maskUrl = await put(await sharp({ create: { width: spec.width, height: spec.height, channels: 3, background: "#ffffff" } }).joinChannel(alpha).png().toBuffer());
+        }
+        // The first face's dashed lines are the safe zones (every face is the same sheet).
+        if (i === 0 && !safe.length && read.safe.length) safe = read.safe;
+        return { ...f, maskUrl, guideUrl };
+      } catch {
+        return f;
+      }
+    }),
+  );
+  return { ...spec, faces, safe };
+}
+
 export async function listTemplates(s: CtSession): Promise<NextResponse> {
   const read = () => s.supabase.from(CT_TABLES.printTemplates).select("*").order("sort_order").order("created_at").returns<CtPrintTemplate[]>();
   let { data, error } = await read();
@@ -63,12 +98,21 @@ export async function listTemplates(s: CtSession): Promise<NextResponse> {
     ({ data, error } = await read());
     if (error) return jsonError(error.message, 500);
   }
-  return NextResponse.json({ templates: (data ?? []).map(templateRow) });
+  const rows = (data ?? []).map(templateRow);
+  // Khuôn uploaded before their pictures were read (2026-11-10): read them now, once.
+  for (const [i, t] of rows.entries()) {
+    const spec = await readUploadedFaces(s.user.id, t.spec);
+    if (spec === t.spec) continue;
+    const { data: saved } = await s.supabase.from(CT_TABLES.printTemplates).update({ spec }).eq("id", t.id).select("*").maybeSingle<CtPrintTemplate>();
+    if (saved) rows[i] = templateRow(saved);
+  }
+  return NextResponse.json({ templates: rows });
 }
 
 export async function createTemplate(s: CtSession, body: TemplateBody): Promise<NextResponse> {
   const c = clean(body, false);
   if (typeof c === "string") return jsonError(c, 400);
+  if (c.spec) c.spec = await readUploadedFaces(s.user.id, c.spec);
   const { data, error } = await s.supabase.from(CT_TABLES.printTemplates).insert({ ...c, user_id: s.user.id }).select("*").single<CtPrintTemplate>();
   if (error) return jsonError(missingMigration(error.message), 500);
   return NextResponse.json({ template: templateRow(data) }, { status: 201 });
@@ -77,6 +121,7 @@ export async function createTemplate(s: CtSession, body: TemplateBody): Promise<
 export async function updateTemplate(s: CtSession, id: string, body: TemplateBody): Promise<NextResponse> {
   const c = clean(body, true);
   if (typeof c === "string") return jsonError(c, 400);
+  if (c.spec) c.spec = await readUploadedFaces(s.user.id, c.spec);
   const { data, error } = await s.supabase.from(CT_TABLES.printTemplates).update(c).eq("id", id).select("*").maybeSingle<CtPrintTemplate>();
   if (error) return jsonError(error.message, 500);
   if (!data) return jsonError("Chỉ người tạo hoặc admin mới được sửa khuôn in", 403);

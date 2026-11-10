@@ -772,6 +772,43 @@ export interface KhuonPairInput {
   /** An alpha piece's hanging tab (CtPrintSilhouette.hole / holeSize). */
   hole: boolean;
   holeSize: number;
+  /** The khuôn's own lines, drawn on `onKhuon` in place of the plain cut line (null: no khuôn / not on this sheet). */
+  lines?: KhuonLines | null;
+}
+
+/**
+ * The khuôn as the factory drew it (asked 2026-11-10: "lấy chính khuôn in có nét liền, nét đứt"): solid line = the
+ * cut (everything printed lies inside it), dashed line = the safe zone for custom options and customers' photos.
+ */
+export interface KhuonLines {
+  /** A khuôn given as a picture: its guide (its own solid + dashed lines) and its box on the sheet. */
+  picture?: { url: string; x: number; y: number; w: number; h: number } | null;
+  /** A khuôn drawn by shapes, as SVG paths in the sheet's px: cut line, safe zones, holes. */
+  cut?: string;
+  safe?: string[];
+  holes?: string[];
+}
+
+/** Solid cut line, dashed safe zone, dashed holes — the khuôn's colours (components/print/print-sheet.tsx). */
+async function drawKhuonLines(ctx: CanvasRenderingContext2D, w: number, h: number, lines: KhuonLines): Promise<void> {
+  if (lines.picture) {
+    const img = await loadImage(lines.picture.url);
+    ctx.drawImage(img, lines.picture.x, lines.picture.y, lines.picture.w, lines.picture.h);
+    return;
+  }
+  const stroke = Math.max(2, Math.min(w, h) / 250);
+  ctx.save();
+  ctx.lineWidth = stroke;
+  ctx.setLineDash([]);
+  ctx.strokeStyle = "#15803d";
+  if (lines.cut) ctx.stroke(new Path2D(lines.cut));
+  ctx.setLineDash([stroke * 6, stroke * 4]);
+  ctx.strokeStyle = "#16a34a";
+  for (const d of lines.safe ?? []) ctx.stroke(new Path2D(d));
+  ctx.setLineDash([stroke * 3, stroke * 3]);
+  ctx.strokeStyle = "#dc2626";
+  for (const d of lines.holes ?? []) ctx.stroke(new Path2D(d));
+  ctx.restore();
 }
 
 /** Colour of the khuôn's line in the factory files: magenta, the usual cut-contour colour. */
@@ -813,7 +850,8 @@ function shapeEdge(shape: HTMLCanvasElement, px: number, color: string): HTMLCan
  * ghép đôi"), both exactly the print sheet's px:
  *   blank    the empty khuôn as Teeinblue's "Print silhouette": the piece's shape in SOLID BLACK, transparent outside
  *            (asked 2026-11-07 — no white fill, no line);
- *   onKhuon  the khuôn (white) with the print on it and the cut line on top — laid on `blank`, it is the piece.
+ *   onKhuon  the khuôn (white) with the print on it and the khuôn's own lines on top (solid cut, dashed safe zone —
+ *            KhuonLines), else a plain cut line — laid on `blank`, it is the piece.
  * The shape is the khuôn's own (cut line / mask), else the print's outline (an acrylic cut along the art), else the
  * whole sheet.
  */
@@ -835,7 +873,7 @@ export async function khuonPair(sheet: HTMLCanvasElement, input: KhuonPairInput)
     sctx.fillRect(0, 0, w, h);
   }
   const line = Math.max(2, Math.round(Math.max(w, h) / 400));
-  const edge = shapeEdge(shape, line, KHUON_LINE);
+  const edge = input.lines ? null : shapeEdge(shape, line, KHUON_LINE);
   const blank = document.createElement("canvas");
   blank.width = w;
   blank.height = h;
@@ -856,6 +894,7 @@ export async function khuonPair(sheet: HTMLCanvasElement, input: KhuonPairInput)
   octx.fillRect(0, 0, w, h);
   octx.globalCompositeOperation = "source-over";
   octx.drawImage(sheet, 0, 0);
-  octx.drawImage(edge, 0, 0);
+  if (input.lines) await drawKhuonLines(octx, w, h, input.lines);
+  else if (edge) octx.drawImage(edge, 0, 0);
   return { blank, onKhuon };
 }

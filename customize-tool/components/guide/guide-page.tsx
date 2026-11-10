@@ -239,7 +239,7 @@ const OWNERS: Array<[string, string, string, string]> = [
   ["Print area (px, dpi) = khổ canvas artwork", "✔ giữ", "canvas lấy theo base", ""],
   ["Khuôn in hình cố định (tròn, vuông)", "✔ giữ", "chỉ hiện để căn", "vị trí artwork trong khuôn"],
   ["Cắt theo viền thiết kế (acrylic) + viền mm", "✔ luật cắt", "silhouette tự sinh mỗi version", ""],
-  ["Silhouette trong file in (kiểu Merchize)", "✔ bật / tắt", "", ""],
+  ["Silhouette trong file in (kiểu Merchize)", "✔ luôn có", "", ""],
   ["Phôi trơn / ảnh nền xem trước", "✔ giữ", "", ""],
   ["Thông số fulfillment (xưởng, SKU, ghi chú)", "✔ giữ", "", ""],
   ["Biến thể + giá (bảng Notion)", "✔ giữ", "", ""],
@@ -436,7 +436,7 @@ export function GuidePage() {
                 Tab <b>Product base</b> → bấm 1 base. Kiểm tra <b>Biến thể + giá</b>, <b>Print area</b>, <b>Khuôn in + phôi</b>, rồi:
               </p>
               <p>
-                • <b>Cắt + file in</b>: theo khuôn cố định / cắt theo viền thiết kế (+ mm) / in phẳng; bật <b>silhouette</b>, tai treo.
+                • <b>Cắt + file in</b>: theo khuôn in (nét liền = cắt, nét đứt = vùng an toàn) / cắt theo viền thiết kế (+ mm) / in phẳng; file in luôn có <b>silhouette</b>, tai treo.
                 <br />• <b>Phôi / nền xem trước</b>: ảnh phôi trơn (sứ, kính) hoặc ảnh nền (acrylic). Kéo 3 thanh để đặt khung thiết kế lên ảnh.
               </p>
               <p>

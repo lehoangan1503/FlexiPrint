@@ -3,7 +3,7 @@
 /**
  * Two parts of a product base page (2026-11-08: the base owns the physical piece, the artwork only the design):
  *
- *   Cắt + file in        fixed khuôn / along the art (+ border mm) / flat — and the silhouette in the print file
+ *   Cắt + file in        fixed khuôn / along the art (+ border mm) / flat — the print file always has its silhouette
  *   Phôi / nền xem trước the photo the preview is drawn on: a phôi trơn (the sheet's box on it), or — cut along the
  *                        art — a background the clear plate made from the design is laid on
  *
@@ -18,9 +18,9 @@ import { printApi } from "../../lib/print-api";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtSelect } from "../ui";
 
 const MODES: Array<{ value: CtBaseCutMode; label: string }> = [
-  { value: "khuon", label: "Theo khuôn in cố định (tròn, vuông…)" },
+  { value: "khuon", label: "Theo khuôn in (nét liền = cắt, nét đứt = vùng an toàn)" },
   { value: "alpha", label: "Cắt theo viền thiết kế (acrylic)" },
-  { value: "none", label: "In phẳng, không cắt (thú bông, áo)" },
+  { value: "none", label: "In phẳng nguyên canvas (không khuôn)" },
 ];
 
 export function BaseCutSection(props: { cfg: CtBaseProductConfig; template: CtPrintTemplate | null; onChange: (cut: CtBaseCut) => void }) {
@@ -37,11 +37,7 @@ export function BaseCutSection(props: { cfg: CtBaseProductConfig; template: CtPr
           <CtInput className="h-8 w-28" inputMode="decimal" value={String(cut.borderMm)} onChange={(e) => set({ borderMm: Math.max(0, Math.min(20, Number(e.target.value) || 0)) })} />
         </CtField>
       )}
-      <label className="flex items-center gap-2">
-        <input type="checkbox" className="accent-sky-500" checked={cut.silhouette} onChange={(e) => set({ silhouette: e.target.checked })} />
-        File in có silhouette full đen ở nửa trên (1 file cao gấp đôi — kiểu Merchize acrylic trên Teeinblue)
-      </label>
-      {cut.mode === "alpha" && cut.silhouette && (
+      {cut.mode === "alpha" && (
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2">
             <input type="checkbox" className="accent-sky-500" checked={cut.hole} onChange={(e) => set({ hole: e.target.checked })} />
@@ -57,10 +53,10 @@ export function BaseCutSection(props: { cfg: CtBaseProductConfig; template: CtPr
       )}
       <p className="text-muted-foreground">
         {cut.mode === "khuon"
-          ? "Mọi artwork xem trên base này được đặt vào khuôn: file in cắt theo đường khuôn, silhouette = hình khuôn."
+          ? "Nét liền của khuôn = đường cắt (mọi nội dung nằm trong đó), nét đứt = vùng an toàn cho option / ảnh khách. File in luôn có silhouette = hình trong nét liền."
           : cut.mode === "alpha"
             ? "Mỗi version tự có đường cắt + silhouette theo chính hình thiết kế (không vẽ tay từng version như Teeinblue)."
-            : "File in = nguyên canvas artwork, không đường cắt."}
+            : "File in = nguyên canvas artwork + silhouette theo hình thiết kế."}
       </p>
     </div>
   );

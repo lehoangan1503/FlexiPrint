@@ -205,14 +205,13 @@ export function withBase(
     borderMm: cut.mode === "alpha" ? cut.borderMm : config.material.borderMm,
   };
   const pxPerMm = widthMm > 0 ? main.width / widthMm : 0;
-  const printSilhouette: CtPrintSilhouette | null = cut.silhouette
-    ? {
-        enabled: true,
-        offset: cut.mode === "alpha" ? Math.min(60, Math.max(0, Math.round(cut.borderMm * pxPerMm))) : 0,
-        hole: cut.mode === "alpha" && cut.hole,
-        holeSize: cut.holeSize,
-      }
-    : null;
+  // Always on (2026-11-10): the khuôn's shape (inside its solid line), else the design's own outline.
+  const printSilhouette: CtPrintSilhouette = {
+    enabled: true,
+    offset: cut.mode === "alpha" ? Math.min(60, Math.max(0, Math.round(cut.borderMm * pxPerMm))) : 0,
+    hole: cut.mode === "alpha" && cut.hole,
+    holeSize: cut.holeSize,
+  };
 
   // The preview photo: the base's own, else (a khuôn) the khuôn's first phôi, else the artwork's.
   let scene: CtProductScene = config.scene;

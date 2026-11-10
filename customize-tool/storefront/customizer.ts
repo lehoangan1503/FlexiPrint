@@ -1780,7 +1780,8 @@ export class Customizer {
           true,
           cutoutOnly || faceFirst ? this.t("removingBg", "Removing background…") : `${this.t("creating", "Creating")} ${name}…`,
           steps,
-          !ai ? "stage" : this.usesTasks(r, next) ? "background" : "here",
+          // The editor preview shows the store's wait too (2026-11-10): Buy More, the products below.
+          !ai ? "stage" : this.usesTasks(r, next) || this.previewMode ? "background" : "here",
         );
         leaving = "task";
       }
@@ -1998,7 +1999,21 @@ export class Customizer {
           return;
         }
         const id = taskOf.get(style);
+        const pending = renders.get(style);
         if (id) this.autoApply(r, id, style, optionId);
+        else if (pending) {
+          // The editor preview has no server task: the redraw running in this page goes in by itself when it is done.
+          const st = style;
+          const src = sourceUrl;
+          free([src]);
+          close();
+          void pending
+            .then((url) => {
+              if (!this.destroyed) this.change(r.id, { kind: "photo", url, transform: { ...IDENTITY_TRANSFORM }, style: st, sourceUrl: src, optionId });
+            })
+            .catch(() => undefined);
+          return;
+        }
         free([]);
         close();
       },

@@ -379,8 +379,9 @@ export function DeployPage({ productId }: { productId: string }) {
                 checked={customerPhoi}
                 onChange={setCustomerPhoi}
                 label="Phôi AI có ảnh khách"
-                hint="Bật: sau khi AI vẽ ảnh khách theo style, server vẽ lại phôi (acrylic thật) có ảnh khách — trông thật hơn nhưng khách chờ thêm ~1 phút. Tắt: ảnh khách đặt lên ảnh phôi của version (nhanh, ~30 s). Có hiệu lực sau khi bấm Deploy."
+                hint="Bật: sau khi AI vẽ ảnh khách theo style, server vẽ lại phôi (acrylic thật) có ảnh khách — trông thật hơn nhưng khách chờ thêm ~1–2 phút. Tắt: ảnh khách đặt lên ảnh phôi của version (~30–60 s). Cả 2 cách đều có loader, nút Buy More và chạy nền. Có hiệu lực sau khi bấm Deploy."
               />
+              <PhoiDemo on={customerPhoi} />
               {customerPhoi && !(template.tpl?.config.versionPhoi.length ?? 0) && (
                 <Notice level="warn" text="Sản phẩm chưa có phôi AI theo version trên base này — tick không có tác dụng." />
               )}
@@ -567,6 +568,39 @@ function CollectionPicker({
         </div>
       )}
     </CtField>
+  );
+}
+
+/**
+ * The two ways side by side (asked 2026-11-10): one cat photo, Santa Hat, on product 6aeef97e "Dog In Red Christmas
+ * Truck", rendered by the live store page (Playwright) — static pictures in public/ct-guide, never made again.
+ */
+const PHOI_DEMO = {
+  photo: "/ct-guide/phoi-demo-photo.jpg",
+  off: { src: "/ct-guide/phoi-demo-off.jpg", label: "Không tick", note: "Ảnh khách đặt lên phôi · ~30–60 s" },
+  on: { src: "/ct-guide/phoi-demo-on.jpg", label: "Tick", note: "Phôi vẽ lại có ảnh khách · thêm ~1–2 phút" },
+} as const;
+
+function PhoiDemo({ on }: { on: boolean }) {
+  return (
+    <div className="grid grid-cols-[minmax(0,0.6fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2">
+      <figure className="space-y-1">
+        <img src={PHOI_DEMO.photo} alt="Ảnh khách upload" className="aspect-square w-full rounded-md border object-cover" />
+        <figcaption className="text-center text-[10px] text-muted-foreground">Ảnh khách upload</figcaption>
+      </figure>
+      {([PHOI_DEMO.off, PHOI_DEMO.on] as const).map((d, i) => {
+        const picked = (i === 1) === on;
+        return (
+          <figure key={d.src} className="space-y-1">
+            <img src={d.src} alt={d.label} className={cx("aspect-square w-full rounded-md border object-cover", picked ? "border-sky-500 ring-2 ring-sky-500" : "opacity-60")} />
+            <figcaption className="text-center text-[10px] leading-tight">
+              <span className={cx("font-medium", picked ? "text-sky-500" : "text-foreground")}>{d.label}</span>
+              <span className="block text-muted-foreground">{d.note}</span>
+            </figcaption>
+          </figure>
+        );
+      })}
+    </div>
   );
 }
 

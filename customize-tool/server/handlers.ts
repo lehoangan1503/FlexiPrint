@@ -417,6 +417,12 @@ export async function deploy(s: CtSession, productId: string, raw: unknown, orig
 }
 
 /** Deploy a product the caller may edit: the template, then the Shopify product (the page's route and the MCP deploy_product). */
+/**
+ * Shopify said no (app not installed, scope, rate…): 424, not 502 — Cloudflare's tunnel swaps a 502 body for its own
+ * "error code: 502" page, which hid the reason from the deploy page (2026-11-10).
+ */
+const SHOPIFY_FAILED = 424;
+
 export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeployBody, origin: string): Promise<CtDeployResponse | { error: string; status: number }> {
   const productId = product.id;
   // The product's own store (migration 032), whatever store the user has picked now.
@@ -475,7 +481,7 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Deploy Shopify thất bại";
-    return { error: `Đã publish template v${pub.publish.version}, nhưng Shopify lỗi: ${msg}`, status: 502 };
+    return { error: `Đã publish template v${pub.publish.version}, nhưng Shopify lỗi: ${msg}`, status: SHOPIFY_FAILED };
   }
 
   const { data: updated, error } = await s.supabase.from(CT_TABLES.products).update({ shopify: result.link }).eq("id", productId).select("*").single<CtProduct>();
@@ -515,10 +521,10 @@ export async function shopifyOpen(s: CtSession, productId: string): Promise<Next
   try {
     const [link] = await previewLinks(await storeOfProduct(s.supabase, product), [gid]);
     const url = (link?.status === "ACTIVE" ? link.storeUrl : null) ?? link?.previewUrl ?? link?.storeUrl ?? product.shopify?.url;
-    if (!url) return jsonError("Shopify không trả link sản phẩm", 502);
+    if (!url) return jsonError("Shopify không trả link sản phẩm", SHOPIFY_FAILED);
     return NextResponse.redirect(url, 302);
   } catch (e) {
-    return jsonError(e instanceof Error ? e.message : String(e), 502);
+    return jsonError(e instanceof Error ? e.message : String(e), SHOPIFY_FAILED);
   }
 }
 
@@ -526,7 +532,7 @@ export async function shopifyCollections(s: CtSession, store: string | null): Pr
   try {
     return NextResponse.json({ collections: await listCollections(await storeFor(s, store)) });
   } catch (e) {
-    return jsonError(e instanceof Error ? e.message : String(e), 502);
+    return jsonError(e instanceof Error ? e.message : String(e), SHOPIFY_FAILED);
   }
 }
 
@@ -536,7 +542,7 @@ export async function shopifyCreateCollection(s: CtSession, store: string | null
   try {
     return NextResponse.json({ collection: await createCollection(await storeFor(s, store), title) }, { status: 201 });
   } catch (e) {
-    return jsonError(e instanceof Error ? e.message : String(e), 502);
+    return jsonError(e instanceof Error ? e.message : String(e), SHOPIFY_FAILED);
   }
 }
 
@@ -544,7 +550,7 @@ export async function shopifySearch(s: CtSession, store: string | null, q: strin
   try {
     return NextResponse.json({ products: await searchShopifyProducts(await storeFor(s, store), q) });
   } catch (e) {
-    return jsonError(e instanceof Error ? e.message : String(e), 502);
+    return jsonError(e instanceof Error ? e.message : String(e), SHOPIFY_FAILED);
   }
 }
 

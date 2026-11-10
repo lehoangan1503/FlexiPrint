@@ -113,6 +113,10 @@ export function normalizeRegion(region: CtRegion): CtRegion {
       photo: normalizePhotoConfig({ ...base.photo, ...cfg.photo }),
       options: normalizeZoneOptions(cfg.options, base.options),
       ...(region.kind === "image" && cfg.materialFrame === true ? { materialFrame: true } : {}),
+      // A khuôn given as a picture: its cut mask + its own lines (solid cut, dashed safe zone) — kept, or the print
+      // file is never cut to it (2026-11-10).
+      ...(region.kind === "image" && cfg.materialFrame === true && typeof cfg.maskUrl === "string" && cfg.maskUrl ? { maskUrl: cfg.maskUrl } : {}),
+      ...(region.kind === "image" && cfg.materialFrame === true && typeof cfg.guideUrl === "string" && cfg.guideUrl ? { guideUrl: cfg.guideUrl } : {}),
       ...(region.kind === "image" && Array.isArray(cfg.cuts) && cfg.cuts.length
         ? { cuts: cfg.cuts.filter((s): s is CtShape => Boolean(s) && typeof s === "object" && "type" in s) }
         : {}),

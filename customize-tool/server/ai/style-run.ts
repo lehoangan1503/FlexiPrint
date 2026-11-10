@@ -9,7 +9,7 @@
 
 import type { CtAiStyle } from "../../types";
 import { CT_IMAGE_MODEL } from "../../lib/image-models";
-import { normalizeAiStyleParams } from "../../lib/ai-style-models";
+import { CT_AI_STYLE_CLEAR_BG_LINE, normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { drawImage } from "../pack-images";
 import { readImageInfo } from "../image-size";
 import type { ProviderImage } from "./providers";
@@ -26,8 +26,16 @@ export function isNotTransparentError(e: unknown): boolean {
   return e instanceof Error && /nền trong suốt/.test(e.message);
 }
 
-/** The style on `image`: transparent (a cut-out, refused when the model paints a backdrop) or on flat white. */
-export async function runStyleModel(style: CtAiStyle, image: ProviderImage, transparent: boolean): Promise<ProviderImage> {
+/**
+ * What the prompt says about the background:
+ *   clear  transparent output (a cut-out, refused when the model paints a backdrop) — with the "Remove background"
+ *          tick on, the user's own line (CT_AI_STYLE_CLEAR_BG_LINE) ends the prompt
+ *   white  flat white, for the bg-remover to lift the subject out
+ *   none   the prompt as written (tick off, zone cut-out off)
+ */
+export type StyleBackground = "clear" | "white" | "none";
+
+export async function runStyleModel(style: CtAiStyle, image: ProviderImage, bg: StyleBackground): Promise<ProviderImage> {
   const p = normalizeAiStyleParams(style.params);
   const info = readImageInfo(image.data);
   const aspect = p.aspect === "auto" && info ? `${info.width}:${info.height}` : "1:1";
@@ -37,6 +45,13 @@ export async function runStyleModel(style: CtAiStyle, image: ProviderImage, tran
   const refs = p.refUrls;
   const numbered = /\bimage\s*1\b/i.test(style.prompt);
   const head = refs.length && !numbered ? `Image 1 is the customer's photo; image${refs.length > 1 ? `s 2–${refs.length + 1} are` : " 2 is"} the style reference. ` : "";
-  const out = await drawImage(CT_IMAGE_MODEL, head + style.prompt.trim() + (transparent ? CLEAR_BG : WHITE_BG), [uri, ...refs], aspect, "pad", transparent);
+  const body = style.prompt.trim();
+  const tail =
+    bg === "white" ? WHITE_BG
+    : bg === "none" ? ""
+    : !p.removeBackground ? CLEAR_BG
+    : body.includes(CT_AI_STYLE_CLEAR_BG_LINE) ? ""
+    : `\n\n${CT_AI_STYLE_CLEAR_BG_LINE}`;
+  const out = await drawImage(CT_IMAGE_MODEL, head + body + tail, [uri, ...refs], aspect, "pad", bg === "clear");
   return { data: out.data, mime: out.mime };
 }

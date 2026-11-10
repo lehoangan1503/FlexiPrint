@@ -9,6 +9,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { CtAiStyle, CtPublicAiStyle } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { aiStyleRef } from "../../lib/photo-styles";
+import { aiStyleTileUrl } from "../../lib/ai-style-models";
 
 interface AiStylesState {
   styles: CtAiStyle[];
@@ -58,5 +59,5 @@ export function useAiStyles(): AiStylesState & { reload: () => Promise<void>; na
     if (!state.loaded && !state.loading) void reloadAiStyles();
   }, []);
   const reload = useCallback(() => reloadAiStyles(), []);
-  return { ...snap, reload, names: snap.styles.map((s) => ({ ref: aiStyleRef(s.id), name: s.name, ...(s.params.demoUrl ? { demoUrl: s.params.demoUrl } : {}) })) };
+  return { ...snap, reload, names: snap.styles.map((s) => ({ ref: aiStyleRef(s.id), name: s.name, ...(aiStyleTileUrl(s.params) ? { demoUrl: aiStyleTileUrl(s.params) } : {}) })) };
 }

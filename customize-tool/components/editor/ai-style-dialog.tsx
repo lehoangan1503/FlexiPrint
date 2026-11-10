@@ -6,17 +6,19 @@
  * 2026-11-04); every style runs on GPT Image 2.5 (no model picker). Frame / background stay on their defaults
  * (square, cut out — the "Nâng cao" section was removed 2026-11-04). "Ảnh demo"
  * (only when editing — hidden when adding a new style, 2026-11-04) runs the saved style on a sample photo — the picture editors and customers
- * pick the style by. Read-only unless the user owns the style or is an admin
+ * pick the style by. "Ảnh thumbnail" (asked 2026-11-10) is an uploaded picture shown on the customer's style tile
+ * instead of the demo. "Remove background" (ticked by default, 2026-11-10) adds CT_AI_STYLE_CLEAR_BG_LINE at the end
+ * of the prompt when the style runs (server/ai/style-run.ts). Read-only unless the user owns the style or is an admin
  * (the server enforces the same).
  */
 
 import { useRef, useState } from "react";
 import { ImagePlus, Loader2, Sparkles, Trash2, X } from "lucide-react";
 import type { CtAiStyle, CtAiStyleBody, CtAiStyleParams } from "../../types";
-import { CT_AI_STYLE_DEFAULT_PARAMS, CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL } from "../../lib/ai-style-models";
+import { CT_AI_STYLE_CLEAR_BG_LINE, CT_AI_STYLE_DEFAULT_PARAMS, CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL } from "../../lib/ai-style-models";
 import { imageModelLabel } from "../../lib/image-models";
 import { ctApi } from "../../lib/api-client";
-import { CtButton, CtField, CtInput, CtModal, CtTextarea } from "../ui";
+import { CtButton, CtCheckbox, CtField, CtInput, CtModal, CtTextarea } from "../ui";
 import { dropAiStyle, putAiStyle } from "./ai-styles-store";
 import { ctConfirm } from "../dialogs";
 
@@ -36,6 +38,8 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
   );
   const [refBusy, setRefBusy] = useState(false);
   const refInput = useRef<HTMLInputElement>(null);
+  const [thumbBusy, setThumbBusy] = useState(false);
+  const thumbInput = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [demoBusy, setDemoBusy] = useState(false);
@@ -51,7 +55,12 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
     setDemoBusy(true);
     setError(null);
     try {
-      const dirty = body.name !== editing.name || body.prompt !== editing.prompt || body.params.refUrls.join("|") !== editing.params.refUrls.join("|");
+      const dirty =
+        body.name !== editing.name ||
+        body.prompt !== editing.prompt ||
+        body.params.removeBackground !== editing.params.removeBackground ||
+        body.params.thumbUrl !== editing.params.thumbUrl ||
+        body.params.refUrls.join("|") !== editing.params.refUrls.join("|");
       if (dirty) putAiStyle(await ctApi.updateAiStyle(editing.id, body));
       const style = await ctApi.makeAiStyleDemo(editing.id, sample);
       putAiStyle(style);
@@ -77,6 +86,20 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
       setError(e instanceof Error ? e.message : "Không tải được ảnh tham chiếu");
     } finally {
       setRefBusy(false);
+    }
+  };
+
+  const setThumb = async (file: File | undefined) => {
+    if (!file || !file.type.startsWith("image/")) return;
+    setThumbBusy(true);
+    setError(null);
+    try {
+      const [url] = await ctApi.uploadAiStyleRefs([file]);
+      if (url) setParams({ thumbUrl: url });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không tải được ảnh thumbnail");
+    } finally {
+      setThumbBusy(false);
     }
   };
 
@@ -126,6 +149,12 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
         <CtField label="Prompt" hint="Khi khách upload ảnh, AI nhận: ảnh khách + ảnh tham chiếu bên dưới + prompt này. Khách không thấy prompt.">
           <CtTextarea value={body.prompt} disabled={readOnly} rows={8} maxLength={4000} className="font-mono text-xs leading-relaxed" onChange={(e) => setBody({ ...body, prompt: e.target.value })} />
         </CtField>
+        <div className="space-y-1">
+          <CtCheckbox checked={body.params.removeBackground} disabled={readOnly} onChange={(v) => setParams({ removeBackground: v })} label="Remove background" />
+          {body.params.removeBackground && (
+            <p className="pl-6 font-mono text-[10px] leading-snug text-muted-foreground">Thêm vào cuối prompt: “{CT_AI_STYLE_CLEAR_BG_LINE}”</p>
+          )}
+        </div>
         <CtField label={`Ảnh tham chiếu (tối đa ${CT_AI_STYLE_MAX_REFS})`}>
           <div className="flex flex-wrap gap-2">
             {body.params.refUrls.map((u) => (
@@ -166,6 +195,47 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
                 void addRefs(list).finally(() => {
                   if (refInput.current) refInput.current.value = "";
                 });
+              }}
+            />
+          </div>
+        </CtField>
+
+        <CtField label="Ảnh thumbnail cho khách" hint="Hiện ở ô chọn style cho khách (thay ảnh demo). Để trống = dùng ảnh demo.">
+          <div className="flex items-center gap-2">
+            <div className="group relative flex h-16 w-16 items-center justify-center overflow-hidden rounded border bg-[repeating-conic-gradient(#f1f1f1_0_25%,#fff_0_50%)] bg-[length:12px_12px]">
+              {body.params.thumbUrl ? (
+                <img src={body.params.thumbUrl} alt="" className="h-full w-full object-contain" />
+              ) : body.params.demoUrl ? (
+                <img src={body.params.demoUrl} alt="" className="h-full w-full object-contain opacity-40" />
+              ) : (
+                <span className="text-[9px] text-muted-foreground">chưa có</span>
+              )}
+              {!readOnly && body.params.thumbUrl && (
+                <button
+                  type="button"
+                  title="Bỏ thumbnail (dùng ảnh demo)"
+                  className="absolute right-0.5 top-0.5 hidden rounded-full bg-black/60 p-0.5 text-white group-hover:block"
+                  onClick={() => setParams({ thumbUrl: "" })}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+            {!readOnly && (
+              <CtButton size="sm" variant="ghost" disabled={thumbBusy} onClick={() => thumbInput.current?.click()}>
+                {thumbBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} {body.params.thumbUrl ? "Đổi ảnh" : "Upload thumbnail"}
+              </CtButton>
+            )}
+            {readOnly && !body.params.thumbUrl && <span className="text-[11px] text-muted-foreground">Dùng ảnh demo</span>}
+            <input
+              ref={thumbInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                void setThumb(f);
               }}
             />
           </div>
@@ -228,7 +298,7 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
               {readOnly ? "Đóng" : "Huỷ"}
             </CtButton>
             {!readOnly && (
-              <CtButton size="sm" variant="primary" disabled={saving || refBusy || !body.name.trim() || !body.prompt.trim()} onClick={save}>
+              <CtButton size="sm" variant="primary" disabled={saving || refBusy || thumbBusy || !body.name.trim() || !body.prompt.trim()} onClick={save}>
                 {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />} {editing ? "Lưu" : "Tạo style"}
               </CtButton>
             )}

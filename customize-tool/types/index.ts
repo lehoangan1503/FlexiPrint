@@ -196,11 +196,14 @@ export type CtAiStyleModelId = "cpa:gpt-image-2.5";
 export interface CtAiStyleParams {
   /** Output shape: square, or follow the photo. */
   aspect: "1:1" | "auto";
-  /** Cut the subject out of the AI result even if the zone's cut-out is off (the model is asked for alpha; the
-   * bg-remover runs when it hands back an opaque picture). */
+  /** "Remove background" tick (on by default): CT_AI_STYLE_CLEAR_BG_LINE is added at the end of the prompt and the
+   * subject is cut out even if the zone's cut-out is off (the bg-remover runs when the model hands back an opaque
+   * picture). Off = the prompt runs as written, nothing said about the background. */
   removeBackground: boolean;
   /** The style run on a sample photo — the picture the editor and the customer pick the style by ("" = none yet). */
   demoUrl: string;
+  /** Uploaded option thumbnail (asked 2026-11-10): shown on the customer's style tile instead of the demo ("" = use the demo). */
+  thumbUrl: string;
   /** The sample photo that demo was made from. */
   demoSourceUrl: string;
   /** Style reference pictures sent after the customer's photo (image 2, 3…; ≤ 4) — like a studio prompt "Image 1 is

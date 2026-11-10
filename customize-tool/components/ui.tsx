@@ -374,18 +374,21 @@ export function CtCheckbox({
   onChange,
   label,
   hint,
+  disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
   hint?: string;
+  disabled?: boolean;
 }) {
   const id = React.useId();
   return (
-    <div className="flex items-start gap-2">
+    <div className={cx("flex items-start gap-2", disabled && "opacity-60")}>
       <CheckboxPrimitive.Root
         id={id}
         checked={checked}
+        disabled={disabled}
         onCheckedChange={(v) => onChange(v === true)}
         className={cx(
           "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-input shadow-sm",

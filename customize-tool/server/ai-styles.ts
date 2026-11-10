@@ -26,7 +26,7 @@ import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_CONFIG, CT_TABLES } from "../config";
 import type { CtAiStyle, CtAiStyleBody, CtAiStyleRef, CtPublicAiStyle } from "../types";
-import { CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL, normalizeAiStyleParams } from "../lib/ai-style-models";
+import { CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL, aiStyleTileUrl, normalizeAiStyleParams } from "../lib/ai-style-models";
 import { aiStyleId, aiStyleRef } from "../lib/photo-styles";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctDownload, ctUpload } from "./storage";
@@ -161,7 +161,8 @@ export async function publicAiStyles(db: Reader, refs: CtAiStyleRef[]): Promise<
   if (!ids.length) return [];
   const { data } = await db.from(CT_TABLES.aiStyles).select("id,name,params").in("id", ids).returns<Array<Pick<CtAiStyleRow, "id" | "name" | "params">>>();
   return (data ?? []).map((r) => {
-    const demoUrl = normalizeAiStyleParams(r.params).demoUrl;
+    // The tile picture: the uploaded thumbnail, else the demo (the storefront reads it as demoUrl).
+    const demoUrl = aiStyleTileUrl(normalizeAiStyleParams(r.params));
     return { ref: aiStyleRef(r.id), name: r.name, ...(demoUrl ? { demoUrl } : {}) };
   });
 }

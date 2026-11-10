@@ -354,12 +354,12 @@ async function runAiStyle(job: PhotoJob, style: CtAiStyle): Promise<PhotoResult>
   let image: ProviderImage;
   if (wantCut) {
     try {
-      image = await runStyleModel(style, job.image, true);
+      image = await runStyleModel(style, job.image, "clear");
     } catch (e) {
       if (!isNotTransparentError(e)) throw e;
-      image = await runStyleModel(style, job.image, false);
+      image = await runStyleModel(style, job.image, "white");
     }
-  } else image = await runStyleModel(style, job.image, false);
+  } else image = await runStyleModel(style, job.image, "none");
   let backdrop: PhotoResult["backdrop"] = null;
   // The model already removed the background: no second model pass.
   const alreadyCut = image.mime === "image/png" && pngHasTransparency(image.data);

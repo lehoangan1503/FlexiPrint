@@ -56,6 +56,7 @@ import { useImageSize } from "./use-image-size";
 import { useLibraryFonts } from "../font-library";
 import { charSetBounds, placeCharSet } from "../../lib/char-set-layers";
 import { layerGroups } from "../../lib/layer-groups";
+import { aiStyleTileUrl } from "../../lib/ai-style-models";
 import { defaultRegionSelection, formOrder, hasTestPhoto, isLinkedLayer, isValidDate, normalizeRegion, textMode, variantsOf, zoneSubtree } from "../../lib/design";
 import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
 import { AiStyleDialog } from "./ai-style-dialog";
@@ -1279,7 +1280,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
                   return (
                     <div key={st.id} className={cx("flex gap-2 rounded-md border p-1.5", ref === selectedAi && "border-sky-500")}>
                       <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-[repeating-conic-gradient(#f1f1f1_0_25%,#fff_0_50%)] bg-[length:12px_12px]">
-                        {st.params.demoUrl ? <img src={st.params.demoUrl} alt={st.name} className="h-full w-full object-contain" /> : <span className="px-1 text-center text-[9px] text-muted-foreground">chưa có demo</span>}
+                        {aiStyleTileUrl(st.params) ? <img src={aiStyleTileUrl(st.params)} alt={st.name} className="h-full w-full object-contain" /> : <span className="px-1 text-center text-[9px] text-muted-foreground">chưa có demo</span>}
                       </div>
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex items-center gap-1">
@@ -1322,7 +1323,7 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
                     <div key={st.id} className={cx("relative overflow-hidden rounded-md border text-left", on ? "border-sky-500 ring-1 ring-sky-500" : "opacity-70 hover:opacity-100")}>
                       <button type="button" className="block w-full" title={on ? "Bỏ style này" : "Cho khách chọn style này"} onClick={() => toggleStyle(ref, !on)}>
                         <div className="flex aspect-square items-center justify-center bg-[repeating-conic-gradient(#f1f1f1_0_25%,#fff_0_50%)] bg-[length:12px_12px]">
-                          {st.params.demoUrl ? <img src={st.params.demoUrl} alt={st.name} className="h-full w-full object-contain" /> : <span className="px-1 text-center text-[10px] text-muted-foreground">chưa có demo</span>}
+                          {aiStyleTileUrl(st.params) ? <img src={aiStyleTileUrl(st.params)} alt={st.name} className="h-full w-full object-contain" /> : <span className="px-1 text-center text-[10px] text-muted-foreground">chưa có demo</span>}
                         </div>
                         <div className="truncate px-1 py-0.5 text-[10px] font-medium">{st.name}</div>
                       </button>

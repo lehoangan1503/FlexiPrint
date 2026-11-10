@@ -16,10 +16,20 @@ export const CT_AI_STYLE_DEFAULT_PARAMS: CtAiStyleParams = {
   aspect: "1:1",
   removeBackground: true,
   demoUrl: "",
+  thumbUrl: "",
   demoSourceUrl: "",
   refUrls: [],
   setId: "",
 };
+
+/** Added at the end of the prompt while "Remove background" is ticked (asked 2026-11-10, wording from the user). */
+export const CT_AI_STYLE_CLEAR_BG_LINE =
+  "Output: the artwork only on a FULLY TRANSPARENT background (real alpha channel, no checkerboard, no shadow, no glow, no frame).";
+
+/** The picture on the style's tile (editor + storefront): the uploaded thumbnail, else the demo ("" = none). */
+export function aiStyleTileUrl(p: Pick<CtAiStyleParams, "thumbUrl" | "demoUrl">): string {
+  return p.thumbUrl || p.demoUrl;
+}
 
 /** Fill missing / invalid params (rows written by older code — fal-era resolution / quality / format are dropped). */
 export function normalizeAiStyleParams(raw: Partial<CtAiStyleParams> | null | undefined): CtAiStyleParams {
@@ -29,6 +39,7 @@ export function normalizeAiStyleParams(raw: Partial<CtAiStyleParams> | null | un
     aspect: p.aspect === "auto" ? "auto" : "1:1",
     removeBackground: p.removeBackground !== false,
     demoUrl: url(p.demoUrl),
+    thumbUrl: url(p.thumbUrl),
     demoSourceUrl: url(p.demoSourceUrl),
     refUrls: (Array.isArray(p.refUrls) ? p.refUrls : []).map(url).filter(Boolean).slice(0, CT_AI_STYLE_MAX_REFS),
     setId: typeof p.setId === "string" && /^[0-9a-f-]{36}$/i.test(p.setId) ? p.setId : "",

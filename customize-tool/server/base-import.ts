@@ -180,6 +180,8 @@ async function fromPrintbelle(s: CtSession, folder: string, p: PbProduct): Promi
     cost: typeof v.price === "number" ? v.price : null,
     weightG: typeof v.weight === "number" ? v.weight : null,
     printArea: v.printAreaKey ?? areas[0]?.name ?? "",
+    printWidth: (areas.find((a) => a.name === v.printAreaKey) ?? areas[0])?.width ?? null,
+    printHeight: (areas.find((a) => a.name === v.printAreaKey) ?? areas[0])?.height ?? null,
   }));
   let preview: CtProductScene = normalizeScene(null);
   const mk = (p.mockups ?? []).find((m) => m.layers?.background && m.zone?.length === 4);
@@ -198,22 +200,41 @@ async function fromPrintbelle(s: CtSession, folder: string, p: PbProduct): Promi
   };
 }
 
-/** Merchize (read off Teeinblue) → base config. No phôi zone: the photos are kept, the preview is set by hand. */
+/**
+ * Merchize (read off Teeinblue) → base config. No phôi zone: the photos are kept, the preview is set by hand.
+ * Teeinblue may give each variant its own print area (variant_printareas: "2-side Printed - 7x7 - front" 2100×6300):
+ * the base's print areas are then one per face name (the size most variants use), and every variant keeps its own.
+ */
 async function fromTeeinblue(s: CtSession, folder: string, catalogId: string, p: TibProduct): Promise<{ name: string; config: Partial<CtBaseProductConfig> }> {
-  const names = p.printareas.map((a) => a.name);
-  const unique = new Set(names).size === names.length;
-  const areaRows = p.printareas.slice(0, 8);
-  const areas: CtPrintArea[] = areaRows.map((a) => ({ id: newId(), name: (unique ? a.name : a.display_name || a.name) || "Front", width: a.width, height: a.height, dpi: a.dpi || 300 }));
-  const variants: CtBaseVariant[] = p.variants.map((v) => ({
-    id: newId(),
-    size: v.size ?? "",
-    color: v.color && v.color !== "Default" ? v.color : "",
-    colorHex: v.color_hex ?? null,
-    sku: v.fulfillment_linked_id ?? "",
-    cost: typeof v.base_cost === "number" ? v.base_cost : null,
-    weightG: v.weight && Number.isFinite(Number(v.weight)) ? Number(v.weight) : null,
-    printArea: areas[0]?.name ?? "",
-  }));
+  const byId = new Map(p.printareas.map((a) => [a.id, a]));
+  const areaOf = (v: TibProduct["variants"][number]) => byId.get(v.variant_printareas[0]?.printarea_id ?? v.printarea_id ?? -1) ?? null;
+  const uses = new Map<number, number>();
+  for (const v of p.variants) {
+    const a = areaOf(v);
+    if (a) uses.set(a.id, (uses.get(a.id) ?? 0) + 1);
+  }
+  const faces = new Map<string, TibProduct["printareas"][number]>();
+  for (const a of p.printareas) {
+    const face = a.name || "front";
+    const had = faces.get(face);
+    if (!had || (uses.get(a.id) ?? 0) > (uses.get(had.id) ?? 0)) faces.set(face, a);
+  }
+  const areas: CtPrintArea[] = [...faces.entries()].slice(0, 8).map(([face, a]) => ({ id: newId(), name: face.charAt(0).toUpperCase() + face.slice(1), width: a.width, height: a.height, dpi: a.dpi || 300 }));
+  const variants: CtBaseVariant[] = p.variants.map((v) => {
+    const a = areaOf(v);
+    return {
+      id: newId(),
+      size: v.size ?? "",
+      color: v.color && v.color !== "Default" ? v.color : "",
+      colorHex: v.color_hex ?? null,
+      sku: v.fulfillment_linked_id ?? "",
+      cost: typeof v.base_cost === "number" ? v.base_cost : null,
+      weightG: v.weight && Number.isFinite(Number(v.weight)) ? Number(v.weight) : null,
+      printArea: a ? a.display_name || a.name : (areas[0]?.name ?? ""),
+      printWidth: a?.width ?? null,
+      printHeight: a?.height ?? null,
+    };
+  });
   const pics = p.mockups.map((m) => (m.preview_url ? TEEINBLUE_CDN + m.preview_url.replace(/^\/+/, "") : (m.ref ?? m.url ?? "")));
   const photos = await copyPictures(s.user.id, folder, pics);
   return {

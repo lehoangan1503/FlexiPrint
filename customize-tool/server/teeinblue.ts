@@ -42,8 +42,8 @@ export interface TibProduct {
   title: string;
   description: string | null;
   fulfillment_linked_id: string | null;
-  printareas: Array<{ name: string; display_name: string | null; width: number; height: number; dpi: number | null; position: number | null }>;
-  variants: Array<{ color: string | null; color_hex: string | null; size: string | null; base_cost: number | null; weight: string | null; available: boolean | null; fulfillment_linked_id: string | null; printarea_id: number | null }>;
+  printareas: Array<{ id: number; name: string; display_name: string | null; width: number; height: number; dpi: number | null; position: number | null }>;
+  variants: Array<{ color: string | null; color_hex: string | null; size: string | null; base_cost: number | null; weight: string | null; available: boolean | null; fulfillment_linked_id: string | null; printarea_id: number | null; variant_printareas: Array<{ printarea_id: number }> }>;
   mockups: Array<{ preview_url: string | null; url: string | null; ref: string | null; width: number | null; height: number | null }>;
 }
 
@@ -238,7 +238,7 @@ export async function merchizeCatalog(q: string, page: number, perPage: number):
 
 const PRODUCT_FIELDS = `id title description fulfillment_linked_id
   printareas(order_by: [{position: asc}, {id: asc}]) { id name display_name width height dpi position }
-  variants(order_by: {id: asc}) { color color_hex size base_cost weight available fulfillment_linked_id printarea_id }
+  variants(order_by: {id: asc}) { color color_hex size base_cost weight available fulfillment_linked_id printarea_id variant_printareas { printarea_id } }
   mockups(order_by: [{position: asc}, {id: asc}]) { preview_url url ref width height }`;
 
 async function readProduct(id: number): Promise<TibProduct> {

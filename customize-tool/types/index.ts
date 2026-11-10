@@ -1702,8 +1702,11 @@ export interface CtBaseVariant {
   /** Base cost, USD (the fulfiller's price to us). null = it does not say. */
   cost: number | null;
   weightG: number | null;
-  /** The print area this variant prints on (CtPrintArea.name). */
+  /** The print area this variant prints on (a CtPrintArea name, or the fulfiller's own name for it). */
   printArea: string;
+  /** That print area's size, px — Merchize gives some variants their own (a 2-side ornament prints taller). */
+  printWidth: number | null;
+  printHeight: number | null;
 }
 
 /** Where an imported base came from (config.source); null on bases made by hand. */

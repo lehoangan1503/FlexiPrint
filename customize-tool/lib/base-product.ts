@@ -63,7 +63,9 @@ function normalizeVariants(raw: unknown): CtBaseVariant[] {
         sku: str(v.sku, 160),
         cost: money(v.cost),
         weightG: money(v.weightG),
-        printArea: str(v.printArea, 60),
+        printArea: str(v.printArea, 120),
+        printWidth: typeof v.printWidth === "number" && v.printWidth > 0 ? num(v.printWidth, 1, 30000, 1000) : null,
+        printHeight: typeof v.printHeight === "number" && v.printHeight > 0 ? num(v.printHeight, 1, 30000, 1000) : null,
       }),
     )
     .slice(0, 500);

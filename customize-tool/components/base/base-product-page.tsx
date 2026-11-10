@@ -280,6 +280,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                           <th className="px-2 py-1 font-medium">Size</th>
                           <th className="px-2 py-1 font-medium">Màu</th>
                           <th className="px-2 py-1 font-medium">Mã nhà in</th>
+                          <th className="px-2 py-1 font-medium">Vùng in px</th>
                           <th className="px-2 py-1 text-right font-medium">Giá vốn</th>
                         </tr>
                       </thead>
@@ -294,6 +295,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                               </span>
                             </td>
                             <td className="px-2 py-1 font-mono text-[11px]">{v.sku || "—"}</td>
+                            <td className="px-2 py-1 text-muted-foreground">{v.printWidth && v.printHeight ? `${v.printWidth}×${v.printHeight}` : "—"}</td>
                             <td className="px-2 py-1 text-right font-medium">{v.cost !== null ? formatUsd(v.cost) : "—"}</td>
                           </tr>
                         ))}

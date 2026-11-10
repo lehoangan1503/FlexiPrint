@@ -837,6 +837,12 @@ export interface CtProductConfig {
   versionPhoi: CtVersionPhoi[];
   /** The base this config is laid on (lib/base-fit withBase): which `versionPhoi` the preview uses. null = none. */
   viewBaseId: string | null;
+  /**
+   * "Phôi AI có ảnh khách" (asked 2026-11-10, a tick on the deploy page, OFF by default): after the AI style the
+   * server draws the version's phôi again WITH the customer's photo (server/photo-tasks.ts, ~1 min more). Off = the
+   * styled photo is laid on the version's phôi in the browser (faster, less real). Set only by deploy.
+   */
+  customerPhoi: boolean;
 }
 
 /** CtProductConfig.versionPhoi — one version's AI phôi on one base. */
@@ -2171,6 +2177,8 @@ export interface CtDeployBody {
   collectionIds: string[];
   /** The breadcrumb's collection (one of collectionIds); null = the theme's default. */
   primaryCollectionId: string | null;
+  /** CtProductConfig.customerPhoi to store before publishing; absent = keep the product's. */
+  customerPhoi?: boolean;
 }
 
 export interface CtShopifyCollection {

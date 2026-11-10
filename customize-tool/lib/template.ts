@@ -120,6 +120,8 @@ export function buildTemplate(args: {
       // The customer's preview on each version's AI phôi of the product's base (only that base's, of the shown versions).
       versionPhoi: config.versionPhoi.filter((v) => v.baseId === config.viewBaseId && mains.some((m) => m.id === v.mainId)),
       viewBaseId: config.viewBaseId,
+      // The phôi drawn again with the customer's photo (server/photo-tasks.ts) — off unless ticked at deploy.
+      customerPhoi: config.customerPhoi,
     },
     // Swatches (main versions, layer options) show the flat clipart; the design is drawn with its material.
     assets: Array.from(used.values()).map((a) => renderAsset(a, flatUrl.get(a.id))),

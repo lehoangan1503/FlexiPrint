@@ -248,8 +248,14 @@ export async function saveDesign(s: CtSession, productId: string, body: CtSaveDe
   if (body.config) {
     const { error: cfgErr } = await s.supabase
       .from(CT_TABLES.products)
-      // The versions' AI phôi are written by the server alone (server/version-phoi.ts): the stored list stays.
-      .update({ config: withArtworkRevision({ ...normalizeProductConfig(body.config), versionPhoi: normalizeProductConfig(owned.config).versionPhoi }, owned) })
+      // The versions' AI phôi are written by the server alone (server/version-phoi.ts) and customerPhoi by deploy:
+      // the stored values stay.
+      .update({
+        config: withArtworkRevision(
+          { ...normalizeProductConfig(body.config), versionPhoi: normalizeProductConfig(owned.config).versionPhoi, customerPhoi: normalizeProductConfig(owned.config).customerPhoi },
+          owned,
+        ),
+      })
       .eq("id", productId);
     if (cfgErr) return jsonError(missingMigration(cfgErr.message) ?? cfgErr.message, 500);
   }
@@ -386,6 +392,7 @@ export function readDeployBody(raw: unknown): CtDeployBody | null {
     collectionIds: strings(b.collectionIds, 50).filter((id) => /^gid:\/\/shopify\/Collection\/\d+$/.test(id)),
     primaryCollectionId: typeof b.primaryCollectionId === "string" && /^gid:\/\/shopify\/Collection\/\d+$/.test(b.primaryCollectionId) ? b.primaryCollectionId : null,
     shopifyProductId: typeof b.shopifyProductId === "string" && /^gid:\/\/shopify\/Product\/\d+$/.test(b.shopifyProductId) ? b.shopifyProductId : null,
+    ...(typeof b.customerPhoi === "boolean" ? { customerPhoi: b.customerPhoi } : {}),
   };
 }
 
@@ -425,6 +432,14 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
     const { data } = await s.supabase.from(CT_TABLES.assets).select("*").eq("product_id", productId).in("id", body.mediaAssetIds).returns<CtAsset[]>();
     const byId = new Map((data ?? []).map((a) => [a.id, a]));
     media = body.mediaAssetIds.map((id) => byId.get(id)).filter((a): a is CtAsset => Boolean(a)).map((asset) => ({ asset, url: absoluteUrl(asset.url, origin) }));
+  }
+
+  // 0. The deploy page's "Phôi AI có ảnh khách" tick goes in the product before its template is made.
+  if (typeof body.customerPhoi === "boolean") {
+    const config = { ...normalizeProductConfig(product.config), customerPhoi: body.customerPhoi };
+    const { error: cfgErr } = await s.supabase.from(CT_TABLES.products).update({ config }).eq("id", productId);
+    if (cfgErr) return { error: cfgErr.message, status: 500 };
+    product = { ...product, config };
   }
 
   // 1. The storefront template (what the customizer draws).

@@ -1251,7 +1251,8 @@ export class Customizer {
 
   /** The photo task of the design shown and the phôi it needs; null = none (no task photo, a version without phôi). */
   private wantedPhoi(sel: CtSelection): { stored: CtStoredTask; key: string; body: object; regionId: string; mainId: string; photo: CtPhotoSelection } | null {
-    if (this.previewMode || !this.taskByPhoto.size) return null;
+    // Only when the deploy ticked "Phôi AI có ảnh khách" (2026-11-10); off = the photo is laid on the version's phôi.
+    if (this.previewMode || !this.taskByPhoto.size || this.tpl.config.customerPhoi !== true) return null;
     const mainId = selectedMainId(sel, this.tpl.assets, this.tpl.mainAssetId);
     if (!this.tpl.config.versionPhoi.some((v) => v.mainId === mainId)) return null;
     for (const r of this.shownRegions(sel)) {

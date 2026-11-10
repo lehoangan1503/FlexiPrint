@@ -13,7 +13,8 @@
  *   2. the browser's finishing steps done here (lib/pixel-ops): white backdrop keyed out, the cropped edge faded, trimmed
  *      — the same picture lib/photo-process makes in the browser
  *   3. photo + upload stored (public, under customize-tool-orders/)
- *   4. a version with an AI phôi (acrylic, cut to shape): the phôi drawn again WITH the photo (server/version-phoi-ref
+ *   4. only with the deploy's "Phôi AI có ảnh khách" tick (config.customerPhoi, off by default — 2026-11-10: it adds
+ *      ~1 min; off = the browser lays the photo on the version's phôi). A version with an AI phôi (acrylic, cut to shape): the phôi drawn again WITH the photo (server/version-phoi-ref
  *      with the customer's picks → gpt-image → layer-kit register), the photo as big as its zone allows until the
  *      customer places it. Preview only: print files stay the design + khuôn + silhouette.
  *
@@ -162,7 +163,8 @@ export async function createPhotoTask(productId: string, form: FormData, ip: str
         ctUpload(ctPublicUploadPath(productId, "photo", "image/png"), png, "image/png"),
         ctUpload(ctPublicUploadPath(productId, "source", parsed.mime), parsed.data, parsed.mime),
       ]);
-      const hasPhoi = (tpl.config.versionPhoi ?? []).some((v) => v.mainId === mainId);
+      // The phôi with the photo only when the deploy ticked "Phôi AI có ảnh khách" (off by default, 2026-11-10).
+      const hasPhoi = tpl.config.customerPhoi === true && (tpl.config.versionPhoi ?? []).some((v) => v.mainId === mainId);
       touch(task, { photoUrl, sourceUrl, stage: hasPhoi ? "phoi" : "done" });
       // Until the customer places it, the photo sits as big as its zone allows (the identity transform: contain).
       if (hasPhoi) await phoiRound(db, task, { mainId, transform: { ...IDENTITY_TRANSFORM }, selection, optionId });
@@ -235,7 +237,7 @@ export async function requestTaskPhoi(id: string, body: unknown, origin: string 
   const tpl = await latestTemplate(db, task.state.productId);
   if (!tpl) return publicError("Sản phẩm chưa publish", 404);
   const mainId = versionOf(tpl, b.mainId);
-  if (!(tpl.config.versionPhoi ?? []).some((v) => v.mainId === mainId)) return publicJson({ task: task.state });
+  if (tpl.config.customerPhoi !== true || !(tpl.config.versionPhoi ?? []).some((v) => v.mainId === mainId)) return publicJson({ task: task.state });
   const ask: PhoiAsk = { mainId, transform: readTransform(b.transform), selection: readSelection(b.selection), optionId: typeof b.optionId === "string" && b.optionId ? b.optionId : null };
   // phoiRound marks the round pending before its first await: the answer already shows it.
   void phoiRound(db, task, ask);

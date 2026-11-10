@@ -30,11 +30,13 @@ import type {
 } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { buildTemplate } from "../../lib/template";
+import { normalizeRegion } from "../../lib/design";
+import { isAiStyleRef } from "../../lib/photo-styles";
 import { suggestCollections } from "../../lib/collections";
 import { defaultDeployMedia, productMockups } from "../../lib/deploy-media";
 import { auditOptions, type CtAuditLevel } from "../../lib/option-audit";
 import { formatUsd, priceCell, priceCells, priceTableFor, priceTableProblems, usesPacks, usesSizes } from "../../lib/pricing";
-import { CHECKER_STYLE, CtButton, CtField, CtInput, CtSelect, CtTextarea, cx } from "../ui";
+import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtSelect, CtTextarea, cx } from "../ui";
 import { PriceTableEditor } from "./price-table-editor";
 import { ContentAgent } from "./content-agent";
 import { ImportStatus } from "../char/import-status";
@@ -72,6 +74,8 @@ export function DeployPage({ productId }: { productId: string }) {
   /** Collections the product joins (badges); `primary` = the breadcrumb's. */
   const [picked, setPicked] = useState<string[]>([]);
   const [primary, setPrimary] = useState<string | null>(null);
+  // "Phôi AI có ảnh khách" (2026-11-10): off by default, stored on the product at deploy.
+  const [customerPhoi, setCustomerPhoi] = useState(false);
 
   const fill = useCallback((p: CtShopifyProductSummary | null, fallbackTitle: string) => {
     setForm({
@@ -98,6 +102,7 @@ export function DeployPage({ productId }: { productId: string }) {
       .then(([b, list, shop, cols, bases]) => {
         if (cancelled) return;
         setBundle(b);
+        setCustomerPhoi(b.product.config?.customerPhoi === true);
         setTables(list);
         setInfo(shop);
         setCollections(cols);
@@ -142,6 +147,11 @@ export function DeployPage({ productId }: { productId: string }) {
     }
   }, [bundle]);
   const audit = useMemo(() => (template.tpl ? auditOptions(template.tpl) : null), [template.tpl]);
+  // The tick is only for products where the customer uploads a photo that an AI style redraws (the 2-step generation).
+  const aiPhoto = useMemo(
+    () => (bundle?.regions ?? []).map(normalizeRegion).some((r) => r.kind === "photo" && r.config.photo.styles.some(isAiStyleRef)),
+    [bundle],
+  );
 
   const table = tables.find((t) => t.id === tableId) ?? null;
   const problems = table ? priceTableProblems(table.config) : [];
@@ -189,6 +199,7 @@ export function DeployPage({ productId }: { productId: string }) {
         shopifyProductId: null,
         collectionIds: picked,
         primaryCollectionId: primary && picked.includes(primary) ? primary : (picked[0] ?? null),
+        ...(aiPhoto ? { customerPhoi } : {}),
       });
       setResult(r);
       setBundle({ ...bundle, product: r.product });
@@ -361,6 +372,20 @@ export function DeployPage({ productId }: { productId: string }) {
             {table ? <PriceSummary table={table} /> : <p className="text-xs text-muted-foreground">Deploy cần 1 bảng giá: Size × Pack, mỗi ô là 1 variant Shopify có giá.</p>}
             {problems.length > 0 && <Notice level="warn" text={problems.join(" ")} />}
           </Card>
+
+          {aiPhoto && (
+            <Card title="Ảnh khách upload">
+              <CtCheckbox
+                checked={customerPhoi}
+                onChange={setCustomerPhoi}
+                label="Phôi AI có ảnh khách"
+                hint="Bật: sau khi AI vẽ ảnh khách theo style, server vẽ lại phôi (acrylic thật) có ảnh khách — trông thật hơn nhưng khách chờ thêm ~1 phút. Tắt: ảnh khách đặt lên ảnh phôi của version (nhanh, ~30 s). Có hiệu lực sau khi bấm Deploy."
+              />
+              {customerPhoi && !(template.tpl?.config.versionPhoi.length ?? 0) && (
+                <Notice level="warn" text="Sản phẩm chưa có phôi AI theo version trên base này — tick không có tác dụng." />
+              )}
+            </Card>
+          )}
 
           {/* Customer options */}
           <Card title="Option cho khách (kiểm tra trước deploy)">

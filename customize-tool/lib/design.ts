@@ -286,6 +286,7 @@ export function defaultProductConfig(): CtProductConfig {
     baseFrameId: null,
     versionPhoi: [],
     viewBaseId: null,
+    customerPhoi: false,
   };
 }
 
@@ -360,6 +361,7 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     baseFrameId: typeof raw?.baseFrameId === "string" && raw.baseFrameId ? raw.baseFrameId : null,
     versionPhoi: normalizeVersionPhoi(raw?.versionPhoi),
     viewBaseId: typeof raw?.viewBaseId === "string" && raw.viewBaseId ? raw.viewBaseId : null,
+    customerPhoi: raw?.customerPhoi === true,
   };
 }
 

@@ -31,6 +31,7 @@ import { aiStyleId, aiStyleRef } from "../lib/photo-styles";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctDownload, ctUpload } from "./storage";
 import { processPhoto } from "./ai/photo";
+import { siteUrl } from "./site-url";
 
 type CtAiStyleRow = Omit<CtAiStyle, "owner" | "can_edit">;
 
@@ -173,8 +174,9 @@ export async function publicAiStyles(db: Reader, refs: CtAiStyleRef[]): Promise<
 // ---------------------------------------------------------------------------
 
 /** The stock sample every demo is made from unless the editor uploads their own (a pet photo, made once with
- * GPT Image 2.5 — scripts in .scratch-e2e, 2026-10-15). */
-export const AI_STYLE_SAMPLE_URL = "https://flexiprint.next.lc/files/shared/customize-tool/ai-styles/sample-pet.jpg";
+ * GPT Image 2.5 — scripts in .scratch-e2e, 2026-10-15). On this instance's own domain: it was hard-coded to the VPS
+ * (flexiprint.next.lc), which is gone, so "Tạo ảnh demo" on flexi2 failed with "fetch failed" (2026-11-11). */
+export const AI_STYLE_SAMPLE_URL = `${siteUrl()}/files/shared/customize-tool/ai-styles/sample-pet.jpg`;
 
 /** POST ai-styles/refs [files] — store style reference pictures (≤ 4 per style, saved later in params.refUrls) → { urls }. */
 export async function uploadAiStyleRefs(s: CtSession, form: FormData | null): Promise<NextResponse> {
@@ -198,8 +200,10 @@ export async function uploadAiStyleRefs(s: CtSession, form: FormData | null): Pr
 export async function makeAiStyleDemo(s: CtSession, id: string, form: FormData | null): Promise<NextResponse> {
   const row = await editable(s, id);
   if (row instanceof NextResponse) return row;
-  let sample: { data: Buffer; mime: string };
-  let sourceUrl = AI_STYLE_SAMPLE_URL;
+  let sample: { data: Buffer; mime: string } | null = null;
+  // No new upload → redo the demo on the sample shown in the dialog (the editor's last own photo), else the stock pet.
+  const lastSource = normalizeAiStyleParams(row.params).demoSourceUrl;
+  let sourceUrl = lastSource || AI_STYLE_SAMPLE_URL;
   const file = form?.get("sample");
   try {
     if (file instanceof Blob && file.size > 0) {
@@ -209,7 +213,13 @@ export async function makeAiStyleDemo(s: CtSession, id: string, form: FormData |
       const data = await sharp(raw).rotate().resize(1600, 1600, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
       sample = { data, mime: "image/jpeg" };
       sourceUrl = await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/ai-styles/${id}/sample-${crypto.randomUUID()}.jpg`, data, "image/jpeg");
-    } else sample = await ctDownload(sourceUrl);
+    } else {
+      if (lastSource) sample = await ctDownload(lastSource).catch(() => null);
+      if (!sample) {
+        sourceUrl = AI_STYLE_SAMPLE_URL;
+        sample = await ctDownload(sourceUrl);
+      }
+    }
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không đọc được ảnh mẫu", 400);
   }

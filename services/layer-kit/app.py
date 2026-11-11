@@ -16,6 +16,8 @@ print upscale is Real-ESRGAN (upscale.py). All on CPU. Three jobs:
     GET  /jobs/{job}/files/{name}   a picture / mask PNG the job wrote (masks: white, alpha = the mask)
     DELETE /jobs/{job}              forget it (else after an hour)
     POST /align   {"ref": url, "url": url} → {"dx", "dy", "unchanged", "before", "residual", "max", "w", "h"}
+    POST /psd/template {"url", "sheet"?} → a fulfiller's PSD khuôn by layer names (psd_kit.py)
+    POST /psd/mockup   {"url", "sheet"?} → its PSD mockup as phôi + overlay + box (psd_kit.py)
     GET  /health
 
 Env:
@@ -713,3 +715,48 @@ def diff_pictures(body: DiffBody, authorization: str | None = Header(default=Non
         except ValueError as e:
             raise HTTPException(400, str(e))
     return {"boxes": [d.__dict__ for d in boxes[:200]]}
+
+
+class PsdBody(BaseModel):
+    url: str
+    # The print area (px) the template / mockup belongs to: a mockup's design smart object must be this shape.
+    sheet: list[int] | None = None
+
+
+@app.post("/psd/template")
+def psd_template(body: PsdBody, authorization: str | None = Header(default=None)) -> dict:
+    """A fulfiller's PSD print template (Merchize) read by layer names → {family, width, height, faces:[{name, mask,
+    guide (PNG base64), safe:[shapes]}]}. family: gray | shapes | cut | manual (psd_kit.py)."""
+    import psd_kit
+
+    auth(authorization)
+    with psd_kit.psd_lock:
+        path = None
+        try:
+            path = psd_kit.download(body.url)
+            return psd_kit.read_template(path)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        finally:
+            if path and os.path.exists(path):
+                os.unlink(path)
+
+
+@app.post("/psd/mockup")
+def psd_mockup(body: PsdBody, authorization: str | None = Header(default=None)) -> dict:
+    """A fulfiller's PSD mockup → the blank product (phôi, JPEG base64), the overlay (PNG base64) and the design's box,
+    or {error, scenes} when no scene can be laid flat (psd_kit.py)."""
+    import psd_kit
+
+    auth(authorization)
+    sheet = tuple(body.sheet) if body.sheet and len(body.sheet) == 2 else None
+    with psd_kit.psd_lock:
+        path = None
+        try:
+            path = psd_kit.download(body.url)
+            return psd_kit.read_mockup(path, sheet)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        finally:
+            if path and os.path.exists(path):
+                os.unlink(path)

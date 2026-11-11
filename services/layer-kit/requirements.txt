@@ -9,3 +9,5 @@ uvicorn[standard]>=0.40,<0.41
 torch>=2.5
 torchvision>=0.20
 spandrel>=0.4,<1
+# Fulfiller PSD templates / mockups (psd_kit.py): layer composite incl. vector shapes (aggdraw) and blend modes.
+psd-tools[composite]>=1.26,<2

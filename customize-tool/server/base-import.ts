@@ -8,8 +8,9 @@
  * Price: the Notion price table whose name fits the title (lib/pricing priceTableForTitle), else none — set later on
  * the base page. Material stays "none", so imported bases are never picked automatically for sets / imports by
  * material. Printbelle (2026-11-11): the khuôn in is made from the product's Template.tif (server/printbelle-khuon.ts)
- * and the cut is "khuon"; the phôi is their mockup with its overlay. Merchize: no khuôn / phôi data anywhere public
- * that reads reliably — the base keeps the links to its PSD template + mockups on merchize.com, cut "none".
+ * and the cut is "khuon"; the phôi is their mockup with its overlay. Merchize (2026-11-12): its PSD template + mockup
+ * off merchize.com read by layer names (server/merchize-khuon.ts → layer-kit psd_kit.py); what can't be read is noted
+ * "làm tay" and the links stay on the base.
  *
  *   GET  base-import/catalog?provider=printbelle|merchize&q=&page=  → CtFulfillCatalogPage
  *   POST base-import/import      CtBaseImportBody → { base }         (admin)
@@ -24,8 +25,8 @@ import { CT_CONFIG, CT_TABLES } from "../config";
 import type {
   CtBaseProduct,
   CtBaseProductConfig,
+  CtBaseCutMode,
   CtBaseSource,
-  CtBaseSourceLink,
   CtBaseVariant,
   CtFulfillCatalogItem,
   CtFulfillCatalogPage,
@@ -41,7 +42,7 @@ import { isAdmin } from "./ai-styles";
 import { updateBaseProduct } from "./base-products";
 import { printbelleProduct, printbelleSearch, type PbProduct } from "./printbelle";
 import { importPrintbelleKhuon, type PbKhuonImport } from "./printbelle-khuon";
-import { merchizeTemplateLinks } from "./merchize-site";
+import { importMerchizeKhuon } from "./merchize-khuon";
 import { ctUpload } from "./storage";
 import { connectTeeinblue, merchizeCatalog, merchizeProduct, teeinblueStatus, TEEINBLUE_CDN, type TibProduct } from "./teeinblue";
 import type { CtSession } from "./supabase";
@@ -277,19 +278,26 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
     let made: { name: string; config: Partial<CtBaseProductConfig> };
     let note: string;
     let templateId: string | null = null;
+    let cutMode: CtBaseCutMode = "none";
     if (provider === "printbelle") {
       const product = await printbelleProduct(catalogId);
       const [m, khuon] = await Promise.all([fromPrintbelle(s, folder, product), importPrintbelleKhuon(s, product.productSpu, nameOf(product.productNameEn))]);
       made = m;
       templateId = khuon.templateId;
+      if (templateId) cutMode = "khuon";
       if (khuon.folderUrl && made.config.source) made.config.source = { ...made.config.source, links: [{ label: "Printbelle: khuôn + mẫu (Google Drive)", url: khuon.folderUrl }] };
       note = `Import từ Printbelle (API) ${catalogId} · ${khuon.note}`;
     } else {
       const { product, created } = await merchizeProduct(catalogId);
-      const [m, links] = await Promise.all([fromTeeinblue(s, folder, catalogId, product), merchizeTemplateLinks(catalogId).catch((): CtBaseSourceLink[] => [])]);
-      made = m;
-      if (made.config.source) made.config.source = { ...made.config.source, links };
-      note = `Import từ Merchize ${catalogId} qua Teeinblue (base #${product.id}${created ? ", đã archive bên Teeinblue" : ", base có sẵn bên Teeinblue — không đổi"})${links.length > 1 ? ` · ${links.length - 1} link khuôn + mockup PSD của Merchize (tải khuôn tay)` : ""}`;
+      made = await fromTeeinblue(s, folder, catalogId, product);
+      // Khuôn + phôi from Merchize's own PSDs (server/merchize-khuon.ts), for the print area Teeinblue gave.
+      const area = made.config.printAreas?.[0];
+      const mz = await importMerchizeKhuon(s, catalogId, made.name, area ? { width: area.width, height: area.height } : null);
+      templateId = mz.templateId;
+      if (mz.cut) cutMode = mz.cut;
+      if (mz.preview) made.config.preview = mz.preview;
+      if (made.config.source) made.config.source = { ...made.config.source, links: mz.links };
+      note = `Import từ Merchize ${catalogId} qua Teeinblue (base #${product.id}${created ? ", đã archive bên Teeinblue" : ", base có sẵn bên Teeinblue — không đổi"}) · ${mz.notes.join(" · ")}`;
     }
     const table = priceTableForTitle(await priceTables(s), made.name);
     const config = normalizeBaseConfig({
@@ -300,7 +308,7 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
       templateId,
       fulfillment: { provider: PROVIDER_NAME[provider], catalogId },
       notes: `${note} · ${new Date().toISOString().slice(0, 10)}`,
-      cut: { mode: templateId ? "khuon" : "none", borderMm: 0, silhouette: true, hole: false, holeSize: 9 },
+      cut: { mode: cutMode, borderMm: cutMode === "alpha" ? 2 : 0, silhouette: true, hole: false, holeSize: 9 },
     });
     const { data: last } = await s.supabase.from(CT_TABLES.baseProducts).select("sort_order").order("sort_order", { ascending: false }).limit(1).maybeSingle<{ sort_order: number }>();
     const { data, error } = await s.supabase
@@ -319,7 +327,7 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
  * A base made from a fulfiller before 2026-11-11, asked from the base page ("Khuôn + phôi …"):
  *  - Printbelle: makes the khuôn when the base has none (an existing one is kept), puts Printbelle's phôi back (zone +
  *    overlay) when Printbelle has a mockup, keeps the Drive folder link;
- *  - Merchize: finds the template / mockup links on merchize.com (no automatic khuôn / phôi — server/merchize-site.ts).
+ *  - Merchize: its PSD khuôn (when the base has none) + phôi off merchize.com (server/merchize-khuon.ts), links kept.
  * Then every product of the base is laid on it again (updateBaseProduct).
  */
 export async function refreshFulfillerBase(s: CtSession, raw: unknown): Promise<NextResponse> {
@@ -356,9 +364,19 @@ export async function refreshFulfillerBase(s: CtSession, raw: unknown): Promise<
         notes: `${cfg.notes}\n${day} lấy lại từ Printbelle: ${khuon.note}${phoi ? " · phôi + lớp phủ của Printbelle" : " · Printbelle không có ảnh phôi"}`.trim(),
       });
     } else {
-      const links = await merchizeTemplateLinks(catalogId);
-      note = links.length > 1 ? `${links.length - 1} link khuôn + mockup PSD của Merchize (mở và tải khuôn tay)` : "merchize.com không có link khuôn cho mã này";
-      config = normalizeBaseConfig({ ...cfg, source: { ...source, links }, notes: `${cfg.notes}\n${day} ${note}`.trim() });
+      const area = cfg.printAreas[0];
+      const mz = await importMerchizeKhuon(s, catalogId, base.name, area ? { width: area.width, height: area.height } : null, !cfg.templateId);
+      const templateId = cfg.templateId ?? mz.templateId;
+      phoi = !!mz.preview;
+      note = (cfg.templateId ? ["Giữ khuôn đang dùng", ...mz.notes] : mz.notes).join(" · ");
+      config = normalizeBaseConfig({
+        ...cfg,
+        templateId,
+        cut: mz.cut && (cfg.cut.mode === "none" || !cfg.templateId) ? { ...cfg.cut, mode: mz.cut, borderMm: mz.cut === "alpha" && !cfg.cut.borderMm ? 2 : cfg.cut.borderMm } : cfg.cut,
+        preview: mz.preview ?? cfg.preview,
+        source: { ...source, links: mz.links.length ? mz.links : source.links },
+        notes: `${cfg.notes}\n${day} lấy lại từ Merchize: ${note}`.trim(),
+      });
     }
     const res = await updateBaseProduct(s, base.id, { name: base.name, config });
     if (!res.ok) return res;

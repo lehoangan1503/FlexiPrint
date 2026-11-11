@@ -51,7 +51,7 @@ async function siteIndex(): Promise<Map<string, PbIndexItem>> {
   return byCode;
 }
 
-interface DriveEntry {
+export interface DriveEntry {
   name: string;
   /** A file's id, or a folder's. */
   id: string;
@@ -59,7 +59,7 @@ interface DriveEntry {
 }
 
 /** A public Drive folder's entries (Drive's embedded folder view — plain HTML, no API key). */
-async function driveFolder(id: string): Promise<DriveEntry[]> {
+export async function driveFolder(id: string): Promise<DriveEntry[]> {
   const res = await fetch(`https://drive.google.com/embeddedfolderview?id=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new Error(`Google Drive: HTTP ${res.status}`);
   const html = await res.text();

@@ -375,14 +375,16 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                         dirty
                           ? "Lưu thay đổi trước"
                           : fulfiller === "merchize"
-                            ? "Tìm link khuôn + mockup (PSD) trên merchize.com"
+                            ? cfg.templateId
+                              ? "Đặt lại phôi theo mockup PSD của Merchize (giữ khuôn đang chọn)"
+                              : "Đọc khuôn in + phôi từ file PSD của Merchize (merchize.com)"
                             : cfg.templateId
                               ? "Đặt lại phôi + lớp phủ theo Printbelle (giữ khuôn đang chọn)"
                               : "Tải khuôn in (Template.tif) + phôi từ Printbelle"
                       }
                     >
                       {pbBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}{" "}
-                      {fulfiller === "merchize" ? "Link khuôn Merchize" : cfg.templateId ? "Phôi Printbelle" : "Khuôn + phôi Printbelle"}
+                      {fulfiller === "merchize" ? (cfg.templateId ? "Phôi Merchize" : "Khuôn + phôi Merchize") : cfg.templateId ? "Phôi Printbelle" : "Khuôn + phôi Printbelle"}
                     </CtButton>
                   )}
                   <CtButton size="sm" variant="outline" onClick={() => setKhuonOpen(true)} title="Tạo khuôn mới / sửa khuôn (AI, mặt, size)">

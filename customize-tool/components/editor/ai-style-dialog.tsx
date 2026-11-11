@@ -170,14 +170,19 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
           </div>
         </CtField>
         <div className="space-y-1">
-          {/\[NAME\]/i.test(body.prompt) ? (
-            <p className="text-[11px] leading-snug text-muted-foreground">Prompt có <span className="font-mono">[NAME]</span>: khách được hỏi tên, tên thay vào đúng chỗ <span className="font-mono">[NAME]</span>.</p>
-          ) : (
-            <>
-              <CtCheckbox checked={body.params.askName} disabled={readOnly} onChange={(v) => setParams({ askName: v })} label="Cho khách nhập tên, ghép vào cuối prompt" />
-              <p className="pl-6 font-mono text-[10px] leading-snug text-muted-foreground">«Name: …» — chỉ bật khi prompt dùng tên. Hoặc viết [NAME] vào prompt ở chỗ cần tên.</p>
-            </>
-          )}
+          <CtCheckbox
+            checked={body.params.askName || /\[NAME\]/i.test(body.prompt)}
+            disabled={readOnly || /\[NAME\]/i.test(body.prompt)}
+            onChange={(v) => setParams({ askName: v })}
+            label="Cho khách nhập tên"
+          />
+          <p className="pl-6 text-[10px] leading-snug text-muted-foreground">
+            {/\[NAME\]/i.test(body.prompt) ? (
+              <>Prompt có <span className="font-mono">[NAME]</span>: luôn bật — tên khách thay vào đúng chỗ <span className="font-mono">[NAME]</span>.</>
+            ) : (
+              <>Tên ghép vào cuối prompt «Name: …» (trống thì không ghép). Chỉ bật khi prompt dùng tên — hoặc viết <span className="font-mono">[NAME]</span> vào prompt ở chỗ cần tên.</>
+            )}
+          </p>
         </div>
         <CtField label={`Ảnh tham chiếu (tối đa ${CT_AI_STYLE_MAX_REFS})`}>
           <div className="flex flex-wrap gap-2">

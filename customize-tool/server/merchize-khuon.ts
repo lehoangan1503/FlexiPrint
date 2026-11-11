@@ -137,8 +137,12 @@ async function makeKhuon(s: CtSession, name: string, t: KitTemplate, face: KitFa
   return data.id;
 }
 
-/** The template that fits the print area: the same px, else the same shape (largest), else the first. */
-function pickTemplate(files: PsdFile[], sheet: { width: number; height: number } | null): PsdFile | null {
+/**
+ * The template that fits the print area: the same px, else the same shape (largest), else the first. Among equals the
+ * shortest name: "MLPC … Shirt.psd" before "MLPC … Shirt (custom pocket).psd".
+ */
+function pickTemplate(all: PsdFile[], sheet: { width: number; height: number } | null): PsdFile | null {
+  const files = [...all].sort((a, b) => a.name.length - b.name.length);
   if (!files.length) return null;
   if (!sheet) return files[0];
   const exact = files.find((f) => f.width === sheet.width && f.height === sheet.height);

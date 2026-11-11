@@ -163,7 +163,7 @@ export function BasePreviewSection(props: { cfg: CtBaseProductConfig; template: 
           </div>
           {preview.url ? (
             <div className="space-y-1">
-              {slider("Cỡ thiết kế", share, 0.2, 1.6, (v) => move({ share: v }))}
+              {slider("Cỡ thiết kế", share, 0.2, 2.5, (v) => move({ share: v }))}
               {slider("Ngang", cx, 0, 1, (v) => move({ cx: v }))}
               {slider("Dọc", cy, 0, 1, (v) => move({ cy: v }))}
             </div>

@@ -193,9 +193,19 @@ export type CtPhotoStyleRef = CtPhotoStyleId | CtAiStyleRef;
  * 2026-10-15 — no fal, no Nano Banana, no picker). Older rows' fal ids read as it. */
 export type CtAiStyleModelId = "cpa:gpt-image-2.5";
 
+/** Output shape of an AI style (lib/ai-style-models CT_AI_STYLE_ASPECTS): "auto" = the photo's own shape. */
+export type CtAiStyleAspect = "1:1" | "auto" | "3:2" | "2:3" | "4:3" | "3:4" | "5:4" | "4:5" | "16:9" | "9:16" | "2:1" | "1:2" | "21:9" | "3:1";
+
 export interface CtAiStyleParams {
-  /** Output shape: square, or follow the photo. */
-  aspect: "1:1" | "auto";
+  /** Output shape: square, follow the photo, or a fixed ratio (asked 2026-11-11: 3:2, 16:9, 2:1… so the picture fits
+   * the artwork / print file it goes in). The ratio is said in the prompt and the answer padded to it exactly. */
+  aspect: CtAiStyleAspect;
+  /** Keep the whole canvas (no trim to the subject) so the picture lands in its zone exactly as drawn — two dolls
+   * drawn at the two print areas stay there (asked 2026-11-11). */
+  keepFrame: boolean;
+  /** The customer types a name in the photo dialog; it goes at the end of the prompt as "Name: …" (nothing when
+   * left empty) — a name on the elf hat (asked 2026-11-11, like the team's studio tick). */
+  askName: boolean;
   /** "Remove background" tick (on by default): CT_AI_STYLE_CLEAR_BG_LINE is added at the end of the prompt and the
    * subject is cut out even if the zone's cut-out is off (the bg-remover runs when the model hands back an opaque
    * picture). Off = the prompt runs as written, nothing said about the background. */
@@ -243,6 +253,10 @@ export interface CtPublicAiStyle {
   name: string;
   /** The style's demo picture (params.demoUrl), shown on the customer's style tile. */
   demoUrl?: string;
+  /** params.keepFrame: the browser does not trim the result to the subject. */
+  keepFrame?: boolean;
+  /** params.askName: the photo dialog asks the customer's name (sent with the photo). */
+  askName?: boolean;
 }
 
 /**

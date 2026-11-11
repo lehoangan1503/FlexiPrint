@@ -1170,7 +1170,8 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
       url = URL.createObjectURL(await processPhoto({ source: base, style, cutout: false, endpoint: ctApi.photoEndpoint(region.product_id) }));
     } else {
       const source = await fetch(sourceUrl).then((r) => r.blob());
-      url = URL.createObjectURL(await processPhoto({ source, style, cutout: cfg.photo.cutout, fadeCrop: cfg.photo.fadeCrop, endpoint: ctApi.photoEndpoint(region.product_id) }));
+      const keepFrame = isAiStyleRef(style) && ai.styles.find((s) => aiStyleRef(s.id) === style)?.params.keepFrame === true;
+      url = URL.createObjectURL(await processPhoto({ source, style, cutout: cfg.photo.cutout, fadeCrop: cfg.photo.fadeCrop, keepFrame, endpoint: ctApi.photoEndpoint(region.product_id) }));
     }
     renders.current.set(key, url);
     return url;

@@ -52,6 +52,7 @@ import { applyBase } from "./artwork-link";
 import { createCollection, deployToShopify, listCollections, previewLinks, searchShopifyProducts, shopifyConfigured, shopifyInfo } from "./shopify";
 import { currentStoreId, storeFor, storeOfProduct } from "./stores";
 import { priceTableProblems } from "../lib/pricing";
+import { cleanCustomerName } from "../lib/ai-style-models";
 
 const ROLES: CtAssetRole[] = ["main", "sub", "variant", "rendition", "composite", "mockup", "reference"];
 
@@ -653,6 +654,8 @@ export interface PhotoRequest {
   style: string;
   cutout: boolean;
   regionId: string;
+  /** The customer's typed name (a style with params.askName puts it at the end of its prompt). */
+  name: string;
 }
 
 export async function readPhotoRequest(form: FormData): Promise<PhotoRequest | string> {
@@ -668,6 +671,7 @@ export async function readPhotoRequest(form: FormData): Promise<PhotoRequest | s
     style: String(form.get("style") ?? "original"),
     cutout: form.get("cutout") === "1",
     regionId: String(form.get("region") ?? ""),
+    name: cleanCustomerName(form.get("name")),
   };
 }
 
@@ -683,7 +687,7 @@ function imageResponse(out: PhotoResult, headers: Record<string, string>): NextR
 async function photoResponse(req: PhotoRequest, headers: Record<string, string>, aiStyle?: CtAiStyle): Promise<NextResponse> {
   if (!isPhotoStyleRef(req.style)) return NextResponse.json({ error: "Style không hợp lệ" }, { status: 400, headers });
   try {
-    return imageResponse(await processPhoto({ image: { data: req.data, mime: req.mime }, style: req.style, cutout: req.cutout, aiStyle }), headers);
+    return imageResponse(await processPhoto({ image: { data: req.data, mime: req.mime }, style: req.style, cutout: req.cutout, aiStyle, name: req.name }), headers);
   } catch (e) {
     const status = e instanceof PhotoConfigError ? 501 : 502;
     return NextResponse.json({ error: e instanceof Error ? e.message : "Xử lý ảnh thất bại" }, { status, headers });
@@ -722,7 +726,7 @@ export async function publicPhoto(productId: string, form: FormData, ip: string,
   if (!aiStylesConfigured()) return publicError("AI styles are not configured (CPA_API_KEY)", 501);
   const aiStyle = await loadAiStyle(db, style);
   if (!aiStyle) return publicError("This style is no longer available", 410);
-  const job = { image: { data: parsed.data, mime: parsed.mime }, style: style as CtAiStyleRef, cutout: parsed.cutout, aiStyle };
+  const job = { image: { data: parsed.data, mime: parsed.mime }, style: style as CtAiStyleRef, cutout: parsed.cutout, aiStyle, name: parsed.name };
   // Same photo + same style version = already paid for: served from the cache, not counted.
   const hit = await cachedAiResult(job);
   if (hit) return imageResponse(hit, CORS_HEADERS);

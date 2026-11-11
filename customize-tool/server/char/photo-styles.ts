@@ -24,7 +24,7 @@ import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_TABLES } from "../../config";
 import type { CtAiStyle, CtAiStyleParams, CtCharImage, CtCharPhotoStyle, CtCharPhotoZone, CtCharProject } from "../../types";
-import { CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL, normalizeAiStyleParams } from "../../lib/ai-style-models";
+import { CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL, CT_AI_STYLE_PROMPT_MAX, normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { aiStyleId, aiStyleRef, isAiStyleRef } from "../../lib/photo-styles";
 import { AI_STYLE_SAMPLE_URL } from "../ai-styles";
 import { processPhoto } from "../ai/photo";
@@ -82,6 +82,8 @@ export interface SaveStyleArgs {
   /** Style reference pictures (image 2, 3…); absent = unchanged (a new style: none). */
   refUrls?: string[];
   zoneId?: string;
+  /** Output shape / keep the canvas / ask the customer's name (CtAiStyleParams); absent = unchanged (new: defaults). */
+  shape?: Partial<Pick<CtAiStyleParams, "aspect" | "keepFrame" | "askName">>;
 }
 
 const httpUrl = (u: unknown): u is string => typeof u === "string" && /^https?:\/\//.test(u);
@@ -92,7 +94,7 @@ export async function savePhotoStyle(db: Db, userId: string, p: CtCharProject, a
   const name = a.name.trim().slice(0, 80);
   const prompt = a.prompt.trim();
   if (!name) throw new Error("Style cần tên (khách thấy tên này)");
-  if (!prompt || prompt.length > 4000) throw new Error("Prompt 1–4000 ký tự");
+  if (!prompt || prompt.length > CT_AI_STYLE_PROMPT_MAX) throw new Error(`Prompt 1–${CT_AI_STYLE_PROMPT_MAX} ký tự`);
   const refUrls = a.refUrls?.filter(httpUrl).slice(0, CT_AI_STYLE_MAX_REFS);
   let row: StyleRow | null;
   if (a.id) {
@@ -100,12 +102,12 @@ export async function savePhotoStyle(db: Db, userId: string, p: CtCharProject, a
     if (!cur) throw new Error(`Không có style ${a.id}`);
     const params = normalizeAiStyleParams(cur.params);
     if (params.setId !== p.id) throw new Error(`"${cur.name}" là style của thư viện chung — sửa ở thư viện, hoặc tạo style riêng cho bộ`);
-    const next: CtAiStyleParams = { ...params, ...(refUrls ? { refUrls } : {}) };
+    const next: CtAiStyleParams = normalizeAiStyleParams({ ...params, ...(refUrls ? { refUrls } : {}), ...a.shape });
     const { data, error } = await db.from(CT_TABLES.aiStyles).update({ name, prompt, params: next }).eq("id", a.id).select(COLUMNS).single<StyleRow>();
     if (error) throw new Error(error.message);
     row = data;
   } else {
-    const params: CtAiStyleParams = { ...normalizeAiStyleParams({}), refUrls: refUrls ?? [], setId: p.id };
+    const params: CtAiStyleParams = { ...normalizeAiStyleParams({ ...a.shape }), refUrls: refUrls ?? [], setId: p.id };
     const { data, error } = await db
       .from(CT_TABLES.aiStyles)
       .insert({ user_id: userId, name, prompt, model: CT_AI_STYLE_MODEL, params, sort_order: 1000 })

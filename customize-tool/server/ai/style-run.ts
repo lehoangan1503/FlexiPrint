@@ -9,7 +9,7 @@
 
 import type { CtAiStyle } from "../../types";
 import { CT_IMAGE_MODEL } from "../../lib/image-models";
-import { CT_AI_STYLE_CLEAR_BG_LINE, normalizeAiStyleParams } from "../../lib/ai-style-models";
+import { CT_AI_STYLE_CLEAR_BG_LINE, aiStyleAspectLine, aiStyleNameLine, normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { drawImage } from "../pack-images";
 import { readImageInfo } from "../image-size";
 import type { ProviderImage } from "./providers";
@@ -35,10 +35,13 @@ export function isNotTransparentError(e: unknown): boolean {
  */
 export type StyleBackground = "clear" | "white" | "none";
 
-export async function runStyleModel(style: CtAiStyle, image: ProviderImage, bg: StyleBackground): Promise<ProviderImage> {
+/** `name`: the customer's typed name, added as "Name: …" at the very end when the style asks for it (params.askName). */
+export async function runStyleModel(style: CtAiStyle, image: ProviderImage, bg: StyleBackground, name?: string): Promise<ProviderImage> {
   const p = normalizeAiStyleParams(style.params);
   const info = readImageInfo(image.data);
-  const aspect = p.aspect === "auto" && info ? `${info.width}:${info.height}` : "1:1";
+  // A fixed ratio is said in the prompt (the image API picks its canvas from the prompt, not from `size`) and the
+  // answer padded to it exactly (drawCpa fit "pad"), so the picture fits the artwork / print area it was made for.
+  const aspect = p.aspect === "auto" ? (info ? `${info.width}:${info.height}` : "1:1") : p.aspect;
   // The browser already shrinks photos to ~1600 px: a data URI is fine as the reference (Node's fetch reads data: URLs).
   const uri = `data:${image.mime};base64,${image.data.toString("base64")}`;
   // Style reference pictures go after the photo (image 2, 3…); a prompt that does not number them gets the order said.
@@ -52,6 +55,9 @@ export async function runStyleModel(style: CtAiStyle, image: ProviderImage, bg: 
     : !p.removeBackground ? CLEAR_BG
     : body.includes(CT_AI_STYLE_CLEAR_BG_LINE) ? ""
     : `\n\n${CT_AI_STYLE_CLEAR_BG_LINE}`;
-  const out = await drawImage(CT_IMAGE_MODEL, head + body + tail, [uri, ...refs], aspect, "pad", bg === "clear");
+  const shape = aiStyleAspectLine(p.aspect);
+  const who = p.askName ? aiStyleNameLine(name) : "";
+  const prompt = [head + body + tail, shape, who].filter(Boolean).join("\n\n");
+  const out = await drawImage(CT_IMAGE_MODEL, prompt, [uri, ...refs], aspect, "pad", bg === "clear");
   return { data: out.data, mime: out.mime };
 }

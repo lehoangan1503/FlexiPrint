@@ -275,6 +275,9 @@
 }
 .ct-dialog__style { display: grid; gap: 6px; flex: 1 1 100%; font-size: 14px; font-weight: 500; }
 .ct-dialog__style-label { font-size: 15px; }
+.ct-dialog__name { display: grid; gap: 6px; flex: 1 1 100%; font-size: 14px; font-weight: 500; }
+.ct-dialog__name[hidden] { display: none; }
+.ct-dialog__name .ct-input { height: 44px; padding-right: 16px; }
 /* Style / Filter row: round swatches with the photo in each style. */
 .ct-filters { display: flex; flex-wrap: wrap; gap: 12px; }
 .ct-filter { display: grid; justify-items: center; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; width: 64px; }

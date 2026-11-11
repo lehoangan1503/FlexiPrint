@@ -39,6 +39,7 @@ import { ctPublicUploadPath, ctUpload } from "./storage";
 import { drawPhoi, promptFor } from "./version-phoi";
 import { phoiReference } from "./version-phoi-ref";
 import { ctServiceClient, type CtServiceClient } from "./supabase";
+import { normalizeAiStyleParams } from "../lib/ai-style-models";
 
 const KEEP_MS = 6 * 60 * 60_000;
 
@@ -103,15 +104,16 @@ function parseJson(v: FormDataEntryValue | null): unknown {
   }
 }
 
-/** The browser's finishing steps (lib/photo-process) on the server's answer: key, fade, trim → PNG. */
-async function finishPhoto(out: PhotoResult, cutout: boolean, fadeCrop: boolean, face: boolean): Promise<Buffer> {
+/** The browser's finishing steps (lib/photo-process) on the server's answer: key, fade, trim → PNG. keepFrame (a style's
+ * params.keepFrame): the whole canvas stays — no fade, no trim — so the picture lands in its zone as drawn. */
+async function finishPhoto(out: PhotoResult, cutout: boolean, fadeCrop: boolean, face: boolean, keepFrame: boolean): Promise<Buffer> {
   const { data, info } = await sharp(out.image.data).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const w = info.width;
   const h = info.height;
   if (out.backdrop === "white") keyOutBackdrop(data, w, h, { tolerance: 26, feather: 2 });
-  if (cutout && fadeCrop && !face) fadeCroppedEdgesData(data, w, h);
+  if (cutout && fadeCrop && !face && !keepFrame) fadeCroppedEdgesData(data, w, h);
   const img = sharp(data, { raw: { width: w, height: h, channels: 4 } });
-  const box = cutout ? opaqueBox(data, w, h, 2) : null;
+  const box = cutout && !keepFrame ? opaqueBox(data, w, h, 2) : null;
   return (box ? img.extract({ left: box.x, top: box.y, width: box.w, height: box.h }) : img).png().toBuffer();
 }
 
@@ -135,7 +137,7 @@ export async function createPhotoTask(productId: string, form: FormData, ip: str
   if (!aiStylesConfigured()) return publicError("AI styles are not configured (CPA_API_KEY)", 501);
   const aiStyle = await loadAiStyle(db, style);
   if (!aiStyle) return publicError("This style is no longer available", 410);
-  const job: PhotoJob = { image: { data: parsed.data, mime: parsed.mime }, style: style as CtAiStyleRef, cutout: parsed.cutout, aiStyle };
+  const job: PhotoJob = { image: { data: parsed.data, mime: parsed.mime }, style: style as CtAiStyleRef, cutout: parsed.cutout, aiStyle, name: parsed.name };
   // Same photo + same style = already paid for (not counted), like public/photo.
   const hit = await cachedAiResult(job);
   if (!hit) {
@@ -158,7 +160,7 @@ export async function createPhotoTask(productId: string, form: FormData, ip: str
   void (async () => {
     try {
       const out = hit ?? (await processPhoto(job));
-      const png = await finishPhoto(out, parsed.cutout, cfg.fadeCrop, styleFamily(style) === "face");
+      const png = await finishPhoto(out, parsed.cutout, cfg.fadeCrop, styleFamily(style) === "face", normalizeAiStyleParams(aiStyle.params).keepFrame);
       const [photoUrl, sourceUrl] = await Promise.all([
         ctUpload(ctPublicUploadPath(productId, "photo", "image/png"), png, "image/png"),
         ctUpload(ctPublicUploadPath(productId, "source", parsed.mime), parsed.data, parsed.mime),

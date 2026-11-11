@@ -27,7 +27,7 @@ import { newId, shapeBounds } from "../../lib/geometry";
 import { normalizePrintSpec, safeShapes, sizedTemplateSpec } from "../../lib/print-template";
 import { str } from "../ai/llm";
 import { aiStyleRef, isAiStyleRef, withAiStyles } from "../../lib/photo-styles";
-import { normalizeAiStyleParams } from "../../lib/ai-style-models";
+import { CT_AI_STYLE_ASPECTS, CT_AI_STYLE_PROMPT_MAX, isAiStyleAspect, normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { ctLibraryPath, ctUpload } from "../storage";
 import { siteUrl } from "../site-url";
 import { frameRegion, makeBaseArtwork, makeTemplateProduct, productPrintOf, type PrintDb } from "../print-products";
@@ -289,9 +289,54 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       return json({
         styles: (data ?? []).map((r) => {
           const p = normalizeAiStyleParams(r.params);
-          return { id: r.id, ref: aiStyleRef(r.id), name: r.name, demoUrl: p.demoUrl || null, prompt: r.prompt, ...(p.setId ? { madeForSet: p.setId } : {}), ...(p.refUrls.length ? { refUrls: p.refUrls } : {}) };
+          return { id: r.id, ref: aiStyleRef(r.id), name: r.name, demoUrl: p.demoUrl || null, prompt: r.prompt, aspect: p.aspect, keepFrame: p.keepFrame, askName: p.askName, ...(p.setId ? { madeForSet: p.setId } : {}), ...(p.refUrls.length ? { refUrls: p.refUrls } : {}) };
         }),
       });
+    },
+  },
+  {
+    name: "update_ai_style",
+    description:
+      `Change an AI photo style of the library (list_ai_styles id): its prompt (≤ ${CT_AI_STYLE_PROMPT_MAX} characters, takes effect for customers at once), name, output shape, keep-frame, ask-name. Only the fields given change. Shape / keep-frame / ask-name / name reach the store when the product is deployed again.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        style_id: { type: "string", description: "From list_ai_styles (id, not the ai: ref)." },
+        name: { type: "string", description: "Customer-facing name." },
+        prompt: { type: "string", description: "The whole prompt." },
+        aspect: { type: "string", description: `Output shape: ${CT_AI_STYLE_ASPECTS.map((x) => x.id).join(" | ")} ("auto" = the photo's shape). Said in the prompt and the picture padded to it exactly — pick the shape of the artwork / print area it fills.` },
+        keep_frame: { type: "boolean", description: "true = placed in its zone as drawn (whole canvas, no trim to the subject): a layout that must land on fixed print areas (front + back doll)." },
+        ask_name: { type: "boolean", description: "true = the customer types a name in the photo dialog, added at the end of the prompt as \"Name: …\" (nothing when empty)." },
+      },
+      required: ["style_id"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const id = str(args.style_id).replace(/^ai:/, "");
+      const { data: row, error: readError } = await ctx.db.from(CT_TABLES.aiStyles).select("id,name,prompt,params").eq("id", id).maybeSingle<{ id: string; name: string; prompt: string; params: Partial<CtAiStyleParams> | null }>();
+      if (readError) throw new Error(readError.message);
+      if (!row) throw new Error(`Không có style ${id}`);
+      const patch: { name?: string; prompt?: string; params: CtAiStyleParams } = {
+        params: normalizeAiStyleParams({
+          ...normalizeAiStyleParams(row.params),
+          ...(isAiStyleAspect(args.aspect) ? { aspect: args.aspect } : {}),
+          ...(typeof args.keep_frame === "boolean" ? { keepFrame: args.keep_frame } : {}),
+          ...(typeof args.ask_name === "boolean" ? { askName: args.ask_name } : {}),
+        }),
+      };
+      if (args.aspect !== undefined && !isAiStyleAspect(args.aspect)) throw new Error(`aspect phải là một trong: ${CT_AI_STYLE_ASPECTS.map((x) => x.id).join(", ")}`);
+      const name = str(args.name).trim();
+      if (name) patch.name = name.slice(0, 80);
+      const prompt = str(args.prompt).trim();
+      if (prompt) {
+        if (prompt.length > CT_AI_STYLE_PROMPT_MAX) throw new Error(`Prompt dài ${prompt.length} ký tự, tối đa ${CT_AI_STYLE_PROMPT_MAX}`);
+        patch.prompt = prompt;
+      }
+      const { data, error } = await ctx.db.from(CT_TABLES.aiStyles).update(patch).eq("id", id).select("id,name,prompt,params").maybeSingle<{ id: string; name: string; prompt: string; params: Partial<CtAiStyleParams> | null }>();
+      if (error) throw new Error(error.message);
+      if (!data) throw new Error("Không có quyền sửa style này");
+      const p = normalizeAiStyleParams(data.params);
+      return json({ id: data.id, ref: aiStyleRef(data.id), name: data.name, promptLength: data.prompt.length, aspect: p.aspect, keepFrame: p.keepFrame, askName: p.askName });
     },
   },
   {

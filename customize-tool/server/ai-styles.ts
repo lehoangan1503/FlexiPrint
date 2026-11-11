@@ -26,7 +26,7 @@ import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_CONFIG, CT_TABLES } from "../config";
 import type { CtAiStyle, CtAiStyleBody, CtAiStyleRef, CtPublicAiStyle } from "../types";
-import { CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL, aiStyleTileUrl, normalizeAiStyleParams } from "../lib/ai-style-models";
+import { CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL, CT_AI_STYLE_PROMPT_MAX, aiStyleTileUrl, normalizeAiStyleParams } from "../lib/ai-style-models";
 import { aiStyleId, aiStyleRef } from "../lib/photo-styles";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctDownload, ctUpload } from "./storage";
@@ -61,7 +61,7 @@ function validBody(body: CtAiStyleBody): string | null {
   const name = (body.name ?? "").trim();
   const prompt = (body.prompt ?? "").trim();
   if (!name || name.length > 80) return "Tên style 1–80 ký tự";
-  if (!prompt || prompt.length > 4000) return "Prompt 1–4000 ký tự";
+  if (!prompt || prompt.length > CT_AI_STYLE_PROMPT_MAX) return `Prompt 1–${CT_AI_STYLE_PROMPT_MAX} ký tự`;
   return null;
 }
 
@@ -162,8 +162,9 @@ export async function publicAiStyles(db: Reader, refs: CtAiStyleRef[]): Promise<
   const { data } = await db.from(CT_TABLES.aiStyles).select("id,name,params").in("id", ids).returns<Array<Pick<CtAiStyleRow, "id" | "name" | "params">>>();
   return (data ?? []).map((r) => {
     // The tile picture: the uploaded thumbnail, else the demo (the storefront reads it as demoUrl).
-    const demoUrl = aiStyleTileUrl(normalizeAiStyleParams(r.params));
-    return { ref: aiStyleRef(r.id), name: r.name, ...(demoUrl ? { demoUrl } : {}) };
+    const p = normalizeAiStyleParams(r.params);
+    const demoUrl = aiStyleTileUrl(p);
+    return { ref: aiStyleRef(r.id), name: r.name, ...(demoUrl ? { demoUrl } : {}), ...(p.keepFrame ? { keepFrame: true } : {}), ...(p.askName ? { askName: true } : {}) };
   });
 }
 

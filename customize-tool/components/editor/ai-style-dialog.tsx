@@ -3,7 +3,8 @@
 /**
  * Create / edit one AI photo style of the global library. The prompt is the
  * main thing, with up to 4 style reference pictures sent after the customer's photo on every run (asked
- * 2026-11-04); every style runs on GPT Image 2.5 (no model picker). Frame / background stay on their defaults
+ * 2026-11-04); every style runs on GPT Image 2.5 (no model picker). 2026-11-11: output ratio (3:2, 16:9, 2:1…), "keep the
+ * whole frame" (no trim) and "the customer's name at the end of the prompt" are back as plain fields. Frame / background stay on their defaults
  * (square, cut out — the "Nâng cao" section was removed 2026-11-04). "Ảnh demo"
  * (only when editing — hidden when adding a new style, 2026-11-04) runs the saved style on a sample photo — the picture editors and customers
  * pick the style by. "Ảnh thumbnail" (asked 2026-11-10) is an uploaded picture shown on the customer's style tile
@@ -14,11 +15,11 @@
 
 import { useRef, useState } from "react";
 import { ImagePlus, Loader2, Sparkles, Trash2, X } from "lucide-react";
-import type { CtAiStyle, CtAiStyleBody, CtAiStyleParams } from "../../types";
-import { CT_AI_STYLE_CLEAR_BG_LINE, CT_AI_STYLE_DEFAULT_PARAMS, CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL } from "../../lib/ai-style-models";
+import type { CtAiStyle, CtAiStyleAspect, CtAiStyleBody, CtAiStyleParams } from "../../types";
+import { CT_AI_STYLE_ASPECTS, CT_AI_STYLE_CLEAR_BG_LINE, CT_AI_STYLE_DEFAULT_PARAMS, CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL, CT_AI_STYLE_PROMPT_MAX, aiStyleAspectLine } from "../../lib/ai-style-models";
 import { imageModelLabel } from "../../lib/image-models";
 import { ctApi } from "../../lib/api-client";
-import { CtButton, CtCheckbox, CtField, CtInput, CtModal, CtTextarea } from "../ui";
+import { CtButton, CtCheckbox, CtField, CtInput, CtModal, CtSelect, CtTextarea } from "../ui";
 import { dropAiStyle, putAiStyle } from "./ai-styles-store";
 import { ctConfirm } from "../dialogs";
 
@@ -59,6 +60,9 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
         body.name !== editing.name ||
         body.prompt !== editing.prompt ||
         body.params.removeBackground !== editing.params.removeBackground ||
+        body.params.aspect !== editing.params.aspect ||
+        body.params.keepFrame !== editing.params.keepFrame ||
+        body.params.askName !== editing.params.askName ||
         body.params.thumbUrl !== editing.params.thumbUrl ||
         body.params.refUrls.join("|") !== editing.params.refUrls.join("|");
       if (dirty) putAiStyle(await ctApi.updateAiStyle(editing.id, body));
@@ -146,14 +150,33 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
         <CtField label="Tên hiển thị cho khách">
           <CtInput value={body.name} disabled={readOnly} maxLength={80} placeholder="Watercolor + Ink" onChange={(e) => setBody({ ...body, name: e.target.value })} />
         </CtField>
-        <CtField label="Prompt" hint="Khi khách upload ảnh, AI nhận: ảnh khách + ảnh tham chiếu bên dưới + prompt này. Khách không thấy prompt.">
-          <CtTextarea value={body.prompt} disabled={readOnly} rows={8} maxLength={4000} className="font-mono text-xs leading-relaxed" onChange={(e) => setBody({ ...body, prompt: e.target.value })} />
+        <CtField label={`Prompt (${body.prompt.length}/${CT_AI_STYLE_PROMPT_MAX})`} hint="Khi khách upload ảnh, AI nhận: ảnh khách + ảnh tham chiếu bên dưới + prompt này. Khách không thấy prompt.">
+          <CtTextarea value={body.prompt} disabled={readOnly} rows={8} maxLength={CT_AI_STYLE_PROMPT_MAX} className="font-mono text-xs leading-relaxed" onChange={(e) => setBody({ ...body, prompt: e.target.value })} />
         </CtField>
         <div className="space-y-1">
           <CtCheckbox checked={body.params.removeBackground} disabled={readOnly} onChange={(v) => setParams({ removeBackground: v })} label="Remove background" />
           {body.params.removeBackground && (
             <p className="pl-6 font-mono text-[10px] leading-snug text-muted-foreground">Thêm vào cuối prompt: “{CT_AI_STYLE_CLEAR_BG_LINE}”</p>
           )}
+        </div>
+        <CtField label="Tỉ lệ ảnh AI" hint="Chọn đúng tỉ lệ vùng artwork / file in mà ảnh sẽ lấp. Tỉ lệ được ghi vào prompt, ảnh trả về được bù nền trong suốt cho khớp tỉ lệ.">
+          <div className="space-y-1">
+            <CtSelect<CtAiStyleAspect>
+              value={body.params.aspect}
+              disabled={readOnly}
+              onChange={(v) => setParams({ aspect: v })}
+              options={CT_AI_STYLE_ASPECTS.map((a) => ({ value: a.id, label: a.label }))}
+            />
+            {aiStyleAspectLine(body.params.aspect) && <p className="font-mono text-[10px] leading-snug text-muted-foreground">Thêm vào cuối prompt: “{aiStyleAspectLine(body.params.aspect)}”</p>}
+          </div>
+        </CtField>
+        <div className="space-y-1">
+          <CtCheckbox checked={body.params.keepFrame} disabled={readOnly} onChange={(v) => setParams({ keepFrame: v })} label="Giữ nguyên khung ảnh (không cắt sát hình)" />
+          <p className="pl-6 text-[10px] leading-snug text-muted-foreground">Ảnh đặt vào vùng đúng như AI vẽ — vd mặt trước + mặt sau búp bê nằm đúng 2 vùng in.</p>
+        </div>
+        <div className="space-y-1">
+          <CtCheckbox checked={body.params.askName} disabled={readOnly} onChange={(v) => setParams({ askName: v })} label="Cho khách nhập tên, ghép vào cuối prompt" />
+          <p className="pl-6 font-mono text-[10px] leading-snug text-muted-foreground">«Name: …» — khách không nhập tên thì không ghép.</p>
         </div>
         <CtField label={`Ảnh tham chiếu (tối đa ${CT_AI_STYLE_MAX_REFS})`}>
           <div className="flex flex-wrap gap-2">

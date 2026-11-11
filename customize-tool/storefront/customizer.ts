@@ -46,6 +46,7 @@ import type {
   CtPhotoTask,
   CtPhotoTaskPhoi,
   CtPhotoStyleRef,
+  CtPublicAiStyle,
   CtProductScene,
   CtRegion,
   CtRenderAsset,
@@ -351,6 +352,8 @@ export class Customizer {
   private renderToken = 0;
   /** Local object URL -> its bytes, for photos (originals and renders) not uploaded yet. */
   private localBlobs = new Map<string, Blob>();
+  /** The name typed in a photo dialog, by zone (a style with askName puts it in its prompt) — kept when it reopens. */
+  private photoNames = new Map<string, string>();
   /** Local object URL -> public URL, one upload per blob however often it is asked for. */
   private uploads = new Map<string, Promise<string>>();
   /** A finished photo (public url) -> the photo task that made it (server/photo-tasks.ts, storefront/tasks.ts). */
@@ -1117,7 +1120,12 @@ export class Customizer {
     return out;
   }
 
-  private async startPhotoTask(r: CtRegion, source: Blob, style: CtPhotoStyleRef, optionId: string | null): Promise<CtStoredTask> {
+  /** The published AI style's flags (keepFrame / askName); undefined for a built-in style. */
+  private aiStyleInfo(style: CtPhotoStyleRef): CtPublicAiStyle | undefined {
+    return this.tpl.aiStyles?.find((x) => x.ref === style);
+  }
+
+  private async startPhotoTask(r: CtRegion, source: Blob, style: CtPhotoStyleRef, optionId: string | null, name: string): Promise<CtStoredTask> {
     const blob = await shrinkImage(source, 1600);
     const body = new FormData();
     body.append("file", blob, blob.type === "image/png" ? "photo.png" : "photo.jpg");
@@ -1127,6 +1135,7 @@ export class Customizer {
     body.append("mainId", selectedMainId(this.selection, this.tpl.assets, this.tpl.mainAssetId));
     body.append("selection", JSON.stringify(phoiPicks(this.selection)));
     if (optionId) body.append("optionId", optionId);
+    if (name) body.append("name", name);
     const res = await fetch(this.tasksUrl, { method: "POST", body, mode: "cors" });
     const json = (await res.json().catch(() => ({}))) as { task?: CtPhotoTask; error?: string };
     if (!res.ok || !json.task) throw new Error(json.error ?? `HTTP ${res.status}`);
@@ -1526,11 +1535,23 @@ export class Customizer {
       swatches.set(id, b);
       styleRow.append(b);
     }
+    // ---- the customer's name, for a style that writes it in the picture (askName, asked 2026-11-11)
+    const nameInput = el("input", {
+      class: "ct-input",
+      type: "text",
+      maxlength: "40",
+      value: this.photoNames.get(r.id) ?? "",
+      placeholder: this.t("photoNamePlaceholder", "Enter a name (optional)"),
+    });
+    const nameRow = el("label", { class: "ct-dialog__name" }, [el("span", { class: "ct-dialog__style-label", text: this.t("photoName", "Name") }), nameInput]);
+    const asksName = (id: CtPhotoStyleRef) => this.aiStyleInfo(id)?.askName === true;
+    const nameFor = (id: CtPhotoStyleRef) => (asksName(id) ? nameInput.value.replace(/\s+/g, " ").trim().slice(0, 40) : "");
     const markStyle = () => {
       for (const [id, b] of swatches) {
         b.classList.toggle("is-selected", id === style);
         b.setAttribute("aria-checked", String(id === style));
       }
+      nameRow.hidden = !asksName(style);
     };
     const setThumb = (id: CtPhotoStyleRef, url: string) => {
       const dot = swatches.get(id)?.querySelector(".ct-filter__dot");
@@ -1725,7 +1746,7 @@ export class Customizer {
             // The whole chain on the server (style → photo → the phôi with it): it goes on if the customer leaves.
             const blob: Blob = source ?? (await fetch(src).then((res) => res.blob()));
             source = blob;
-            const stored = await this.startPhotoTask(r, blob, next, optionId);
+            const stored = await this.startPhotoTask(r, blob, next, optionId, nameFor(next));
             taskOf.set(next, stored.id);
             // Ready when the acrylic piece is drawn too; the loader's lines follow the task's step.
             return this.taskResult(stored.id, (stage) => {
@@ -1746,7 +1767,9 @@ export class Customizer {
               : (async () => {
                   const blob: Blob = source ?? (await fetch(src).then((res) => res.blob()));
                   source = blob;
-                  return keep(await processPhoto({ source: blob, style: next, cutout: cfg.cutout, fadeCrop: cfg.fadeCrop, endpoint: this.photoUrl, fields: { region: r.id } }));
+                  const name = nameFor(next);
+                  const keepFrame = this.aiStyleInfo(next)?.keepFrame === true;
+                  return keep(await processPhoto({ source: blob, style: next, cutout: cfg.cutout, fadeCrop: cfg.fadeCrop, keepFrame, endpoint: this.photoUrl, fields: { region: r.id, ...(name ? { name } : {}) } }));
                 })();
       renders.set(next, p);
       p.catch(() => renders.delete(next));
@@ -2023,7 +2046,18 @@ export class Customizer {
       },
     });
 
+    // A new name redraws the styles that write it (the others keep their picture).
+    nameInput.addEventListener("change", () => {
+      this.photoNames.set(r.id, nameInput.value);
+      for (const id of cfg.styles) {
+        if (!asksName(id) || !renders.has(id)) continue;
+        renders.delete(id);
+        swatches.get(id)?.querySelector(".ct-filter__dot")?.replaceChildren(emptyDot(id));
+      }
+      if (sourceUrl && asksName(style)) void show(style);
+    });
     const controls: HTMLElement[] = [];
+    if (cfg.styles.some(asksName)) controls.push(nameRow);
     if (cfg.styles.length > 1) controls.push(el("div", { class: "ct-dialog__style" }, [el("span", { class: "ct-dialog__style-label", text: cfg.styleLabel || this.t("filter", "Filter") }), styleRow]));
     controls.push(el("div", { class: "ct-dialog__tools" }, [pick, adjust, file, hint]));
     if (photoUrl) pick.textContent = this.t("changePhoto", "Change photo");

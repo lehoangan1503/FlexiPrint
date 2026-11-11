@@ -27,7 +27,7 @@
 
 import type { CtAiProviderId, CtAiStyle, CtAspectRatio, CtPhotoCapabilities, CtPhotoStyleRef } from "../../types";
 import { isAiStyleRef, photoStyle } from "../../lib/photo-styles";
-import { normalizeAiStyleParams } from "../../lib/ai-style-models";
+import { cleanCustomerName, normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { cachedPhoto, peekPhotoCache, photoCacheKey } from "../photo-cache";
 import { pngHasTransparency } from "../png-alpha";
 import { aiStylesConfigured, isNotTransparentError, runStyleModel } from "./style-run";
@@ -40,6 +40,8 @@ export interface PhotoJob {
   cutout: boolean;
   /** The ct_ai_styles row, resolved by the caller when `style` is "ai:<id>". */
   aiStyle?: CtAiStyle;
+  /** The customer's typed name (only for a style with params.askName; "" / absent = none). */
+  name?: string;
 }
 
 export interface PhotoResult {
@@ -333,7 +335,8 @@ export function photoCapabilities(): CtPhotoCapabilities {
 
 /** AI results by (photo, style version, cut-out) — see server/photo-cache.ts. */
 function aiCacheKey(job: PhotoJob, style: CtAiStyle): string {
-  return photoCacheKey(job.image.data, "ai", style.id, style.updated_at, job.cutout ? 1 : 0);
+  const name = normalizeAiStyleParams(style.params).askName ? cleanCustomerName(job.name) : "";
+  return photoCacheKey(job.image.data, "ai", style.id, style.updated_at, job.cutout ? 1 : 0, ...(name ? [name] : []));
 }
 
 /**
@@ -354,12 +357,12 @@ async function runAiStyle(job: PhotoJob, style: CtAiStyle): Promise<PhotoResult>
   let image: ProviderImage;
   if (wantCut) {
     try {
-      image = await runStyleModel(style, job.image, "clear");
+      image = await runStyleModel(style, job.image, "clear", job.name);
     } catch (e) {
       if (!isNotTransparentError(e)) throw e;
-      image = await runStyleModel(style, job.image, "white");
+      image = await runStyleModel(style, job.image, "white", job.name);
     }
-  } else image = await runStyleModel(style, job.image, "none");
+  } else image = await runStyleModel(style, job.image, "none", job.name);
   let backdrop: PhotoResult["backdrop"] = null;
   // The model already removed the background: no second model pass.
   const alreadyCut = image.mime === "image/png" && pngHasTransparency(image.data);

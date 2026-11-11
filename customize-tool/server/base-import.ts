@@ -12,7 +12,9 @@
  * off merchize.com read by layer names (server/merchize-khuon.ts → layer-kit psd_kit.py); what can't be read is noted
  * "làm tay" and the links stay on the base.
  *
- *   GET  base-import/catalog?provider=printbelle|merchize&q=&page=  → CtFulfillCatalogPage
+ *   GET  base-import/catalog?provider=printbelle|merchize&q=&page=&filter=all|new|imported  → CtFulfillCatalogPage
+ *        all: the fulfiller's page, products that already have a base moved to its bottom · new: without them ·
+ *        imported: flexi2's own bases made from this fulfiller (no fulfiller call)
  *   POST base-import/import      CtBaseImportBody → { base }         (admin)
  *   GET  base-import/teeinblue   → CtTeeinblueStatus                 (Merchize goes through Teeinblue)
  *   POST base-import/teeinblue   { code } → CtTeeinblueStatus        (admin)
@@ -28,6 +30,7 @@ import type {
   CtBaseCutMode,
   CtBaseSource,
   CtBaseVariant,
+  CtFulfillCatalogFilter,
   CtFulfillCatalogItem,
   CtFulfillCatalogPage,
   CtFulfillProvider,
@@ -66,16 +69,41 @@ function providerOf(name: string): CtFulfillProvider | null {
   return null;
 }
 
+interface ExistingBase {
+  id: string;
+  name: string;
+  provider: CtFulfillProvider;
+  catalogId: string;
+  /** For the "Đã import" list: the base's picture + what the import read. */
+  image: string | null;
+  cost: number | null;
+  variants: number;
+  printArea: { width: number; height: number } | null;
+  createdAt: string;
+}
+
 /** "<provider>:<CATALOG ID>" of every base made from a fulfiller product — by its import, or typed by hand. */
-async function existingBases(s: CtSession): Promise<Map<string, { id: string; name: string }>> {
-  const { data } = await s.supabase.from(CT_TABLES.baseProducts).select("id,name,config").returns<Array<Pick<CtBaseProduct, "id" | "name" | "config">>>();
-  const out = new Map<string, { id: string; name: string }>();
+async function existingBases(s: CtSession): Promise<Map<string, ExistingBase>> {
+  const { data } = await s.supabase.from(CT_TABLES.baseProducts).select("id,name,config,created_at").returns<Array<Pick<CtBaseProduct, "id" | "name" | "config" | "created_at">>>();
+  const out = new Map<string, ExistingBase>();
   for (const b of data ?? []) {
-    const src = b.config?.source;
-    if (src?.provider && src.catalogId) out.set(`${src.provider}:${src.catalogId.toUpperCase()}`, { id: b.id, name: b.name });
-    const ful = b.config?.fulfillment;
-    const p = ful?.provider ? providerOf(ful.provider) : null;
-    if (p && ful?.catalogId) out.set(`${p}:${ful.catalogId.toUpperCase()}`, { id: b.id, name: b.name });
+    const cfg = normalizeBaseConfig(b.config);
+    const row = (provider: CtFulfillProvider, catalogId: string): ExistingBase => ({
+      id: b.id,
+      name: b.name,
+      provider,
+      catalogId,
+      image: cfg.preview.url ?? cfg.source?.photos[0] ?? null,
+      cost: minCost(cfg.variants.map((v) => v.cost)),
+      variants: cfg.variants.length,
+      printArea: cfg.printAreas[0] ? { width: cfg.printAreas[0].width, height: cfg.printAreas[0].height } : null,
+      createdAt: b.created_at ?? "",
+    });
+    const src = cfg.source;
+    if (src?.provider && src.catalogId) out.set(`${src.provider}:${src.catalogId.toUpperCase()}`, row(src.provider, src.catalogId));
+    const p = cfg.fulfillment.provider ? providerOf(cfg.fulfillment.provider) : null;
+    const cid = cfg.fulfillment.catalogId.trim();
+    if (p && cid && !out.has(`${p}:${cid.toUpperCase()}`)) out.set(`${p}:${cid.toUpperCase()}`, row(p, cid));
   }
   return out;
 }
@@ -90,14 +118,40 @@ function minCost(costs: Array<number | null | undefined>): number | null {
   return n.length ? Math.min(...n) : null;
 }
 
-export async function importCatalog(s: CtSession, providerRaw: string | null, q: string, pageRaw: string | null): Promise<NextResponse> {
+export async function importCatalog(s: CtSession, providerRaw: string | null, q: string, pageRaw: string | null, filterRaw: string | null = null): Promise<NextResponse> {
   const provider = asProvider(providerRaw);
   if (!provider) return jsonError("provider = printbelle | merchize", 400);
+  const filter: CtFulfillCatalogFilter = filterRaw === "new" || filterRaw === "imported" ? filterRaw : "all";
   const page = Math.max(1, Math.min(500, Number(pageRaw) || 1));
   try {
-    const [found, existing, tables] = await Promise.all([
+    const [existing, tables] = await Promise.all([existingBases(s), priceTables(s)]);
+    // One entry per base (a base can be keyed twice: by its import source and its typed fulfillment).
+    const mine = [...new Map([...existing.values()].filter((b) => b.provider === provider).map((b) => [b.id, b])).values()];
+    const withTable = (it: Omit<CtFulfillCatalogItem, "priceTable">): CtFulfillCatalogItem => {
+      const t = priceTableForTitle(tables, it.title);
+      return { ...it, priceTable: t ? { id: t.id, name: t.name } : null };
+    };
+    if (filter === "imported") {
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      const hits = mine
+        .filter((b) => words.every((w) => `${b.name} ${b.catalogId}`.toLowerCase().includes(w)))
+        .sort((x, y) => y.createdAt.localeCompare(x.createdAt));
+      const body: CtFulfillCatalogPage = {
+        provider,
+        filter,
+        page,
+        perPage: PER_PAGE,
+        total: hits.length,
+        importedCount: mine.length,
+        items: hits.slice((page - 1) * PER_PAGE, page * PER_PAGE).map((b) =>
+          withTable({ catalogId: b.catalogId, title: b.name, image: b.image, cost: b.cost, variants: b.variants, printArea: b.printArea, existing: { id: b.id, name: b.name } }),
+        ),
+      };
+      return NextResponse.json(body);
+    }
+    const found =
       provider === "printbelle"
-        ? printbelleSearch(q, page, PER_PAGE).then((r) => ({
+        ? await printbelleSearch(q, page, PER_PAGE).then((r) => ({
             total: r.total,
             items: r.list.map((p): Omit<CtFulfillCatalogItem, "existing" | "priceTable"> => ({
               catalogId: p.productSpu,
@@ -108,20 +162,14 @@ export async function importCatalog(s: CtSession, providerRaw: string | null, q:
               printArea: p.printAreas?.[0] ? { width: p.printAreas[0].width, height: p.printAreas[0].height } : null,
             })),
           }))
-        : merchizeCatalog(q, page, PER_PAGE),
-      existingBases(s),
-      priceTables(s),
-    ]);
-    const body: CtFulfillCatalogPage = {
-      provider,
-      page,
-      perPage: PER_PAGE,
-      total: found.total,
-      items: found.items.map((it) => {
-        const t = priceTableForTitle(tables, it.title);
-        return { ...it, existing: existing.get(`${provider}:${it.catalogId.toUpperCase()}`) ?? null, priceTable: t ? { id: t.id, name: t.name } : null };
-      }),
-    };
+        : await merchizeCatalog(q, page, PER_PAGE);
+    const items = found.items.map((it) => {
+      const had = existing.get(`${provider}:${it.catalogId.toUpperCase()}`);
+      return withTable({ ...it, existing: had ? { id: had.id, name: had.name } : null });
+    });
+    // Imported ones at the bottom of the page ("all"), or left out ("new").
+    const shown = filter === "new" ? items.filter((it) => !it.existing) : [...items.filter((it) => !it.existing), ...items.filter((it) => it.existing)];
+    const body: CtFulfillCatalogPage = { provider, filter, page, perPage: PER_PAGE, total: found.total, importedCount: mine.length, items: shown };
     return NextResponse.json(body);
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Lỗi", 502);

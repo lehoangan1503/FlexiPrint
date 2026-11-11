@@ -246,7 +246,7 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
   // Import product base from a fulfiller (server/base-import.ts): Printbelle's API, Merchize through Teeinblue.
   if (head === "base-import" && id === "catalog" && !sub && method === "GET") {
     const sp = req.nextUrl.searchParams;
-    return baseImport.importCatalog(session, sp.get("provider"), sp.get("q")?.trim() ?? "", sp.get("page"));
+    return baseImport.importCatalog(session, sp.get("provider"), sp.get("q")?.trim() ?? "", sp.get("page"), sp.get("filter"));
   }
   if (head === "base-import" && id === "import" && !sub && method === "POST") return baseImport.importBase(session, await readJson<unknown>(req));
   if (head === "base-import" && id === "teeinblue" && !sub && method === "GET") return baseImport.getTeeinblueStatus();

@@ -1880,13 +1880,22 @@ export interface CtFulfillCatalogItem {
   priceTable: { id: string; name: string } | null;
 }
 
-/** GET base-import/catalog?provider=&q=&page= */
+/**
+ * Which catalog products the Import dialog lists: every one (those already made into a base at the bottom of each
+ * page), only those not imported yet, or only the imported ones (read from flexi2's own bases, no fulfiller call).
+ */
+export type CtFulfillCatalogFilter = "all" | "new" | "imported";
+
+/** GET base-import/catalog?provider=&q=&page=&filter= */
 export interface CtFulfillCatalogPage {
   provider: CtFulfillProvider;
+  filter: CtFulfillCatalogFilter;
   items: CtFulfillCatalogItem[];
   total: number;
   page: number;
   perPage: number;
+  /** How many products of this fulfiller already have a flexi2 base. */
+  importedCount: number;
 }
 
 /** GET base-import/teeinblue — whether flexi2 holds a working Teeinblue login (needed for Merchize). */

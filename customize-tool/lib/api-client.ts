@@ -5,7 +5,8 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtBasePlacement, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogPage, CtFulfillProvider, CtTeeinblueStatus, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind, CtStoreList } from "../types";
+import type { CtBasePlacement, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
+  CtFulfillCatalogPage, CtFulfillProvider, CtTeeinblueStatus, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind, CtStoreList } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
   CtAgentStatus,
@@ -110,7 +111,8 @@ export const ctApi = {
   updateBaseProduct: (id: string, body: CtBaseProductBody) => call<{ base: CtBaseProduct; reapplied: number; failed: string[] }>(`base-products/${id}`, json("PATCH", body)),
   deleteBaseProduct: (id: string) => call<void>(`base-products/${id}`, { method: "DELETE" }),
   /** A fulfiller's catalog for the Import dialog (server/base-import.ts). */
-  baseImportCatalog: (provider: CtFulfillProvider, q: string, page: number) => call<CtFulfillCatalogPage>(`base-import/catalog?${new URLSearchParams({ provider, q, page: String(page) })}`),
+  baseImportCatalog: (provider: CtFulfillProvider, q: string, page: number, filter: CtFulfillCatalogFilter = "all") =>
+    call<CtFulfillCatalogPage>(`base-import/catalog?${new URLSearchParams({ provider, q, page: String(page), filter })}`),
   /** Makes a new product base from a fulfiller product. */
   importBase: (body: CtBaseImportBody) => call<{ base: CtBaseProduct }>("base-import/import", json("POST", body)).then((r) => r.base),
   teeinblueStatus: () => call<CtTeeinblueStatus>("base-import/teeinblue"),

@@ -1085,6 +1085,8 @@ export class Customizer {
   private photoField(r: CtRegion, sel: CtPhotoSelection | null): HTMLElement {
     const cfg = r.config.photo;
     const body = el("div", { class: "ct-photo" });
+    /** The name field below (a style that writes the name), when there is one: a required name comes before the upload. */
+    let nameGate: (() => boolean) | null = null;
     if (sel?.url) {
       body.append(el("img", { class: "ct-photo__thumb", src: sel.url, alt: "" }));
       const edit = el("button", { type: "button", class: "ct-btn ct-btn--ghost", text: this.t("editPhoto", "Edit photo") });
@@ -1092,7 +1094,10 @@ export class Customizer {
       body.append(edit);
     } else {
       const up = el("button", { type: "button", class: "ct-btn ct-btn--upload", text: cfg.label || this.t("upload", "Upload your photo") });
-      up.addEventListener("click", () => this.openPhotoDialog(r, null));
+      up.addEventListener("click", () => {
+        if (nameGate && !nameGate()) return;
+        this.openPhotoDialog(r, null);
+      });
       body.append(up);
     }
     const styleName = cfg.styles.length > 1 && sel?.url ? styleLabel(sel.style, this.tpl.aiStyles) : undefined;
@@ -1109,11 +1114,23 @@ export class Customizer {
       placeholder: nameCfg.placeholder,
     });
     const counter = el("span", { class: "ct-counter", text: `${input.value.length}/${nameCfg.maxChars}` });
+    const missing = el("div", { class: "ct-field__error", text: this.t("photoNameFirst", "Please enter a name first."), hidden: true });
     input.addEventListener("input", () => {
       this.photoNames.set(r.id, input.value);
       counter.textContent = `${input.value.length}/${nameCfg.maxChars}`;
       this.errorBox.hidden = true;
+      if (input.value.trim()) {
+        missing.hidden = true;
+        input.classList.remove("ct-input--error");
+      }
     });
+    nameGate = () => {
+      if (!nameCfg.required || input.value.trim()) return true;
+      missing.hidden = false;
+      input.classList.add("ct-input--error");
+      input.focus();
+      return false;
+    };
     input.addEventListener("change", () => {
       this.photoNames.set(r.id, input.value);
       const now = this.selection[r.id];
@@ -1121,7 +1138,7 @@ export class Customizer {
       const name = input.value.replace(/\s+/g, " ").trim().slice(0, nameCfg.maxChars);
       if ((this.nameOfPhoto.get(now.url) ?? "") !== name) this.openPhotoDialog(r, now, true);
     });
-    return el("div", { class: "ct-photo-group" }, [this.field(nameCfg.label || this.t("photoName", "Name"), el("div", { class: "ct-input-wrap" }, [input, counter]), nameCfg.required), photo]);
+    return el("div", { class: "ct-photo-group" }, [this.field(nameCfg.label || this.t("photoName", "Name"), el("div", {}, [el("div", { class: "ct-input-wrap" }, [input, counter]), missing]), nameCfg.required), photo]);
   }
 
   // ------------------------------------------------------------- photo tasks (server/photo-tasks.ts)

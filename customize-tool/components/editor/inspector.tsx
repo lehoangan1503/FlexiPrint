@@ -1186,6 +1186,8 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
   /** The name the test photo is drawn with (like a customer typing it on the product page). */
   const [testName, setTestName] = useState("");
   const [testNameUsed, setTestNameUsed] = useState("");
+  /** Upload pressed with no test name: the field says so (asked 2026-11-11 — a name style is never tried without one). */
+  const [nameMissing, setNameMissing] = useState(false);
   const typedName = testName.replace(/\s+/g, " ").trim().slice(0, nameCfg.maxChars);
 
   const getRender = async (sourceUrl: string, style: CtPhotoStyleRef): Promise<string> => {
@@ -1430,7 +1432,17 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
         {zoneAsksName && (
           <CtField label={`Tên để thử (${nameCfg.label || "Name"})`}>
             <div className="flex gap-1.5">
-              <CtInput value={testName} maxLength={nameCfg.maxChars} placeholder="vd Minh — nhập trước khi upload" onChange={(e) => setTestName(e.target.value)} />
+              <CtInput
+                id={`ct-test-name-${region.id}`}
+                value={testName}
+                maxLength={nameCfg.maxChars}
+                placeholder="vd Minh — nhập trước khi upload"
+                className={nameMissing ? "border-amber-500 ring-1 ring-amber-500" : undefined}
+                onChange={(e) => {
+                  setTestName(e.target.value);
+                  if (e.target.value.trim()) setNameMissing(false);
+                }}
+              />
               {sel.sourceUrl && sel.style && asksName(sel.style) && typedName !== testNameUsed && (
                 <CtButton size="sm" variant="primary" disabled={working !== null} onClick={() => sel.sourceUrl && sel.style && void renderTest(sel.sourceUrl, sel.style, sel)}>
                   Vẽ lại với tên này
@@ -1439,12 +1451,22 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
             </div>
           </CtField>
         )}
+        {zoneAsksName && nameMissing && <p className="rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">Nhập tên để thử trước khi upload ảnh — style này ghép tên khách vào ảnh.</p>}
         <div className="flex gap-1.5">
           <CtButton
             size="sm"
             variant="primary"
             disabled={working !== null}
-            onClick={() => (tab === null ? setError("Chọn 1 style trước.") : fileRef.current?.click())}
+            onClick={() => {
+              if (tab === null) return setError("Chọn 1 style trước.");
+              // A style that writes the name: the test photo needs one, like a customer's would.
+              if (zoneAsksName && !typedName) {
+                setNameMissing(true);
+                document.getElementById(`ct-test-name-${region.id}`)?.focus();
+                return;
+              }
+              fileRef.current?.click();
+            }}
           >
             <Upload className="h-3.5 w-3.5" /> {sel.url ? "Đổi ảnh test" : "Upload ảnh test"}
           </CtButton>

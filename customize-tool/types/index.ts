@@ -1912,6 +1912,9 @@ export interface CtTeeinblueStatus {
 export interface CtBaseImportBody {
   provider: CtFulfillProvider;
   catalogId: string;
+  /** The catalog's own title (the dialog's card): Merchize through an existing Teeinblue base would otherwise be named
+   * after that base (the team's campaign title). */
+  title?: string;
 }
 
 export interface CtUpdateProductBody {

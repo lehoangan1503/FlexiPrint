@@ -318,6 +318,7 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
   const b = raw && typeof raw === "object" ? (raw as Partial<Record<string, unknown>>) : {};
   const provider = asProvider(b.provider);
   const catalogId = typeof b.catalogId === "string" ? b.catalogId.trim().slice(0, 120) : "";
+  const catalogTitle = typeof b.title === "string" ? b.title.trim().slice(0, 160) : "";
   if (!provider || !catalogId) return jsonError("Cần provider + catalogId", 400);
   const had = (await existingBases(s)).get(`${provider}:${catalogId.toUpperCase()}`);
   if (had) return jsonError(`Đã có product base “${had.name}” làm từ ${PROVIDER_NAME[provider]} ${catalogId}`, 409);
@@ -338,6 +339,8 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
     } else {
       const { product, created } = await merchizeProduct(catalogId);
       made = await fromTeeinblue(s, folder, catalogId, product);
+      // A Teeinblue base that was there already carries the team's own title: name the base after the catalog.
+      if (catalogTitle) made.name = nameOf(catalogTitle);
       // Khuôn + phôi from Merchize's own PSDs (server/merchize-khuon.ts), for the print area Teeinblue gave.
       const area = made.config.printAreas?.[0];
       const mz = await importMerchizeKhuon(s, catalogId, made.name, area ? { width: area.width, height: area.height } : null);

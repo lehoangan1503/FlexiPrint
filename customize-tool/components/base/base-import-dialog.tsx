@@ -103,11 +103,11 @@ export function BaseImportDialog({ open, onOpenChange }: { open: boolean; onOpen
     setError(null);
   };
 
-  const doImport = async (catalogId: string) => {
+  const doImport = async (catalogId: string, title: string) => {
     setImporting(catalogId);
     setError(null);
     try {
-      const base = await ctApi.importBase({ provider, catalogId });
+      const base = await ctApi.importBase({ provider, catalogId, title });
       router.push(`/base-products/${base.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không import được");
@@ -215,7 +215,7 @@ export function BaseImportDialog({ open, onOpenChange }: { open: boolean; onOpen
                               </Link>
                             </div>
                           ) : (
-                            <CtButton size="sm" variant="outline" disabled={!!importing} onClick={() => void doImport(it.catalogId)}>
+                            <CtButton size="sm" variant="outline" disabled={!!importing} onClick={() => void doImport(it.catalogId, it.title)}>
                               {importing === it.catalogId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Import
                             </CtButton>
                           )}

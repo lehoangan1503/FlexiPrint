@@ -588,10 +588,17 @@ export async function publicTemplate(productId: string, version: number | null):
   const { data, error } = await q.maybeSingle<{ template: CtTemplate }>();
   if (error) return publicError(error.message, 500);
   if (!data) return publicError("Template chưa được publish", 404);
+  const template = data.template;
+  // Whether a style asks the customer's name is read now (its tick / a [NAME] in its prompt), not frozen at deploy:
+  // ticking it reaches the store without deploying the product again (asked 2026-11-11). Names / demos stay as published.
+  if (template.aiStyles?.length) {
+    const asks = new Set((await publicAiStyles(db, template.aiStyles.map((x) => x.ref))).filter((x) => x.askName).map((x) => x.ref));
+    template.aiStyles = template.aiStyles.map(({ askName: _was, ...x }) => (asks.has(x.ref) ? { ...x, askName: true } : x));
+  }
   // Short shared cache: a new Publish reaches the storefront within ~a minute,
   // a pinned version never changes.
   const cache = version ? "public, max-age=31536000, immutable" : "public, max-age=30, s-maxage=30, stale-while-revalidate=300";
-  return publicJson(data.template, 200, { "Cache-Control": cache });
+  return publicJson(template, 200, { "Cache-Control": cache });
 }
 
 /** Customer photo / cart preview upload from the storefront. */

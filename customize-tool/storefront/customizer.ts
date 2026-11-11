@@ -355,6 +355,8 @@ export class Customizer {
   private localBlobs = new Map<string, Blob>();
   /** The name typed in a photo dialog, by zone (a style with askName puts it in its prompt) — kept when it reopens. */
   private photoNames = new Map<string, string>();
+  /** The name a styled photo was drawn with (its url → name): a different name typed later redraws it. */
+  private nameOfPhoto = new Map<string, string>();
   /** Local object URL -> public URL, one upload per blob however often it is asked for. */
   private uploads = new Map<string, Promise<string>>();
   /** A finished photo (public url) -> the photo task that made it (server/photo-tasks.ts, storefront/tasks.ts). */
@@ -1093,7 +1095,26 @@ export class Customizer {
       body.append(up);
     }
     const styleName = cfg.styles.length > 1 && sel?.url ? styleLabel(sel.style, this.tpl.aiStyles) : undefined;
-    return this.field(cfg.label, body, cfg.required, styleName);
+    const photo = this.field(cfg.label, body, cfg.required, styleName);
+    if (!cfg.styles.some((id) => this.aiStyleInfo(id)?.askName === true)) return photo;
+    // The name a style writes in the picture ([NAME] in its prompt / its tick), asked on the form before the upload
+    // (asked 2026-11-11); the photo dialog shows the same value. Changed after the photo is made: drawn again with it.
+    const input = el("input", {
+      class: "ct-input ct-input--plain",
+      type: "text",
+      maxlength: "40",
+      value: this.photoNames.get(r.id) ?? "",
+      placeholder: this.t("photoNamePlaceholder", "Enter a name (optional)"),
+    });
+    input.addEventListener("input", () => this.photoNames.set(r.id, input.value));
+    input.addEventListener("change", () => {
+      this.photoNames.set(r.id, input.value);
+      const now = this.selection[r.id];
+      if (now?.kind !== "photo" || !now.url || !now.style || this.aiStyleInfo(now.style)?.askName !== true) return;
+      const name = input.value.replace(/\s+/g, " ").trim().slice(0, 40);
+      if ((this.nameOfPhoto.get(now.url) ?? "") !== name) this.openPhotoDialog(r, now, true);
+    });
+    return el("div", { class: "ct-photo-group" }, [this.field(this.t("photoName", "Name"), input, false), photo]);
   }
 
   // ------------------------------------------------------------- photo tasks (server/photo-tasks.ts)
@@ -1461,7 +1482,8 @@ export class Customizer {
    * to rotate, pinch / wheel to zoom — like the editor's frame. → Apply. Renders are made once per style and kept
    * for the dialog's lifetime; files upload when the customer applies, so Add to cart does not wait on them.
    */
-  private openPhotoDialog(r: CtRegion, current: CtPhotoSelection | null): void {
+  /** redraw: the photo is drawn again at once (a new name typed on the form). */
+  private openPhotoDialog(r: CtRegion, current: CtPhotoSelection | null, redraw = false): void {
     const cfg = r.config.photo;
     const dialog = el("dialog", { class: "ct-dialog", "data-ct-owner": this.root.id || undefined });
     // The dialog lives on <body>, outside the section that sets the accent.
@@ -1495,7 +1517,7 @@ export class Customizer {
     let t: CtTransform = { ...(current?.transform ?? IDENTITY_TRANSFORM) };
     let source: Blob | null = sourceUrl ? (this.localBlobs.get(sourceUrl) ?? null) : null;
     let renders = new Map<CtPhotoStyleRef, Promise<string>>();
-    if (photoUrl && current?.style === style) renders.set(style, Promise.resolve(photoUrl));
+    if (photoUrl && current?.style === style && !redraw) renders.set(style, Promise.resolve(photoUrl));
     /** Blob URLs made by this dialog; the ones not applied are freed on close. */
     const made = new Set<string>();
     let job = 0;
@@ -1811,6 +1833,7 @@ export class Customizer {
       }
       try {
         const url = await render(next);
+        if (asksName(next)) this.nameOfPhoto.set(url, nameFor(next));
         if (token !== job) return;
         photoUrl = url;
         placing = false;
@@ -2080,6 +2103,10 @@ export class Customizer {
     markStyle();
     document.body.append(dialog);
     dialog.showModal();
+    if (redraw && sourceUrl) {
+      void show(style);
+      return;
+    }
     if (photoUrl) warmThumbs();
     void draw();
   }

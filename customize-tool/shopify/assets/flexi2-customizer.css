@@ -275,6 +275,8 @@
 }
 .ct-dialog__style { display: grid; gap: 6px; flex: 1 1 100%; font-size: 14px; font-weight: 500; }
 .ct-dialog__style-label { font-size: 15px; }
+.ct-photo-group { display: contents; }
+.ct-input--plain { padding-right: 16px; }
 .ct-dialog__name { display: grid; gap: 6px; flex: 1 1 100%; font-size: 14px; font-weight: 500; }
 .ct-dialog__name[hidden] { display: none; }
 .ct-dialog__name .ct-input { height: 44px; padding-right: 16px; }

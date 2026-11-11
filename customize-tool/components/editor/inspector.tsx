@@ -1095,6 +1095,17 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
   /** `${sourceUrl}|${style}|${cutout}|${fadeCrop}|${version}` → rendered blob URL, so flipping styles doesn't re-bill the AI. */
   const renders = useRef(new Map<string, string>());
   const label = (ref: CtPhotoStyleRef) => styleLabel(ref, ai.names);
+  /** AI styles on a khuôn with 2+ safe areas in the zone come back already shaped like the zone, each figure centred
+   * on its safe area (lib/face-center): they fill the zone 1:1, so the zone keeps no child frame (an auto frame grows
+   * the photo ~15 % + margin past the zone and moves the figures off their safe areas — bug 2026-11-11). */
+  const centredZone = () => isAiStyleRef(cfg.photo.defaultStyle) && faceTargets(props.print ?? design.state.config.print, shapeBounds(region.shape)) !== null;
+  /** The frame a new test photo starts from: a fresh auto frame, or none on a centred zone. */
+  const resetFrame = () => {
+    const fr = cfg.photo.frame;
+    if (centredZone()) {
+      if (fr.enabled) set({ frame: { ...IDENTITY_PHOTO_FRAME, enabled: false, tilt: fr.tilt } });
+    } else if (!fr.enabled || !fr.auto) set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true, tilt: fr.tilt, ...(fr.head ? { head: true } : {}) } });
+  };
 
   useEffect(() => {
     ctApi.photoCapabilities().then(setCaps).catch(() => setCaps(null));
@@ -1391,7 +1402,7 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
           {(sel.url || sel.sourceUrl) && (
             <CtButton size="sm" variant="ghost" disabled={working !== null} onClick={() => {
                 // The frame goes with the photo; the next upload works out a new one. Customers get the auto frame.
-                if (!cfg.photo.frame.auto || !cfg.photo.frame.enabled) set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true, tilt: cfg.photo.frame.tilt, ...(cfg.photo.frame.head ? { head: true } : {}) } });
+                resetFrame();
                 onPhotoSelection(region.id, { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM } });
               }}>
               <X className="h-3.5 w-3.5" /> Bỏ
@@ -1409,9 +1420,9 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
             if (!f) return;
             const sourceUrl = URL.createObjectURL(f);
             // A new photo always gets a fresh child frame — also after the frame was deleted: worked out again from the
-            // zone (its outline, tilt) and this photo. The zone's tilt is the zone's: it stays.
-            const fr = cfg.photo.frame;
-            if (!fr.enabled || !fr.auto) set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true, tilt: fr.tilt, ...(fr.head ? { head: true } : {}) } });
+            // zone (its outline, tilt) and this photo — none on a zone whose AI pictures are centred on the khuôn.
+            // The zone's tilt is the zone's: it stays.
+            resetFrame();
             // The raw upload never goes into the frame: the zone stays empty (with a spinner) until the processed photo is ready.
             const base: CtPhotoSelection = { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM }, style: cfg.photo.defaultStyle, sourceUrl };
             onPhotoSelection(region.id, base);

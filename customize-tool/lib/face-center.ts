@@ -112,27 +112,33 @@ export function placeFaces(data: Pixels, w: number, h: number, targets: FaceTarg
       : Array.from({ length: n - 1 }, (_, i) => Math.round(lo + ((hi + 1 - lo) * (i + 1)) / n));
   const edges = [lo, ...cuts, hi + 1];
 
-  // Each figure's box.
+  // Each figure's box, read from its own column / row counts: stray specks left by a background removal (a few px
+  // each, far from the figure) are not enough to widen it.
   const boxes: CtBounds[] = [];
   for (let k = 0; k < n; k++) {
     const a = edges[k];
     const b = edges[k + 1];
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -1;
-    let y1 = -1;
     const [xa, xb, ya, yb] = across ? [a, b, 0, h] : [0, w, a, b];
+    const cols = new Uint32Array(xb - xa);
+    const rows = new Uint32Array(yb - ya);
     for (let y = ya; y < yb; y++) {
       for (let x = xa; x < xb; x++) {
         if (!ink((y * w + x) * 4)) continue;
-        if (x < x0) x0 = x;
-        if (x > x1) x1 = x;
-        if (y < y0) y0 = y;
-        if (y > y1) y1 = y;
+        cols[x - xa]++;
+        rows[y - ya]++;
       }
     }
-    if (x1 < 0) return null;
-    boxes.push({ x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 });
+    const span = (counts: Uint32Array, min: number): [number, number] | null => {
+      let i = 0;
+      while (i < counts.length && counts[i] < min) i++;
+      let j = counts.length - 1;
+      while (j > i && counts[j] < min) j--;
+      return i <= j && counts[i] >= min ? [i, j] : null;
+    };
+    const sx = span(cols, Math.max(3, Math.round((yb - ya) * 0.006)));
+    const sy = span(rows, Math.max(3, Math.round((xb - xa) * 0.006)));
+    if (!sx || !sy) return null;
+    boxes.push({ x: xa + sx[0], y: ya + sy[0], w: sx[1] - sx[0] + 1, h: sy[1] - sy[0] + 1 });
   }
 
   // One scale for all (zone px per source px): the tightest figure fills its safe area.

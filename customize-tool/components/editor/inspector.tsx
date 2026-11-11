@@ -55,6 +55,7 @@ import type {
 } from "../../types";
 import { CT_BASE_OPTION } from "../../types";
 import { bandShape, fitZoneToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, orientedBox, resolvePhotoFrame, shapeBounds, textBand } from "../../lib/geometry";
+import { faceTargets } from "../../lib/face-center";
 import { useImageSize } from "./use-image-size";
 import { useLibraryFonts } from "../font-library";
 import { charSetBounds, placeCharSet } from "../../lib/char-set-layers";
@@ -1067,7 +1068,8 @@ function RegionProps(props: InspectorProps & { region: CtRegion; ink: CtLayerInk
 // Customer photo zone
 // ---------------------------------------------------------------------------
 
-function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }: InspectorProps & { region: CtRegion }) {
+function PhotoProps(props: InspectorProps & { region: CtRegion }) {
+  const { design, region, selection, onPhotoSelection, onPhotoBusy } = props;
   const cfg = region.config;
   const set = (patch: Partial<typeof cfg.photo>) =>
     design.commit((s) => updateRegion(s, region.id, (r) => { const n = normalizeRegion(r); return { ...n, config: { ...n.config, photo: { ...n.config.photo, ...patch } } }; }));
@@ -1171,7 +1173,9 @@ function PhotoProps({ design, region, selection, onPhotoSelection, onPhotoBusy }
     } else {
       const source = await fetch(sourceUrl).then((r) => r.blob());
       const keepFrame = isAiStyleRef(style) && ai.styles.find((s) => aiStyleRef(s.id) === style)?.params.keepFrame === true;
-      url = URL.createObjectURL(await processPhoto({ source, style, cutout: cfg.photo.cutout, fadeCrop: cfg.photo.fadeCrop, keepFrame, endpoint: ctApi.photoEndpoint(region.product_id) }));
+      // Like the store: each figure centred on the khuôn's safe area it falls in (lib/face-center).
+      const centerOn = keepFrame ? faceTargets(props.print ?? design.state.config.print, shapeBounds(region.shape)) : null;
+      url = URL.createObjectURL(await processPhoto({ source, style, cutout: cfg.photo.cutout, fadeCrop: cfg.photo.fadeCrop, keepFrame, centerOn, endpoint: ctApi.photoEndpoint(region.product_id) }));
     }
     renders.current.set(key, url);
     return url;

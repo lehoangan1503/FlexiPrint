@@ -303,8 +303,20 @@ export interface CtPhotoFrame {
   enabled: boolean;
 }
 
+/** The customer's name for an AI style that writes it ([NAME] in the prompt / the style's tick): the field on the
+ * product form above the photo upload (asked 2026-11-11: label + placeholder + length + required set per zone). */
+export interface CtPhotoNameConfig {
+  label: string;
+  placeholder: string;
+  maxChars: number;
+  /** The customer must type a name before adding to cart. */
+  required: boolean;
+}
+
 export interface CtPhotoConfig {
   label: string;
+  /** The name field (only shown while one of the zone's styles asks a name); absent = defaults (lib/photo-name). */
+  name?: CtPhotoNameConfig;
   fit: "cover" | "contain";
   /** Customer must upload before adding to cart. */
   required: boolean;

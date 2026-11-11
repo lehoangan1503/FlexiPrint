@@ -89,6 +89,7 @@ import {
 } from "../lib/design";
 import { IDENTITY_TRANSFORM, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds } from "../lib/geometry";
 import { faceTargets } from "../lib/face-center";
+import { photoNameConfig } from "../lib/photo-name";
 import { filterBlob, processPhoto, shrinkImage } from "../lib/photo-process";
 import { isAiStyleRef, styleEngine, styleFamily, styleFilter, styleLabel } from "../lib/photo-styles";
 import { phoiPicks, phoiTaskKey } from "../lib/photo-task-key";
@@ -1097,24 +1098,30 @@ export class Customizer {
     const styleName = cfg.styles.length > 1 && sel?.url ? styleLabel(sel.style, this.tpl.aiStyles) : undefined;
     const photo = this.field(cfg.label, body, cfg.required, styleName);
     if (!cfg.styles.some((id) => this.aiStyleInfo(id)?.askName === true)) return photo;
+    const nameCfg = photoNameConfig(cfg);
     // The name a style writes in the picture ([NAME] in its prompt / its tick), asked on the form before the upload
     // (asked 2026-11-11); the photo dialog shows the same value. Changed after the photo is made: drawn again with it.
     const input = el("input", {
-      class: "ct-input ct-input--plain",
+      class: "ct-input",
       type: "text",
-      maxlength: "40",
+      maxlength: String(nameCfg.maxChars),
       value: this.photoNames.get(r.id) ?? "",
-      placeholder: this.t("photoNamePlaceholder", "Enter a name (optional)"),
+      placeholder: nameCfg.placeholder,
     });
-    input.addEventListener("input", () => this.photoNames.set(r.id, input.value));
+    const counter = el("span", { class: "ct-counter", text: `${input.value.length}/${nameCfg.maxChars}` });
+    input.addEventListener("input", () => {
+      this.photoNames.set(r.id, input.value);
+      counter.textContent = `${input.value.length}/${nameCfg.maxChars}`;
+      this.errorBox.hidden = true;
+    });
     input.addEventListener("change", () => {
       this.photoNames.set(r.id, input.value);
       const now = this.selection[r.id];
       if (now?.kind !== "photo" || !now.url || !now.style || this.aiStyleInfo(now.style)?.askName !== true) return;
-      const name = input.value.replace(/\s+/g, " ").trim().slice(0, 40);
+      const name = input.value.replace(/\s+/g, " ").trim().slice(0, nameCfg.maxChars);
       if ((this.nameOfPhoto.get(now.url) ?? "") !== name) this.openPhotoDialog(r, now, true);
     });
-    return el("div", { class: "ct-photo-group" }, [this.field(this.t("photoName", "Name"), input, false), photo]);
+    return el("div", { class: "ct-photo-group" }, [this.field(nameCfg.label || this.t("photoName", "Name"), el("div", { class: "ct-input-wrap" }, [input, counter]), nameCfg.required), photo]);
   }
 
   // ------------------------------------------------------------- photo tasks (server/photo-tasks.ts)
@@ -1562,13 +1569,13 @@ export class Customizer {
     const nameInput = el("input", {
       class: "ct-input",
       type: "text",
-      maxlength: "40",
+      maxlength: String(photoNameConfig(cfg).maxChars),
       value: this.photoNames.get(r.id) ?? "",
-      placeholder: this.t("photoNamePlaceholder", "Enter a name (optional)"),
+      placeholder: photoNameConfig(cfg).placeholder,
     });
-    const nameRow = el("label", { class: "ct-dialog__name" }, [el("span", { class: "ct-dialog__style-label", text: this.t("photoName", "Name") }), nameInput]);
+    const nameRow = el("label", { class: "ct-dialog__name" }, [el("span", { class: "ct-dialog__style-label", text: photoNameConfig(cfg).label || this.t("photoName", "Name") }), nameInput]);
     const asksName = (id: CtPhotoStyleRef) => this.aiStyleInfo(id)?.askName === true;
-    const nameFor = (id: CtPhotoStyleRef) => (asksName(id) ? nameInput.value.replace(/\s+/g, " ").trim().slice(0, 40) : "");
+    const nameFor = (id: CtPhotoStyleRef) => (asksName(id) ? nameInput.value.replace(/\s+/g, " ").trim().slice(0, photoNameConfig(cfg).maxChars) : "");
     const markStyle = () => {
       for (const [id, b] of swatches) {
         b.classList.toggle("is-selected", id === style);
@@ -2232,6 +2239,10 @@ export class Customizer {
       if (r.kind === "photo" && r.config.photo.required && !(sel?.kind === "photo" && sel.url)) {
         return `${this.t("required", "Please complete")}: ${r.config.photo.label}`;
       }
+      if (r.kind === "photo" && r.config.photo.styles.some((id) => this.aiStyleInfo(id)?.askName === true)) {
+        const nameCfg = photoNameConfig(r.config.photo);
+        if (nameCfg.required && !(this.photoNames.get(r.id) ?? "").trim()) return `${this.t("required", "Please complete")}: ${nameCfg.label || "Name"}`;
+      }
       const mode = r.kind === "text" ? textMode(r) : null;
       if ((mode === "input" || mode === "list") && !(sel?.kind === "text" && sel.text.trim())) {
         return `${this.t("required", "Please complete")}: ${r.config.text.label}`;
@@ -2334,6 +2345,9 @@ export class Customizer {
           const cfg = r.config.photo;
           named(cfg.label, sel.url);
           if (cfg.styles.length > 1 || cfg.defaultStyle !== "original") named(cfg.styleLabel, styleLabel(sel.style, this.tpl.aiStyles));
+          // The name drawn in the picture (a style that asks it): on the order too, for the team to check.
+          const typed = sel.style && this.aiStyleInfo(sel.style)?.askName ? (this.photoNames.get(r.id) ?? "").trim() : "";
+          if (typed) named(photoNameConfig(cfg).label || "Name", typed);
           this.zoneOptionProperty(r, sel, named);
           // Fulfilment may want to re-render from the untouched upload.
           if (sel.sourceUrl && sel.sourceUrl !== sel.url) named(`_${cfg.label} (original)`, sel.sourceUrl);

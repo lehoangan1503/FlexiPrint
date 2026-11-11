@@ -36,6 +36,7 @@ import { outsideSafe } from "../print/layer-print-section";
 import { useLayerInk, type CtLayerInk } from "./use-layer-ink";
 import type {
   CtAsset,
+  CtPhotoNameConfig,
   CtOptionDisplay,
   CtTextFormat,
   CtMainFrame,
@@ -56,11 +57,12 @@ import type {
 import { CT_BASE_OPTION } from "../../types";
 import { bandShape, fitZoneToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, orientedBox, resolvePhotoFrame, shapeBounds, textBand } from "../../lib/geometry";
 import { faceTargets } from "../../lib/face-center";
+import { photoNameConfig } from "../../lib/photo-name";
 import { useImageSize } from "./use-image-size";
 import { useLibraryFonts } from "../font-library";
 import { charSetBounds, placeCharSet } from "../../lib/char-set-layers";
 import { layerGroups } from "../../lib/layer-groups";
-import { aiStyleTileUrl } from "../../lib/ai-style-models";
+import { aiStyleAsksName, aiStyleTileUrl } from "../../lib/ai-style-models";
 import { defaultRegionSelection, formOrder, hasTestPhoto, isLinkedLayer, isValidDate, normalizeRegion, textMode, variantsOf, zoneSubtree } from "../../lib/design";
 import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
 import { AiStyleDialog } from "./ai-style-dialog";
@@ -1173,8 +1175,22 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
   const version = (ref: CtPhotoStyleRef) => (isAiStyleRef(ref) ? ai.styles.find((s) => aiStyleRef(s.id) === ref)?.updated_at ?? "" : "");
 
   /** Render the test photo in `style` exactly like the storefront would (same caching rules). */
+  /** A zone style that writes the customer's name ([NAME] in its prompt / its tick). */
+  const asksName = (ref: CtPhotoStyleRef) => {
+    const st = isAiStyleRef(ref) ? ai.styles.find((x) => aiStyleRef(x.id) === ref) : undefined;
+    return st ? aiStyleAsksName(st.params, st.prompt) : false;
+  };
+  const zoneAsksName = styles.some(asksName);
+  const nameCfg = photoNameConfig(cfg.photo);
+  const setName = (patch: Partial<CtPhotoNameConfig>) => set({ name: { ...nameCfg, ...patch } });
+  /** The name the test photo is drawn with (like a customer typing it on the product page). */
+  const [testName, setTestName] = useState("");
+  const [testNameUsed, setTestNameUsed] = useState("");
+  const typedName = testName.replace(/\s+/g, " ").trim().slice(0, nameCfg.maxChars);
+
   const getRender = async (sourceUrl: string, style: CtPhotoStyleRef): Promise<string> => {
-    const key = `${sourceUrl}|${style}|${cfg.photo.cutout}|${cfg.photo.fadeCrop}|${version(style)}`;
+    const name = asksName(style) ? typedName : "";
+    const key = `${sourceUrl}|${style}|${cfg.photo.cutout}|${cfg.photo.fadeCrop}|${version(style)}|${name}`;
     const cached = renders.current.get(key);
     if (cached) return cached;
     const engine = styleEngine(style);
@@ -1188,8 +1204,9 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
       const source = await fetch(sourceUrl).then((r) => r.blob());
       // Like the store: on a khuôn with 2+ safe areas in the zone each figure is centred on its own (lib/face-center).
       const centerOn = isAiStyleRef(style) ? faceTargets(props.print ?? design.state.config.print, shapeBounds(region.shape)) : null;
-      url = URL.createObjectURL(await processPhoto({ source, style, cutout: cfg.photo.cutout, fadeCrop: cfg.photo.fadeCrop, centerOn, endpoint: ctApi.photoEndpoint(region.product_id) }));
+      url = URL.createObjectURL(await processPhoto({ source, style, cutout: cfg.photo.cutout, fadeCrop: cfg.photo.fadeCrop, centerOn, endpoint: ctApi.photoEndpoint(region.product_id), ...(name ? { fields: { name } } : {}) }));
     }
+    if (asksName(style)) setTestNameUsed(name);
     renders.current.set(key, url);
     return url;
   };
@@ -1230,6 +1247,22 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
         />
       </CtField>
       <CtCheckbox checked={cfg.photo.required} onChange={(v) => set({ required: v })} label="Bắt buộc upload trước khi thêm vào giỏ" />
+      {zoneAsksName && (
+        <div className="space-y-2 rounded-md border p-2.5">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Ô nhập tên cho khách</div>
+          <p className="text-[10px] leading-snug text-muted-foreground">Style của vùng này dùng tên khách ([NAME] trong prompt / tick). Ô hiện trên trang sản phẩm, ngay trên nút upload ảnh.</p>
+          <CtField label="Nhãn ô tên">
+            <CtInput value={nameCfg.label} placeholder="Name" onChange={(e) => setName({ label: e.target.value })} />
+          </CtField>
+          <CtField label="Chữ gợi ý trong ô">
+            <CtInput value={nameCfg.placeholder} placeholder="Enter a name" onChange={(e) => setName({ placeholder: e.target.value })} />
+          </CtField>
+          <CtField label="Tối đa ký tự">
+            <CtInput type="number" min={1} max={40} value={nameCfg.maxChars} onChange={(e) => setName({ maxChars: Number(e.target.value) || 1 })} />
+          </CtField>
+          <CtCheckbox checked={nameCfg.required} onChange={(v) => setName({ required: v })} label="Bắt buộc nhập tên trước khi thêm vào giỏ" />
+        </div>
+      )}
 
       {!hasTestPhoto(cur) ? null : cfg.photo.frame?.enabled !== false ? (
         <PhotoFrameFields
@@ -1394,6 +1427,18 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
 
       <div className="space-y-2 rounded-md border p-2.5">
         <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Thử ảnh khách</div>
+        {zoneAsksName && (
+          <CtField label={`Tên để thử (${nameCfg.label || "Name"})`}>
+            <div className="flex gap-1.5">
+              <CtInput value={testName} maxLength={nameCfg.maxChars} placeholder="vd Minh — nhập trước khi upload" onChange={(e) => setTestName(e.target.value)} />
+              {sel.sourceUrl && sel.style && asksName(sel.style) && typedName !== testNameUsed && (
+                <CtButton size="sm" variant="primary" disabled={working !== null} onClick={() => sel.sourceUrl && sel.style && void renderTest(sel.sourceUrl, sel.style, sel)}>
+                  Vẽ lại với tên này
+                </CtButton>
+              )}
+            </div>
+          </CtField>
+        )}
         <div className="flex gap-1.5">
           <CtButton
             size="sm"

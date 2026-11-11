@@ -43,8 +43,11 @@ export const KEEP_PRINT =
 
 // ---- the front mockup: the print laid exactly on the phôi --------------------------------------------------
 
-/** The print on the blank photo, inside `box` (photo px, may reach past the photo), lit by the blank's own shading. */
-export async function frontMockup(blank: Buffer, print: Buffer, box: CtProductScene["box"]): Promise<Buffer> {
+/**
+ * The print on the blank photo, inside `box` (photo px, may reach past the photo), lit by the blank's own shading —
+ * or, with the fulfiller's `overlay` (CtProductScene.overlay), pasted flat with the overlay laid over it.
+ */
+export async function frontMockup(blank: Buffer, print: Buffer, box: CtProductScene["box"], overlay: Buffer | null = null): Promise<Buffer> {
   const meta = await sharp(blank).metadata();
   const W = meta.width ?? 0;
   const H = meta.height ?? 0;
@@ -62,6 +65,12 @@ export async function frontMockup(blank: Buffer, print: Buffer, box: CtProductSc
     .extract({ left: x - bx, top: y - by, width: w, height: hh })
     .raw()
     .toBuffer();
+  if (overlay) {
+    const over = await sharp(overlay).resize(W, H, { fit: "fill" }).ensureAlpha().png().toBuffer();
+    const flat = await sharp(art, { raw: { width: w, height: hh, channels: 4 } }).png().toBuffer();
+    const laid = await sharp(blank).ensureAlpha().composite([{ input: flat, left: x, top: y }, { input: over, left: 0, top: 0 }]).png().toBuffer();
+    return sharp(laid).flatten({ background: "#ffffff" }).jpeg({ quality: 92 }).toBuffer();
+  }
   // The phôi's own light on the print: its shading darkens it, its gloss highlights lie over it (lib/blank-shading).
   const under = await sharp(blank).removeAlpha().extract({ left: x, top: y, width: w, height: hh }).raw().toBuffer();
   const out = Buffer.alloc(w * hh * 4);
@@ -526,7 +535,8 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
   // made from the artwork's outline (+ the border, the hanging tab). Without a phôi: on white.
   const dieCut = config.print?.kind === "cut" || (config.material.id.startsWith("acrylic") && config.material.shape === "contour");
   let front: Buffer;
-  if (config.scene.url && config.scene.box.w > 0) front = await frontMockup(await fetchImage(config.scene.url), print, config.scene.box);
+  if (config.scene.url && config.scene.box.w > 0)
+    front = await frontMockup(await fetchImage(config.scene.url), print, config.scene.box, config.scene.overlay ? await fetchImage(config.scene.overlay).catch(() => null) : null);
   else if (dieCut) {
     const pw = (await sharp(print).metadata()).width ?? 1024;
     const mm = config.print?.spec.widthMm || config.material.widthMm || 90;

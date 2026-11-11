@@ -115,6 +115,8 @@ export const ctApi = {
   importBase: (body: CtBaseImportBody) => call<{ base: CtBaseProduct }>("base-import/import", json("POST", body)).then((r) => r.base),
   teeinblueStatus: () => call<CtTeeinblueStatus>("base-import/teeinblue"),
   connectTeeinblue: (code: string) => call<CtTeeinblueStatus>("base-import/teeinblue", json("POST", { code })),
+  /** A fulfiller's base: Printbelle khuôn (if none) + phôi with its overlay · Merchize template / mockup links. */
+  refreshFulfillerBase: (baseId: string) => call<{ reapplied: number; failed: string[]; note: string; phoi: boolean }>("base-import/refresh", json("POST", { baseId })),
   createProduct: (name: string) => call<{ product: CtProduct }>("products", json("POST", { name })).then((r) => r.product),
   getBundle: (id: string) => call<CtProductBundle>(`products/${id}`),
   updateProduct: (id: string, body: CtUpdateProductBody) =>

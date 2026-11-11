@@ -1092,6 +1092,18 @@ export function Stage(props: StageProps) {
         }}
       >
         <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
+        {sceneRect && props.scene?.overlay && (
+          // The fulfiller's overlay (product shape + shade) over the design, under the handles; a little see-through
+          // so what it hides can still be edited.
+          // eslint-disable-next-line @next/next/no-img-element -- our R2 picture
+          <img
+            src={props.scene.overlay}
+            alt=""
+            draggable={false}
+            className="pointer-events-none absolute max-w-none select-none opacity-85"
+            style={{ left: sceneRect.x, top: sceneRect.y, width: sceneRect.w, height: sceneRect.h }}
+          />
+        )}
         <svg
           className="absolute inset-0 h-full w-full overflow-visible"
           viewBox={`0 0 ${main.width} ${main.height}`}

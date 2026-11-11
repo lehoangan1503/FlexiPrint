@@ -80,7 +80,7 @@ export function BasePreviewSection(props: { cfg: CtBaseProductConfig; template: 
   const aspect = sheet.width / sheet.height;
   const blank = cut.mode === "khuon" ? props.template?.spec.blanks[0] : undefined;
   // What the preview uses now: the base's own photo, else (a khuôn) its first phôi.
-  const shown = preview.url ? preview : blank ? { url: blank.url, width: blank.width, height: blank.height, box: blank.box } : null;
+  const shown: CtProductScene | null = preview.url ? preview : blank ? { url: blank.url, width: blank.width, height: blank.height, box: blank.box } : null;
   const share = preview.url ? Math.max(preview.box.w, preview.box.h) / Math.min(preview.width, preview.height) : 0.7;
   const cx = preview.url ? (preview.box.x + preview.box.w / 2) / preview.width : 0.5;
   const cy = preview.url ? (preview.box.y + preview.box.h / 2) / preview.height : 0.5;
@@ -121,6 +121,7 @@ export function BasePreviewSection(props: { cfg: CtBaseProductConfig; template: 
           {shown?.url ? (
             <div className="relative" style={{ aspectRatio: `${shown.width} / ${shown.height}` }}>
               <img src={shown.url} alt="Nền xem trước" className="absolute inset-0 h-full w-full" />
+              {shown.overlay && <img src={shown.overlay} alt="" className="absolute inset-0 h-full w-full" />}
               <div
                 className="absolute border-2 border-dashed border-sky-400"
                 style={{
@@ -162,7 +163,7 @@ export function BasePreviewSection(props: { cfg: CtBaseProductConfig; template: 
           </div>
           {preview.url ? (
             <div className="space-y-1">
-              {slider("Cỡ thiết kế", share, 0.2, 1, (v) => move({ share: v }))}
+              {slider("Cỡ thiết kế", share, 0.2, 1.6, (v) => move({ share: v }))}
               {slider("Ngang", cx, 0, 1, (v) => move({ cx: v }))}
               {slider("Dọc", cy, 0, 1, (v) => move({ cy: v }))}
             </div>

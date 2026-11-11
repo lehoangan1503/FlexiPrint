@@ -32,6 +32,7 @@ export function normalizeScene(raw: Partial<CtProductScene> | null | undefined):
     height,
     box: { x: num(b.x, 0, -width * 4, width * 5), y: num(b.y, 0, -height * 4, height * 5), w: num(b.w, width, 1, width * 8), h: num(b.h, height, 1, height * 8) },
     ...(plate ? { plate } : {}),
+    ...(typeof raw.overlay === "string" && raw.overlay ? { overlay: raw.overlay } : {}),
   };
 }
 
@@ -74,6 +75,13 @@ export async function drawOnScene(
   const dh = (scene.box.h + 2 * by) * k;
   if (flat) {
     ctx.drawImage(design, dx, dy, dw, dh);
+    return out;
+  }
+  if (scene.overlay) {
+    // The fulfiller's own mockup: the design flat, its overlay (product shape + shade) over it.
+    ctx.drawImage(design, dx, dy, dw, dh);
+    const over = await loadImage(scene.overlay).catch(() => null);
+    if (over) ctx.drawImage(over, 0, 0, out.width, out.height);
     return out;
   }
   if (scene.plate) {

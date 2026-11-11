@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, ExternalLink, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { CT_CONFIG } from "../../config";
 import type { CtBaseProductConfig, CtBaseProductDetail, CtPriceTable, CtPrintArea } from "../../types";
 import type { CtPrintTemplate } from "../../types/print";
@@ -57,6 +57,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
   const [phoiBusy, setPhoiBusy] = useState<string | null>(null);
   /** The khuôn editor (draw / change a khuôn by AI, faces, sizes) — what the old Thư viện → Khuôn in tab was. */
   const [khuonOpen, setKhuonOpen] = useState(false);
+  const [pbBusy, setPbBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -110,6 +111,22 @@ export function BaseProductView({ baseId }: { baseId: string }) {
   };
 
   const template = useMemo(() => templates.find((t) => t.id === cfg?.templateId) ?? null, [templates, cfg?.templateId]);
+  const fulfiller = !cfg ? null : cfg.source?.provider ?? (/^prin?t?belle/i.test(cfg.fulfillment.provider) ? "printbelle" : /^merchize/i.test(cfg.fulfillment.provider) ? "merchize" : null);
+  /** Printbelle: its khuôn (Template.tif, if the base has none) + its phôi with the overlay · Merchize: its PSD links. */
+  const refreshFulfiller = async () => {
+    setPbBusy(true);
+    setError(null);
+    try {
+      const r = await ctApi.refreshFulfillerBase(baseId);
+      await load();
+      setTemplates(await printApi.list());
+      flash(`${r.note}${r.phoi ? " · phôi Printbelle" : ""}${r.reapplied ? ` · ${r.reapplied} sản phẩm cập nhật` : ""}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không lấy được từ Printbelle");
+    } finally {
+      setPbBusy(false);
+    }
+  };
   const table = useMemo(() => tables.find((t) => t.id === cfg?.priceTableId) ?? null, [tables, cfg?.priceTableId]);
   const cells = table ? priceCells(table.config) : [];
 
@@ -186,7 +203,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                 <div className="mt-3 rounded-md border bg-muted/30 p-2.5 text-xs text-muted-foreground">
                   <div>
                     Import từ <span className="font-medium text-foreground">{cfg.fulfillment.provider || cfg.source.provider}</span> · {cfg.source.catalogId}
-                    {cfg.source.via === "teeinblue" && cfg.source.teeinblueId ? ` · qua Teeinblue (base #${cfg.source.teeinblueId})` : " · API Printbelle"}
+                    {cfg.source.via === "teeinblue" ? (cfg.source.teeinblueId ? ` · qua Teeinblue (base #${cfg.source.teeinblueId})` : "") : " · API Printbelle"}
                     {cfg.source.importedAt && ` · ${cfg.source.importedAt.slice(0, 10)}`}
                   </div>
                   {cfg.source.photos.length > 0 && (
@@ -195,6 +212,15 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                         <a key={u} href={u} target="_blank" rel="noreferrer" className="h-16 w-16 shrink-0 overflow-hidden rounded border bg-white">
                           {/* eslint-disable-next-line @next/next/no-img-element -- our R2 copy of the fulfiller's photo */}
                           <img src={u} alt="" className="h-full w-full object-contain" loading="lazy" />
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {(cfg.source.links ?? []).length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                      {(cfg.source.links ?? []).map((l) => (
+                        <a key={l.url} href={l.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sky-600 hover:underline">
+                          <ExternalLink className="h-3 w-3" /> {l.label}
                         </a>
                       ))}
                     </div>
@@ -338,9 +364,31 @@ export function BaseProductView({ baseId }: { baseId: string }) {
             <Section
               title="Khuôn in + phôi"
               right={
-                <CtButton size="sm" variant="outline" onClick={() => setKhuonOpen(true)} title="Tạo khuôn mới / sửa khuôn (AI, mặt, size)">
-                  Quản lý khuôn
-                </CtButton>
+                <>
+                  {fulfiller && (
+                    <CtButton
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void refreshFulfiller()}
+                      disabled={pbBusy || dirty}
+                      title={
+                        dirty
+                          ? "Lưu thay đổi trước"
+                          : fulfiller === "merchize"
+                            ? "Tìm link khuôn + mockup (PSD) trên merchize.com"
+                            : cfg.templateId
+                              ? "Đặt lại phôi + lớp phủ theo Printbelle (giữ khuôn đang chọn)"
+                              : "Tải khuôn in (Template.tif) + phôi từ Printbelle"
+                      }
+                    >
+                      {pbBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}{" "}
+                      {fulfiller === "merchize" ? "Link khuôn Merchize" : cfg.templateId ? "Phôi Printbelle" : "Khuôn + phôi Printbelle"}
+                    </CtButton>
+                  )}
+                  <CtButton size="sm" variant="outline" onClick={() => setKhuonOpen(true)} title="Tạo khuôn mới / sửa khuôn (AI, mặt, size)">
+                    Quản lý khuôn
+                  </CtButton>
+                </>
               }
             >
               <CtField label="Khuôn in">

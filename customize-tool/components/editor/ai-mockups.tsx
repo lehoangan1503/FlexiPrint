@@ -218,6 +218,10 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                       height: `${(config.scene.box.h / config.scene.height) * 100}%`,
                     }}
                   />
+                  {config.scene.overlay && (
+                    // eslint-disable-next-line @next/next/no-img-element -- our R2 picture
+                    <img src={config.scene.overlay} alt="" className="absolute inset-0 h-full w-full" />
+                  )}
                 </div>
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element -- a local blob

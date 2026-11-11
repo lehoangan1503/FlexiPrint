@@ -6,13 +6,17 @@
  * is shown as "Đã có", not imported twice.
  *
  * Price: the Notion price table whose name fits the title (lib/pricing priceTableForTitle), else none — set later on
- * the base page. Material stays "none" and the cut "none" (khuôn / cut are chosen on the base page), so imported bases
- * are never picked automatically for sets / imports by material.
+ * the base page. Material stays "none", so imported bases are never picked automatically for sets / imports by
+ * material. Printbelle (2026-11-11): the khuôn in is made from the product's Template.tif (server/printbelle-khuon.ts)
+ * and the cut is "khuon"; the phôi is their mockup with its overlay. Merchize: no khuôn / phôi data anywhere public
+ * that reads reliably — the base keeps the links to its PSD template + mockups on merchize.com, cut "none".
  *
  *   GET  base-import/catalog?provider=printbelle|merchize&q=&page=  → CtFulfillCatalogPage
  *   POST base-import/import      CtBaseImportBody → { base }         (admin)
  *   GET  base-import/teeinblue   → CtTeeinblueStatus                 (Merchize goes through Teeinblue)
  *   POST base-import/teeinblue   { code } → CtTeeinblueStatus        (admin)
+ *   POST base-import/refresh { baseId } → { base, reapplied, note, phoi }  (admin; a base imported before 2026-11-11:
+ *        Printbelle khuôn if none + its phôi again · Merchize template / mockup links)
  */
 
 import { NextResponse } from "next/server";
@@ -21,6 +25,7 @@ import type {
   CtBaseProduct,
   CtBaseProductConfig,
   CtBaseSource,
+  CtBaseSourceLink,
   CtBaseVariant,
   CtFulfillCatalogItem,
   CtFulfillCatalogPage,
@@ -33,7 +38,10 @@ import { newId } from "../lib/geometry";
 import { priceTableForTitle } from "../lib/pricing";
 import { normalizeScene } from "../lib/scene";
 import { isAdmin } from "./ai-styles";
+import { updateBaseProduct } from "./base-products";
 import { printbelleProduct, printbelleSearch, type PbProduct } from "./printbelle";
+import { importPrintbelleKhuon, type PbKhuonImport } from "./printbelle-khuon";
+import { merchizeTemplateLinks } from "./merchize-site";
 import { ctUpload } from "./storage";
 import { connectTeeinblue, merchizeCatalog, merchizeProduct, teeinblueStatus, TEEINBLUE_CDN, type TibProduct } from "./teeinblue";
 import type { CtSession } from "./supabase";
@@ -168,6 +176,29 @@ function nameOf(title: string): string {
   return title.replace(/\s+/g, " ").trim().slice(0, 160) || "Product base";
 }
 
+/**
+ * Printbelle's first mockup → the base's phôi: its background photo, its zone (where the artwork sits — may reach past
+ * the photo: a hooded blanket's artwork runs off its edges) and its "main" layer as the overlay (opaque where the
+ * product isn't, the folds' shade where it is). No mockup → no phôi.
+ */
+async function printbellePreview(userId: string, folder: string, p: PbProduct): Promise<CtProductScene> {
+  const mk = (p.mockups ?? []).find((m) => m.layers?.background && m.zone?.length === 4);
+  if (!mk?.layers.background) return normalizeScene(null);
+  const [bg, main] = await Promise.all([copyPicture(userId, folder, mk.layers.background), mk.layers.main ? copyPicture(userId, folder, mk.layers.main) : Promise.resolve(null)]);
+  if (!bg) return normalizeScene(null);
+  const xs = mk.zone.map((z) => z.x);
+  const ys = mk.zone.map((z) => z.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return normalizeScene({
+    url: bg.url,
+    width: Number(mk.width) || 1000,
+    height: Number(mk.height) || 1000,
+    box: { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y },
+    ...(main ? { overlay: main.url } : {}),
+  });
+}
+
 /** Printbelle → base config. The first mockup = the phôi photo; its zone = where the artwork sits. */
 async function fromPrintbelle(s: CtSession, folder: string, p: PbProduct): Promise<{ name: string; config: Partial<CtBaseProductConfig> }> {
   const areas: CtPrintArea[] = (p.printAreas ?? []).map((a) => ({ id: newId(), name: a.key || "Artwork", width: a.width, height: a.height, dpi: 300 }));
@@ -183,17 +214,7 @@ async function fromPrintbelle(s: CtSession, folder: string, p: PbProduct): Promi
     printWidth: (areas.find((a) => a.name === v.printAreaKey) ?? areas[0])?.width ?? null,
     printHeight: (areas.find((a) => a.name === v.printAreaKey) ?? areas[0])?.height ?? null,
   }));
-  let preview: CtProductScene = normalizeScene(null);
-  const mk = (p.mockups ?? []).find((m) => m.layers?.background && m.zone?.length === 4);
-  if (mk?.layers.background) {
-    const bg = await copyPicture(s.user.id, folder, mk.layers.background);
-    const xs = mk.zone.map((z) => z.x);
-    const ys = mk.zone.map((z) => z.y);
-    const x = Math.min(...xs);
-    const y = Math.min(...ys);
-    if (bg) preview = normalizeScene({ url: bg.url, width: Number(mk.width) || 1000, height: Number(mk.height) || 1000, box: { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y } });
-  }
-  const photos = await copyPictures(s.user.id, folder, [p.productImg ?? "", ...(p.productPhotoCollection ?? [])]);
+  const [preview, photos] = await Promise.all([printbellePreview(s.user.id, folder, p), copyPictures(s.user.id, folder, [p.productImg ?? "", ...(p.productPhotoCollection ?? [])])]);
   return {
     name: nameOf(p.productNameEn),
     config: { description: htmlText(p.desc), printAreas: areas, variants, preview, source: { provider: "printbelle", catalogId: p.productSpu, via: "printbelle", teeinblueId: null, importedAt: new Date().toISOString(), photos } },
@@ -255,13 +276,20 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
     const folder = `${provider}-${catalogId.replace(/[^a-z0-9_-]+/gi, "_")}`;
     let made: { name: string; config: Partial<CtBaseProductConfig> };
     let note: string;
+    let templateId: string | null = null;
     if (provider === "printbelle") {
-      made = await fromPrintbelle(s, folder, await printbelleProduct(catalogId));
-      note = `Import từ Printbelle (API) ${catalogId}`;
+      const product = await printbelleProduct(catalogId);
+      const [m, khuon] = await Promise.all([fromPrintbelle(s, folder, product), importPrintbelleKhuon(s, product.productSpu, nameOf(product.productNameEn))]);
+      made = m;
+      templateId = khuon.templateId;
+      if (khuon.folderUrl && made.config.source) made.config.source = { ...made.config.source, links: [{ label: "Printbelle: khuôn + mẫu (Google Drive)", url: khuon.folderUrl }] };
+      note = `Import từ Printbelle (API) ${catalogId} · ${khuon.note}`;
     } else {
       const { product, created } = await merchizeProduct(catalogId);
-      made = await fromTeeinblue(s, folder, catalogId, product);
-      note = `Import từ Merchize ${catalogId} qua Teeinblue (base #${product.id}${created ? ", đã archive bên Teeinblue" : ", base có sẵn bên Teeinblue — không đổi"})`;
+      const [m, links] = await Promise.all([fromTeeinblue(s, folder, catalogId, product), merchizeTemplateLinks(catalogId).catch((): CtBaseSourceLink[] => [])]);
+      made = m;
+      if (made.config.source) made.config.source = { ...made.config.source, links };
+      note = `Import từ Merchize ${catalogId} qua Teeinblue (base #${product.id}${created ? ", đã archive bên Teeinblue" : ", base có sẵn bên Teeinblue — không đổi"})${links.length > 1 ? ` · ${links.length - 1} link khuôn + mockup PSD của Merchize (tải khuôn tay)` : ""}`;
     }
     const table = priceTableForTitle(await priceTables(s), made.name);
     const config = normalizeBaseConfig({
@@ -269,10 +297,10 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
       productType: "",
       material: "none",
       priceTableId: table?.id ?? null,
-      templateId: null,
+      templateId,
       fulfillment: { provider: PROVIDER_NAME[provider], catalogId },
       notes: `${note} · ${new Date().toISOString().slice(0, 10)}`,
-      cut: { mode: "none", borderMm: 0, silhouette: true, hole: false, holeSize: 9 },
+      cut: { mode: templateId ? "khuon" : "none", borderMm: 0, silhouette: true, hole: false, holeSize: 9 },
     });
     const { data: last } = await s.supabase.from(CT_TABLES.baseProducts).select("sort_order").order("sort_order", { ascending: false }).limit(1).maybeSingle<{ sort_order: number }>();
     const { data, error } = await s.supabase
@@ -282,6 +310,60 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
       .single<CtBaseProduct>();
     if (error) return jsonError(error.message, 500);
     return NextResponse.json({ base: { ...data, config: normalizeBaseConfig(data.config) } }, { status: 201 });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Lỗi", 502);
+  }
+}
+
+/**
+ * A base made from a fulfiller before 2026-11-11, asked from the base page ("Khuôn + phôi …"):
+ *  - Printbelle: makes the khuôn when the base has none (an existing one is kept), puts Printbelle's phôi back (zone +
+ *    overlay) when Printbelle has a mockup, keeps the Drive folder link;
+ *  - Merchize: finds the template / mockup links on merchize.com (no automatic khuôn / phôi — server/merchize-site.ts).
+ * Then every product of the base is laid on it again (updateBaseProduct).
+ */
+export async function refreshFulfillerBase(s: CtSession, raw: unknown): Promise<NextResponse> {
+  if (!(await isAdmin(s))) return jsonError("Chỉ admin", 403);
+  const baseId = raw && typeof raw === "object" && typeof (raw as { baseId?: unknown }).baseId === "string" ? (raw as { baseId: string }).baseId : "";
+  const { data: base } = await s.supabase.from(CT_TABLES.baseProducts).select("*").eq("id", baseId).maybeSingle<CtBaseProduct>();
+  if (!base) return jsonError("Không tìm thấy product base", 404);
+  const cfg = normalizeBaseConfig(base.config);
+  const provider = cfg.source?.provider ?? (cfg.fulfillment.provider ? providerOf(cfg.fulfillment.provider) : null);
+  const catalogId = cfg.source?.catalogId || cfg.fulfillment.catalogId;
+  if (!provider || !catalogId) return jsonError("Base này không làm từ Printbelle / Merchize", 400);
+  const day = new Date().toISOString().slice(0, 10);
+  const source: CtBaseSource = cfg.source ?? { provider, catalogId, via: provider === "merchize" ? "teeinblue" : "printbelle", teeinblueId: null, importedAt: "", photos: [] };
+  try {
+    let config: CtBaseProductConfig;
+    let note: string;
+    let phoi = false;
+    if (provider === "printbelle") {
+      const product = await printbelleProduct(catalogId);
+      const folder = `printbelle-${catalogId.replace(/[^a-z0-9_-]+/gi, "_")}`;
+      const [preview, khuon] = await Promise.all([
+        printbellePreview(s.user.id, folder, product),
+        cfg.templateId ? Promise.resolve<PbKhuonImport>({ templateId: null, note: "Giữ khuôn đang dùng", folderUrl: null }) : importPrintbelleKhuon(s, catalogId, base.name),
+      ]);
+      const templateId = cfg.templateId ?? khuon.templateId;
+      phoi = !!preview.url;
+      note = khuon.note;
+      config = normalizeBaseConfig({
+        ...cfg,
+        templateId,
+        cut: templateId && cfg.cut.mode === "none" ? { ...cfg.cut, mode: "khuon" } : cfg.cut,
+        preview: preview.url ? preview : cfg.preview,
+        source: { ...source, links: khuon.folderUrl ? [{ label: "Printbelle: khuôn + mẫu (Google Drive)", url: khuon.folderUrl }] : source.links },
+        notes: `${cfg.notes}\n${day} lấy lại từ Printbelle: ${khuon.note}${phoi ? " · phôi + lớp phủ của Printbelle" : " · Printbelle không có ảnh phôi"}`.trim(),
+      });
+    } else {
+      const links = await merchizeTemplateLinks(catalogId);
+      note = links.length > 1 ? `${links.length - 1} link khuôn + mockup PSD của Merchize (mở và tải khuôn tay)` : "merchize.com không có link khuôn cho mã này";
+      config = normalizeBaseConfig({ ...cfg, source: { ...source, links }, notes: `${cfg.notes}\n${day} ${note}`.trim() });
+    }
+    const res = await updateBaseProduct(s, base.id, { name: base.name, config });
+    if (!res.ok) return res;
+    const body = (await res.json()) as { base: CtBaseProduct; reapplied: number; failed: string[] };
+    return NextResponse.json({ ...body, note, phoi });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Lỗi", 502);
   }

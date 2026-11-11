@@ -1179,6 +1179,12 @@ export interface CtProductScene {
    * pixels, a fraction of the box's width. Absent = the photo is the phôi (or a plain background).
    */
   plate?: { border: number };
+  /**
+   * A picture laid OVER the design, same px as `url` (2026-11-11, Printbelle's mockup "main" layer): opaque where the
+   * product isn't (hides the design reaching past the blanket's edge, the hood…), see-through with the folds' shade
+   * where it is. With it the design is pasted flat — the overlay is the light.
+   */
+  overlay?: string;
 }
 
 /**
@@ -1741,6 +1747,16 @@ export interface CtBaseSource {
   importedAt: string;
   /** The fulfiller's product photos, copied to our storage. */
   photos: string[];
+  /**
+   * The fulfiller's own khuôn / mockup files to open by hand (2026-11-11: Merchize's PSD templates + mockups on Google
+   * Drive, linked from merchize.com — too varied to read automatically). Printbelle: its Template.tif folder.
+   */
+  links?: CtBaseSourceLink[];
+}
+
+export interface CtBaseSourceLink {
+  label: string;
+  url: string;
 }
 
 /**

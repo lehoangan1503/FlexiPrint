@@ -84,6 +84,11 @@ function normalizeSource(raw: unknown): CtBaseSource | null {
     teeinblueId: typeof s.teeinblueId === "number" && Number.isFinite(s.teeinblueId) ? s.teeinblueId : null,
     importedAt: str(s.importedAt, 40),
     photos: Array.isArray(s.photos) ? s.photos.filter((u): u is string => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 12) : [],
+    links: (Array.isArray(s.links) ? s.links : [])
+      .map((l) => (l && typeof l === "object" ? (l as Partial<Record<"label" | "url", unknown>>) : {}))
+      .filter((l): l is { label: string; url: string } => typeof l.url === "string" && /^https:\/\//.test(l.url) && typeof l.label === "string")
+      .slice(0, 12)
+      .map((l) => ({ label: l.label.slice(0, 160), url: l.url.slice(0, 500) })),
   };
 }
 

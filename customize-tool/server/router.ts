@@ -29,6 +29,7 @@
  *   GET    price-tables · POST CtPriceTableBody · PATCH :id · DELETE :id   bảng giá (server/price-tables.ts)
  *   GET    base-products · POST CtBaseProductBody · GET/PATCH/DELETE :id   product base (server/base-products.ts)
  *   GET    base-import/catalog?provider=&q=&page= · POST base-import/import · GET/POST base-import/teeinblue
+ *   POST   base-import/refresh { baseId }
  *                                         import a product base from Printbelle / Merchize (server/base-import.ts)
  *   POST   products/artwork              CtCreateArtworkBody → { product } a hand-made artwork (server/print-products.ts)
  *   POST   products/:id/assets           multipart: file, role, parent_id?, name?, meta?
@@ -250,6 +251,7 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
   if (head === "base-import" && id === "import" && !sub && method === "POST") return baseImport.importBase(session, await readJson<unknown>(req));
   if (head === "base-import" && id === "teeinblue" && !sub && method === "GET") return baseImport.getTeeinblueStatus();
   if (head === "base-import" && id === "teeinblue" && !sub && method === "POST") return baseImport.setTeeinblue(session, await readJson<unknown>(req));
+  if (head === "base-import" && id === "refresh" && !sub && method === "POST") return baseImport.refreshFulfillerBase(session, await readJson<unknown>(req));
   const storeParam = req.nextUrl.searchParams.get("store");
   if (head === "shopify" && id === "products" && !sub && method === "GET") return h.shopifySearch(session, storeParam, req.nextUrl.searchParams.get("q")?.trim() ?? "");
   if (head === "shopify" && id === "collections" && !sub && method === "GET") return h.shopifyCollections(session, storeParam);

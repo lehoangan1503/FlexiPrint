@@ -220,7 +220,7 @@ export function withBase(
   if (cut.mode === "alpha" && photo.url) {
     scene = { url: photo.url, width: photo.width, height: photo.height, box: containIn(photo.box, main), plate: { border: widthMm > 0 ? cut.borderMm / widthMm : 0.025 } };
   } else if (photo.url) {
-    scene = { url: photo.url, width: photo.width, height: photo.height, box: place ? canvasOnPhoto(photo.box, place, main) : containIn(photo.box, main) };
+    scene = { url: photo.url, width: photo.width, height: photo.height, box: place ? canvasOnPhoto(photo.box, place, main) : containIn(photo.box, main), ...(photo.overlay ? { overlay: photo.overlay } : {}) };
   } else if (blank && place) {
     scene = { url: blank.url, width: blank.width, height: blank.height, box: canvasOnPhoto(blank.box, place, main) };
   }

@@ -26,7 +26,9 @@ import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
 import type { CtAiStyleRef, CtPhotoTask, CtProduct, CtSelection, CtTemplate, CtTransform } from "../types";
 import { normalizeRegion } from "../lib/design";
-import { IDENTITY_TRANSFORM } from "../lib/geometry";
+import { IDENTITY_TRANSFORM, shapeBounds } from "../lib/geometry";
+import { layoutFor } from "../lib/layout";
+import { faceTargets, placeFaces, type FaceTargets } from "../lib/face-center";
 import { fadeCroppedEdgesData, keyOutBackdrop, opaqueBox } from "../lib/pixel-ops";
 import { phoiPicks, phoiTaskKey } from "../lib/photo-task-key";
 import { isAiStyleRef, styleFamily } from "../lib/photo-styles";
@@ -104,14 +106,40 @@ function parseJson(v: FormDataEntryValue | null): unknown {
   }
 }
 
+/** Each figure of the picture centred on its safe area (lib/face-center), one scale for all; null = nothing to place. */
+async function centerFaces(data: Buffer, w: number, h: number, targets: FaceTargets): Promise<Buffer | null> {
+  const plan = placeFaces(data, w, h, targets);
+  if (!plan) return null;
+  const layers = await Promise.all(
+    plan.pieces.map(async (p) => {
+      const dw = Math.max(1, Math.min(plan.width, Math.round(p.dst.w)));
+      const dh = Math.max(1, Math.min(plan.height, Math.round(p.dst.h)));
+      const input = await sharp(data, { raw: { width: w, height: h, channels: 4 } })
+        .extract({ left: p.src.x, top: p.src.y, width: p.src.w, height: p.src.h })
+        .resize(dw, dh, { fit: "fill", kernel: "lanczos3" })
+        .png()
+        .toBuffer();
+      const clamp = (v: number, size: number, room: number) => Math.max(0, Math.min(room - size, Math.round(v)));
+      return { input, left: clamp(p.dst.x, dw, plan.width), top: clamp(p.dst.y, dh, plan.height) };
+    }),
+  );
+  const background = plan.opaque ? { r: 255, g: 255, b: 255, alpha: 1 } : { r: 0, g: 0, b: 0, alpha: 0 };
+  return sharp({ create: { width: plan.width, height: plan.height, channels: 4, background } }).composite(layers).png().toBuffer();
+}
+
 /** The browser's finishing steps (lib/photo-process) on the server's answer: key, fade, trim → PNG. keepFrame (a style's
- * params.keepFrame): the whole canvas stays — no fade, no trim — so the picture lands in its zone as drawn. */
-async function finishPhoto(out: PhotoResult, cutout: boolean, fadeCrop: boolean, face: boolean, keepFrame: boolean): Promise<Buffer> {
+ * params.keepFrame): no fade, no trim — and with the khuôn's safe areas in the zone (`targets`) each figure is centred
+ * on its own area (front + back of a doll), else the picture lands in its zone as drawn. */
+async function finishPhoto(out: PhotoResult, cutout: boolean, fadeCrop: boolean, face: boolean, keepFrame: boolean, targets: FaceTargets | null): Promise<Buffer> {
   const { data, info } = await sharp(out.image.data).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const w = info.width;
   const h = info.height;
   if (out.backdrop === "white") keyOutBackdrop(data, w, h, { tolerance: 26, feather: 2 });
   if (cutout && fadeCrop && !face && !keepFrame) fadeCroppedEdgesData(data, w, h);
+  if (keepFrame && targets) {
+    const centred = await centerFaces(data, w, h, targets);
+    if (centred) return centred;
+  }
   const img = sharp(data, { raw: { width: w, height: h, channels: 4 } });
   const box = cutout && !keepFrame ? opaqueBox(data, w, h, 2) : null;
   return (box ? img.extract({ left: box.x, top: box.y, width: box.w, height: box.h }) : img).png().toBuffer();
@@ -156,11 +184,14 @@ export async function createPhotoTask(productId: string, form: FormData, ip: str
   const mainId = versionOf(tpl, form.get("mainId"));
   const selection = readSelection(parseJson(form.get("selection")));
   const optionId = typeof form.get("optionId") === "string" && form.get("optionId") ? String(form.get("optionId")) : null;
+  // keepFrame: the figures go on the khuôn's safe areas inside the zone (as the zone sits on this version).
+  const keepFrame = normalizeAiStyleParams(aiStyle.params).keepFrame;
+  const targets = keepFrame ? faceTargets(tpl.config.print, shapeBounds(layoutFor(tpl.config.layouts, mainId)?.regions[region.id]?.shape ?? region.shape)) : null;
 
   void (async () => {
     try {
       const out = hit ?? (await processPhoto(job));
-      const png = await finishPhoto(out, parsed.cutout, cfg.fadeCrop, styleFamily(style) === "face", normalizeAiStyleParams(aiStyle.params).keepFrame);
+      const png = await finishPhoto(out, parsed.cutout, cfg.fadeCrop, styleFamily(style) === "face", keepFrame, targets);
       const [photoUrl, sourceUrl] = await Promise.all([
         ctUpload(ctPublicUploadPath(productId, "photo", "image/png"), png, "image/png"),
         ctUpload(ctPublicUploadPath(productId, "source", parsed.mime), parsed.data, parsed.mime),

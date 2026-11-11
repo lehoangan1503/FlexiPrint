@@ -88,6 +88,7 @@ import {
   isLinkedLayer,
 } from "../lib/design";
 import { IDENTITY_TRANSFORM, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds } from "../lib/geometry";
+import { faceTargets } from "../lib/face-center";
 import { filterBlob, processPhoto, shrinkImage } from "../lib/photo-process";
 import { isAiStyleRef, styleEngine, styleFamily, styleFilter, styleLabel } from "../lib/photo-styles";
 import { phoiPicks, phoiTaskKey } from "../lib/photo-task-key";
@@ -1769,7 +1770,8 @@ export class Customizer {
                   source = blob;
                   const name = nameFor(next);
                   const keepFrame = this.aiStyleInfo(next)?.keepFrame === true;
-                  return keep(await processPhoto({ source: blob, style: next, cutout: cfg.cutout, fadeCrop: cfg.fadeCrop, keepFrame, endpoint: this.photoUrl, fields: { region: r.id, ...(name ? { name } : {}) } }));
+                  const centerOn = keepFrame ? faceTargets(this.tpl.config.print, shapeBounds(zoneNow().shape)) : null;
+                  return keep(await processPhoto({ source: blob, style: next, cutout: cfg.cutout, fadeCrop: cfg.fadeCrop, keepFrame, centerOn, endpoint: this.photoUrl, fields: { region: r.id, ...(name ? { name } : {}) } }));
                 })();
       renders.set(next, p);
       p.catch(() => renders.delete(next));

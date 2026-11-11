@@ -21,6 +21,7 @@ import { removeBackgroundFrom, trimTransparent } from "./image-tools";
 import { needsServer, styleEngine, styleFamily, styleFilter, type CtPhotoFilter } from "./photo-styles";
 import { jobFetch } from "./job-fetch";
 import { fadeCroppedEdgesData } from "./pixel-ops";
+import { placeFaces, type FaceTargets } from "./face-center";
 
 const isFaceStyle = (style: CtPhotoStyleRef) => styleFamily(style) === "face";
 
@@ -38,6 +39,8 @@ export interface PhotoProcessRequest {
   endpoint: string;
   /** The style keeps its whole canvas (CtAiStyleParams.keepFrame): no fade, no trim — it lands in the zone as drawn. */
   keepFrame?: boolean;
+  /** With keepFrame: the khuôn's safe areas in the zone — each figure centred on its own (lib/face-center). */
+  centerOn?: FaceTargets | null;
   /** Extra multipart fields (the storefront sends its region id). */
   fields?: Record<string, string>;
   signal?: AbortSignal;
@@ -107,10 +110,30 @@ export async function processPhoto(req: PhotoProcessRequest): Promise<Blob> {
   // Face styles end at the jaw on purpose (services/face-detect): no fade into a body that isn't there.
   if (req.cutout && req.fadeCrop && !isFaceStyle(req.style) && !req.keepFrame) canvas = fadeCroppedEdges(canvas);
   if (req.cutout && !req.keepFrame) canvas = trimTransparent(canvas, 2);
+  if (req.keepFrame && req.centerOn) canvas = centerFaces(canvas, req.centerOn) ?? canvas;
   if (styleEngine(req.style) === "local") canvas = pixelArt(canvas, { cells: 170, colors: 64 });
   const filter = styleFilter(req.style);
   if (filter) canvas = colorFilter(canvas, filter);
   return hasAlpha(canvas) ? canvasToBlob(canvas, "image/png") : canvasToBlob(canvas, "image/jpeg", 0.92);
+}
+
+/** Each figure centred on its safe area, one scale for all (server/photo-tasks does the same with sharp). */
+function centerFaces(src: HTMLCanvasElement, targets: FaceTargets): HTMLCanvasElement | null {
+  const data = src.getContext("2d", { willReadFrequently: true })?.getImageData(0, 0, src.width, src.height).data;
+  const plan = data ? placeFaces(data, src.width, src.height, targets) : null;
+  if (!plan) return null;
+  const out = document.createElement("canvas");
+  out.width = plan.width;
+  out.height = plan.height;
+  const ctx = out.getContext("2d");
+  if (!ctx) return null;
+  if (plan.opaque) {
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, out.width, out.height);
+  }
+  ctx.imageSmoothingQuality = "high";
+  for (const p of plan.pieces) ctx.drawImage(src, p.src.x, p.src.y, p.src.w, p.src.h, p.dst.x, p.dst.y, p.dst.w, p.dst.h);
+  return out;
 }
 
 /** A colour filter on a processed photo (alpha kept): the Face filters all start from one "Real face" cut. */

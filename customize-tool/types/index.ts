@@ -200,8 +200,8 @@ export interface CtAiStyleParams {
   /** Output shape: square, follow the photo, or a fixed ratio (asked 2026-11-11: 3:2, 16:9, 2:1… so the picture fits
    * the artwork / print file it goes in). The ratio is said in the prompt and the answer padded to it exactly. */
   aspect: CtAiStyleAspect;
-  /** Keep the whole canvas (no trim to the subject) so the picture lands in its zone exactly as drawn — two dolls
-   * drawn at the two print areas stay there (asked 2026-11-11). */
+  /** Keep the whole canvas (no trim to the subject); with the khuôn's safe areas inside the zone each figure is
+   * centred on its own area at one shared scale (lib/face-center — front + back of a doll). On by default (2026-11-11). */
   keepFrame: boolean;
   /** The customer types a name in the photo dialog; it goes at the end of the prompt as "Name: …" (nothing when
    * left empty) — a name on the elf hat (asked 2026-11-11, like the team's studio tick). */

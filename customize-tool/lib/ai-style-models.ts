@@ -66,7 +66,7 @@ export function cleanCustomerName(name: unknown): string {
 
 export const CT_AI_STYLE_DEFAULT_PARAMS: CtAiStyleParams = {
   aspect: "1:1",
-  keepFrame: false,
+  keepFrame: true,
   askName: false,
   removeBackground: true,
   demoUrl: "",
@@ -91,7 +91,8 @@ export function normalizeAiStyleParams(raw: Partial<CtAiStyleParams> | null | un
   const url = (v: unknown) => (typeof v === "string" && /^https?:\/\//.test(v) ? v : "");
   return {
     aspect: isAiStyleAspect(p.aspect) ? p.aspect : "1:1",
-    keepFrame: p.keepFrame === true,
+    // On unless switched off (asked 2026-11-11: "cái này phải là mặc định").
+    keepFrame: p.keepFrame !== false,
     askName: p.askName === true,
     removeBackground: p.removeBackground !== false,
     demoUrl: url(p.demoUrl),

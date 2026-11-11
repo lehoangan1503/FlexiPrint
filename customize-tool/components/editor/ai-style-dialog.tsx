@@ -172,7 +172,7 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
         </CtField>
         <div className="space-y-1">
           <CtCheckbox checked={body.params.keepFrame} disabled={readOnly} onChange={(v) => setParams({ keepFrame: v })} label="Giữ nguyên khung ảnh (không cắt sát hình)" />
-          <p className="pl-6 text-[10px] leading-snug text-muted-foreground">Ảnh đặt vào vùng đúng như AI vẽ — vd mặt trước + mặt sau búp bê nằm đúng 2 vùng in.</p>
+          <p className="pl-6 text-[10px] leading-snug text-muted-foreground">Mặc định bật. Khuôn có vùng an toàn (nét đứt) trong vùng ảnh: mỗi hình vào giữa 1 vùng, cùng cỡ — vd mặt trước + mặt sau búp bê vào giữa 2 vùng in. Không có vùng an toàn: ảnh vào vùng đúng như AI vẽ.</p>
         </div>
         <div className="space-y-1">
           <CtCheckbox checked={body.params.askName} disabled={readOnly} onChange={(v) => setParams({ askName: v })} label="Cho khách nhập tên, ghép vào cuối prompt" />

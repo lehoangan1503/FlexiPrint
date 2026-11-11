@@ -109,6 +109,9 @@ def on_sheet(layer, W: int, H: int) -> np.ndarray:
 
 # ---------------------------------------------------------------- khuôn
 
+# Custom-shape products (acrylic / wood cut along the design): "Cut-out Shape", "Cut Design", "cut-2 copy 3", "Hình Cắt".
+CUT = re.compile(r"cut-?out|^cut\b|cut[- ]?design|design c[aắ]t|hình c[aắ]t|phần c[aắ]t", re.I)
+
 
 def safe_shapes(lines: np.ndarray, W: int, H: int) -> list[dict]:
     """Dashed safe lines (0/1, sheet px) → the areas they close in: rect / ellipse / polygon, sheet px. The big areas
@@ -188,7 +191,7 @@ def guide_of(mask: np.ndarray, lines_rgba: np.ndarray | None) -> Image.Image:
 def classify(psd) -> tuple[str, dict]:
     layers = list(psd.descendants())
     names = [name_of(l).lower() for l in layers]
-    if any(re.search(r"cut-?out shape|^cut design|design c[aắ]t|hình cắt|^cut-design", n) for n in names):
+    if any(CUT.search(n) for n in names):
         return "cut", {}
     gray = next((l for l in layers if not l.is_group() and re.fullmatch(r"gr[ae]y", name_of(l), re.I)), None)
     safe = next((l for l in layers if re.fullmatch(r"safe ?zone", name_of(l), re.I)), None)
@@ -307,6 +310,10 @@ def _render(psd, chain, sos, fill: int) -> np.ndarray:
 
 def read_mockup(path: str, sheet: tuple[int, int] | None) -> dict:
     psd = PSDImage.open(path)
+    # A custom-shape product's mockup shows the example design's own outline (a "Cut" smart object, a stacked "Depth"
+    # edge): its phôi depends on each design — not a fixed blank.
+    if any((l.kind == "smartobject" and CUT.search(name_of(l))) or (l.is_group() and re.fullmatch(r"depth", name_of(l), re.I)) for l in psd.descendants()):
+        return {"error": "Sản phẩm cắt theo hình thiết kế — phôi theo hình từng thiết kế, không có phôi cố định"}
     scenes: dict = {}
     for layer in psd.descendants():
         if layer.kind != "smartobject" or not layer.visible:

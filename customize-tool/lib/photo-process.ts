@@ -37,9 +37,8 @@ export interface PhotoProcessRequest {
   fadeCrop?: boolean;
   /** POST endpoint of the server step (public/photo/:id or products/:id/photo). */
   endpoint: string;
-  /** The style keeps its whole canvas (CtAiStyleParams.keepFrame): no fade, no trim — it lands in the zone as drawn. */
-  keepFrame?: boolean;
-  /** With keepFrame: the khuôn's safe areas in the zone — each figure centred on its own (lib/face-center). */
+  /** The khuôn's safe areas in the zone (2+, lib/face-center faceTargets): each figure centred on its own instead of
+   * the fade + trim. */
   centerOn?: FaceTargets | null;
   /** Extra multipart fields (the storefront sends its region id). */
   fields?: Record<string, string>;
@@ -108,9 +107,12 @@ export async function processPhoto(req: PhotoProcessRequest): Promise<Blob> {
   const input = await shrinkImage(req.source, isFaceStyle(req.style) ? FACE_PROCESS_MAX_PX : PROCESS_MAX_PX);
   let canvas = needsServer(req.style, req.cutout) ? await serverStep(req, input) : toCanvas(await blobToImage(input));
   // Face styles end at the jaw on purpose (services/face-detect): no fade into a body that isn't there.
-  if (req.cutout && req.fadeCrop && !isFaceStyle(req.style) && !req.keepFrame) canvas = fadeCroppedEdges(canvas);
-  if (req.cutout && !req.keepFrame) canvas = trimTransparent(canvas, 2);
-  if (req.keepFrame && req.centerOn) canvas = centerFaces(canvas, req.centerOn) ?? canvas;
+  const centred = req.centerOn ? centerFaces(canvas, req.centerOn) : null;
+  if (centred) canvas = centred;
+  else {
+    if (req.cutout && req.fadeCrop && !isFaceStyle(req.style)) canvas = fadeCroppedEdges(canvas);
+    if (req.cutout) canvas = trimTransparent(canvas, 2);
+  }
   if (styleEngine(req.style) === "local") canvas = pixelArt(canvas, { cells: 170, colors: 64 });
   const filter = styleFilter(req.style);
   if (filter) canvas = colorFilter(canvas, filter);

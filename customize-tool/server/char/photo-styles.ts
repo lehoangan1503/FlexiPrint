@@ -82,8 +82,8 @@ export interface SaveStyleArgs {
   /** Style reference pictures (image 2, 3…); absent = unchanged (a new style: none). */
   refUrls?: string[];
   zoneId?: string;
-  /** Output shape / keep the canvas / ask the customer's name (CtAiStyleParams); absent = unchanged (new: defaults). */
-  shape?: Partial<Pick<CtAiStyleParams, "aspect" | "keepFrame" | "askName">>;
+  /** Output shape / ask the customer's name (CtAiStyleParams); absent = unchanged (new: defaults). */
+  shape?: Partial<Pick<CtAiStyleParams, "aspect" | "askName">>;
 }
 
 const httpUrl = (u: unknown): u is string => typeof u === "string" && /^https?:\/\//.test(u);

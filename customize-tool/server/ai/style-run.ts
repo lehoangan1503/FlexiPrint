@@ -9,7 +9,7 @@
 
 import type { CtAiStyle } from "../../types";
 import { CT_IMAGE_MODEL } from "../../lib/image-models";
-import { CT_AI_STYLE_CLEAR_BG_LINE, aiStyleAspectLine, aiStyleNameLine, normalizeAiStyleParams } from "../../lib/ai-style-models";
+import { CT_AI_STYLE_CLEAR_BG_LINE, aiStyleAspectLine, aiStylePromptWithName, normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { drawImage } from "../pack-images";
 import { readImageInfo } from "../image-size";
 import type { ProviderImage } from "./providers";
@@ -35,7 +35,8 @@ export function isNotTransparentError(e: unknown): boolean {
  */
 export type StyleBackground = "clear" | "white" | "none";
 
-/** `name`: the customer's typed name, added as "Name: …" at the very end when the style asks for it (params.askName). */
+/** `name`: the customer's typed name — put in for [NAME] in the prompt, else added as "Name: …" at the very end when the
+ * style's tick asks for it (params.askName). */
 export async function runStyleModel(style: CtAiStyle, image: ProviderImage, bg: StyleBackground, name?: string): Promise<ProviderImage> {
   const p = normalizeAiStyleParams(style.params);
   const info = readImageInfo(image.data);
@@ -56,8 +57,7 @@ export async function runStyleModel(style: CtAiStyle, image: ProviderImage, bg: 
     : body.includes(CT_AI_STYLE_CLEAR_BG_LINE) ? ""
     : `\n\n${CT_AI_STYLE_CLEAR_BG_LINE}`;
   const shape = aiStyleAspectLine(p.aspect);
-  const who = p.askName ? aiStyleNameLine(name) : "";
-  const prompt = [head + body + tail, shape, who].filter(Boolean).join("\n\n");
+  const prompt = aiStylePromptWithName([head + body + tail, shape].filter(Boolean).join("\n\n"), p, name);
   const out = await drawImage(CT_IMAGE_MODEL, prompt, [uri, ...refs], aspect, "pad", bg === "clear");
   return { data: out.data, mime: out.mime };
 }

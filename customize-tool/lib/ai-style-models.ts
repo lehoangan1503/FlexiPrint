@@ -53,6 +53,22 @@ export function aiStyleAspectLine(aspect: CtAiStyleAspect): string {
   return `Output format: a ${w > h ? "landscape" : "portrait"} picture with aspect ratio ${w}:${h} (width:height). Compose for that exact shape and use the whole canvas.`;
 }
 
+/** The place a prompt wants the customer's name (the team's NAS prompts write [NAME]). */
+const NAME_TOKEN = /\[NAME\]/i;
+
+/** Does the style ask the customer's name: the tick, or a prompt with [NAME] (asked 2026-11-11: not every prompt has a name). */
+export function aiStyleAsksName(p: Pick<CtAiStyleParams, "askName">, prompt: string): boolean {
+  return p.askName || NAME_TOKEN.test(prompt);
+}
+
+/** The prompt with the customer's name: put in for every [NAME], else "Name: …" added at the end (when asked). */
+export function aiStylePromptWithName(prompt: string, p: Pick<CtAiStyleParams, "askName">, name: string | undefined): string {
+  const n = cleanCustomerName(name);
+  if (NAME_TOKEN.test(prompt)) return prompt.replace(/\[NAME\]/gi, n);
+  const line = p.askName ? aiStyleNameLine(n) : "";
+  return line ? `${prompt}\n\n${line}` : prompt;
+}
+
 /** "Name: …" for the end of the prompt (params.askName); "" when the customer left it empty. */
 export function aiStyleNameLine(name: string | undefined): string {
   const n = cleanCustomerName(name);
@@ -66,7 +82,6 @@ export function cleanCustomerName(name: unknown): string {
 
 export const CT_AI_STYLE_DEFAULT_PARAMS: CtAiStyleParams = {
   aspect: "1:1",
-  keepFrame: true,
   askName: false,
   removeBackground: true,
   demoUrl: "",
@@ -91,8 +106,6 @@ export function normalizeAiStyleParams(raw: Partial<CtAiStyleParams> | null | un
   const url = (v: unknown) => (typeof v === "string" && /^https?:\/\//.test(v) ? v : "");
   return {
     aspect: isAiStyleAspect(p.aspect) ? p.aspect : "1:1",
-    // On unless switched off (asked 2026-11-11: "cái này phải là mặc định").
-    keepFrame: p.keepFrame !== false,
     askName: p.askName === true,
     removeBackground: p.removeBackground !== false,
     demoUrl: url(p.demoUrl),

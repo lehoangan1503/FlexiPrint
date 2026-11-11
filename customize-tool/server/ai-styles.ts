@@ -26,7 +26,7 @@ import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_CONFIG, CT_TABLES } from "../config";
 import type { CtAiStyle, CtAiStyleBody, CtAiStyleRef, CtPublicAiStyle } from "../types";
-import { CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL, CT_AI_STYLE_PROMPT_MAX, aiStyleTileUrl, normalizeAiStyleParams } from "../lib/ai-style-models";
+import { CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL, CT_AI_STYLE_PROMPT_MAX, aiStyleAsksName, aiStyleTileUrl, normalizeAiStyleParams } from "../lib/ai-style-models";
 import { aiStyleId, aiStyleRef } from "../lib/photo-styles";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctDownload, ctUpload } from "./storage";
@@ -160,12 +160,12 @@ export async function loadAiStyle(db: Reader, ref: CtAiStyleRef): Promise<CtAiSt
 export async function publicAiStyles(db: Reader, refs: CtAiStyleRef[]): Promise<CtPublicAiStyle[]> {
   const ids = [...new Set(refs.map(aiStyleId))];
   if (!ids.length) return [];
-  const { data } = await db.from(CT_TABLES.aiStyles).select("id,name,params").in("id", ids).returns<Array<Pick<CtAiStyleRow, "id" | "name" | "params">>>();
+  const { data } = await db.from(CT_TABLES.aiStyles).select("id,name,prompt,params").in("id", ids).returns<Array<Pick<CtAiStyleRow, "id" | "name" | "prompt" | "params">>>();
   return (data ?? []).map((r) => {
     // The tile picture: the uploaded thumbnail, else the demo (the storefront reads it as demoUrl).
     const p = normalizeAiStyleParams(r.params);
     const demoUrl = aiStyleTileUrl(p);
-    return { ref: aiStyleRef(r.id), name: r.name, ...(demoUrl ? { demoUrl } : {}), ...(p.keepFrame ? { keepFrame: true } : {}), ...(p.askName ? { askName: true } : {}) };
+    return { ref: aiStyleRef(r.id), name: r.name, ...(demoUrl ? { demoUrl } : {}), ...(aiStyleAsksName(p, r.prompt) ? { askName: true } : {}) };
   });
 }
 

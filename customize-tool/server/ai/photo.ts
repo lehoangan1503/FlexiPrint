@@ -27,7 +27,7 @@
 
 import type { CtAiProviderId, CtAiStyle, CtAspectRatio, CtPhotoCapabilities, CtPhotoStyleRef } from "../../types";
 import { isAiStyleRef, photoStyle } from "../../lib/photo-styles";
-import { cleanCustomerName, normalizeAiStyleParams } from "../../lib/ai-style-models";
+import { aiStyleAsksName, cleanCustomerName, normalizeAiStyleParams } from "../../lib/ai-style-models";
 import { cachedPhoto, peekPhotoCache, photoCacheKey } from "../photo-cache";
 import { pngHasTransparency } from "../png-alpha";
 import { aiStylesConfigured, isNotTransparentError, runStyleModel } from "./style-run";
@@ -335,7 +335,7 @@ export function photoCapabilities(): CtPhotoCapabilities {
 
 /** AI results by (photo, style version, cut-out) — see server/photo-cache.ts. */
 function aiCacheKey(job: PhotoJob, style: CtAiStyle): string {
-  const name = normalizeAiStyleParams(style.params).askName ? cleanCustomerName(job.name) : "";
+  const name = aiStyleAsksName(normalizeAiStyleParams(style.params), style.prompt) ? cleanCustomerName(job.name) : "";
   return photoCacheKey(job.image.data, "ai", style.id, style.updated_at, job.cutout ? 1 : 0, ...(name ? [name] : []));
 }
 

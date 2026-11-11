@@ -3,8 +3,8 @@
 /**
  * Create / edit one AI photo style of the global library. The prompt is the
  * main thing, with up to 4 style reference pictures sent after the customer's photo on every run (asked
- * 2026-11-04); every style runs on GPT Image 2.5 (no model picker). 2026-11-11: output ratio (3:2, 16:9, 2:1…), "keep the
- * whole frame" (no trim) and "the customer's name at the end of the prompt" are back as plain fields. Frame / background stay on their defaults
+ * 2026-11-04); every style runs on GPT Image 2.5 (no model picker). 2026-11-11: output ratio (3:2, 16:9, 2:1…) and "the
+ * customer's name" ([NAME] in the prompt, or the tick: "Name: …" at the end). Frame / background stay on their defaults
  * (square, cut out — the "Nâng cao" section was removed 2026-11-04). "Ảnh demo"
  * (only when editing — hidden when adding a new style, 2026-11-04) runs the saved style on a sample photo — the picture editors and customers
  * pick the style by. "Ảnh thumbnail" (asked 2026-11-10) is an uploaded picture shown on the customer's style tile
@@ -61,7 +61,6 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
         body.prompt !== editing.prompt ||
         body.params.removeBackground !== editing.params.removeBackground ||
         body.params.aspect !== editing.params.aspect ||
-        body.params.keepFrame !== editing.params.keepFrame ||
         body.params.askName !== editing.params.askName ||
         body.params.thumbUrl !== editing.params.thumbUrl ||
         body.params.refUrls.join("|") !== editing.params.refUrls.join("|");
@@ -171,12 +170,14 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
           </div>
         </CtField>
         <div className="space-y-1">
-          <CtCheckbox checked={body.params.keepFrame} disabled={readOnly} onChange={(v) => setParams({ keepFrame: v })} label="Giữ nguyên khung ảnh (không cắt sát hình)" />
-          <p className="pl-6 text-[10px] leading-snug text-muted-foreground">Mặc định bật. Khuôn có vùng an toàn (nét đứt) trong vùng ảnh: mỗi hình vào giữa 1 vùng, cùng cỡ — vd mặt trước + mặt sau búp bê vào giữa 2 vùng in. Không có vùng an toàn: ảnh vào vùng đúng như AI vẽ.</p>
-        </div>
-        <div className="space-y-1">
-          <CtCheckbox checked={body.params.askName} disabled={readOnly} onChange={(v) => setParams({ askName: v })} label="Cho khách nhập tên, ghép vào cuối prompt" />
-          <p className="pl-6 font-mono text-[10px] leading-snug text-muted-foreground">«Name: …» — khách không nhập tên thì không ghép.</p>
+          {/\[NAME\]/i.test(body.prompt) ? (
+            <p className="text-[11px] leading-snug text-muted-foreground">Prompt có <span className="font-mono">[NAME]</span>: khách được hỏi tên, tên thay vào đúng chỗ <span className="font-mono">[NAME]</span>.</p>
+          ) : (
+            <>
+              <CtCheckbox checked={body.params.askName} disabled={readOnly} onChange={(v) => setParams({ askName: v })} label="Cho khách nhập tên, ghép vào cuối prompt" />
+              <p className="pl-6 font-mono text-[10px] leading-snug text-muted-foreground">«Name: …» — chỉ bật khi prompt dùng tên. Hoặc viết [NAME] vào prompt ở chỗ cần tên.</p>
+            </>
+          )}
         </div>
         <CtField label={`Ảnh tham chiếu (tối đa ${CT_AI_STYLE_MAX_REFS})`}>
           <div className="flex flex-wrap gap-2">

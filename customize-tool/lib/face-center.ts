@@ -1,8 +1,9 @@
 /**
  * A customer photo drawn as several figures side by side (a plush doll's front + back) placed on the khuôn's print
  * areas: each figure centred on its own safe area, all at ONE scale (front and back the same size, like one sewing
- * pattern) — asked 2026-11-11 for the Funny Face doll ("2 mặt ảnh phải ở center khuôn in"). Runs on AI styles with
- * params.keepFrame when the photo zone holds safe areas of the product's khuôn.
+ * pattern) — asked 2026-11-11 for the Funny Face doll ("2 mặt ảnh phải ở center khuôn in"). Runs on every AI style
+ * when the photo zone holds 2+ safe areas of the product's khuôn (no setting: "không phải cái nào cũng là doll 2 mặt" —
+ * a one-face product keeps the usual trim + fit).
  *
  * Pure geometry on RGBA pixels: placeFaces says which source box goes where on a new picture shaped like the zone;
  * the browser (lib/photo-process, canvas) and the server (server/photo-tasks, sharp) draw it.
@@ -38,14 +39,14 @@ const FILL = 0.97;
 /** The new picture's longest side at most (a print zone is often 8 000 px wide; the AI picture ~1 800). */
 const MAX_SIDE = 4096;
 
-/** The khuôn's safe areas whose centre lies in the zone (canvas px); null when there are none. */
+/** The khuôn's safe areas whose centre lies in the zone (canvas px); null unless there are 2 or more (several faces). */
 export function faceTargets(print: CtProductPrint | null | undefined, zone: CtBounds): FaceTargets | null {
   const faces = (print?.spec.safe ?? []).map(shapeBounds).filter((b) => {
     const cx = b.x + b.w / 2;
     const cy = b.y + b.h / 2;
     return b.w > 0 && b.h > 0 && cx >= zone.x && cx <= zone.x + zone.w && cy >= zone.y && cy <= zone.y + zone.h;
   });
-  return faces.length && zone.w > 0 && zone.h > 0 ? { zone, faces } : null;
+  return faces.length >= 2 && zone.w > 0 && zone.h > 0 ? { zone, faces } : null;
 }
 
 type Pixels = Uint8Array | Uint8ClampedArray;

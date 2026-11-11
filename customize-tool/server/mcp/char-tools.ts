@@ -1215,8 +1215,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
         ref_urls: { type: "array", items: { type: "string" }, description: "≤ 4 picture urls sent after the customer's photo." },
         zone_id: { type: "string", description: "Photo zone (default: the first)." },
         aspect: { type: "string", description: `Output shape: ${CT_AI_STYLE_ASPECTS.map((x) => x.id).join(" | ")} (default 1:1; "auto" = the photo's shape). Pick the shape of the artwork / print area the picture fills (two dolls front + back on a 2:1 print = "2:1"). Omit = unchanged.` },
-        keep_frame: { type: "boolean", description: "true = the picture is placed in its zone as drawn (whole canvas, no trim to the subject) — for a layout that must land on fixed print areas. Omit = unchanged." },
-        ask_name: { type: "boolean", description: "true = the customer types a name in the photo dialog, added at the end of the prompt as \"Name: …\" (nothing when empty) — write the prompt so it uses it (\"write the Name on the hat\"). Omit = unchanged." },
+        ask_name: { type: "boolean", description: "true = the customer types a name in the photo dialog, added at the end of the prompt as \"Name: …\" (nothing when empty) — write the prompt so it uses it (\"write the Name on the hat\"). A prompt with [NAME] always asks and gets the name in that place (no tick needed). Omit = unchanged." },
       },
       required: ["task_id", "name", "prompt"],
     },
@@ -1231,7 +1230,6 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
         zoneId: str(args.zone_id) || undefined,
         shape: {
           ...(isAiStyleAspect(args.aspect) ? { aspect: args.aspect } : {}),
-          ...(typeof args.keep_frame === "boolean" ? { keepFrame: args.keep_frame } : {}),
           ...(typeof args.ask_name === "boolean" ? { askName: args.ask_name } : {}),
         },
       });

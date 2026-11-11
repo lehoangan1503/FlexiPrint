@@ -1121,7 +1121,7 @@ export class Customizer {
     return out;
   }
 
-  /** The published AI style's flags (keepFrame / askName); undefined for a built-in style. */
+  /** The published AI style's flags (askName); undefined for a built-in style. */
   private aiStyleInfo(style: CtPhotoStyleRef): CtPublicAiStyle | undefined {
     return this.tpl.aiStyles?.find((x) => x.ref === style);
   }
@@ -1769,9 +1769,8 @@ export class Customizer {
                   const blob: Blob = source ?? (await fetch(src).then((res) => res.blob()));
                   source = blob;
                   const name = nameFor(next);
-                  const keepFrame = this.aiStyleInfo(next)?.keepFrame === true;
-                  const centerOn = keepFrame ? faceTargets(this.tpl.config.print, shapeBounds(zoneNow().shape)) : null;
-                  return keep(await processPhoto({ source: blob, style: next, cutout: cfg.cutout, fadeCrop: cfg.fadeCrop, keepFrame, centerOn, endpoint: this.photoUrl, fields: { region: r.id, ...(name ? { name } : {}) } }));
+                  const centerOn = isAiStyleRef(next) ? faceTargets(this.tpl.config.print, shapeBounds(zoneNow().shape)) : null;
+                  return keep(await processPhoto({ source: blob, style: next, cutout: cfg.cutout, fadeCrop: cfg.fadeCrop, centerOn, endpoint: this.photoUrl, fields: { region: r.id, ...(name ? { name } : {}) } }));
                 })();
       renders.set(next, p);
       p.catch(() => renders.delete(next));

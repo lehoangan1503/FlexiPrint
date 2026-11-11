@@ -1172,10 +1172,9 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
       url = URL.createObjectURL(await processPhoto({ source: base, style, cutout: false, endpoint: ctApi.photoEndpoint(region.product_id) }));
     } else {
       const source = await fetch(sourceUrl).then((r) => r.blob());
-      const keepFrame = isAiStyleRef(style) && ai.styles.find((s) => aiStyleRef(s.id) === style)?.params.keepFrame === true;
-      // Like the store: each figure centred on the khuôn's safe area it falls in (lib/face-center).
-      const centerOn = keepFrame ? faceTargets(props.print ?? design.state.config.print, shapeBounds(region.shape)) : null;
-      url = URL.createObjectURL(await processPhoto({ source, style, cutout: cfg.photo.cutout, fadeCrop: cfg.photo.fadeCrop, keepFrame, centerOn, endpoint: ctApi.photoEndpoint(region.product_id) }));
+      // Like the store: on a khuôn with 2+ safe areas in the zone each figure is centred on its own (lib/face-center).
+      const centerOn = isAiStyleRef(style) ? faceTargets(props.print ?? design.state.config.print, shapeBounds(region.shape)) : null;
+      url = URL.createObjectURL(await processPhoto({ source, style, cutout: cfg.photo.cutout, fadeCrop: cfg.photo.fadeCrop, centerOn, endpoint: ctApi.photoEndpoint(region.product_id) }));
     }
     renders.current.set(key, url);
     return url;

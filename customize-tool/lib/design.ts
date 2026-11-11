@@ -263,9 +263,11 @@ function normalizePhotoConfig(p: CtPhotoConfig): CtPhotoConfig {
     enabled: f.enabled !== false,
     ...(f.head === true ? { head: true } : {}),
   };
-  // Face zones saved before `auto` existed fit the head automatically unless their frame was moved by hand.
+  // The auto frame is a Face thing only (asked 2026-11-11: "chỉ apply khi style là face detect"): an AI / free zone's
+  // frame is the one the editor set by hand (default = the zone itself). Face zones saved before `auto` existed fit
+  // the head automatically unless their frame was moved by hand.
   const untouched = frame.offsetX === 0 && frame.offsetY === 0 && frame.scaleX === 1 && frame.scaleY === 1 && frame.rotation === 0 && frame.padding === 0;
-  frame.auto = typeof f.auto === "boolean" ? f.auto : family === "face" && untouched;
+  frame.auto = family === "face" && (typeof f.auto === "boolean" ? f.auto : untouched);
   // Face filters are a "Filter" row of round swatches (default Real face); zones saved with the generic label get it.
   const styleLabel = family === "face" && (!p.styleLabel?.trim() || p.styleLabel === "Choose style") ? "Filter" : p.styleLabel;
   return { ...p, mode, frame, cutout: true, fadeCrop: true, styles: list, styleLabel, defaultStyle: list.includes(p.defaultStyle) ? p.defaultStyle : list[0] };

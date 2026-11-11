@@ -1095,16 +1095,17 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
   /** `${sourceUrl}|${style}|${cutout}|${fadeCrop}|${version}` → rendered blob URL, so flipping styles doesn't re-bill the AI. */
   const renders = useRef(new Map<string, string>());
   const label = (ref: CtPhotoStyleRef) => styleLabel(ref, ai.names);
-  /** AI styles on a khuôn with 2+ safe areas in the zone come back already shaped like the zone, each figure centred
-   * on its safe area (lib/face-center): they fill the zone 1:1, so the zone keeps no child frame (an auto frame grows
-   * the photo ~15 % + margin past the zone and moves the figures off their safe areas — bug 2026-11-11). */
-  const centredZone = () => isAiStyleRef(cfg.photo.defaultStyle) && faceTargets(props.print ?? design.state.config.print, shapeBounds(region.shape)) !== null;
-  /** The frame a new test photo starts from: a fresh auto frame, or none on a centred zone. */
+  /** Only Face zones fit their frame to each photo (the trimmed head). Every other zone keeps the frame the editor
+   * set by hand — by default the zone itself (asked 2026-11-11: no "Tự khớp" for AI styles; a doll's centred
+   * picture fills its zone 1:1, an auto frame grew it ~153 % past the khuôn). */
+  const faceZone = styleFamily(cfg.photo.defaultStyle) === "face";
+  /** The default frame of this zone: auto for Face, the zone's own box otherwise. */
+  const defaultFrame = (fr: CtPhotoFrame): CtPhotoFrame =>
+    faceZone ? { ...IDENTITY_PHOTO_FRAME, auto: true, tilt: fr.tilt, ...(fr.head ? { head: true } : {}) } : { ...IDENTITY_PHOTO_FRAME, tilt: fr.tilt };
+  /** A new test photo: Face gets a fresh auto frame; elsewhere the frame stays where the editor put it (shown again if it was deleted). */
   const resetFrame = () => {
     const fr = cfg.photo.frame;
-    if (centredZone()) {
-      if (fr.enabled) set({ frame: { ...IDENTITY_PHOTO_FRAME, enabled: false, tilt: fr.tilt } });
-    } else if (!fr.enabled || !fr.auto) set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true, tilt: fr.tilt, ...(fr.head ? { head: true } : {}) } });
+    if (faceZone ? !fr.enabled || !fr.auto : !fr.enabled) set({ frame: defaultFrame(fr) });
   };
 
   useEffect(() => {
@@ -1140,7 +1141,9 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
     const same = styles.filter((s) => styleFamily(s) === t);
     if (t === "ai") {
       const ref = selectedAi ?? defaultAi();
-      set(ref ? { mode: t, styles: pickedAi.length ? pickedAi : [ref], defaultStyle: ref } : { mode: t });
+      // No auto frame outside Face: a frame left fitting a head goes back to the zone's own box.
+      const frame = cfg.photo.frame.auto ? { frame: { ...IDENTITY_PHOTO_FRAME, tilt: cfg.photo.frame.tilt } } : {};
+      set(ref ? { mode: t, styles: pickedAi.length ? pickedAi : [ref], defaultStyle: ref, ...frame } : { mode: t, ...frame });
     } else {
       const list: CtPhotoStyleRef[] = t === "face" ? CT_FACE_STYLES.map((s) => s.id) : same.length ? same : ["original"];
       // A face is a trimmed head cut-out: "contain" keeps its ears / chin inside the frame, which fits itself to the head.
@@ -1232,10 +1235,11 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
         <PhotoFrameFields
           frame={resolvePhotoFrame(cfg.photo, region.shape, photoSize)}
           auto={cfg.photo.frame?.auto ?? false}
+          onReset={() => set({ frame: defaultFrame(cfg.photo.frame) })}
           onChange={(frame) => set({ frame })}
         />
       ) : (
-        <CtButton size="sm" variant="outline" className="w-full" onClick={() => set({ frame: { ...IDENTITY_PHOTO_FRAME, auto: true, ...(cfg.photo.frame?.head ? { head: true, tilt: cfg.photo.frame.tilt } : {}) } })}>
+        <CtButton size="sm" variant="outline" className="w-full" onClick={() => set({ frame: defaultFrame(cfg.photo.frame) })}>
           <Frame className="h-3.5 w-3.5" /> Thêm khung ảnh
         </CtButton>
       )}
@@ -1402,7 +1406,7 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
           {(sel.url || sel.sourceUrl) && (
             <CtButton size="sm" variant="ghost" disabled={working !== null} onClick={() => {
                 // The frame goes with the photo; the next upload works out a new one. Customers get the auto frame.
-                resetFrame();
+                if (faceZone) resetFrame();
                 onPhotoSelection(region.id, { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM } });
               }}>
               <X className="h-3.5 w-3.5" /> Bỏ
@@ -1420,8 +1424,8 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
             if (!f) return;
             const sourceUrl = URL.createObjectURL(f);
             // A new photo always gets a fresh child frame — also after the frame was deleted: worked out again from the
-            // zone (its outline, tilt) and this photo — none on a zone whose AI pictures are centred on the khuôn.
-            // The zone's tilt is the zone's: it stays.
+            // zone (its outline, tilt) and this photo on a Face zone; elsewhere the editor's frame stays. The zone's tilt
+            // is the zone's: it stays.
             resetFrame();
             // The raw upload never goes into the frame: the zone stays empty (with a spinner) until the processed photo is ready.
             const base: CtPhotoSelection = { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM }, style: cfg.photo.defaultStyle, sourceUrl };
@@ -1462,25 +1466,20 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
  * The zone's child frame (CtPhotoFrame) as numbers — the same frame Object mode (↵ / double-click) drags on the canvas.
  * `frame` is the frame in use (worked out for the test photo when auto); editing a number pins it (auto off).
  */
-function PhotoFrameFields({ frame, auto, onChange }: { frame: CtPhotoFrame; auto: boolean; onChange: (f: CtPhotoFrame) => void }) {
+function PhotoFrameFields({ frame, auto, onChange, onReset }: { frame: CtPhotoFrame; auto: boolean; onChange: (f: CtPhotoFrame) => void; onReset: () => void }) {
   const set = (patch: Partial<CtPhotoFrame>) => onChange({ ...frame, ...patch, auto: false });
   const pct = (v: number) => Math.round(v * 1000) / 10;
-  const moved = frame.offsetX !== 0 || frame.offsetY !== 0 || frame.scaleX !== 1 || frame.scaleY !== 1 || frame.rotation !== 0;
+  const moved = frame.offsetX !== 0 || frame.offsetY !== 0 || frame.scaleX !== 1 || frame.scaleY !== 1 || frame.rotation !== 0 || frame.padding !== 0;
   return (
     <div className="space-y-2 rounded-md border p-2.5">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Khung ảnh</span>
         {!auto && moved && (
-          <button type="button" className="text-[11px] text-sky-600 hover:underline" onClick={() => onChange({ ...IDENTITY_PHOTO_FRAME, auto: true, tilt: frame.tilt, ...(frame.head ? { head: true } : {}) })}>
+          <button type="button" className="text-[11px] text-sky-600 hover:underline" onClick={onReset}>
             Đặt lại
           </button>
         )}
       </div>
-      <CtCheckbox
-        checked={auto}
-        onChange={(v) => onChange(v ? { ...frame, auto: true } : { ...frame, auto: false })}
-        label="Tự khớp theo vùng & ảnh"
-      />
       <div className="grid grid-cols-3 gap-2">
         <CtField label="Độ nghiêng °">
           <CtNumber value={frame.rotation} step={1} min={-180} max={180} onChange={(rotation) => set({ rotation })} />

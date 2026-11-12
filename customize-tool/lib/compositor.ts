@@ -13,7 +13,6 @@ import { activeRegions, isStaticLayer, normalizeRegion, regionChoices, regionFor
 import { mainFrameFor, resolveLayout } from "./layout";
 import { frameRegionFor, frameSvgPath, renditionFrameBox, traceFrame } from "./material-frame";
 import { scaleShape } from "./print-template";
-import { sheetToDesign } from "./assembly";
 
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 
@@ -160,8 +159,9 @@ async function drawAssembled(ctx: CanvasRenderingContext2D, input: CompositeInpu
   const { scale } = input;
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   for (const piece of pieces) {
-    // Sheet → product: the piece's outline where it shows, its sheet box drawn into its product box.
-    const p = { shape: sheetToDesign(piece.shape, piece), from: piece.to, to: piece.from };
+    // Sheet → product: its sheet box drawn into its product box, whole — the corners a rounded piece leaves (a hood
+    // piece's crown seam) show the sheet's background there, not a notch in the photo.
+    const p = { shape: { type: "rect" as const, ...piece.from, radius: 0 }, from: piece.to, to: piece.from };
     const k = p.to.w / p.from.w;
     if (!(k > 0) || !Number.isFinite(k)) continue;
     ctx.save();

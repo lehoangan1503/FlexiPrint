@@ -36,7 +36,7 @@ import { fetchImage } from "./char/files";
 import { loadBaseProduct } from "./base-products";
 import { templateRow } from "./print-templates";
 import { addTemplateBlank } from "./print-blanks";
-import { makeBlank, pieceBounds, sceneForBlank, sheetBoxOn } from "./product-mockups";
+import { makeBlank, pieceBounds, sheetBoxOn } from "./product-mockups";
 import { ctRemove, ctUpload } from "./storage";
 import { jsonError, record, str } from "./ai/llm";
 import { ctServiceClient, type CtServiceClient, type CtSession, type CtSupabase } from "./supabase";
@@ -346,8 +346,8 @@ const AUTO_PRESETS: Array<Exclude<CtBaseScenePreset, "custom">> = ["home", "holi
 const runs = new Map<string, CtBaseScenesAuto>();
 
 /**
- * The plain phôi a base's backgrounds are made from — made by AI when the base has none (a khuôn without phôi: added to
- * the khuôn like "Tạo phôi bằng AI"; no khuôn: the base's own preview photo). null + why = nothing to make.
+ * The plain phôi a base's backgrounds are made from — made by AI when its khuôn has none (added to the khuôn like
+ * "Tạo phôi bằng AI"). skip + why = nothing to make it from.
  */
 async function plainPhoi(db: Db, userId: string, base: CtBaseProduct, template: CtPrintTemplate | null, say: (t: string) => void): Promise<{ source: CtProductScene; plain: CtProductScene } | { skip: string }> {
   const cfg = base.config;
@@ -365,15 +365,9 @@ async function plainPhoi(db: Db, userId: string, base: CtBaseProduct, template: 
     const b = t.spec.blanks[0];
     return { source: { url: b.url, width: b.width, height: b.height, box: b.box }, plain };
   }
-  say("AI đang vẽ phôi trơn…");
-  const sheet = sheetOf(cfg, null);
-  const photo = await makeBlank(userId, base.name, null, cfg.material, (cfg.source?.photos ?? []).slice(0, 2));
-  const url = await ctUpload(`${userId}/${CT_CONFIG.storagePrefix}/bases/${base.id}/phoi-${crypto.randomUUID()}.png`, photo, "image/png");
-  const own = await sceneForBlank(photo, url, sheet);
-  // The base's own phôi from now on (what "Phôi trơn" goes back to).
-  const { data: row } = await db.from(CT_TABLES.baseProducts).select("config").eq("id", base.id).maybeSingle<{ config: Record<string, unknown> | null }>();
-  await db.from(CT_TABLES.baseProducts).update({ config: { ...(row?.config ?? {}), preview: own } }).eq("id", base.id);
-  return { source: own, plain: own };
+  // No khuôn: the AI has nothing to draw the piece's shape from (Wood Ornament 2026-11-12: a made-up orange shape
+  // filling the frame) — the editor uploads a phôi first.
+  return { skip: "Base chưa có khuôn hay ảnh phôi — tải phôi lên trước, rồi bấm template để tạo nền" };
 }
 
 async function runAuto(db: Db, userId: string, baseId: string, state: CtBaseScenesAuto): Promise<void> {

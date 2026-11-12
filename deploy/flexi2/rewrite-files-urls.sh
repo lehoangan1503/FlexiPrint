@@ -9,14 +9,14 @@ OLD="https://flexi2.next.lc/files/"
 NEW="https://cdn.teein.top/flexi2/"
 SCHEMA="flexiprint"
 APPLY=0; [ "${1:-}" = "--apply" ] && APPLY=1
-psql() { docker exec -i supabase-db psql -U postgres -v ON_ERROR_STOP=1 -tA "$@"; }
+psql() { docker exec supabase-db psql -U postgres -v ON_ERROR_STOP=1 -tA "$@"; }
 
 cols=$(psql -c "select table_name||'|'||column_name||'|'||data_type from information_schema.columns
   where table_schema='$SCHEMA' and data_type in ('text','character varying','jsonb')
   and table_name in (select table_name from information_schema.tables where table_schema='$SCHEMA' and table_type='BASE TABLE')")
 total=0
-for c in $cols; do
-  IFS='|' read -r t col typ <<<"$c"
+while IFS='|' read -r t col typ; do
+  [ -n "$t" ] || continue
   expr="\"$col\"::text"
   n=$(psql -c "select count(*) from $SCHEMA.\"$t\" where $expr like '%$OLD%'")
   [ "$n" = "0" ] && continue
@@ -26,5 +26,5 @@ for c in $cols; do
     if [ "$typ" = "jsonb" ]; then set_expr="replace(\"$col\"::text, '$OLD', '$NEW')::jsonb"; else set_expr="replace(\"$col\", '$OLD', '$NEW')"; fi
     psql -c "update $SCHEMA.\"$t\" set \"$col\" = $set_expr where $expr like '%$OLD%'" >/dev/null
   fi
-done
+done <<<"$cols"
 echo "tổng: $total dòng-cột $([ $APPLY = 1 ] && echo 'ĐÃ ĐỔI' || echo '(chỉ đếm, chưa đổi gì)')"

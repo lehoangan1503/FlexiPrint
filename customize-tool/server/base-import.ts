@@ -50,7 +50,6 @@ import { ctUpload } from "./storage";
 import { connectTeeinblue, merchizeCatalog, merchizeProduct, teeinblueStatus, TEEINBLUE_CDN, type TibProduct } from "./teeinblue";
 import { ctServiceClient, type CtSession } from "./supabase";
 import { startBaseScenes } from "./base-scenes";
-import { autoAssembly } from "./base-assembly";
 
 const PER_PAGE = 24;
 const PROVIDER_NAME: Record<CtFulfillProvider, string> = { printbelle: "Printbelle", merchize: "Merchize" };
@@ -370,9 +369,6 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
       .select("*")
       .single<CtBaseProduct>();
     if (error) return jsonError(error.message, 500);
-    // A sheet sewn from pieces (hooded blanket): which part of the design each piece prints (server/base-assembly.ts) —
-    // before the backgrounds, which save the config too.
-    await autoAssembly(s.supabase, s.user.id, data.id);
     // Its phôi (if the fulfiller had none) + the 3 ready preview backgrounds, in the background (server/base-scenes.ts).
     startBaseScenes(ctServiceClient() ?? s.supabase, s.user.id, data.id);
     return NextResponse.json({ base: { ...data, config: normalizeBaseConfig(data.config) } }, { status: 201 });
@@ -439,8 +435,7 @@ export async function refreshFulfillerBase(s: CtSession, raw: unknown): Promise<
     const res = await updateBaseProduct(s, base.id, { name: base.name, config });
     if (!res.ok) return res;
     const body = (await res.json()) as { base: CtBaseProduct; reapplied: number; failed: string[] };
-    const sewn = await autoAssembly(s.supabase, s.user.id, base.id);
-    return NextResponse.json({ ...body, note: sewn ? `${note} · ${sewn}` : note, phoi });
+    return NextResponse.json({ ...body, note, phoi });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Lỗi", 502);
   }

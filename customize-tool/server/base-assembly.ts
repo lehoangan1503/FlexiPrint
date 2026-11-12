@@ -1,7 +1,6 @@
 /**
- * A base's print sheet sewn from pieces (lib/assembly), read off its khuôn + its phôi (asked 2026-11-12 on the
- * Printbelle Wearable Hooded Blanket: the preview shows the top of the design on the hood, the file in must carry it
- * on the hood pieces):
+ * A base's print sheet of sewn pieces (lib/assembly), read off its khuôn + its phôi (2026-11-12, Printbelle Wearable
+ * Hooded Blanket). The khuôn itself is never changed — this only says where each piece shows on the product:
  *
  *   POST base-products/:id/assembly  { swap?: boolean, off?: boolean } → { base, note, reapplied }
  *
@@ -11,24 +10,21 @@
  *  - where they show: the phôi's overlay (Printbelle mockup "main": opaque off the product) — its wide rows are the
  *    blanket, the narrow rows above them the hood. The preview lays the sheet on the photo at `box`, so both read back
  *    in sheet px;
- *  - body: the blanket on the preview → the body piece (one scale, by width, from its top edge);
- *    hood: each half of it → one hood piece, the middle of the hood on the piece's straight edge, its bottom on the
- *    piece's bottom (`swap`: the left half on the right-hand piece, the hood's middle on that piece's rounded side);
- *  - the guide the editor shows on the design: each piece's own lines cut out of the khuôn and moved to where it shows.
+ *  - body piece ↔ the blanket on the photo (one scale, covering it, from its top edge);
+ *    hood pieces ↔ the hood, one half each, their bottom (neckline) on the blanket's top edge: by default the left
+ *    half (seen from behind) on the piece rounded on its right — the rounded corner is the seam over the crown, down
+ *    the middle of the back; `swap` the other way.
  */
 
-import sharp, { type OverlayOptions } from "sharp";
+import sharp from "sharp";
 import { NextResponse } from "next/server";
-import { CT_CONFIG, CT_TABLES } from "../config";
+import { CT_TABLES } from "../config";
 import type { CtBaseAssembly, CtBaseProduct, CtBounds, CtProduct, CtProductScene, CtSewnPiece, CtShape } from "../types";
 import type { CtPrintTemplate } from "../types/print";
-import { shapeToSvgPath } from "../lib/geometry";
-import { moveShapeBy } from "../lib/assembly";
 import { fetchImage } from "./char/files";
 import { loadBaseProduct } from "./base-products";
 import { applyBase, loadTemplate } from "./artwork-link";
 import { BAND, BAND_ALPHA, groupsOf, grow, outline, reach, simplify } from "./printbelle-khuon";
-import { ctUpload } from "./storage";
 import type { CtServiceClient, CtSession } from "./supabase";
 
 type Db = CtSession["supabase"] | CtServiceClient;
@@ -235,11 +231,14 @@ export function sewPieces(pieces: SheetPiece[], parts: PreviewParts, swap: boole
   if (!parts.hood) return "Phôi không thấy phần nón (lớp phủ không có phần hẹp nhô lên trên thân)";
   if (!pair) return "Khuôn không có cặp mảnh nón (2 mảnh đối xứng không phải hình chữ nhật)";
   const out: CtSewnPiece[] = [];
-  // Body: the blanket as the preview shows it, from its top edge, one scale by width.
-  const kb = body.box.w / parts.body.w;
-  out.push({ name: "Thân", shape: body.shape, from: { x: parts.body.x, y: parts.body.y, w: parts.body.w, h: body.box.h / kb }, to: body.box });
-  // Hood: one half of it on each piece, its middle on the piece's straight edge (swap: on its rounded side), its
-  // bottom on the piece's bottom, one scale by height.
+  // Body: covers the blanket on the photo (one scale, from its top edge, centred) — no bare strip on the preview.
+  const s = Math.max(parts.body.w / body.box.w, parts.body.h / body.box.h);
+  const bw = body.box.w * s;
+  out.push({ name: "Thân", role: "body", shape: body.shape, from: { x: parts.body.x + (parts.body.w - bw) / 2, y: parts.body.y, w: bw, h: body.box.h * s }, to: body.box });
+  // Hood: one half of it on each piece, its bottom on the piece's bottom (the neckline), one scale by height. A hood
+  // piece is sewn with its straight side at the face and its rounded corner over the crown down the back: seen from
+  // behind, the middle of the hood is the rounded sides of both pieces — the left half is on the piece rounded on its
+  // right (swap: the other way, its middle on the straight sides).
   const { x0, x1, top, bottom } = parts.hood;
   const cx = (x0 + x1) / 2;
   const [L, R] = pair;
@@ -247,68 +246,21 @@ export function sewPieces(pieces: SheetPiece[], parts: PreviewParts, swap: boole
   const half = (p: SheetPiece, side: "left" | "right", name: string): CtSewnPiece => {
     const w = p.box.w / kh;
     const h = p.box.h / kh;
-    return { name, shape: p.shape, from: { x: side === "left" ? cx - w : cx, y: bottom - h, w, h }, to: p.box };
+    return { name, role: "hood", shape: p.shape, from: { x: side === "left" ? cx - w : cx, y: bottom - h, w, h }, to: p.box };
   };
-  if (!swap) out.push(half(L, "left", "Nón (nửa trái)"), half(R, "right", "Nón (nửa phải)"));
-  else out.push(half(R, "left", "Nón (nửa trái)"), half(L, "right", "Nón (nửa phải)"));
+  if (!swap) out.push(half(R, "left", "Nón (nửa trái, mảnh phải)"), half(L, "right", "Nón (nửa phải, mảnh trái)"));
+  else out.push(half(L, "left", "Nón (nửa trái, mảnh trái)"), half(R, "right", "Nón (nửa phải, mảnh phải)"));
   const pct = (v: number) => `${Math.round(v * 100)}%`;
   const note =
-    `Thân: phần thiết kế từ y ${Math.round(out[0].from.y)} đến ${Math.round(out[0].from.y + out[0].from.h)}px (mép trên thân chăn trên preview) → ô thân · ` +
-    `Nón: vùng ${Math.round(x0)}–${Math.round(x1)} × ${Math.round(top)}–${Math.round(bottom)}px (trên preview) → 2 mảnh nón, phóng ${pct(kh)}` +
-    (swap ? " · nửa trái ↔ mảnh phải" : "") +
-    (pieces.length > 3 ? ` · ${pieces.length - 3} mảnh khác (túi…) giữ thiết kế nằm tại chỗ` : "");
+    `Ô thân = thân chăn trên preview (mép trên ở y ${Math.round(parts.body.y)}px của tờ) · ` +
+    `2 mảnh nón = nón trên preview (vùng ${Math.round(x0)}–${Math.round(x1)} × ${Math.round(top)}–${Math.round(bottom)}px), mỗi mảnh nửa nón, ×${pct(kh)}` +
+    (swap ? " · đã đổi nửa nón" : "") +
+    (pieces.length > 3 ? ` · ${pieces.length - 3} mảnh khác (túi…) không hiện trên preview` : "");
   return { pieces: out, note };
 }
 
-/** An overlay placed at (x, y) on a W × H sheet, cut to the sheet. */
-async function placed(img: Buffer, x: number, y: number, W: number, H: number): Promise<OverlayOptions | null> {
-  const m = await sharp(img).metadata();
-  const iw = m.width ?? 0;
-  const ih = m.height ?? 0;
-  const left = Math.max(0, x);
-  const topY = Math.max(0, y);
-  const right = Math.min(W, x + iw);
-  const bottom = Math.min(H, y + ih);
-  if (right <= left || bottom <= topY) return null;
-  const cut = await sharp(img)
-    .extract({ left: left - x, top: topY - y, width: right - left, height: bottom - topY })
-    .png()
-    .toBuffer();
-  return { input: cut, left, top: topY };
-}
-
-/** The khuôn's lines as they fall on the design: each piece's own lines (cut to its outline) moved to `from`. */
-export async function designGuide(guide: Buffer, W: number, H: number, pieces: CtSewnPiece[]): Promise<Buffer> {
-  const layers: OverlayOptions[] = [];
-  for (const p of pieces) {
-    const left = Math.max(0, Math.floor(p.to.x));
-    const top = Math.max(0, Math.floor(p.to.y));
-    const width = Math.min(W - left, Math.ceil(p.to.w));
-    const height = Math.min(H - top, Math.ceil(p.to.h));
-    if (width < 2 || height < 2) continue;
-    const local = moveShapeBy(p.shape, 1, -left, -top);
-    const mask = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><path d="${shapeToSvgPath(local)}" fill="#fff"/></svg>`);
-    const cut = await sharp(guide, { limitInputPixels: false })
-      .extract({ left, top, width, height })
-      .ensureAlpha()
-      .composite([{ input: mask, blend: "dest-in" }])
-      .png()
-      .toBuffer();
-    const k = p.from.w / p.to.w;
-    const rw = Math.max(1, Math.round(width * k));
-    const rh = Math.max(1, Math.round(height * k));
-    const scaled = await sharp(cut).resize(rw, rh, { fit: "fill" }).png().toBuffer();
-    const o = await placed(scaled, Math.round(p.from.x + (left - p.to.x) * k), Math.round(p.from.y + (top - p.to.y) * k), W, H);
-    if (o) layers.push(o);
-  }
-  return sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
-    .composite(layers)
-    .png()
-    .toBuffer();
-}
-
 /** Reads the base's assembly (see the file comment); a string = why there is none. */
-export async function readAssembly(userId: string, base: CtBaseProduct, template: CtPrintTemplate | null, swap: boolean): Promise<CtBaseAssembly | string> {
+export async function readAssembly(base: CtBaseProduct, template: CtPrintTemplate | null, swap: boolean): Promise<CtBaseAssembly | string> {
   if (!template) return "Base chưa có khuôn in";
   const face = template.spec.faces[0];
   if (!face?.guideUrl) return "Khuôn in không có ảnh nét khuôn (guide)";
@@ -323,9 +275,7 @@ export async function readAssembly(userId: string, base: CtBaseProduct, template
   if (!parts) return "Không đọc được hình sản phẩm trên lớp phủ phôi";
   const sewn = sewPieces(pieces, parts, swap);
   if (typeof sewn === "string") return sewn;
-  const png = await designGuide(guide, W, H, sewn.pieces);
-  const guideUrl = await ctUpload(`${userId}/${CT_CONFIG.storagePrefix}/bases/${base.id}/assembly-${crypto.randomUUID()}.png`, png, "image/png");
-  return { pieces: sewn.pieces, guideUrl, swap, note: sewn.note, at: new Date().toISOString() };
+  return { pieces: sewn.pieces, guideUrl: null, swap, note: sewn.note, at: new Date().toISOString() };
 }
 
 /** Saves the assembly into the base (read fresh — other fields stay) and lays every product on it again. */
@@ -349,7 +299,7 @@ export async function makeBaseAssembly(s: CtSession, baseId: string, raw: unknow
       const r = await saveAssembly(s.supabase, baseId, null);
       return NextResponse.json({ base: r.base, note: "Đã bỏ ráp mảnh: file in = thiết kế nằm nguyên trên tờ khuôn", reapplied: r.reapplied });
     }
-    const read = await readAssembly(s.user.id, base, await loadTemplate(s.supabase, base.config.templateId), body.swap === true);
+    const read = await readAssembly(base, await loadTemplate(s.supabase, base.config.templateId), body.swap === true);
     if (typeof read === "string") return NextResponse.json({ error: read }, { status: 422 });
     const r = await saveAssembly(s.supabase, baseId, read);
     return NextResponse.json({ base: r.base, note: read.note, reapplied: r.reapplied });
@@ -363,7 +313,7 @@ export async function autoAssembly(db: Db, userId: string, baseId: string): Prom
   try {
     const base = await loadBaseProduct(db, baseId);
     if (!base || base.config.assembly) return null;
-    const read = await readAssembly(userId, base, await loadTemplate(db, base.config.templateId), false);
+    const read = await readAssembly(base, await loadTemplate(db, base.config.templateId), false);
     if (typeof read === "string") return null;
     await saveAssembly(db, baseId, read);
     return "ráp mảnh nón + thân";

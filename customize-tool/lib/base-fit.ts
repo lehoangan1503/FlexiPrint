@@ -13,11 +13,11 @@
  * (server/artwork-link.ts applyBase) so the storefront, the deploy and the server print need nothing else.
  */
 
-import type { CtBaseProduct, CtBasePlacement, CtMaterialConfig, CtPrintAssembly, CtPrintSilhouette, CtProductConfig, CtProductScene, CtRegion, CtSewnPiece, CtShape } from "../types";
+import type { CtBaseProduct, CtBasePlacement, CtMaterialConfig, CtPrintAssembly, CtPrintSilhouette, CtProductConfig, CtProductScene, CtRegion, CtShape } from "../types";
 import type { CtPrintTemplate, CtProductPrint } from "../types/print";
 import { defaultRegionConfig } from "./design";
 import { scaleShape } from "./print-template";
-import { assemblyOnCanvas, pieceOf, sheetToDesign } from "./assembly";
+import { assemblyOnCanvas } from "./assembly";
 
 export interface FitBox {
   x: number;
@@ -186,16 +186,6 @@ export function productPrintOfTemplate(t: CtPrintTemplate): CtProductPrint {
   return { templateId: t.id, name: t.name, kind: t.kind, spec: t.spec };
 }
 
-/** A sewn sheet's safe zones (canvas px of the sheet) moved to where their pieces show on the design. */
-function sewnSafe(print: CtProductPrint, pieces: CtSewnPiece[]): CtProductPrint {
-  if (!pieces.length) return print;
-  const safe = print.spec.safe.flatMap((s) => {
-    const p = pieceOf(pieces, s);
-    return p ? [sheetToDesign(s, p)] : [];
-  });
-  return { ...print, spec: { ...print.spec, safe, outline: null, cuts: [], zones: [] } };
-}
-
 /** The artwork as it is on `base` (see the file comment). No base: unchanged. */
 export function withBase(
   input: BaseFitInput,
@@ -219,14 +209,12 @@ export function withBase(
   const sheetBox = print ? sheetPlace(main, print.spec, cut.mode === "khuon" ? placement : DEFAULT_PLACEMENT) : null;
   // Cut along the art (alpha): the khuôn is only guides. Fixed khuôn / flat print: the design sits in the khuôn.
   const place = cut.mode !== "alpha" ? sheetBox : null;
-  // A sheet sewn from pieces (hooded blanket): the design is the product as the preview shows it — the guide on it is
-  // the khuôn's lines moved to where each piece shows (lib/assembly), the file in is sewn from it.
+  const frame = place && print && !ownFrame ? baseFrameRegion(input.productId, frameId, print, place) : null;
+  // A sheet of sewn pieces (hooded blanket, lib/assembly): the khuôn stays the factory's, the design + print file are
+  // the sheet; only the preview is sewn from it (each piece where it shows on the product).
   const sewn = base.config.assembly && print && place && cut.mode !== "alpha" ? base.config.assembly : null;
   const pieces = sewn && place && print ? assemblyOnCanvas(sewn, print.spec.width, place) : [];
-  let frame = place && print && !ownFrame ? baseFrameRegion(input.productId, frameId, print, place) : null;
-  if (frame && sewn?.guideUrl) frame = { ...frame, config: { ...frame.config, guideUrl: sewn.guideUrl, maskUrl: null } };
-  const sheetGuideUrl = print?.spec.faces[0]?.guideUrl ?? null;
-  const assembly: CtPrintAssembly | null = pieces.length && place ? { pieces, sheetGuide: sheetGuideUrl ? { url: sheetGuideUrl, ...place } : null } : null;
+  const assembly: CtPrintAssembly | null = pieces.length ? { pieces, sheetGuide: null } : null;
 
   const widthMm = canvasWidthMm(base, print, sheetBox, main);
   const material: CtMaterialConfig = {
@@ -263,7 +251,7 @@ export function withBase(
     config: {
       ...config,
       viewBaseId: base.id,
-      print: print && sheetBox ? sewnSafe(printOnCanvas(print, sheetBox, main), pieces) : ownFrame ? config.print : null,
+      print: print && sheetBox ? printOnCanvas(print, sheetBox, main) : ownFrame ? config.print : null,
       material,
       printSilhouette,
       scene,

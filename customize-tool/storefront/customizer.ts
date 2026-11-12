@@ -51,6 +51,7 @@ import type {
   CtRegion,
   CtRenderAsset,
   CtSelection,
+  CtSewnPiece,
   CtShopifyPricing,
   CtTemplate,
   CtTextSelection,
@@ -690,7 +691,8 @@ export class Customizer {
     const cut = !!scene.url && !!printFrame({ main: this.main, assets: this.tpl.assets, regions: this.regions, selection: shown });
     const b = cut ? { x: 0, y: 0 } : compositeBleed({ main: this.main, assets: this.tpl.assets, regions: this.regions, selection: shown, layouts: this.tpl.config.layouts });
     const bleed = { x: b.x / this.main.width, y: b.y / this.main.height };
-    const off = await this.product(shown, side, !!own, cut)
+    // A sheet of sewn pieces (hooded blanket, lib/assembly): the photo shows the product sewn from it.
+    const off = await this.product(shown, side, !!own, cut, this.tpl.config.assembly?.pieces ?? null)
       .then((c) => drawOnScene(scene, c, side, bleed))
       .catch(() => null);
     if (!off || token !== this.renderToken) return;
@@ -742,11 +744,11 @@ export class Customizer {
    * The product as the customer sees it (material renditions are already swapped in by the template), long side
    * `maxSide` — grown by the material version's padding, so its plate / cord are not cut off.
    */
-  private product(selection: CtSelection, maxSide: number, display = false, cutToFrame = false): Promise<HTMLCanvasElement> {
+  private product(selection: CtSelection, maxSide: number, display = false, cutToFrame = false, assembled: CtSewnPiece[] | null = null): Promise<HTMLCanvasElement> {
     const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts };
     const b = cutToFrame ? { x: 0, y: 0 } : compositeBleed(input);
     const scale = Math.min(1, maxSide / Math.max(this.main.width + 2 * b.x, this.main.height + 2 * b.y));
-    return renderComposite({ ...input, scale, bleed: !cutToFrame, display, cutToFrame });
+    return renderComposite({ ...input, scale, bleed: !cutToFrame && !assembled, display, cutToFrame, assembled });
   }
 
   /** The AI phôi of the shown version on the product's base (config.versionPhoi); null = none. */
@@ -781,9 +783,7 @@ export class Customizer {
     if (!print) return withSilhouette(await renderComposite({ ...input, scale: 1, cutToFrame: true }), sil, cut());
     const picked = pickedOptions(this.root);
     const size = print.spec.sizes.length ? printSize(print.spec, picked.find((v) => print.spec.sizes.some((s) => s.name.toLowerCase() === v.toLowerCase())) ?? null) : null;
-    // A sheet sewn from pieces (a hooded blanket, lib/assembly): each piece prints what the preview shows on it.
-    const sewn = size?.id ? null : (this.tpl.config.assembly?.pieces ?? null);
-    const sheet = await renderComposite({ ...input, scale: 1, cutToFrame: !size, size: size && size.id ? size : null, sewn });
+    const sheet = await renderComposite({ ...input, scale: 1, cutToFrame: !size, size: size && size.id ? size : null });
     // A khuôn made as one half (one trouser leg): the other half is its mirror image.
     return withSilhouette(print.spec.mirror ? mirrorSheet(sheet) : sheet, sil, size?.id ? null : silhouetteCutOf(printFrame(input), print.spec.mirror));
   }

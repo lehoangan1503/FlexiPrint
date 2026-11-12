@@ -443,6 +443,11 @@ export interface CtRegionConfig {
    */
   previewOnly?: boolean;
   /**
+   * Drawn only inside this outline (canvas px): a piece of the artwork cut to one piece of a sewn khuôn (lib/assembly
+   * cutArtwork — the head of a character on a hood piece).
+   */
+  clipTo?: CtShape;
+  /**
    * A layer of a bộ nhân vật v2 dropped from the library (asked 2026-10-29): the set's layers land together, pixel
    * for pixel as the set built them, and are listed as ONE "bộ" layer with its own layers under it.
    */
@@ -859,7 +864,7 @@ export interface CtProductConfig {
   versionPhoi: CtVersionPhoi[];
   /** The base this config is laid on (lib/base-fit withBase): which `versionPhoi` the preview uses. null = none. */
   viewBaseId: string | null;
-  /** The print sheet sewn from the design (the base's CtBaseAssembly on this canvas), set by withBase; null = none. */
+  /** The base's sewn pieces on this canvas (set by withBase): the preview is sewn from the sheet; null = none. */
   assembly: CtPrintAssembly | null;
   /**
    * "Phôi AI có ảnh khách" (asked 2026-11-10, a tick on the deploy page, OFF by default): after the AI style the
@@ -1834,8 +1839,10 @@ export interface CtBaseProductConfig {
  * product: its canvas px).
  */
 export interface CtSewnPiece {
-  /** "Thân", "Nón trái", "Nón phải" */
+  /** "Thân", "Nón (nửa trái)", "Nón (nửa phải)" */
   name: string;
+  /** The blanket's body, or a hood piece. */
+  role: "body" | "hood";
   /** The piece's outline on the print sheet (its cut line, a little past it). */
   shape: CtShape;
   /** The part of the design it shows (on the preview). */
@@ -1847,19 +1854,23 @@ export interface CtSewnPiece {
 /** CtBaseProductConfig.assembly — read off the khuôn (its pieces) + the phôi's overlay (where the hood is). */
 export interface CtBaseAssembly {
   pieces: CtSewnPiece[];
-  /** The khuôn's lines moved to where each piece shows on the design (PNG, sheet px): the editor's guide. */
+  /** Not used since 2026-11-12 (the khuôn is never moved or redrawn): null. */
   guideUrl: string | null;
-  /** The hood's left half printed on the right-hand hood piece (and the other way round). */
+  /**
+   * Hood halves the other way: by default the hood's left half (seen from behind) is on the piece with its rounded
+   * corner on the right (that corner = the seam over the crown, at the middle of the back) — swap puts it on the other.
+   */
   swap: boolean;
   /** What was read (for the base page). */
   note: string;
   at: string;
 }
 
-/** CtProductConfig.assembly — the base's assembly laid on the artwork canvas (lib/base-fit withBase). */
+/** CtProductConfig.assembly — the base's assembly laid on the artwork canvas (lib/base-fit withBase): the preview is
+ * sewn from the sheet (each piece drawn where it shows on the product); the print file is the sheet as it is. */
 export interface CtPrintAssembly {
   pieces: CtSewnPiece[];
-  /** The khuôn's own lines on the print sheet (canvas px): File in shows them over the sewn sheet. */
+  /** Not used since 2026-11-12. */
   sheetGuide: ({ url: string } & CtBounds) | null;
 }
 

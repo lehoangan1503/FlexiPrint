@@ -17,7 +17,7 @@
 
 import { useEffect, useState } from "react";
 import { Download, Loader2, Package } from "lucide-react";
-import type { CtAsset, CtMainLayout, CtMaterialConfig, CtPrintAssembly, CtPrintSilhouette, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
+import type { CtAsset, CtMainLayout, CtMaterialConfig, CtPrintSilhouette, CtProduct, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import type { CtProductPrint } from "../../types/print";
 import { displayAssets } from "../../lib/library";
 import { canvasToBlob, khuonPair, mirrorSheet, printFrame, renderComposite, silhouetteCutOf, withSilhouette, type KhuonLines } from "../../lib/compositor";
@@ -69,8 +69,6 @@ export interface PrintPanelProps {
   /** How the silhouette above the print is made (CtProductConfig.printSilhouette): the base's rule when viewed on a
    * base (off for a flat print, 2026-11-12); null = no base: always on, from the print's outline. */
   printSilhouette: CtPrintSilhouette | null;
-  /** The base's sheet is sewn from pieces (lib/assembly, a hooded blanket): the file is sewn from the design. */
-  assembly?: CtPrintAssembly | null;
 }
 
 function shrink(src: HTMLCanvasElement, k: number): HTMLCanvasElement {
@@ -110,12 +108,9 @@ export function PrintPanel(props: PrintPanelProps) {
   const sil = props.printSilhouette ?? DEFAULT_SILHOUETTE;
   const silOn = sil.enabled;
   const spec = props.print?.spec ?? null;
-  const sewn = !size?.id ? (props.assembly ?? null) : null;
   /** The khuôn's own lines on the design (solid = cut, dashed = safe zone) — on a sheet cut to the khuôn only. */
   const lines: KhuonLines | null = (() => {
     if (!cutFrame || mirror) return null;
-    // A sewn sheet: the khuôn's own lines on the sheet (the design's guide shows them where the pieces show).
-    if (sewn?.sheetGuide) return { picture: sewn.sheetGuide };
     if (cutFrame.config.guideUrl) return { picture: { url: cutFrame.config.guideUrl, ...shapeBounds(cutFrame.shape) } };
     if (cutFrame.config.maskUrl) return null;
     if (spec?.outline && !spec.faces.length) {
@@ -125,7 +120,7 @@ export function PrintPanel(props: PrintPanelProps) {
   })();
   /** The flat sheet — and, a khuôn made as one half (spec.mirror), its mirror image beside it. */
   const flatSheet = async (): Promise<HTMLCanvasElement> => {
-    const sheet = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts, ...sizeArgs, sewn: sewn?.pieces ?? null });
+    const sheet = await renderComposite({ main, assets: flat, regions, items, selection, scale: 1, layouts, ...sizeArgs });
     return mirror ? mirrorSheet(sheet) : sheet;
   };
   /** The print file: the flat sheet, with the silhouette above it when on. */

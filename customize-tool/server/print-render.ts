@@ -225,7 +225,11 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
       let pic = await sharp(buf).resize(Math.max(1, Math.round(p.w)), Math.max(1, Math.round(p.h)), { fit: "fill" }).png().toBuffer();
       if (p.rotation) pic = await sharp(pic).rotate(p.rotation, { background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
       const m = await sharp(pic).metadata();
-      layers.push({ input: pic, left: Math.round(p.cx - (m.width ?? p.w) / 2), top: Math.round(p.cy - (m.height ?? p.h) / 2) });
+      const left = Math.round(p.cx - (m.width ?? p.w) / 2);
+      const top = Math.round(p.cy - (m.height ?? p.h) / 2);
+      // A piece of the artwork cut to one piece of a sewn khuôn (lib/assembly): only inside that piece.
+      if (r.config.clipTo) pic = await sharp(pic).composite([{ input: maskSvg(m.width ?? Math.round(p.w), m.height ?? Math.round(p.h), translateShape(r.config.clipTo, -left, -top)), blend: "dest-in" }]).png().toBuffer();
+      layers.push({ input: pic, left, top });
     } else if (r.kind === "text") {
       // A text whose colour follows another layer's option (a red "1st Christmas" → red name).
       const t = textColorFromOption(r, chosen).config.text;

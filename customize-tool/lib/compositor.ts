@@ -13,6 +13,7 @@ import { activeRegions, isStaticLayer, normalizeRegion, regionChoices, regionFor
 import { mainFrameFor, resolveLayout } from "./layout";
 import { frameRegionFor, frameSvgPath, renditionFrameBox, traceFrame } from "./material-frame";
 import { scaleShape } from "./print-template";
+import { sheetToDesign } from "./assembly";
 
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 
@@ -70,10 +71,11 @@ export interface CompositeInput {
    */
   size?: { width: number; height: number; zones: Record<string, CtShape> } | null;
   /**
-   * The print sheet sewn from pieces (lib/assembly, a hooded blanket): each piece prints its part of the design into
-   * its place on the sheet — print files only (the preview / mockups show the design as it is).
+   * The product sewn from its print sheet (lib/assembly, a hooded blanket — the preview only): each piece of the sheet
+   * is drawn where it shows on the product (the hood pieces above the blanket's top edge), nothing else. The print
+   * file never takes it: it is the sheet as designed.
    */
-  sewn?: CtSewnPiece[] | null;
+  assembled?: CtSewnPiece[] | null;
 }
 
 /**
@@ -107,6 +109,13 @@ export async function renderComposite(input: CompositeInput): Promise<HTMLCanvas
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D không khả dụng");
+  if (input.assembled?.length && !input.size) {
+    // The product sewn from its sheet (preview only): the pieces where they show, the khuôn's own cut is the pieces'.
+    canvas.width = Math.max(1, Math.round(main.width * scale));
+    canvas.height = Math.max(1, Math.round(main.height * scale));
+    await drawAssembled(ctx, input, input.assembled);
+    return canvas;
+  }
   const cut = input.cutToFrame ? printFrame(input) : null;
   if (cut) {
     // The print file is the whole edit frame (asked 2026-10-10): the khuôn sits inside it, and only the piece —
@@ -114,7 +123,6 @@ export async function renderComposite(input: CompositeInput): Promise<HTMLCanvas
     canvas.width = Math.max(1, Math.round(main.width * scale));
     canvas.height = Math.max(1, Math.round(main.height * scale));
     await drawComposite(ctx, input);
-    await drawSewn(ctx, input);
     ctx.save();
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     ctx.globalCompositeOperation = "destination-in";
@@ -141,18 +149,19 @@ export async function renderComposite(input: CompositeInput): Promise<HTMLCanvas
   canvas.width = Math.max(1, Math.round((main.width + 2 * b.x) * scale));
   canvas.height = Math.max(1, Math.round((main.height + 2 * b.y) * scale));
   await drawComposite(ctx, input, b);
-  if (!b.x && !b.y) await drawSewn(ctx, input);
   return canvas;
 }
 
 /**
- * A sewn print sheet (input.sewn): over the design as it lies, each piece is drawn again from the part of the design
- * it shows (`from`, at full quality — the layers themselves, not the pixels), scaled into its place (`to`), clipped
- * to its outline. What no piece takes (pockets, spare area) keeps the design as it lies.
+ * The product as it is sewn (input.assembled): each piece of the sheet (`to`, clipped to its outline) drawn where it
+ * shows on the product (`from`) — the layers themselves at that scale, not pixels.
  */
-async function drawSewn(ctx: CanvasRenderingContext2D, input: CompositeInput): Promise<void> {
+async function drawAssembled(ctx: CanvasRenderingContext2D, input: CompositeInput, pieces: CtSewnPiece[]): Promise<void> {
   const { scale } = input;
-  for (const p of input.sewn ?? []) {
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  for (const piece of pieces) {
+    // Sheet → product: the piece's outline where it shows, its sheet box drawn into its product box.
+    const p = { shape: sheetToDesign(piece.shape, piece), from: piece.to, to: piece.from };
     const k = p.to.w / p.from.w;
     if (!(k > 0) || !Number.isFinite(k)) continue;
     ctx.save();
@@ -396,6 +405,8 @@ async function drawRegion(
   const bounds = shapeBounds(region.shape);
 
   ctx.save();
+  // A piece of the artwork cut to one piece of a sewn khuôn (lib/assembly cutArtwork): only inside that piece.
+  if (region.config.clipTo) clipShape(ctx, region.config.clipTo);
   // Text is never clipped to its zone, like the print file (server/print-render): a name bent along a hat's brim
   // (arcTilt) reaches past its box, and the clip cut the first / last letters off (2026-10-22).
   if (region.kind !== "text" && (region.config.clip || region.config.fill)) clipToShape(ctx, region);

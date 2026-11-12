@@ -24,7 +24,7 @@
  * is exactly what the storefront and exports render.
  */
 
-import { GridLines, GridToggleButton, useGridToggle } from "./grid";
+import { GridLines, GridToggleButton, KhuonToggleButton, useGridToggle, useStoredToggle } from "./grid";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CtAsset, CtBounds, CtMainFrame, CtProductScene, CtPhotoFrame, CtPoint, CtRegion, CtRegionItem, CtRegionKind, CtSelection, CtShape, CtTransform } from "../../types";
 import { bandShape, clamp, fitZoneToBounds, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, SNAP_FRACTIONS, snapAxis, textBand, translateShape } from "../../lib/geometry";
@@ -168,6 +168,7 @@ export function Stage(props: StageProps) {
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
   const [zoom, setZoom] = useState(0.5);
   const [showGrid, toggleGrid] = useGridToggle();
+  const [showKhuon, toggleKhuon] = useStoredToggle("ct-editor-khuon");
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [draft, setDraft] = useState<CtPoint[]>([]);
@@ -1120,14 +1121,14 @@ export function Stage(props: StageProps) {
           style={{ pointerEvents: "none" }}
         >
           {/* Edit grid (Teeinblue-style), over the pictures and under every guide / handle. */}
-          {showGrid && <GridLines width={main.width} height={main.height} zoom={zoom} />}
+          {showGrid && <GridLines width={main.width} height={main.height} />}
           {/* Khuôn vật liệu: what is printed / made into the vật liệu — outside it dimmed, its cut-out parts hatched. */}
           {/* A khuôn drawn as a picture (khuôn in face): its own cut line + safe zone. */}
-          {props.showOverlay && props.materialFrame?.config.guideUrl && (
+          {props.showOverlay && showKhuon && props.materialFrame?.config.guideUrl && (
             // Over the khuôn's own box (a base's khuôn may sit smaller than the canvas, lib/base-fit sheetPlace).
             <image href={props.materialFrame.config.guideUrl} x={guideBox.x} y={guideBox.y} width={guideBox.w} height={guideBox.h} preserveAspectRatio="none" pointerEvents="none" />
           )}
-          {props.showOverlay && props.materialFrame && !props.materialFrame.config.maskUrl && (
+          {props.showOverlay && showKhuon && props.materialFrame && !props.materialFrame.config.maskUrl && (
             <g pointerEvents="none">
               <defs>
                 <pattern id="ct-cut-hatch" width={12 * px} height={12 * px} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -1147,7 +1148,7 @@ export function Stage(props: StageProps) {
             </g>
           )}
           {/* Khuôn in: the printer's guide sheet (faint), the safe zone (dashed green), the named zones. */}
-          {props.showOverlay && props.printSpec && !props.printSpec.faces.length && (
+          {props.showOverlay && showKhuon && props.printSpec && !props.printSpec.faces.length && (
             <g pointerEvents="none">
               {props.printSpec.frameUrl && <image href={props.printSpec.frameUrl} x={0} y={0} width={main.width} height={main.height} opacity={0.25} preserveAspectRatio="none" />}
               {safeShapes(props.printSpec).map((sh, i) => (
@@ -1703,6 +1704,7 @@ export function Stage(props: StageProps) {
           100%
         </button>
         <GridToggleButton on={showGrid} onToggle={toggleGrid} />
+        {(props.materialFrame || props.printSpec) && <KhuonToggleButton on={showKhuon} onToggle={toggleKhuon} />}
       </div>
 
       {props.drawInto && (tool === "rect" || tool === "ellipse" || tool === "polygon") && (

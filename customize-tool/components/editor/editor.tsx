@@ -51,6 +51,7 @@ import {
   zoneSubtree,
 } from "../../lib/design";
 import { fitShapeToBounds, IDENTITY_PHOTO_FRAME, IDENTITY_TRANSFORM, newId, shapeBounds, translateShape } from "../../lib/geometry";
+import { safeShapes } from "../../lib/print-template";
 import { CtAutoWidthInput, CtButton, CtSelect, CtTooltip, CtTooltipProvider, cx } from "../ui";
 import { StoreTag } from "../store-switch";
 import { Stage, type EditTarget, type StageTool } from "./stage";
@@ -310,6 +311,19 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       .catch(() => undefined);
   }, [productId, isProduct]);
   const viewConfig = onBase ? { ...onBase.config, versionPhoi: phoiStatus.phoi } : config;
+  /**
+   * Where dropped sets / pictures go on a base's khuôn (2026-11-12): its biggest safe zone — a sewn piece's khuôn
+   * (Printbelle hooded blanket) lays every piece on one sheet, and only the body holds the design; the hood and pocket
+   * pieces below it are cut from the background. Null = the whole canvas.
+   */
+  const designBox = useMemo(() => {
+    const spec = onBase?.config.print?.spec;
+    if (!spec || !main) return null;
+    const boxes = safeShapes(spec).map(shapeBounds).filter((b) => b.w > 0 && b.h > 0);
+    const big = boxes.sort((a, b) => b.w * b.h - a.w * a.h)[0];
+    // A safe zone that is (almost) the whole canvas changes nothing.
+    return big && big.w * big.h < main.width * main.height * 0.9 ? big : null;
+  }, [onBase, main]);
   const viewRegions = onBase?.regions ?? allRegions;
   // The khuôn vật liệu the shown version is cut to: its own, else the default version's — or the
   // base's khuôn laid on the artwork.
@@ -863,13 +877,15 @@ export function CustomizeEditor({ productId }: { productId: string }) {
    */
   const dropBox = (a: CtAsset, at: CtPoint | null): { x: number; y: number; w: number; h: number } => {
     if (!main) return { x: 0, y: 0, w: a.width, h: a.height };
-    const k = Math.min(1, main.width / Math.max(1, a.width), main.height / Math.max(1, a.height));
+    // On a base's khuôn: inside its main safe zone (designBox), else the artboard.
+    const area = designBox ?? { x: 0, y: 0, w: main.width, h: main.height };
+    const k = Math.min(1, area.w / Math.max(1, a.width), area.h / Math.max(1, a.height));
     const w = Math.max(1, Math.round(a.width * k));
     const h = Math.max(1, Math.round(a.height * k));
-    const p = at ?? { x: main.width / 2, y: main.height / 2 };
-    // Full-size pictures land exactly on the artboard.
-    const x = w >= main.width ? 0 : Math.round(Math.min(Math.max(p.x - w / 2, 0), main.width - w));
-    const y = h >= main.height ? 0 : Math.round(Math.min(Math.max(p.y - h / 2, 0), main.height - h));
+    const p = at ?? { x: area.x + area.w / 2, y: area.y + area.h / 2 };
+    // Full-size pictures land exactly on the area.
+    const x = w >= area.w ? Math.round(area.x) : Math.round(Math.min(Math.max(p.x - w / 2, area.x), area.x + area.w - w));
+    const y = h >= area.h ? Math.round(area.y) : Math.round(Math.min(Math.max(p.y - h / 2, area.y), area.y + area.h - h));
     return { x, y, w, h };
   };
 
@@ -895,7 +911,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     setNotice(`Đang lấy layer của bộ “${set.name}”…`);
     try {
       const bundle = await ctApi.getBundle(set.productId);
-      const got = await charSetDrop(bundle, { productId: product.id, mainId, board: { w: main.width, h: main.height }, firstOrder: 0 }, { projectId: set.projectId, name: set.name }, uploadChooser);
+      const got = await charSetDrop(bundle, { productId: product.id, mainId, board: { w: main.width, h: main.height }, ...(designBox ? { box: designBox } : {}), firstOrder: 0 }, { projectId: set.projectId, name: set.name }, uploadChooser);
       if (!got.regions.length) {
         flash(`Bộ “${set.name}” không có layer dùng được`);
         return;

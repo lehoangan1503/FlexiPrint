@@ -33,6 +33,9 @@ export interface CtCharSetTarget {
   productId: string;
   mainId: string;
   board: { w: number; h: number };
+  /** Where on the board the set goes (default: the whole board) — on a base's khuôn, its main safe zone (2026-11-12:
+   * a hooded blanket's body, not the hood / pocket pieces below it). */
+  box?: { x: number; y: number; w: number; h: number };
   firstOrder: number;
 }
 
@@ -63,10 +66,11 @@ export function charSetLayers(bundle: CtProductBundle, target: CtCharSetTarget, 
   }
 
   const cloned = cloneLayers(keep, shown.items, target.mainId);
-  // The set's canvas fitted into the artboard, centred (identity when they are the same size).
-  const k = Math.min(target.board.w / Math.max(1, srcMain.width), target.board.h / Math.max(1, srcMain.height));
-  const ox = (target.board.w - srcMain.width * k) / 2;
-  const oy = (target.board.h - srcMain.height * k) / 2;
+  // The set's canvas fitted into the artboard (or its box), centred (identity when they are the same size).
+  const box = target.box ?? { x: 0, y: 0, w: target.board.w, h: target.board.h };
+  const k = Math.min(box.w / Math.max(1, srcMain.width), box.h / Math.max(1, srcMain.height));
+  const ox = box.x + (box.w - srcMain.width * k) / 2;
+  const oy = box.y + (box.h - srcMain.height * k) / 2;
   const same = Math.abs(k - 1) < 1e-6 && Math.abs(ox) < 1e-6 && Math.abs(oy) < 1e-6;
   const place = (s: CtShape): CtShape => {
     if (same) return s;

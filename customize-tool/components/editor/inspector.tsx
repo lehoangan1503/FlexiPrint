@@ -166,8 +166,10 @@ export function Inspector(props: InspectorProps) {
   /** Where each image layer really has pixels: a full-canvas clipart frame with the part inside is not "outside". */
   const ink = useLayerInk(regions, design.state.items, props.assets, !!props.print);
   const [renaming, setRenaming] = useState<string | null>(null);
-  // Drag-to-restack: the dragged layer and where it would land (index in `ordered`, 0..n).
-  const [dragId, setDragId] = useState<string | null>(null);
+  // Drag-to-restack: the dragged layers (one layer, or a whole bộ — asked 2026-11-12) and where they would land
+  // (index in `ordered`, 0..n). `dragId` = the row being dragged (a layer id, or the bộ's first layer).
+  const [dragIds, setDragIds] = useState<string[] | null>(null);
+  const dragId = dragIds?.[0] ?? null;
   const [dropAt, setDropAt] = useState<number | null>(null);
   /** Bộ nhân vật groups opened (by the first layer's id — a version's own copy of a set is its own group). */
   const [openSets, setOpenSets] = useState<Set<string>>(new Set());
@@ -226,23 +228,38 @@ export function Inspector(props: InspectorProps) {
     props.onSelectRegion(null);
   };
 
-  /** Move a layer to slot `at` of the topmost-first list; sort_order is its mirror. */
-  const restack = (id: string, at: number) =>
+  /** Move layers (kept in their own order) to slot `at` of the topmost-first list; sort_order is its mirror. */
+  const restack = (ids: string[], at: number) =>
     design.commit((s) => {
       const list = formOrder(s.regions);
-      const from = list.findIndex((r) => r.id === id);
-      if (from < 0) return s;
-      const to = at > from ? at - 1 : at;
-      if (to === from) return s;
-      const [moved] = list.splice(from, 1);
-      list.splice(to, 0, moved);
+      const moving = new Set(ids);
+      const moved = list.filter((r) => moving.has(r.id));
+      if (!moved.length) return s;
+      const before = list.slice(0, at).filter((r) => moving.has(r.id)).length;
+      const rest = list.filter((r) => !moving.has(r.id));
+      const to = at - before;
+      const next = [...rest.slice(0, to), ...moved, ...rest.slice(to)];
+      if (next.every((r, k) => r.id === list[k].id)) return s;
       // Stored bottom-first: the save RPC rewrites sort_order from array position.
-      const bottomFirst = list.reverse();
+      const bottomFirst = next.reverse();
       return { ...s, regions: bottomFirst.map((r, k) => ({ ...r, sort_order: k })) };
     });
 
+  /** Where a drop over row `index` (upper half: before it) lands. A layer from outside a bộ never lands inside it: it
+   * goes to the bộ's nearer end, so a bộ stays one block. */
+  const dropSlot = (index: number, upper: boolean): number => {
+    const at = upper ? index : index + 1;
+    const r = ordered[index];
+    const head = r?.config?.charSet ? groupOf(r.id) : null;
+    const list = head ? (setGroups.get(head) ?? []) : [];
+    if (!head || !dragIds || dragIds.every((id) => list.some((x) => x.id === id) && dragIds.length < list.length)) return at;
+    const first = ordered.findIndex((x) => x.id === list[0].id);
+    const last = first + list.length;
+    return at - first <= last - at ? first : last;
+  };
+
   const endDrag = () => {
-    setDragId(null);
+    setDragIds(null);
     setDropAt(null);
   };
 
@@ -273,14 +290,41 @@ export function Inspector(props: InspectorProps) {
             <Fragment key={r.id}>
             {group === r.id && (
               <div
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", r.id);
+                  setDragIds(groupList.map((x) => x.id));
+                }}
+                onDragOver={(e) => {
+                  if (!dragIds) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  const box = e.currentTarget.getBoundingClientRect();
+                  const first = index;
+                  // Over a bộ's row: before it (upper half), else after the whole bộ when closed / at its top when open.
+                  setDropAt(e.clientY < box.top + box.height / 2 || groupOpen ? first : first + groupList.length);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragIds && dropAt !== null) restack(dragIds, dropAt);
+                  endDrag();
+                }}
+                onDragEnd={endDrag}
                 onClick={(e) => clickRow(e, groupList.map((x) => x.id), () => props.onSelectSet(groupList.map((x) => x.id)))}
                 onMouseEnter={() => props.onHoverRegion(null)}
                 className={cx(
-                  "group flex cursor-pointer items-center gap-2 px-3 py-1.5",
+                  "group relative flex cursor-pointer items-center gap-2 px-3 py-1.5",
+                  dragId === r.id && "opacity-40",
                   props.selectedSet && !selectedRegionId && selectedGroup === group ? "bg-sky-500/15" : selectedGroup === group ? "bg-sky-500/5" : "hover:bg-accent",
                 )}
-                title="Bộ nhân vật v2 — bấm để chọn cả bộ (kéo / co giãn cả bộ trên canvas); ⌘-click thêm vào các layer đang chọn; mũi tên để mở / đóng các layer bên trong"
+                title="Bộ nhân vật v2 — bấm để chọn cả bộ (kéo / co giãn cả bộ trên canvas); kéo hàng này lên / xuống để đổi thứ tự cả bộ; ⌘-click thêm vào các layer đang chọn; mũi tên để mở / đóng các layer bên trong"
               >
+                {dragIds && dropAt === index && <span className="pointer-events-none absolute inset-x-1 top-0 h-0.5 -translate-y-1/2 rounded bg-sky-500" />}
+                {dragIds && !groupOpen && dropAt === index + groupList.length && (
+                  <span className="pointer-events-none absolute inset-x-1 bottom-0 h-0.5 translate-y-1/2 rounded bg-sky-500" />
+                )}
+                <GripVertical className="-ml-2 h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/50 active:cursor-grabbing" />
                 <button
                   className="-ml-2 rounded p-0.5 hover:bg-background"
                   onClick={(e) => {
@@ -311,18 +355,18 @@ export function Inspector(props: InspectorProps) {
                 e.dataTransfer.effectAllowed = "move";
                 // Firefox refuses to start a drag without data.
                 e.dataTransfer.setData("text/plain", r.id);
-                setDragId(r.id);
+                setDragIds([r.id]);
               }}
               onDragOver={(e) => {
-                if (!dragId) return;
+                if (!dragIds) return;
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
                 const box = e.currentTarget.getBoundingClientRect();
-                setDropAt(e.clientY < box.top + box.height / 2 ? index : index + 1);
+                setDropAt(dropSlot(index, e.clientY < box.top + box.height / 2));
               }}
               onDrop={(e) => {
                 e.preventDefault();
-                if (dragId && dropAt !== null) restack(dragId, dropAt);
+                if (dragIds && dropAt !== null) restack(dragIds, dropAt);
                 endDrag();
               }}
               onDragEnd={endDrag}
@@ -336,8 +380,8 @@ export function Inspector(props: InspectorProps) {
                 r.id === dragId && "opacity-40",
               )}
             >
-              {dragId && dropAt === index && <span className="pointer-events-none absolute inset-x-1 top-0 h-0.5 -translate-y-1/2 rounded bg-sky-500" />}
-              {dragId && dropAt === index + 1 && index === ordered.length - 1 && (
+              {dragIds && dropAt === index && group !== r.id && <span className="pointer-events-none absolute inset-x-1 top-0 h-0.5 -translate-y-1/2 rounded bg-sky-500" />}
+              {dragIds && dropAt === index + 1 && (index === ordered.length - 1 || (!!group && groupList[groupList.length - 1]?.id === r.id)) && (
                 <span className="pointer-events-none absolute inset-x-1 bottom-0 h-0.5 translate-y-1/2 rounded bg-sky-500" />
               )}
               <GripVertical className="-ml-2 h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/50 active:cursor-grabbing" />
@@ -437,7 +481,7 @@ export function Inspector(props: InspectorProps) {
       onDragLeave={() => setOverGroup(null)}
       onDrop={(e) => {
         e.preventDefault();
-        if (dragId) moveTo(dragId, key);
+        if (dragIds) for (const id of dragIds) moveTo(id, key);
         setOverGroup(null);
         endDrag();
       }}

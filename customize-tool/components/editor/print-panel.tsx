@@ -255,7 +255,7 @@ export function PrintPanel(props: PrintPanelProps) {
           {props.baseName && `Trên base ${props.baseName} · `}
           {frame ? `Khuôn "${frame.name}"` : material.shape === "contour" ? "Cắt theo viền hình (alpha)" : "Toàn khung (không có khuôn)"}
           {props.print?.spec.mirror && " · + nửa đối xứng"}
-          {silOn ? " · print.png: nửa trên = silhouette, nửa dưới = bản in" : " · in phẳng: print.png = bản in (không silhouette)"}
+          {silOn ? " · print.png: nửa trên = silhouette, nửa dưới = bản in" : " · in phẳng: print.png = nguyên tờ khuôn đúng khổ + đúng vị trí (như file mẫu của nhà in), xưởng đặt khuôn lên cắt từng mảnh — không silhouette"}
           {shot && ` · ${shot.w}×${shot.h}px`}
           {dpi > 0 && ` · ${mm}mm ≈ ${dpi} dpi`}
         </span>

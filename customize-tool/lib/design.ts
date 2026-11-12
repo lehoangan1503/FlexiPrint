@@ -126,7 +126,7 @@ export function normalizeRegion(region: CtRegion): CtRegion {
         : {}),
       ...(cfg.printOnly === true ? { printOnly: true } : {}),
       ...(cfg.previewOnly === true && cfg.printOnly !== true ? { previewOnly: true } : {}),
-      ...(cfg.clipTo && typeof cfg.clipTo === "object" && "type" in cfg.clipTo ? { clipTo: cfg.clipTo } : {}),
+      ...(cfg.noHood === true ? { noHood: true } : {}),
       ...(cfg.charSet && typeof cfg.charSet.projectId === "string" ? { charSet: { projectId: cfg.charSet.projectId, name: String(cfg.charSet.name ?? "") } } : {}),
     },
   };

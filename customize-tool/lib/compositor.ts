@@ -5,7 +5,7 @@
  * scaled once at the end, so preview and full-res export are the same picture.
  */
 
-import type { CtFillConfig, CtMainFrame, CtMainLayout, CtPrintSilhouette, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtSewnPiece, CtShape, CtTextConfig, CtTransform } from "../types";
+import type { CtFillConfig, CtMainFrame, CtMainLayout, CtPrintSilhouette, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtPrintAssembly, CtSelection, CtSewnPiece, CtShape, CtTextConfig, CtTransform } from "../types";
 import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, textBand } from "./geometry";
 
 export { textBand };
@@ -13,6 +13,7 @@ import { activeRegions, isStaticLayer, normalizeRegion, regionChoices, regionFor
 import { mainFrameFor, resolveLayout } from "./layout";
 import { frameRegionFor, frameSvgPath, renditionFrameBox, traceFrame } from "./material-frame";
 import { scaleShape } from "./print-template";
+import { hoodFolds } from "./assembly";
 
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 
@@ -75,6 +76,11 @@ export interface CompositeInput {
    * file never takes it: it is the sheet as designed.
    */
   assembled?: CtSewnPiece[] | null;
+  /**
+   * The base's sewn pieces on this canvas (CtProductConfig.assembly): what reaches above the body's top edge is drawn
+   * again on the hood pieces (lib/assembly hoodFolds) — in the editor, the print file and the preview alike.
+   */
+  assembly?: CtPrintAssembly | null;
 }
 
 /**
@@ -365,6 +371,31 @@ export async function drawComposite(ctx: CanvasRenderingContext2D, input: Compos
   }
   for (const r of above) await draw(r);
 
+  // A sewn khuôn (hooded blanket): what reaches above the body's top edge is printed on the hood pieces — each piece
+  // gets its half of what is up there, at print size, its bottom on the body's top edge (lib/assembly hoodFolds).
+  // Backgrounds (fills) are not folded: the pieces keep the background they lie on.
+  const folds = !size && input.assembly ? hoodFolds(input.assembly) : [];
+  for (const fold of folds) {
+    ctx.save();
+    clipShape(ctx, fold.shape);
+    ctx.translate(fold.dx, fold.dy);
+    // Only what is above the top edge (it lands inside the piece; the rest would fall under it, outside the clip).
+    ctx.beginPath();
+    ctx.rect(fold.src.x, fold.src.y, fold.src.w, fold.src.h);
+    ctx.clip();
+    const folded = (r: CtRegion) => !r.config.fill && !r.config.materialFrame && !r.config.noHood;
+    for (const r of below.filter(folded)) await draw(r);
+    if (input.part !== "dynamic") {
+      ctx.save();
+      ctx.translate(f.x + f.w / 2, f.y + f.h / 2);
+      if (f.rotation) ctx.rotate((f.rotation * Math.PI) / 180);
+      ctx.drawImage(mainImg, -f.w / 2 - px, -f.h / 2 - py, f.w + 2 * px, f.h + 2 * py);
+      ctx.restore();
+    }
+    for (const r of above.filter(folded)) await draw(r);
+    ctx.restore();
+  }
+
   ctx.restore();
 }
 
@@ -405,8 +436,6 @@ async function drawRegion(
   const bounds = shapeBounds(region.shape);
 
   ctx.save();
-  // A piece of the artwork cut to one piece of a sewn khuôn (lib/assembly cutArtwork): only inside that piece.
-  if (region.config.clipTo) clipShape(ctx, region.config.clipTo);
   // Text is never clipped to its zone, like the print file (server/print-render): a name bent along a hat's brim
   // (arcTilt) reaches past its box, and the clip cut the first / last letters off (2026-10-22).
   if (region.kind !== "text" && (region.config.clip || region.config.fill)) clipToShape(ctx, region);

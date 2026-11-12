@@ -235,25 +235,25 @@ export function sewPieces(pieces: SheetPiece[], parts: PreviewParts, swap: boole
   const s = Math.max(parts.body.w / body.box.w, parts.body.h / body.box.h);
   const bw = body.box.w * s;
   out.push({ name: "Thân", role: "body", shape: body.shape, from: { x: parts.body.x + (parts.body.w - bw) / 2, y: parts.body.y, w: bw, h: body.box.h * s }, to: body.box });
-  // Hood: one half of it on each piece, its bottom on the piece's bottom (the neckline), one scale by height. A hood
-  // piece is sewn with its straight side at the face and its rounded corner over the crown down the back: seen from
-  // behind, the middle of the hood is the rounded sides of both pieces — the left half is on the piece rounded on its
-  // right (swap: the other way, its middle on the straight sides).
+  // Hood: one half of it on each piece, at the body's scale (the hood is printed at the same size as the body), its
+  // bottom (the neckline) on the blanket's top edge, the hood's middle on the blanket's middle. A hood piece is sewn
+  // with its straight side at the face and its rounded corner over the crown down the back: seen from behind, the
+  // middle of the hood is the rounded sides of both pieces — the left half is on the piece rounded on its right (swap:
+  // the other way, the middle on the straight sides).
   const { x0, x1, top, bottom } = parts.hood;
-  const cx = (x0 + x1) / 2;
   const [L, R] = pair;
-  const kh = (L.box.h + R.box.h) / 2 / (bottom - top);
+  const cx = out[0].from.x + out[0].from.w / 2;
+  const edge = out[0].from.y;
   const half = (p: SheetPiece, side: "left" | "right", name: string): CtSewnPiece => {
-    const w = p.box.w / kh;
-    const h = p.box.h / kh;
-    return { name, role: "hood", shape: p.shape, from: { x: side === "left" ? cx - w : cx, y: bottom - h, w, h }, to: p.box };
+    const w = p.box.w * s;
+    const h = p.box.h * s;
+    return { name, role: "hood", half: side, shape: p.shape, from: { x: side === "left" ? cx - w : cx, y: edge - h, w, h }, to: p.box };
   };
   if (!swap) out.push(half(R, "left", "Nón (nửa trái, mảnh phải)"), half(L, "right", "Nón (nửa phải, mảnh trái)"));
   else out.push(half(L, "left", "Nón (nửa trái, mảnh trái)"), half(R, "right", "Nón (nửa phải, mảnh phải)"));
-  const pct = (v: number) => `${Math.round(v * 100)}%`;
   const note =
     `Ô thân = thân chăn trên preview (mép trên ở y ${Math.round(parts.body.y)}px của tờ) · ` +
-    `2 mảnh nón = nón trên preview (vùng ${Math.round(x0)}–${Math.round(x1)} × ${Math.round(top)}–${Math.round(bottom)}px), mỗi mảnh nửa nón, ×${pct(kh)}` +
+    `2 mảnh nón = nón trên preview (vùng ${Math.round(x0)}–${Math.round(x1)} × ${Math.round(top)}–${Math.round(bottom)}px), mỗi mảnh nửa nón · phần layer tràn lên trên mép ô thân in xuống 2 mảnh nón, cùng cỡ` +
     (swap ? " · đã đổi nửa nón" : "") +
     (pieces.length > 3 ? ` · ${pieces.length - 3} mảnh khác (túi…) không hiện trên preview` : "");
   return { pieces: out, note };

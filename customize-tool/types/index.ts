@@ -443,10 +443,10 @@ export interface CtRegionConfig {
    */
   previewOnly?: boolean;
   /**
-   * Drawn only inside this outline (canvas px): a piece of the artwork cut to one piece of a sewn khuôn (lib/assembly
-   * cutArtwork — the head of a character on a hood piece).
+   * A base whose khuôn is sewn pieces (hooded blanket, lib/assembly): what of this layer reaches above the body's top
+   * edge is printed on the hood pieces — unless this is set ("Phần tràn lên trên → in lên nón" off).
    */
-  clipTo?: CtShape;
+  noHood?: boolean;
   /**
    * A layer of a bộ nhân vật v2 dropped from the library (asked 2026-10-29): the set's layers land together, pixel
    * for pixel as the set built them, and are listed as ONE "bộ" layer with its own layers under it.
@@ -1843,6 +1843,8 @@ export interface CtSewnPiece {
   name: string;
   /** The blanket's body, or a hood piece. */
   role: "body" | "hood";
+  /** A hood piece: which half of the hood (seen from behind, as the preview) it carries. */
+  half?: "left" | "right";
   /** The piece's outline on the print sheet (its cut line, a little past it). */
   shape: CtShape;
   /** The part of the design it shows (on the preview). */

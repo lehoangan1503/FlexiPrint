@@ -26,7 +26,6 @@ import {
   Redo2,
   Rocket,
   Save,
-  Scissors,
   Square,
   SquareDashedMousePointer,
   Type,
@@ -68,7 +67,6 @@ import { ArtworkLinkBar } from "./artwork-link-bar";
 import { CLIPART_DRAG, SETS_CHANGED, isCharSetDrag, type CtCharSetDrag, type CtClipartDrag, type CtLibraryDrag } from "./library-panel";
 import { ctConfirm, ctPrompt } from "../dialogs";
 import { renderComposite } from "../../lib/compositor";
-import { cutArtwork } from "../../lib/assembly";
 import { trimCanvas } from "../../lib/canvas-trim";
 import { asLayerClipart, asVersion } from "../../lib/library";
 import { claimSharedLayers, cloneLayers, fitMainFrame, mainFrameFor, resolveLayout, versionLayers } from "../../lib/layout";
@@ -327,6 +325,25 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     return big && big.w * big.h < main.width * main.height * 0.9 ? big : null;
   }, [onBase, main]);
   const viewRegions = onBase?.regions ?? allRegions;
+  /**
+   * The artwork's canvas is not the khuôn's shape (2026-11-12: "vùng artwork edit sẽ đúng rộng bằng khuôn in"): the
+   * khuôn sits in it with bare strips — "Khung = khuôn in" makes the canvas the khuôn (server/artwork-fit.ts).
+   */
+  const canvasOff = !!(onBase?.place && main && (Math.abs(onBase.place.w - main.width) > 1 || Math.abs(onBase.place.h - main.height) > 1));
+  const [fitting, setFitting] = useState(false);
+  const fitCanvas = async () => {
+    if (!product) return;
+    if (design.dirty) return flash("Lưu thiết kế trước rồi bấm lại");
+    setFitting(true);
+    try {
+      const r = await ctApi.fitArtworkToBase(product.id);
+      if (r.changed) window.location.reload();
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Không đổi được khung");
+    } finally {
+      setFitting(false);
+    }
+  };
   // The khuôn vật liệu the shown version is cut to: its own, else the default version's — or the
   // base's khuôn laid on the artwork.
   const materialFrame = useMemo(
@@ -1338,20 +1355,16 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               <ExternalLink className="h-3 w-3" />
             </Link>
           )}
-          {viewConfig.assembly && main && (
+          {canvasOff && (
             <CtButton
               size="sm"
               variant="outline"
-              className="h-7 text-[11px]"
-              title="Khuôn xưởng giữ nguyên. Clipart đang nằm ở vùng nón (như trên preview phẳng của xưởng) được cắt: phần trên nón → 2 mảnh nón ở dưới tờ, phần còn lại theo thân chăn. Nền giữ nguyên. Ctrl+Z để hoàn tác."
-              onClick={() => {
-                const r = cutArtwork(allRegions, allItems, viewConfig.assembly?.pieces ?? [], main);
-                if (!r.moved) return flash("Artwork đã cắt theo khuôn rồi (hoặc không có clipart nào) — Ctrl+Z để hoàn tác lần cắt trước");
-                design.commit((s) => ({ ...s, regions: r.regions, items: r.items }));
-                flash(`Đã cắt: ${r.moved} layer theo thân, ${r.hood} mảnh lên nón, ${r.kept} nền giữ nguyên${r.skipped.length ? ` · chữ / ảnh khách trên nón chưa cắt được: ${r.skipped.join(", ")}` : ""} — nhớ Lưu`);
-              }}
+              className="h-7 border-amber-500 text-[11px] text-amber-600"
+              title="Khung artwork khác hình khuôn in: khuôn nằm giữa, thừa 2 dải (đường cam = mép khuôn) và file in không đúng px của xưởng. Bấm để khung = đúng khuôn, mọi layer dời theo."
+              disabled={fitting}
+              onClick={() => void fitCanvas()}
             >
-              <Scissors className="h-3 w-3" /> Cắt artwork theo khuôn
+              {fitting ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Khung = khuôn in
             </CtButton>
           )}
         </div>
@@ -1486,6 +1499,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     }}
                     materialFrame={materialFrame}
                     printSpec={viewConfig.print?.spec ?? null}
+                    assembly={viewConfig.assembly}
                     mmPerPx={
                       viewConfig.print?.spec.widthMm
                         ? viewConfig.print.spec.widthMm / main.width
@@ -1529,6 +1543,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               print={viewConfig.print}
               baseName={viewBase?.name ?? null}
               printSilhouette={viewBase ? viewConfig.printSilhouette : null}
+              assembly={viewConfig.assembly}
             />
           ) : view === "preview" && !main ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>
@@ -1568,6 +1583,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               artworkBusy={artworks.busy}
               artworkFolder={artworks.folderName}
               print={viewConfig.print}
+              hoodFold={!!viewConfig.assembly}
               phoiAi={
                 viewBase && viewBase.config.cut.mode === "alpha"
                   ? { done: mains.filter((m) => phoiStatus.phoi.some((v) => v.mainId === m.id && v.baseId === viewBase.id)).length, total: mains.length, onOpen: () => setPhoiOpen(true) }

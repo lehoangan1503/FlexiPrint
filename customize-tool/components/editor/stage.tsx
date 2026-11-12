@@ -26,7 +26,7 @@
 
 import { GridLines, GridToggleButton, KhuonToggleButton, useGridToggle, useStoredToggle } from "./grid";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CtAsset, CtBounds, CtMainFrame, CtProductScene, CtPhotoFrame, CtPoint, CtRegion, CtRegionItem, CtRegionKind, CtSelection, CtShape, CtTransform } from "../../types";
+import type { CtAsset, CtBounds, CtMainFrame, CtPrintAssembly, CtProductScene, CtPhotoFrame, CtPoint, CtRegion, CtRegionItem, CtRegionKind, CtSelection, CtShape, CtTransform } from "../../types";
 import { bandShape, clamp, fitZoneToBounds, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, SNAP_FRACTIONS, snapAxis, textBand, translateShape } from "../../lib/geometry";
 import { drawComposite, pickAt, renderPickMap, type CtPickMap } from "../../lib/compositor";
 import { activeRegions, hasTestPhoto, makeRegion } from "../../lib/design";
@@ -132,6 +132,8 @@ export interface StageProps {
   drawInto?: { label: string; onShape: (shape: CtShape) => void } | null;
   /** The khuôn in the product is made on (types/print.ts): its guide sheet, safe zone and zones over the canvas. */
   printSpec?: CtPrintSpec | null;
+  /** A sewn khuôn (hooded blanket): what reaches above the body's top edge shows on the hood pieces (lib/assembly). */
+  assembly?: CtPrintAssembly | null;
   /** A bộ nhân vật's layers (CtRegionConfig.charSet) — the canvas picks the whole set, never one of them. */
   setOf?: (regionId: string) => string[] | null;
   /** The set selected: one frame around it, dragged / scaled with every layer in it. */
@@ -290,7 +292,7 @@ export function Stage(props: StageProps) {
       if (!ctx) return;
       const shown: HTMLCanvasElement = off;
       try {
-        await drawComposite(ctx, { main, assets, regions, items, selection, scale: renderScale, layouts });
+        await drawComposite(ctx, { main, assets, regions, items, selection, scale: renderScale, layouts, assembly: props.assembly ?? null });
       } catch {
         return;
       }
@@ -302,7 +304,7 @@ export function Stage(props: StageProps) {
       vis.getContext("2d")?.drawImage(shown, 0, 0);
     });
     return () => cancelAnimationFrame(raf);
-  }, [main, assets, regions, items, selection, renderScale, layouts]);
+  }, [main, assets, regions, items, selection, renderScale, layouts, props.assembly]);
 
   // Pick map: each shown layer's own pixels, so a click selects the picture under the pointer — not the biggest frame
   // around it (2026-10-24). Rebuilt a moment after the design settles (not on every frame of a drag).
@@ -1125,8 +1127,30 @@ export function Stage(props: StageProps) {
           {/* Khuôn vật liệu: what is printed / made into the vật liệu — outside it dimmed, its cut-out parts hatched. */}
           {/* A khuôn drawn as a picture (khuôn in face): its own cut line + safe zone. */}
           {props.showOverlay && showKhuon && props.materialFrame?.config.guideUrl && (
-            // Over the khuôn's own box (a base's khuôn may sit smaller than the canvas, lib/base-fit sheetPlace).
-            <image href={props.materialFrame.config.guideUrl} x={guideBox.x} y={guideBox.y} width={guideBox.w} height={guideBox.h} preserveAspectRatio="none" pointerEvents="none" />
+            // Over the khuôn's own box (a base's khuôn may sit smaller than the canvas, lib/base-fit sheetPlace). Its
+            // lines redrawn bright green on a dark halo, ~2 screen px whatever the zoom (2026-11-12: the factory's thin
+            // navy lines were faint and hard to see on a design).
+            <g pointerEvents="none">
+              <defs>
+                <filter id="ct-khuon-lines" x="0" y="0" width="1" height="1" colorInterpolationFilters="sRGB">
+                  <feComponentTransfer in="SourceAlpha" result="ink">
+                    {/* The band marker (alpha 1) stays invisible; every drawn line becomes solid. */}
+                    <feFuncA type="discrete" tableValues="0 1 1 1 1 1 1 1" />
+                  </feComponentTransfer>
+                  <feMorphology in="ink" operator="dilate" radius={0.6 * px} result="line" />
+                  <feMorphology in="line" operator="dilate" radius={1.2 * px} result="halo" />
+                  <feFlood floodColor="#052e16" floodOpacity="0.85" />
+                  <feComposite in2="halo" operator="in" result="dark" />
+                  <feFlood floodColor="#22c55e" />
+                  <feComposite in2="line" operator="in" result="green" />
+                  <feMerge>
+                    <feMergeNode in="dark" />
+                    <feMergeNode in="green" />
+                  </feMerge>
+                </filter>
+              </defs>
+              <image href={props.materialFrame.config.guideUrl} x={guideBox.x} y={guideBox.y} width={guideBox.w} height={guideBox.h} preserveAspectRatio="none" filter="url(#ct-khuon-lines)" />
+            </g>
           )}
           {props.showOverlay && showKhuon && props.materialFrame && !props.materialFrame.config.maskUrl && (
             <g pointerEvents="none">

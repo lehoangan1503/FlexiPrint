@@ -152,6 +152,7 @@ import * as prices from "./price-tables";
 import * as bases from "./base-products";
 import { autoBaseScenes, autoBaseScenesState, cronBaseScenes, makeBaseScene } from "./base-scenes";
 import { makeBaseAssembly } from "./base-assembly";
+import { fitArtworkToBase } from "./artwork-fit";
 import * as baseImport from "./base-import";
 import * as stores from "./stores";
 import { mcpEndpoint } from "./mcp/server";
@@ -365,6 +366,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return versionPhoi.deleteVersionPhoi(session, id, q.get("mainId") ?? "", q.get("baseId") ?? "");
     } else if (sub === "placement" && !path[3] && method === "POST") {
       return artworkLink.setPlacement(session, id, await readJson<unknown>(req));
+    } else if (sub === "fit-base" && !path[3] && method === "POST") {
+      return fitArtworkToBase(session, id);
     } else if (sub === "artworks" && !path[3] && method === "GET") {
       return artworks.listProductArtworks(session, id);
     } else if (sub === "artworks" && !path[3] && method === "POST") {

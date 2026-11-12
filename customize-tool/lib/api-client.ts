@@ -150,6 +150,8 @@ export const ctApi = {
   deleteVersionPhoi: (id: string, mainId: string, baseId: string) =>
     call<void>(`products/${id}/version-phoi?mainId=${encodeURIComponent(mainId)}&baseId=${encodeURIComponent(baseId)}`, { method: "DELETE" }),
   /** Where a product's artwork sits in its base's khuôn (Teeinblue "Locate artwork"). */
+  /** The artwork's canvas made exactly its base's khuôn (server/artwork-fit.ts). */
+  fitArtworkToBase: (id: string) => call<{ changed: boolean; width: number; height: number }>(`products/${id}/fit-base`, json("POST", {})),
   setPlacement: (id: string, placement: CtBasePlacement) => call<{ product: CtProduct }>(`products/${id}/placement`, json("POST", placement)).then((r) => r.product),
   syncFromArtwork: (id: string) => call<{ product: CtProduct }>(`products/${id}/artwork-sync`, { method: "POST" }).then((r) => r.product),
   syncManyFromArtwork: (artworkId: string, ids: string[]) =>

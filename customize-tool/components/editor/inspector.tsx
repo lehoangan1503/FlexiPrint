@@ -131,6 +131,8 @@ export interface InspectorProps {
   onZoneOption: (regionId: string, optionId: string | null) => void;
   /** The khuôn in the product is made on: placement / fill / print-only per layer, the safe zone check. */
   print?: CtProductPrint | null;
+  /** The base's khuôn is sewn pieces (hooded blanket): a layer's part above the body's top edge goes on the hood. */
+  hoodFold?: boolean;
   /** The bộ nhân vật picked as a whole (its layers' ids) — its row in Layers selects it. */
   selectedSet: string[] | null;
   onSelectSet: (ids: string[]) => void;
@@ -948,6 +950,12 @@ function RegionProps(props: InspectorProps & { region: CtRegion; ink: CtLayerInk
             ]}
           />
         </CtField>
+      )}
+      {props.hoodFold && !cfg.materialFrame && !cfg.fill && (
+        <label className="flex items-start gap-2 text-[11px]" title="Khuôn may nhiều mảnh (chăn có nón): phần layer nhô lên trên mép trên ô thân được in xuống 2 mảnh nón ở dưới tờ khuôn — như khi may, nón nằm ngay trên mép thân.">
+          <input type="checkbox" className="mt-0.5 accent-sky-500" checked={!cfg.noHood} onChange={(e) => set((r) => ({ ...r, config: { ...r.config, noHood: e.target.checked ? undefined : true } }))} />
+          Phần tràn lên trên mép khuôn → in xuống 2 mảnh nón
+        </label>
       )}
       {outsideSafe(props.print ?? null, region, props.ink.get(region.id)) && (
         <p className="flex items-start gap-1.5 rounded bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-400">

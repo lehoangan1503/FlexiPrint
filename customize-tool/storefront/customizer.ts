@@ -745,7 +745,7 @@ export class Customizer {
    * `maxSide` — grown by the material version's padding, so its plate / cord are not cut off.
    */
   private product(selection: CtSelection, maxSide: number, display = false, cutToFrame = false, assembled: CtSewnPiece[] | null = null): Promise<HTMLCanvasElement> {
-    const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts };
+    const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts, assembly: this.tpl.config.assembly };
     const b = cutToFrame ? { x: 0, y: 0 } : compositeBleed(input);
     const scale = Math.min(1, maxSide / Math.max(this.main.width + 2 * b.x, this.main.height + 2 * b.y));
     return renderComposite({ ...input, scale, bleed: !cutToFrame && !assembled, display, cutToFrame, assembled });
@@ -775,7 +775,7 @@ export class Customizer {
    * one: the whole edit frame at full size, cut to the frame.
    */
   private async printFile(selection: CtSelection): Promise<HTMLCanvasElement> {
-    const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts };
+    const input = { main: this.main, assets: this.tpl.assets, regions: this.regions, items: this.tpl.items, selection, layouts: this.tpl.config.layouts, assembly: this.tpl.config.assembly };
     const print = this.tpl.config.print;
     const sil = this.tpl.config.printSilhouette;
     // The silhouette follows the khuôn the file is cut to (its outline + holes), else the print's own shape.

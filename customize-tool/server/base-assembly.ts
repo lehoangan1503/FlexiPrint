@@ -5,7 +5,8 @@
  *
  *   POST base-products/:id/assembly  { swap?: boolean, off?: boolean } → { base, note, reapplied }
  *
- *  - pieces of the khuôn: the guide's grey band (server/printbelle-khuon.ts keeps it as grey 222) closes each piece;
+ *  - pieces of the khuôn: the guide's grey band (server/printbelle-khuon.ts keeps it as a transparent marker, alpha
+ *    BAND_ALPHA; guides read before 2026-11-12 had it opaque grey 222) closes each piece;
  *    the body = the biggest, the hood = the two mirrored pieces that are not rectangles (the rectangles are pockets);
  *  - where they show: the phôi's overlay (Printbelle mockup "main": opaque off the product) — its wide rows are the
  *    blanket, the narrow rows above them the hood. The preview lays the sheet on the photo at `box`, so both read back
@@ -26,7 +27,7 @@ import { moveShapeBy } from "../lib/assembly";
 import { fetchImage } from "./char/files";
 import { loadBaseProduct } from "./base-products";
 import { applyBase, loadTemplate } from "./artwork-link";
-import { groupsOf, grow, outline, reach, simplify } from "./printbelle-khuon";
+import { BAND, BAND_ALPHA, groupsOf, grow, outline, reach, simplify } from "./printbelle-khuon";
 import { ctUpload } from "./storage";
 import type { CtServiceClient, CtSession } from "./supabase";
 
@@ -34,8 +35,6 @@ type Db = CtSession["supabase"] | CtServiceClient;
 
 /** Long side the khuôn guide is read at. */
 const READ_SIDE = 1600;
-/** The band's grey in the guide (printbelle-khuon BAND). */
-const BAND = 222;
 
 interface SheetPiece {
   /** Outline, sheet px. */
@@ -59,7 +58,10 @@ export async function sheetPieces(guide: Buffer, W: number, H: number): Promise<
   const ch = info.channels;
   const band = new Uint8Array(w * h);
   for (let i = 0, p = 0; i < w * h; i++, p += ch) {
-    if (data[p + 3] > 200 && Math.abs(data[p] - BAND) <= 8 && Math.abs(data[p + 1] - BAND) <= 8 && Math.abs(data[p + 2] - BAND) <= 8) band[i] = 1;
+    // The marker (alpha only: a resize drops the colour of a nearly transparent pixel), or an old opaque grey band.
+    const a = data[p + 3];
+    if (a > 0 && a <= BAND_ALPHA + 1) band[i] = 1;
+    else if (a > 200 && Math.abs(data[p] - BAND) <= 8 && Math.abs(data[p + 1] - BAND) <= 8 && Math.abs(data[p + 2] - BAND) <= 8) band[i] = 1;
   }
   const sx = W / w;
   const sy = H / h;

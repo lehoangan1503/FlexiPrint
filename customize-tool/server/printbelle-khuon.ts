@@ -12,7 +12,9 @@
  *
  * cleanPrintbelleKhuon keeps only the khuôn itself — the grey band and the lines that touch it — so the generic
  * reader (print-khuon-read.ts: solid = piece, dashed = safe zone) is not fooled by the legend's icons and text. The
- * band is kept as a light grey (not ink for the reader, a faint band in the guide). Sheets with no band (the
+ * grey is only the factory's way of marking the band — it is printed with the artwork like everything inside the solid
+ * line (2026-11-12: "vùng xám là quy ước của xưởng in … artwork của mình sẽ render ra đấy"), so the guide keeps it
+ * transparent: alpha BAND_ALPHA, a marker only server/base-assembly.ts reads (the pieces it closes). Sheets with no band (the
  * "USE FOR PRINT | USE FOR CUTOUT" custom-shape acrylics, whose cut is the design's own outline) give null.
  */
 
@@ -315,15 +317,17 @@ function shapeOf(map: Uint8Array, w: number, h: number, ox: number, oy: number, 
   return { type: "polygon", points: pts.map((p) => ({ x: r((ox + p.x + 0.5) * k), y: r((oy + p.y + 0.5) * k) })) };
 }
 
-/** The band kept in the clean khuôn's picture: a light grey (a faint band under the lines in the guide). */
-const BAND = 222;
+/** The band in the clean khuôn's picture: a grey at alpha BAND_ALPHA — invisible over the design (the band is printed
+ * with the artwork), kept only so the pieces it closes can be read back (server/base-assembly.ts). */
+export const BAND = 222;
+export const BAND_ALPHA = 1;
 /** Long side the sheet is read at for the piece and the safe areas (the guide keeps the sheet's own px). */
 const READ_SIDE = 3000;
 
 export interface PbKhuonRead {
   width: number;
   height: number;
-  /** The khuôn alone: the grey band + the lines touching it, transparent elsewhere (PNG, sheet px). */
+  /** The khuôn alone: the lines touching the grey band (the band itself a transparent marker), PNG, sheet px. */
   guide: Buffer;
   /** Alpha 255 = printed, sheet px, 1 channel; null = the whole sheet is printed. */
   mask: Buffer | null;
@@ -342,8 +346,8 @@ export interface PbKhuonRead {
  *    printed but are not where the design goes; a tote's front + back are both kept);
  *  - piece: what the sheet's white border can't reach through anything drawn (lines, band, spare-area grid): the
  *    spare area is printed ("not to be left blank"), white around a round ornament is not;
- *  - guide: the band (light grey) + every line touching it — the cut and the dashes; legend text and icons, the logo
- *    and the grid stand off the band and are dropped.
+ *  - guide: every line touching the band — the cut and the dashes (the band itself transparent: the artwork shows
+ *    through it up to the solid line); legend text and icons, the logo and the grid stand off the band and are dropped.
  */
 export async function readPrintbelleKhuon(tif: Buffer): Promise<PbKhuonRead | "print-cutout" | null> {
   const { data, info } = await sharp(tif, { limitInputPixels: false, unlimited: true }).flatten({ background: "#ffffff" }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -493,7 +497,7 @@ export async function readPrintbelleKhuon(tif: Buffer): Promise<PbKhuonRead | "p
       pix[i * 4] = BAND;
       pix[i * 4 + 1] = BAND;
       pix[i * 4 + 2] = BAND;
-      pix[i * 4 + 3] = 255;
+      pix[i * 4 + 3] = BAND_ALPHA;
     }
   const guide = await sharp(pix, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer();
   return { width: W, height: H, guide, mask, safe };

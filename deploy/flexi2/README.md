@@ -48,6 +48,7 @@ containers trust it (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`). Browsers neve
 keep the `https://flexi2.next.lc/files/<key>` form — they still load and are still recognised as our own files
 (`r2KeyOfUrl`). New objects carry `Cache-Control: public, max-age=31536000, immutable`; older ones get the custom
 domain's default (4 h). Rollback: remove the line from `.env`, `docker compose up -d app`.
+Optional, not run: `deploy/flexi2/rewrite-files-urls.sh` counts (default) or rewrites (`--apply`) the old urls in the DB.
 
 ## Update
 

@@ -3,7 +3,7 @@
  * (base product page) and on the server (server/base-products.ts).
  */
 
-import type { CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseSource, CtBaseVariant, CtMaterialId, CtPrintArea } from "../types";
+import type { CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseSource, CtBaseVariant, CtMaterialId, CtPrintArea } from "../types";
 import { newId } from "./geometry";
 import { normalizeScene } from "./scene";
 
@@ -122,6 +122,30 @@ export function normalizeBaseConfig(raw: unknown): CtBaseProductConfig {
     variants: normalizeVariants(c.variants),
     source: normalizeSource(c.source),
     preview: normalizeScene(c.preview && typeof c.preview === "object" ? c.preview : null),
+    previewScenes: normalizeBaseScenes(c.previewScenes),
   };
+}
+
+const SCENE_PRESETS: CtBaseScenePreset[] = ["home", "holiday", "minimal", "custom"];
+
+function normalizeBaseScenes(raw: unknown): CtBaseScene[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CtBaseScene[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    const o = r as Partial<Record<keyof CtBaseScene, unknown>>;
+    const scene = normalizeScene(o.scene && typeof o.scene === "object" ? o.scene : null);
+    if (!scene.url) continue;
+    out.push({
+      id: str(o.id, 64) || newId(),
+      preset: SCENE_PRESETS.find((p) => p === o.preset) ?? "custom",
+      prompt: str(o.prompt, 1000),
+      scene,
+      plain: normalizeScene(o.plain && typeof o.plain === "object" ? o.plain : null),
+      found: o.found === true,
+      at: str(o.at, 40),
+    });
+  }
+  return out.slice(-24);
 }
 

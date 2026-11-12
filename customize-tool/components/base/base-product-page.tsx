@@ -433,7 +433,18 @@ export function BaseProductView({ baseId }: { baseId: string }) {
             </Section>
 
             <Section title="Phôi / nền xem trước">
-              <BasePreviewSection cfg={cfg} template={template} onChange={(preview) => patch({ preview })} />
+              <BasePreviewSection
+                baseId={baseId}
+                cfg={cfg}
+                template={template}
+                onChange={(preview) => patch({ preview })}
+                onScenes={(previewScenes) => patch({ previewScenes })}
+                onScene={(sc) => {
+                  setCfg((c) => (c ? { ...c, previewScenes: [...c.previewScenes, sc], preview: sc.scene } : c));
+                  setDirty(true);
+                  flash("Đã tạo nền — bấm Lưu để dùng làm nền xem trước");
+                }}
+              />
             </Section>
 
             <Section title={`Mockups (${mockupCount}) · ${detail.uses.length} sản phẩm`}>

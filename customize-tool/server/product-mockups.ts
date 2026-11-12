@@ -219,7 +219,7 @@ export async function acrylicFront(sheet: Buffer, borderPx: number): Promise<Buf
 // ---- the phôi trơn ------------------------------------------------------------------------------------------
 
 /** What the piece is cut to, in sheet px: the khuôn outline, else the whole sheet. */
-function pieceBounds(spec: Pick<CtPrintSpec, "width" | "height" | "outline">): CtBounds {
+export function pieceBounds(spec: Pick<CtPrintSpec, "width" | "height" | "outline">): CtBounds {
   return spec.outline ? shapeBounds(spec.outline) : { x: 0, y: 0, w: spec.width, h: spec.height };
 }
 

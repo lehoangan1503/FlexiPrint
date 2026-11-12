@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtBasePlacement, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
+import type { CtBasePlacement, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
   CtFulfillCatalogPage, CtFulfillProvider, CtTeeinblueStatus, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind, CtStoreList } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
@@ -110,6 +110,8 @@ export const ctApi = {
   /** Saves the base; every product on it is laid on it again (reapplied / failed). */
   updateBaseProduct: (id: string, body: CtBaseProductBody) => call<{ base: CtBaseProduct; reapplied: number; failed: string[] }>(`base-products/${id}`, json("PATCH", body)),
   deleteBaseProduct: (id: string) => call<void>(`base-products/${id}`, { method: "DELETE" }),
+  /** An AI background of the base's preview (~1–2 min; already added to its previewScenes). */
+  makeBaseScene: (id: string, body: CtBaseSceneRequest) => call<{ scene: CtBaseScene }>(`base-products/${id}/scenes`, json("POST", body)).then((r) => r.scene),
   /** A fulfiller's catalog for the Import dialog (server/base-import.ts). */
   baseImportCatalog: (provider: CtFulfillProvider, q: string, page: number, filter: CtFulfillCatalogFilter = "all") =>
     call<CtFulfillCatalogPage>(`base-import/catalog?${new URLSearchParams({ provider, q, page: String(page), filter })}`),

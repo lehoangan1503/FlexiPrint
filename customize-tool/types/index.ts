@@ -1807,6 +1807,40 @@ export interface CtBaseProductConfig {
    * the khuôn's first phôi (khuon), else no photo.
    */
   preview: CtProductScene;
+  /**
+   * Backgrounds the AI made for the preview (2026-11-12, asked: "nền đặt phôi lên tự sinh ra cho phù hợp thay vì nền
+   * xám" — 3 templates, the AI reads the base's own info to know where the product lives): picking one copies its
+   * scene into `preview`. Newest last.
+   */
+  previewScenes: CtBaseScene[];
+}
+
+/** The 3 ready templates of a preview background (server/base-scenes.ts), or the editor's own words. */
+export type CtBaseScenePreset = "home" | "holiday" | "minimal" | "custom";
+
+/** One AI background of a base's preview: the blank piece put in a real place. */
+export interface CtBaseScene {
+  id: string;
+  preset: CtBaseScenePreset;
+  /** The editor's own description (custom), else "". */
+  prompt: string;
+  /** The picture with the print sheet's box on it — what `preview` becomes when picked. */
+  scene: CtProductScene;
+  /** The preview it was made from (the plain phôi; url null = the khuôn's first phôi) — "Phôi trơn" goes back to it. */
+  plain: CtProductScene;
+  /** The piece was found on the picture (else its box is where it was on the plain phôi — check it). */
+  found: boolean;
+  at: string;
+}
+
+/** POST base-products/:id/scenes */
+export interface CtBaseSceneRequest {
+  preset: CtBaseScenePreset;
+  prompt: string;
+  /** The plain phôi to put in the scene, as shown (its url resolved: the khuôn's first phôi when the base has none). */
+  source: CtProductScene;
+  /** What `preview` was before (kept as the scene's `plain`). */
+  plain: CtProductScene;
 }
 
 export interface CtBaseProduct {

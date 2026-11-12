@@ -12,6 +12,7 @@
  *   POST   print-templates/ai            CtPrintAiRequest → CtPrintAiResult  khuôn drawn by AI (server/print-khuon.ts)
  *   POST   print-templates/:id/blanks    multipart file → { template }  a phôi of the khuôn (server/print-blanks.ts)
  *   POST   print-templates/:id/blanks/ai → { template }  a phôi drawn by AI
+ *   POST   base-products/:id/scenes      → { scene }     an AI background of the base's preview (server/base-scenes.ts)
  *   POST   products/from-template        { templateId, name } → { product }   (server/print-products.ts)
  *   POST   products                      { name }
  *   GET    products/:id                  → CtProductBundle
@@ -147,6 +148,7 @@ import { dispatchChar } from "./char/router";
 import * as packImages from "./pack-images";
 import * as prices from "./price-tables";
 import * as bases from "./base-products";
+import { makeBaseScene } from "./base-scenes";
 import * as baseImport from "./base-import";
 import * as stores from "./stores";
 import { mcpEndpoint } from "./mcp/server";
@@ -286,6 +288,7 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     if (id && method === "PATCH") return bases.updateBaseProduct(session, id, await readJson<unknown>(req));
     if (id && method === "DELETE") return bases.deleteBaseProduct(session, id);
   }
+  if (head === "base-products" && id && sub === "scenes" && !path[3] && method === "POST") return makeBaseScene(session, id, await readJson<unknown>(req));
   if (head === "price-tables" && !sub) {
     if (!id && method === "GET") return prices.listPriceTables(session);
     if (!id && method === "POST") return prices.createPriceTable(session, await readJson<unknown>(req));

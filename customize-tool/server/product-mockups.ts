@@ -237,6 +237,41 @@ async function outlineDrawing(spec: CtPrintSpec): Promise<Buffer> {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
+/**
+ * A khuôn given as a picture, drawn from its MASK like outlineDrawing: the sheet framed the same way, the piece filled
+ * light grey with one thin black edge — none of the khuôn's own lines (2026-11-12: the Printbelle Round Rug guide's
+ * dashed safe-zone line was sent as is and the AI drew it on the blank as stitching).
+ */
+async function maskDrawing(spec: CtPrintSpec, maskUrl: string): Promise<Buffer> {
+  const side = 1024;
+  const pad = Math.max(spec.width, spec.height) * 0.15;
+  const k = side / (Math.max(spec.width, spec.height) + 2 * pad);
+  const w = Math.max(1, Math.round(spec.width * k));
+  const h = Math.max(1, Math.round(spec.height * k));
+  const { data, info } = await sharp(await fetchImage(maskUrl)).ensureAlpha().resize(w, h, { fit: "fill" }).extractChannel(3).raw().toBuffer({ resolveWithObject: true });
+  const c = info.channels;
+  const inside = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && data[(y * w + x) * c] > 127;
+  const r = Math.max(1, Math.round(side / 400));
+  const px = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      if (!inside(x, y)) continue;
+      let edge = false;
+      for (let dy = -r; dy <= r && !edge; dy++) for (let dx = -r; dx <= r && !edge; dx++) if (!inside(x + dx, y + dy)) edge = true;
+      const v = edge ? 0 : 0xee;
+      const i = (y * w + x) * 4;
+      px[i] = v;
+      px[i + 1] = v;
+      px[i + 2] = v;
+      px[i + 3] = 255;
+    }
+  const piece = await sharp(px, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
+  return sharp({ create: { width: side, height: side, channels: 3, background: "#ffffff" } })
+    .composite([{ input: piece, left: Math.round((side - w) / 2), top: Math.round((side - h) / 2) }])
+    .png()
+    .toBuffer();
+}
+
 /** The prompt of a phôi trơn: the bare piece, straight on, on a plain grey backdrop (so its box can be found). */
 /** A clear glass piece (lib/materials "glass_clear", asked 2026-10-28: a round glass ornament, not acrylic, its edge
  * cut in facets like a diamond) — said in the phôi and mockup prompts, or the model draws frosted acrylic. */
@@ -257,6 +292,10 @@ export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: 
   return [
     `Studio product photo of ONE blank, unprinted ${label || "product"}${size}, completely plain: no print, no picture, no text, no pattern, no logo.`,
     spec ? `The piece has EXACTLY the outline of the reference drawing${hole} (its filled area is the piece) — the same shape and proportions.` : "",
+    // A khuôn's guide lines (dashed safe zone, bleed) are for the designer, never on the real piece (2026-11-12).
+    spec
+      ? "The drawing is only a shape guide: copy NONE of its lines onto the piece — no dashed or dotted line, no inner border or stitching line inside the face, no safe-zone or bleed line; the blank's face is one even, uninterrupted surface up to its edge."
+      : "",
     "Shot exactly front-on, camera square to the piece's face (orthographic: no perspective, no tilt, no angle from above or below), centred, the piece filling about 70% of the picture's width.",
     // The print is laid flat on the box found around the piece (2026-11-04: a tilted ceramic disc showed its bottom
     // thickness as a white band and the round print left it bare): only the front face may show.
@@ -405,10 +444,13 @@ export async function sceneForBlank(photo: Buffer, url: string, spec: Pick<CtPri
 export async function makeBlank(userId: string, label: string, spec: CtPrintSpec | null, material?: string, looks: string[] = [], extra = ""): Promise<Buffer> {
   const refs: string[] = [];
   let guide: string | null = null;
-  if (spec?.faces[0]?.imageUrl && !spec.outline) refs.push(spec.faces[0].imageUrl);
+  const face = spec?.faces[0];
+  // A khuôn picture without a mask (lines only) is the only one sent as is — its lines are told off in the prompt.
+  if (face?.imageUrl && !face.maskUrl && !spec?.outline) refs.push(face.imageUrl);
   else if (spec) {
     guide = `${userId}/${CT_CONFIG.storagePrefix}/blank-guides/${crypto.randomUUID()}.png`;
-    refs.push(await ctUpload(guide, await outlineDrawing(spec), "image/png"));
+    const drawing = face?.maskUrl && !spec.outline ? await maskDrawing(spec, face.maskUrl) : await outlineDrawing(spec);
+    refs.push(await ctUpload(guide, drawing, "image/png"));
   }
   const model = CT_IMAGE_MODEL;
   let last = "";

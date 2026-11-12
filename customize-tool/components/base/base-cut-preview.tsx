@@ -14,7 +14,7 @@
 
 import { useRef, useState } from "react";
 import { ImageIcon, Loader2, Sparkles, Trash2, Upload, X } from "lucide-react";
-import type { CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtProductScene } from "../../types";
+import type { CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseScenesAuto, CtProductScene } from "../../types";
 import type { CtPrintTemplate } from "../../types/print";
 import { printApi } from "../../lib/print-api";
 import { ctApi } from "../../lib/api-client";
@@ -78,6 +78,8 @@ export function BasePreviewSection(props: {
   baseId: string;
   cfg: CtBaseProductConfig;
   template: CtPrintTemplate | null;
+  /** The automatic 3 backgrounds being made (server/base-scenes.ts). */
+  auto: CtBaseScenesAuto | null;
   onChange: (preview: CtProductScene) => void;
   /** A new AI background: added to the list and made the preview. */
   onScene: (scene: CtBaseScene) => void;
@@ -187,7 +189,7 @@ export function BasePreviewSection(props: {
           {error && <p className="text-destructive">{error}</p>}
         </div>
       </div>
-      <SceneMaker baseId={props.baseId} cfg={props.cfg} blank={blank ? { url: blank.url, width: blank.width, height: blank.height, box: blank.box } : null} onChange={props.onChange} onScene={props.onScene} onScenes={props.onScenes} />
+      <SceneMaker baseId={props.baseId} cfg={props.cfg} auto={props.auto} blank={blank ? { url: blank.url, width: blank.width, height: blank.height, box: blank.box } : null} onChange={props.onChange} onScene={props.onScene} onScenes={props.onScenes} />
     </div>
   );
 }
@@ -207,13 +209,16 @@ const PRESET_LABEL: Record<CtBaseScenePreset, string> = { home: "Quen thuộc", 
 function SceneMaker(props: {
   baseId: string;
   cfg: CtBaseProductConfig;
+  auto: CtBaseScenesAuto | null;
   blank: CtProductScene | null;
   onChange: (preview: CtProductScene) => void;
   onScene: (scene: CtBaseScene) => void;
   onScenes: (scenes: CtBaseScene[]) => void;
 }) {
   const { preview, previewScenes, cut } = props.cfg;
-  const [making, setMaking] = useState<CtBaseScenePreset | null>(null);
+  const [mine, setMaking] = useState<CtBaseScenePreset | null>(null);
+  const autoRunning = props.auto?.status === "running";
+  const making = mine ?? (autoRunning ? "home" : null);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const alpha = cut.mode === "alpha";
@@ -277,8 +282,14 @@ function SceneMaker(props: {
               {making === "custom" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} Tạo nền
             </CtButton>
           </div>
-          {making && <p className="text-muted-foreground">AI đang đọc thông tin sản phẩm và vẽ nền (~1–2 phút)…</p>}
+          {mine && <p className="text-muted-foreground">AI đang đọc thông tin sản phẩm và vẽ nền (~30 giây – 2 phút)…</p>}
         </>
+      )}
+      {props.auto && props.auto.status !== "idle" && (
+        <p className={props.auto.status === "failed" ? "text-amber-600" : "text-muted-foreground"}>
+          {autoRunning && <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />}
+          {autoRunning ? `Tạo sẵn 3 nền: ${props.auto.step}` : props.auto.step}
+        </p>
       )}
       {error && <p className="text-destructive">{error}</p>}
       {(previewScenes.length > 0 || current) && (

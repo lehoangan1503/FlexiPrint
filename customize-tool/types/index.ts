@@ -1813,6 +1813,19 @@ export interface CtBaseProductConfig {
    * scene into `preview`. Newest last.
    */
   previewScenes: CtBaseScene[];
+  /**
+   * When the 3 ready backgrounds were made on their own (import, first open of the base, the cron) — once per base;
+   * null = not yet. The editor makes more by hand.
+   */
+  scenesAuto: string | null;
+}
+
+/** The automatic run of a base (server/base-scenes.ts): phôi if it has none, then the 3 templates. */
+export interface CtBaseScenesAuto {
+  status: "idle" | "running" | "done" | "skipped" | "failed";
+  /** What it is doing / why it stopped, for the editor. */
+  step: string;
+  made: number;
 }
 
 /** The 3 ready templates of a preview background (server/base-scenes.ts), or the editor's own words. */

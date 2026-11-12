@@ -4,7 +4,14 @@
  * chung, cho nó phân tích sản phẩm là gì, dùng trong bối cảnh nào, vị trí thường đặt, cấu trúc … dựa theo thông tin đã
  * import được từ product base", 3 templates):
  *
- *   POST base-products/:id/scenes   CtBaseSceneRequest → { scene: CtBaseScene }   (~1–2 min: call it with jobFetch)
+ *   POST base-products/:id/scenes        CtBaseSceneRequest → { scene: CtBaseScene }   (~30 s–2 min: call it with jobFetch)
+ *   POST base-products/:id/scenes/auto   → CtBaseScenesAuto   the 3 ready backgrounds, in the background (+ an AI phôi
+ *                                        first when the base has none); GET = its state
+ *   POST cron/base-scenes                Bearer CT_CRON_SECRET, { ids? } → the same for every base not done yet
+ *
+ * Asked 2026-11-12 ("không có mặc định tạo sẵn 3 background à? … base chưa có hình thì tạo hình luôn"): every base gets
+ * the 3 once (import, first open, cron — config.scenesAuto); a base no product uses yet shows the "home" one at once,
+ * one already in use keeps its preview (its products would change) and only gets the 3 to pick from.
  *
  * The plain phôi (the piece on grey, straight on) goes to the image model with everything the base knows (name, type,
  * sizes, colours, description, the fulfiller's product photos): the model works out what the product is and where it
@@ -18,7 +25,7 @@
 import sharp from "sharp";
 import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
-import type { CtBaseProduct, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBounds, CtMaterialId, CtProductScene } from "../types";
+import type { CtBaseProduct, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseScenesAuto, CtBounds, CtMaterialId, CtProductScene } from "../types";
 import type { CtPrintSpec, CtPrintTemplate } from "../types/print";
 import { normalizeBaseConfig } from "../lib/base-product";
 import { normalizeScene } from "../lib/scene";
@@ -27,11 +34,14 @@ import { CT_IMAGE_MODEL } from "../lib/image-models";
 import { drawImage } from "./pack-images";
 import { fetchImage } from "./char/files";
 import { loadBaseProduct } from "./base-products";
-import { getTemplate } from "./print-templates";
-import { pieceBounds, sheetBoxOn } from "./product-mockups";
+import { templateRow } from "./print-templates";
+import { addTemplateBlank } from "./print-blanks";
+import { makeBlank, pieceBounds, sceneForBlank, sheetBoxOn } from "./product-mockups";
 import { ctRemove, ctUpload } from "./storage";
 import { jsonError, record, str } from "./ai/llm";
-import type { CtSession } from "./supabase";
+import { ctServiceClient, type CtServiceClient, type CtSession, type CtSupabase } from "./supabase";
+
+type Db = CtSupabase | CtServiceClient;
 
 const SIDE = 1024;
 
@@ -220,36 +230,45 @@ function sheetOf(cfg: CtBaseProductConfig, template: CtPrintTemplate | null): Pi
   return { width: a?.width ?? 1000, height: a?.height ?? 1000, outline: null };
 }
 
-/** POST base-products/:id/scenes */
-export async function makeBaseScene(s: CtSession, baseId: string, raw: unknown): Promise<NextResponse> {
-  const req = readRequest(raw);
-  if (!req) return jsonError("Chọn 1 template nền hoặc viết mô tả nền", 400);
-  const base = await loadBaseProduct(s.supabase, baseId);
-  if (!base) return jsonError("Không tìm thấy product base", 404);
+async function loadTemplate(db: Db, id: string | null): Promise<CtPrintTemplate | null> {
+  if (!id) return null;
+  const { data } = await db.from(CT_TABLES.printTemplates).select("*").eq("id", id).maybeSingle<CtPrintTemplate>();
+  return data ? templateRow(data) : null;
+}
+
+/** One AI background: drawn, its piece found again, stored. Not yet on the base (saveScenes). Throws a message. */
+async function drawBaseScene(o: {
+  userId: string;
+  base: CtBaseProduct;
+  template: CtPrintTemplate | null;
+  preset: CtBaseScenePreset;
+  prompt: string;
+  source: CtProductScene;
+  plain: CtProductScene;
+}): Promise<CtBaseScene> {
+  const { base, template, preset, source } = o;
   const cfg = base.config;
-  const template = cfg.templateId ? await getTemplate(s, cfg.templateId) : null;
   const sheet = sheetOf(cfg, template);
   const aspect = sheet.width / Math.max(1, sheet.height);
   const alpha = cfg.cut.mode === "alpha";
-  if (!alpha && !req.source.url) return jsonError("Chưa có phôi trơn để đặt vào nền — tạo hoặc tải phôi trước", 409);
-
-  const where = req.preset === "custom" ? `${req.prompt} (the editor's own description of the place — follow it)` : PRESETS[req.preset];
+  if (!alpha && !source.url) throw new Error("Chưa có phôi trơn để đặt vào nền — tạo hoặc tải phôi trước");
+  const where = preset === "custom" ? `${o.prompt} (the editor's own description of the place — follow it)` : PRESETS[preset];
   const photos = (cfg.source?.photos ?? []).slice(0, 3);
-  const dir = `${s.user.id}/${CT_CONFIG.storagePrefix}/bases/${baseId}/scenes`;
+  const dir = `${o.userId}/${CT_CONFIG.storagePrefix}/bases/${base.id}/scenes`;
   const temp: string[] = [];
   try {
     const refs: string[] = [];
     let expect: CtBounds;
     if (!alpha) {
-      const ref = await squareRef(req.source);
+      const ref = await squareRef(source);
       const path = `${dir}/ref-${crypto.randomUUID()}.png`;
       refs.push(await ctUpload(path, ref.png, "image/png"));
       temp.push(path);
       expect = ref.box;
-    } else if (req.source.url && req.source.width && req.source.height) {
+    } else if (source.url && source.width && source.height) {
       // The plate goes where it went on the old background (same share of the frame).
-      const b = req.source.box;
-      expect = { x: (b.x / req.source.width) * SIDE, y: (b.y / req.source.height) * SIDE, w: (b.w / req.source.width) * SIDE, h: (b.h / req.source.height) * SIDE };
+      const b = source.box;
+      expect = { x: (b.x / source.width) * SIDE, y: (b.y / source.height) * SIDE, w: (b.w / source.width) * SIDE, h: (b.h / source.height) * SIDE };
     } else {
       const w = aspect >= 1 ? SIDE * 0.55 : SIDE * 0.55 * aspect;
       const h = w / aspect;
@@ -267,7 +286,7 @@ export async function makeBaseScene(s: CtSession, baseId: string, raw: unknown):
         last = e instanceof Error ? e.message : String(e);
       }
     }
-    if (!picture) return jsonError(`AI không vẽ được nền: ${last}`, 502);
+    if (!picture) throw new Error(`AI không vẽ được nền: ${last}`);
 
     const m = await sharp(picture).metadata();
     const k = (m.width ?? SIDE) / SIDE;
@@ -285,21 +304,155 @@ export async function makeBaseScene(s: CtSession, baseId: string, raw: unknown):
       }
     }
     const jpg = await sharp(picture).flatten({ background: "#ffffff" }).jpeg({ quality: 90 }).toBuffer();
-    const url = await ctUpload(`${dir}/${req.preset}-${crypto.randomUUID()}.jpg`, jpg, "image/jpeg");
-    const scene: CtProductScene = { url, width: m.width ?? SIDE, height: m.height ?? SIDE, box, ...(alpha && req.source.plate ? { plate: req.source.plate } : {}) };
-    const entry: CtBaseScene = { id: newId(), preset: req.preset, prompt: req.prompt, scene, plain: req.plain, found, at: new Date().toISOString() };
-
-    // Kept on the base at once: a picture that took a minute is never lost to an unsaved page.
-    const { data: row } = await s.supabase.from(CT_TABLES.baseProducts).select("config").eq("id", baseId).maybeSingle<{ config: Record<string, unknown> | null }>();
-    const now = row?.config ?? {};
-    const previewScenes = [...normalizeBaseConfig(now).previewScenes, entry].slice(-24);
-    const { error } = await s.supabase.from(CT_TABLES.baseProducts).update({ config: { ...now, previewScenes } }).eq("id", baseId);
-    if (error) console.warn(`[ct] base scene ${baseId}: ${error.message}`);
-    console.info(`[ct] base scene ${base.name} ${req.preset}: ${found ? "piece found" : "box kept from the phôi"}`);
-    return NextResponse.json({ scene: entry });
-  } catch (e) {
-    return jsonError(e instanceof Error ? e.message : "Không tạo được nền", 500);
+    const url = await ctUpload(`${dir}/${preset}-${crypto.randomUUID()}.jpg`, jpg, "image/jpeg");
+    const scene: CtProductScene = { url, width: m.width ?? SIDE, height: m.height ?? SIDE, box, ...(alpha && source.plate ? { plate: source.plate } : {}) };
+    console.info(`[ct] base scene ${base.name} ${preset}: ${found ? "piece found" : "box kept from the phôi"}`);
+    return { id: newId(), preset, prompt: o.prompt, scene, plain: o.plain, found, at: new Date().toISOString() };
   } finally {
     if (temp.length) await ctRemove(temp).catch(() => undefined);
   }
+}
+
+/** Adds scenes to the base (read fresh: a picture that took a minute is never lost to an unsaved page) + other fields. */
+async function saveScenes(db: Db, baseId: string, add: CtBaseScene[], extra: Partial<CtBaseProductConfig> = {}): Promise<void> {
+  const { data: row } = await db.from(CT_TABLES.baseProducts).select("config").eq("id", baseId).maybeSingle<{ config: Record<string, unknown> | null }>();
+  const now = row?.config ?? {};
+  const previewScenes = [...normalizeBaseConfig(now).previewScenes, ...add].slice(-24);
+  const { error } = await db.from(CT_TABLES.baseProducts).update({ config: { ...now, ...extra, previewScenes } }).eq("id", baseId);
+  if (error) throw new Error(error.message);
+}
+
+/** POST base-products/:id/scenes */
+export async function makeBaseScene(s: CtSession, baseId: string, raw: unknown): Promise<NextResponse> {
+  const req = readRequest(raw);
+  if (!req) return jsonError("Chọn 1 template nền hoặc viết mô tả nền", 400);
+  const base = await loadBaseProduct(s.supabase, baseId);
+  if (!base) return jsonError("Không tìm thấy product base", 404);
+  try {
+    const template = await loadTemplate(s.supabase, base.config.templateId);
+    const entry = await drawBaseScene({ userId: s.user.id, base, template, preset: req.preset, prompt: req.prompt, source: req.source, plain: req.plain });
+    await saveScenes(s.supabase, baseId, [entry]).catch((e: Error) => console.warn(`[ct] base scene ${baseId}: ${e.message}`));
+    return NextResponse.json({ scene: entry });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không tạo được nền", 500);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The 3 ready backgrounds, made on their own
+// ---------------------------------------------------------------------------
+
+const AUTO_PRESETS: Array<Exclude<CtBaseScenePreset, "custom">> = ["home", "holiday", "minimal"];
+const runs = new Map<string, CtBaseScenesAuto>();
+
+/**
+ * The plain phôi a base's backgrounds are made from — made by AI when the base has none (a khuôn without phôi: added to
+ * the khuôn like "Tạo phôi bằng AI"; no khuôn: the base's own preview photo). null + why = nothing to make.
+ */
+async function plainPhoi(db: Db, userId: string, base: CtBaseProduct, template: CtPrintTemplate | null, say: (t: string) => void): Promise<{ source: CtProductScene; plain: CtProductScene } | { skip: string }> {
+  const cfg = base.config;
+  const current = cfg.previewScenes.find((sc) => sc.scene.url && sc.scene.url === cfg.preview.url);
+  const plain = current ? current.plain : cfg.preview;
+  if (cfg.cut.mode === "alpha") return { source: plain, plain };
+  if (plain.overlay) return { skip: "Phôi có lớp phủ nếp vải của nhà in — nền AI không giữ được, ảnh sinh động để mockup AI làm" };
+  if (plain.url) return { source: plain, plain };
+  const blank = template?.spec.blanks[0];
+  if (blank) return { source: { url: blank.url, width: blank.width, height: blank.height, box: blank.box }, plain };
+  if (template) {
+    say("AI đang vẽ phôi trơn từ khuôn…");
+    const photo = await makeBlank(userId, template.name, template.spec, cfg.material);
+    const t = await addTemplateBlank(db, userId, template, photo, "Phôi AI", true);
+    const b = t.spec.blanks[0];
+    return { source: { url: b.url, width: b.width, height: b.height, box: b.box }, plain };
+  }
+  say("AI đang vẽ phôi trơn…");
+  const sheet = sheetOf(cfg, null);
+  const photo = await makeBlank(userId, base.name, null, cfg.material, (cfg.source?.photos ?? []).slice(0, 2));
+  const url = await ctUpload(`${userId}/${CT_CONFIG.storagePrefix}/bases/${base.id}/phoi-${crypto.randomUUID()}.png`, photo, "image/png");
+  const own = await sceneForBlank(photo, url, sheet);
+  // The base's own phôi from now on (what "Phôi trơn" goes back to).
+  const { data: row } = await db.from(CT_TABLES.baseProducts).select("config").eq("id", base.id).maybeSingle<{ config: Record<string, unknown> | null }>();
+  await db.from(CT_TABLES.baseProducts).update({ config: { ...(row?.config ?? {}), preview: own } }).eq("id", base.id);
+  return { source: own, plain: own };
+}
+
+async function runAuto(db: Db, userId: string, baseId: string, state: CtBaseScenesAuto): Promise<void> {
+  const say = (t: string) => void (state.step = t);
+  try {
+    const base = await loadBaseProduct(db, baseId);
+    if (!base) throw new Error("Không tìm thấy product base");
+    const { data: row } = await db.from(CT_TABLES.baseProducts).select("config").eq("id", baseId).maybeSingle<{ config: Record<string, unknown> | null }>();
+    await db.from(CT_TABLES.baseProducts).update({ config: { ...(row?.config ?? {}), scenesAuto: new Date().toISOString() } }).eq("id", baseId);
+    const template = await loadTemplate(db, base.config.templateId);
+    const got = await plainPhoi(db, userId, base, template, say);
+    if ("skip" in got) {
+      state.status = "skipped";
+      say(got.skip);
+      return;
+    }
+    const fresh = (await loadBaseProduct(db, baseId)) ?? base;
+    const have = new Set(fresh.config.previewScenes.map((sc) => sc.preset));
+    const todo = AUTO_PRESETS.filter((p) => !have.has(p));
+    say(`AI đang tạo ${todo.length} nền bối cảnh…`);
+    const made = (
+      await Promise.allSettled(todo.map((preset) => drawBaseScene({ userId, base: fresh, template, preset, prompt: "", source: got.source, plain: got.plain })))
+    ).flatMap((r) => (r.status === "fulfilled" ? [r.value] : (console.warn(`[ct] base scene ${base.name}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`), [])));
+    state.made = made.length;
+    // Shown at once only on a base nothing is made on yet (else every product's preview would change unasked) and
+    // never over a background the editor picked; a cut-along-the-art base keeps the background its phôi were drawn on.
+    const { count } = await db.from(CT_TABLES.products).select("id", { count: "exact", head: true }).eq("base_product_id", baseId).eq("kind", "product");
+    const picked = fresh.config.previewScenes.some((sc) => sc.scene.url && sc.scene.url === fresh.config.preview.url);
+    const home = made.find((sc) => sc.preset === "home") ?? made[0];
+    const show = home && fresh.config.cut.mode !== "alpha" && !count && !picked;
+    await saveScenes(db, baseId, made, show ? { preview: home.scene } : {});
+    state.status = made.length ? "done" : "failed";
+    say(made.length ? `Đã tạo ${made.length} nền${show ? " — nền “Nơi dùng quen thuộc” đang làm nền xem trước" : ""}` : "AI không vẽ được nền nào — bấm template để thử lại");
+  } catch (e) {
+    state.status = "failed";
+    say(e instanceof Error ? e.message : String(e));
+  }
+}
+
+/** Starts the automatic run of a base (once at a time) → its state. */
+export function startBaseScenes(db: Db, userId: string, baseId: string): CtBaseScenesAuto {
+  const now = runs.get(baseId);
+  if (now?.status === "running") return now;
+  const state: CtBaseScenesAuto = { status: "running", step: "Đang chuẩn bị…", made: 0 };
+  runs.set(baseId, state);
+  void runAuto(db, userId, baseId, state);
+  return state;
+}
+
+/** POST base-products/:id/scenes/auto */
+export async function autoBaseScenes(s: CtSession, baseId: string): Promise<NextResponse> {
+  const base = await loadBaseProduct(s.supabase, baseId);
+  if (!base) return jsonError("Không tìm thấy product base", 404);
+  // The service client when there is one: the run outlives the editor's login token.
+  return NextResponse.json(startBaseScenes(ctServiceClient() ?? s.supabase, s.user.id, baseId));
+}
+
+/** GET base-products/:id/scenes/auto */
+export function autoBaseScenesState(baseId: string): NextResponse {
+  return NextResponse.json(runs.get(baseId) ?? ({ status: "idle", step: "", made: 0 } satisfies CtBaseScenesAuto));
+}
+
+/** POST cron/base-scenes — every base without its automatic run (or `ids`), one after the other. */
+export async function cronBaseScenes(authorization: string | null, raw: unknown): Promise<NextResponse> {
+  const secret = process.env.CT_CRON_SECRET;
+  if (!secret) return jsonError("CT_CRON_SECRET chưa được cấu hình", 503);
+  if (authorization !== `Bearer ${secret}`) return jsonError("Unauthorized", 401);
+  const db = ctServiceClient();
+  if (!db) return jsonError("Thiếu service key", 503);
+  const ids = (Array.isArray(record(raw).ids) ? (record(raw).ids as unknown[]) : []).filter((v): v is string => typeof v === "string");
+  const { data } = await db.from(CT_TABLES.baseProducts).select("id, name, user_id, config").returns<Array<{ id: string; name: string; user_id: string | null; config: Record<string, unknown> | null }>>();
+  const list = (data ?? []).filter((b) => (ids.length ? ids.includes(b.id) : !normalizeBaseConfig(b.config).scenesAuto) && b.user_id);
+  void (async () => {
+    for (const b of list) {
+      const state: CtBaseScenesAuto = { status: "running", step: "Đang chuẩn bị…", made: 0 };
+      runs.set(b.id, state);
+      await runAuto(db, b.user_id as string, b.id, state);
+      console.info(`[ct] base scenes (cron) ${b.name}: ${state.status} · ${state.step}`);
+    }
+  })();
+  return NextResponse.json({ started: list.map((b) => ({ id: b.id, name: b.name })) });
 }

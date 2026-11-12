@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtBasePlacement, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
+import type { CtBasePlacement, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseScenesAuto, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
   CtFulfillCatalogPage, CtFulfillProvider, CtTeeinblueStatus, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind, CtStoreList } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
@@ -112,6 +112,9 @@ export const ctApi = {
   deleteBaseProduct: (id: string) => call<void>(`base-products/${id}`, { method: "DELETE" }),
   /** An AI background of the base's preview (~1–2 min; already added to its previewScenes). */
   makeBaseScene: (id: string, body: CtBaseSceneRequest) => call<{ scene: CtBaseScene }>(`base-products/${id}/scenes`, json("POST", body)).then((r) => r.scene),
+  /** The 3 ready backgrounds (+ an AI phôi when the base has none), made in the background — and their state. */
+  startBaseScenes: (id: string) => call<CtBaseScenesAuto>(`base-products/${id}/scenes/auto`, json("POST", {})),
+  baseScenesState: (id: string) => call<CtBaseScenesAuto>(`base-products/${id}/scenes/auto`),
   /** A fulfiller's catalog for the Import dialog (server/base-import.ts). */
   baseImportCatalog: (provider: CtFulfillProvider, q: string, page: number, filter: CtFulfillCatalogFilter = "all") =>
     call<CtFulfillCatalogPage>(`base-import/catalog?${new URLSearchParams({ provider, q, page: String(page), filter })}`),

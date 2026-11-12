@@ -13,6 +13,7 @@
  *   POST   print-templates/:id/blanks    multipart file → { template }  a phôi of the khuôn (server/print-blanks.ts)
  *   POST   print-templates/:id/blanks/ai → { template }  a phôi drawn by AI
  *   POST   base-products/:id/scenes      → { scene }     an AI background of the base's preview (server/base-scenes.ts)
+ *   POST|GET base-products/:id/scenes/auto → CtBaseScenesAuto  the 3 ready backgrounds (+ phôi) in the background
  *   POST   products/from-template        { templateId, name } → { product }   (server/print-products.ts)
  *   POST   products                      { name }
  *   GET    products/:id                  → CtProductBundle
@@ -148,7 +149,7 @@ import { dispatchChar } from "./char/router";
 import * as packImages from "./pack-images";
 import * as prices from "./price-tables";
 import * as bases from "./base-products";
-import { makeBaseScene } from "./base-scenes";
+import { autoBaseScenes, autoBaseScenesState, cronBaseScenes, makeBaseScene } from "./base-scenes";
 import * as baseImport from "./base-import";
 import * as stores from "./stores";
 import { mcpEndpoint } from "./mcp/server";
@@ -213,6 +214,7 @@ async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResp
 async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
   if (path[0] === "public") return dispatchPublic(req, path);
   if (path[0] === "cron" && path[1] === "cleanup" && req.method === "POST") return h.cronCleanup(req.headers.get("authorization"));
+  if (path[0] === "cron" && path[1] === "base-scenes" && req.method === "POST") return cronBaseScenes(req.headers.get("authorization"), await readJson<unknown>(req));
   if (path[0] === "mcp" && path.length === 1) return mcpEndpoint(req);
 
   const session = await ctSession();
@@ -289,6 +291,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     if (id && method === "DELETE") return bases.deleteBaseProduct(session, id);
   }
   if (head === "base-products" && id && sub === "scenes" && !path[3] && method === "POST") return makeBaseScene(session, id, await readJson<unknown>(req));
+  if (head === "base-products" && id && sub === "scenes" && path[3] === "auto" && method === "POST") return autoBaseScenes(session, id);
+  if (head === "base-products" && id && sub === "scenes" && path[3] === "auto" && method === "GET") return autoBaseScenesState(id);
   if (head === "price-tables" && !sub) {
     if (!id && method === "GET") return prices.listPriceTables(session);
     if (!id && method === "POST") return prices.createPriceTable(session, await readJson<unknown>(req));

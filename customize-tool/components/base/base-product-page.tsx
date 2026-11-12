@@ -14,11 +14,11 @@
  *   Mockups          none of its own: the mockups of every product made on it, by product
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Download, ExternalLink, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { CT_CONFIG } from "../../config";
-import type { CtBaseProductConfig, CtBaseProductDetail, CtPriceTable, CtPrintArea } from "../../types";
+import type { CtBaseProductConfig, CtBaseProductDetail, CtBaseScenesAuto, CtPriceTable, CtPrintArea } from "../../types";
 import type { CtPrintTemplate } from "../../types/print";
 import { ctApi } from "../../lib/api-client";
 import { printApi } from "../../lib/print-api";
@@ -58,10 +58,15 @@ export function BaseProductView({ baseId }: { baseId: string }) {
   /** The khuôn editor (draw / change a khuôn by AI, faces, sizes) — what the old Thư viện → Khuôn in tab was. */
   const [khuonOpen, setKhuonOpen] = useState(false);
   const [pbBusy, setPbBusy] = useState(false);
+  /** The automatic 3 preview backgrounds (server/base-scenes.ts) while they are made. */
+  const [auto, setAuto] = useState<CtBaseScenesAuto | null>(null);
+  /** The preview as saved: the run's default background replaces it only when the editor has not changed it. */
+  const savedPreview = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const d = await ctApi.getBaseProduct(baseId);
+      savedPreview.current = d.base.config.preview.url;
       setDetail(d);
       setName(d.base.name);
       setCfg(d.base.config);
@@ -111,6 +116,45 @@ export function BaseProductView({ baseId }: { baseId: string }) {
   };
 
   const template = useMemo(() => templates.find((t) => t.id === cfg?.templateId) ?? null, [templates, cfg?.templateId]);
+
+  // The 3 ready backgrounds, once per base, as soon as it has a phôi (a run already going — an import's — is followed).
+  const hasPhoi = !!cfg && (!!cfg.preview.url || (cfg.cut.mode !== "alpha" && !!template?.spec.blanks.length));
+  const autoDue = !!cfg && !cfg.scenesAuto && !cfg.previewScenes.length && hasPhoi;
+  useEffect(() => {
+    let off = false;
+    ctApi
+      .baseScenesState(baseId)
+      .then((st) => {
+        if (off) return;
+        if (st.status === "running") setAuto(st);
+        else if (autoDue) return ctApi.startBaseScenes(baseId).then((started) => void (!off && setAuto(started)));
+      })
+      .catch(() => undefined);
+    return () => {
+      off = true;
+    };
+  }, [baseId, autoDue]);
+  const autoRunning = auto?.status === "running";
+  useEffect(() => {
+    if (!autoRunning) return;
+    const t = window.setInterval(() => {
+      void (async () => {
+        const st = await ctApi.baseScenesState(baseId).catch(() => null);
+        if (!st || st.status === "running") return st && setAuto(st);
+        const d = await ctApi.getBaseProduct(baseId).catch(() => null);
+        if (d) {
+          const was = savedPreview.current;
+          savedPreview.current = d.base.config.preview.url;
+          setCfg((c) =>
+            c ? { ...c, previewScenes: d.base.config.previewScenes, scenesAuto: d.base.config.scenesAuto, preview: c.preview.url === was ? d.base.config.preview : c.preview } : c,
+          );
+        }
+        printApi.list().then(setTemplates).catch(() => undefined);
+        setAuto(st);
+      })();
+    }, 5000);
+    return () => window.clearInterval(t);
+  }, [autoRunning, baseId]);
   const fulfiller = !cfg ? null : cfg.source?.provider ?? (/^prin?t?belle/i.test(cfg.fulfillment.provider) ? "printbelle" : /^merchize/i.test(cfg.fulfillment.provider) ? "merchize" : null);
   /** Printbelle: its khuôn (Template.tif, if the base has none) + its phôi with the overlay · Merchize: its PSD links. */
   const refreshFulfiller = async () => {
@@ -437,6 +481,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                 baseId={baseId}
                 cfg={cfg}
                 template={template}
+                auto={auto}
                 onChange={(preview) => patch({ preview })}
                 onScenes={(previewScenes) => patch({ previewScenes })}
                 onScene={(sc) => {

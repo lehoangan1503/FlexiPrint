@@ -48,7 +48,8 @@ import { importPrintbelleKhuon, type PbKhuonImport } from "./printbelle-khuon";
 import { importMerchizeKhuon } from "./merchize-khuon";
 import { ctUpload } from "./storage";
 import { connectTeeinblue, merchizeCatalog, merchizeProduct, teeinblueStatus, TEEINBLUE_CDN, type TibProduct } from "./teeinblue";
-import type { CtSession } from "./supabase";
+import { ctServiceClient, type CtSession } from "./supabase";
+import { startBaseScenes } from "./base-scenes";
 
 const PER_PAGE = 24;
 const PROVIDER_NAME: Record<CtFulfillProvider, string> = { printbelle: "Printbelle", merchize: "Merchize" };
@@ -368,6 +369,8 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
       .select("*")
       .single<CtBaseProduct>();
     if (error) return jsonError(error.message, 500);
+    // Its phôi (if the fulfiller had none) + the 3 ready preview backgrounds, in the background (server/base-scenes.ts).
+    startBaseScenes(ctServiceClient() ?? s.supabase, s.user.id, data.id);
     return NextResponse.json({ base: { ...data, config: normalizeBaseConfig(data.config) } }, { status: 201 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Lỗi", 502);

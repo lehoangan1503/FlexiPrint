@@ -123,6 +123,7 @@ export function normalizeBaseConfig(raw: unknown): CtBaseProductConfig {
     source: normalizeSource(c.source),
     preview: normalizeScene(c.preview && typeof c.preview === "object" ? c.preview : null),
     previewScenes: normalizeBaseScenes(c.previewScenes),
+    scenesAuto: str(c.scenesAuto, 40) || null,
   };
 }
 

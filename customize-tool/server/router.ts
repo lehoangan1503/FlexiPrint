@@ -13,6 +13,7 @@
  *   POST   print-templates/:id/blanks    multipart file → { template }  a phôi of the khuôn (server/print-blanks.ts)
  *   POST   print-templates/:id/blanks/ai → { template }  a phôi drawn by AI
  *   POST   base-products/:id/scenes      → { scene }     an AI background of the base's preview (server/base-scenes.ts)
+ *   POST   base-products/:id/assembly    { swap?, off? } → { base, note, reapplied }   sewn print sheet (server/base-assembly.ts)
  *   POST|GET base-products/:id/scenes/auto → CtBaseScenesAuto  the 3 ready backgrounds (+ phôi) in the background
  *   POST   products/from-template        { templateId, name } → { product }   (server/print-products.ts)
  *   POST   products                      { name }
@@ -150,6 +151,7 @@ import * as packImages from "./pack-images";
 import * as prices from "./price-tables";
 import * as bases from "./base-products";
 import { autoBaseScenes, autoBaseScenesState, cronBaseScenes, makeBaseScene } from "./base-scenes";
+import { makeBaseAssembly } from "./base-assembly";
 import * as baseImport from "./base-import";
 import * as stores from "./stores";
 import { mcpEndpoint } from "./mcp/server";
@@ -291,6 +293,7 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     if (id && method === "DELETE") return bases.deleteBaseProduct(session, id);
   }
   if (head === "base-products" && id && sub === "scenes" && !path[3] && method === "POST") return makeBaseScene(session, id, await readJson<unknown>(req));
+  if (head === "base-products" && id && sub === "assembly" && !path[3] && method === "POST") return makeBaseAssembly(session, id, await readJson<unknown>(req));
   if (head === "base-products" && id && sub === "scenes" && path[3] === "auto" && method === "POST") return autoBaseScenes(session, id);
   if (head === "base-products" && id && sub === "scenes" && path[3] === "auto" && method === "GET") return autoBaseScenesState(id);
   if (head === "price-tables" && !sub) {

@@ -123,6 +123,8 @@ export const ctApi = {
   teeinblueStatus: () => call<CtTeeinblueStatus>("base-import/teeinblue"),
   connectTeeinblue: (code: string) => call<CtTeeinblueStatus>("base-import/teeinblue", json("POST", { code })),
   /** A fulfiller's base: Printbelle khuôn (if none) + phôi with its overlay · Merchize template / mockup links. */
+  /** Read the base's sewn pieces (hood + body) off its khuôn + phôi; swap = hood halves the other way; off = none. */
+  baseAssembly: (id: string, body: { swap?: boolean; off?: boolean }) => call<{ base: CtBaseProduct; note: string; reapplied: number }>(`base-products/${id}/assembly`, json("POST", body)),
   refreshFulfillerBase: (baseId: string) => call<{ reapplied: number; failed: string[]; note: string; phoi: boolean }>("base-import/refresh", json("POST", { baseId })),
   createProduct: (name: string) => call<{ product: CtProduct }>("products", json("POST", { name })).then((r) => r.product),
   getBundle: (id: string) => call<CtProductBundle>(`products/${id}`),

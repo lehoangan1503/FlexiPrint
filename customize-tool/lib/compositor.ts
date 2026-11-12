@@ -5,7 +5,7 @@
  * scaled once at the end, so preview and full-res export are the same picture.
  */
 
-import type { CtFillConfig, CtMainFrame, CtMainLayout, CtPrintSilhouette, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtShape, CtTextConfig, CtTransform } from "../types";
+import type { CtFillConfig, CtMainFrame, CtMainLayout, CtPrintSilhouette, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtSelection, CtSewnPiece, CtShape, CtTextConfig, CtTransform } from "../types";
 import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, textBand } from "./geometry";
 
 export { textBand };
@@ -69,6 +69,11 @@ export interface CompositeInput {
    * zone of that size (patterns keep their px size), everything else is stretched with the sheet.
    */
   size?: { width: number; height: number; zones: Record<string, CtShape> } | null;
+  /**
+   * The print sheet sewn from pieces (lib/assembly, a hooded blanket): each piece prints its part of the design into
+   * its place on the sheet — print files only (the preview / mockups show the design as it is).
+   */
+  sewn?: CtSewnPiece[] | null;
 }
 
 /**
@@ -109,6 +114,7 @@ export async function renderComposite(input: CompositeInput): Promise<HTMLCanvas
     canvas.width = Math.max(1, Math.round(main.width * scale));
     canvas.height = Math.max(1, Math.round(main.height * scale));
     await drawComposite(ctx, input);
+    await drawSewn(ctx, input);
     ctx.save();
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     ctx.globalCompositeOperation = "destination-in";
@@ -135,7 +141,33 @@ export async function renderComposite(input: CompositeInput): Promise<HTMLCanvas
   canvas.width = Math.max(1, Math.round((main.width + 2 * b.x) * scale));
   canvas.height = Math.max(1, Math.round((main.height + 2 * b.y) * scale));
   await drawComposite(ctx, input, b);
+  if (!b.x && !b.y) await drawSewn(ctx, input);
   return canvas;
+}
+
+/**
+ * A sewn print sheet (input.sewn): over the design as it lies, each piece is drawn again from the part of the design
+ * it shows (`from`, at full quality — the layers themselves, not the pixels), scaled into its place (`to`), clipped
+ * to its outline. What no piece takes (pockets, spare area) keeps the design as it lies.
+ */
+async function drawSewn(ctx: CanvasRenderingContext2D, input: CompositeInput): Promise<void> {
+  const { scale } = input;
+  for (const p of input.sewn ?? []) {
+    const k = p.to.w / p.from.w;
+    if (!(k > 0) || !Number.isFinite(k)) continue;
+    ctx.save();
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    clipShape(ctx, p.shape);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    if (input.background) {
+      ctx.fillStyle = input.background;
+      ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    }
+    // drawComposite maps a design point q to (q + offset) × its scale: from.x → to.x.
+    await drawComposite(ctx, { ...input, scale: scale * k, background: undefined }, { x: p.to.x / k - p.from.x, y: p.to.y / k - p.from.y });
+    ctx.restore();
+  }
 }
 
 /** The khuôn vật liệu the shown version is printed to (lib/material-frame), if the product has one. */

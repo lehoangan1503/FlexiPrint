@@ -44,6 +44,7 @@ import { normalizeLayouts, onVersion } from "./layout";
 import { defaultMaterialConfig, normalizeMaterialConfig } from "./materials";
 import { defaultScene, normalizeScene } from "./scene";
 import { isPrintKind, normalizePrintSpec } from "./print-template";
+import { normalizePrintAssembly } from "./assembly";
 
 export function defaultRegionConfig(kind: CtRegionKind): CtRegionConfig {
   return {
@@ -292,6 +293,7 @@ export function defaultProductConfig(): CtProductConfig {
     baseFrameId: null,
     versionPhoi: [],
     viewBaseId: null,
+    assembly: null,
     customerPhoi: false,
   };
 }
@@ -367,6 +369,7 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     baseFrameId: typeof raw?.baseFrameId === "string" && raw.baseFrameId ? raw.baseFrameId : null,
     versionPhoi: normalizeVersionPhoi(raw?.versionPhoi),
     viewBaseId: typeof raw?.viewBaseId === "string" && raw.viewBaseId ? raw.viewBaseId : null,
+    assembly: normalizePrintAssembly(raw?.assembly),
     customerPhoi: raw?.customerPhoi === true,
   };
 }

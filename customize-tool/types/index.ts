@@ -859,6 +859,8 @@ export interface CtProductConfig {
   versionPhoi: CtVersionPhoi[];
   /** The base this config is laid on (lib/base-fit withBase): which `versionPhoi` the preview uses. null = none. */
   viewBaseId: string | null;
+  /** The print sheet sewn from the design (the base's CtBaseAssembly on this canvas), set by withBase; null = none. */
+  assembly: CtPrintAssembly | null;
   /**
    * "Phôi AI có ảnh khách" (asked 2026-11-10, a tick on the deploy page, OFF by default): after the AI style the
    * server draws the version's phôi again WITH the customer's photo (server/photo-tasks.ts, ~1 min more). Off = the
@@ -1818,6 +1820,47 @@ export interface CtBaseProductConfig {
    * null = not yet. The editor makes more by hand.
    */
   scenesAuto: string | null;
+  /**
+   * The print sheet is sewn pieces, not the preview laid flat (2026-11-12, Wearable Hooded Blanket: the preview shows
+   * the top of the design on the hood, so the file must carry it on the hood pieces): which part of the design each
+   * piece prints. null = the sheet is printed as the design lies on it.
+   */
+  assembly: CtBaseAssembly | null;
+}
+
+/**
+ * One sewn piece (CtBaseAssembly): the part of the design `from` — the design as the preview shows it — is printed
+ * into `to` on the print sheet, one scale (to.w / from.w), clipped to `shape`. Both in the khuôn sheet's px (on a
+ * product: its canvas px).
+ */
+export interface CtSewnPiece {
+  /** "Thân", "Nón trái", "Nón phải" */
+  name: string;
+  /** The piece's outline on the print sheet (its cut line, a little past it). */
+  shape: CtShape;
+  /** The part of the design it shows (on the preview). */
+  from: CtBounds;
+  /** Where it lies on the print sheet (same shape as `from`). */
+  to: CtBounds;
+}
+
+/** CtBaseProductConfig.assembly — read off the khuôn (its pieces) + the phôi's overlay (where the hood is). */
+export interface CtBaseAssembly {
+  pieces: CtSewnPiece[];
+  /** The khuôn's lines moved to where each piece shows on the design (PNG, sheet px): the editor's guide. */
+  guideUrl: string | null;
+  /** The hood's left half printed on the right-hand hood piece (and the other way round). */
+  swap: boolean;
+  /** What was read (for the base page). */
+  note: string;
+  at: string;
+}
+
+/** CtProductConfig.assembly — the base's assembly laid on the artwork canvas (lib/base-fit withBase). */
+export interface CtPrintAssembly {
+  pieces: CtSewnPiece[];
+  /** The khuôn's own lines on the print sheet (canvas px): File in shows them over the sewn sheet. */
+  sheetGuide: ({ url: string } & CtBounds) | null;
 }
 
 /** The automatic run of a base (server/base-scenes.ts): phôi if it has none, then the 3 templates. */

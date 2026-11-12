@@ -108,7 +108,7 @@ export async function printbelleKhuonFile(spu: string): Promise<PbKhuonFile | nu
 
 
 /** A 0/1 map's 8-connected groups. */
-interface Group {
+export interface Group {
   px: Int32Array;
   x0: number;
   y0: number;
@@ -116,7 +116,7 @@ interface Group {
   y1: number;
 }
 
-function groupsOf(map: Uint8Array, w: number, h: number): Group[] {
+export function groupsOf(map: Uint8Array, w: number, h: number): Group[] {
   const seen = new Uint8Array(w * h);
   const stack = new Int32Array(w * h);
   const out: Group[] = [];
@@ -157,7 +157,7 @@ function groupsOf(map: Uint8Array, w: number, h: number): Group[] {
 }
 
 /** 1 where the border of a w × h grid reaches over cells that are 0 in `wall` (4-connected). */
-function reach(wall: Uint8Array, w: number, h: number): Uint8Array {
+export function reach(wall: Uint8Array, w: number, h: number): Uint8Array {
   const seen = new Uint8Array(w * h);
   const stack = new Int32Array(w * h);
   let top = 0;
@@ -187,7 +187,7 @@ function reach(wall: Uint8Array, w: number, h: number): Uint8Array {
 }
 
 /** Square dilation by `r` (row pass + column pass of running counts). */
-function grow(src: Uint8Array, w: number, h: number, r: number): Uint8Array {
+export function grow(src: Uint8Array, w: number, h: number, r: number): Uint8Array {
   const tmp = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) {
     const row = y * w;
@@ -213,7 +213,7 @@ function grow(src: Uint8Array, w: number, h: number, r: number): Uint8Array {
 }
 
 /** A filled region (local grid `w` × `h`, 1 = in) → its outline (Moore neighbour tracing), in local px. */
-function outline(map: Uint8Array, w: number, h: number): CtPoint[] {
+export function outline(map: Uint8Array, w: number, h: number): CtPoint[] {
   let start = -1;
   for (let i = 0; i < w * h; i++)
     if (map[i]) {
@@ -250,7 +250,7 @@ function outline(map: Uint8Array, w: number, h: number): CtPoint[] {
 }
 
 /** Douglas–Peucker on a closed outline. */
-function simplify(pts: CtPoint[], tol: number): CtPoint[] {
+export function simplify(pts: CtPoint[], tol: number): CtPoint[] {
   if (pts.length < 8) return pts;
   const keep = new Uint8Array(pts.length);
   // Split at the point farthest from the first, so the closed loop becomes two open runs.

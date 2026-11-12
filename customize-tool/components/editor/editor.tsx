@@ -1511,6 +1511,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               print={viewConfig.print}
               baseName={viewBase?.name ?? null}
               printSilhouette={viewBase ? viewConfig.printSilhouette : null}
+              assembly={viewConfig.assembly}
             />
           ) : view === "preview" && !main ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>

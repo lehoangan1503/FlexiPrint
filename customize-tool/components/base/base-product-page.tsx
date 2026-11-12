@@ -29,6 +29,7 @@ import { PhoiRow } from "../print/phoi-tab";
 import { KhuonPreview, KhuonTab } from "../print/khuon-tab";
 import { ctConfirm } from "../dialogs";
 import { BaseCutSection, BasePreviewSection } from "./base-cut-preview";
+import { BaseAssemblySection } from "./base-assembly-section";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, CtSelect, CtTextarea, CtTooltipProvider } from "../ui";
 
 function Section({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
@@ -475,6 +476,22 @@ export function BaseProductView({ baseId }: { baseId: string }) {
             <Section title="Cắt + file in">
               <BaseCutSection cfg={cfg} template={template} onChange={(cut) => patch({ cut })} />
             </Section>
+
+            {(cfg.assembly || (template && cfg.cut.mode !== "alpha")) && (
+              <Section title="Ráp mảnh (nón + thân)">
+                <BaseAssemblySection
+                  baseId={baseId}
+                  cfg={cfg}
+                  template={template}
+                  dirty={dirty}
+                  onDone={(_, note) => {
+                    void load();
+                    flash(note);
+                  }}
+                  onError={setError}
+                />
+              </Section>
+            )}
 
             <Section title="Phôi / nền xem trước">
               <BasePreviewSection

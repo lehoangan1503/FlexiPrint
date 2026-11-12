@@ -781,7 +781,9 @@ export class Customizer {
     if (!print) return withSilhouette(await renderComposite({ ...input, scale: 1, cutToFrame: true }), sil, cut());
     const picked = pickedOptions(this.root);
     const size = print.spec.sizes.length ? printSize(print.spec, picked.find((v) => print.spec.sizes.some((s) => s.name.toLowerCase() === v.toLowerCase())) ?? null) : null;
-    const sheet = await renderComposite({ ...input, scale: 1, cutToFrame: !size, size: size && size.id ? size : null });
+    // A sheet sewn from pieces (a hooded blanket, lib/assembly): each piece prints what the preview shows on it.
+    const sewn = size?.id ? null : (this.tpl.config.assembly?.pieces ?? null);
+    const sheet = await renderComposite({ ...input, scale: 1, cutToFrame: !size, size: size && size.id ? size : null, sewn });
     // A khuôn made as one half (one trouser leg): the other half is its mirror image.
     return withSilhouette(print.spec.mirror ? mirrorSheet(sheet) : sheet, sil, size?.id ? null : silhouetteCutOf(printFrame(input), print.spec.mirror));
   }

@@ -6,6 +6,7 @@
 import type { CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseSource, CtBaseVariant, CtMaterialId, CtPrintArea } from "../types";
 import { newId } from "./geometry";
 import { normalizeScene } from "./scene";
+import { normalizeBaseAssembly } from "./assembly";
 
 const MATERIALS: CtMaterialId[] = ["none", "acrylic_white", "acrylic_clear", "glass_clear", "ceramic_gloss", "ceramic_matte", "aluminum", "wood"];
 
@@ -124,6 +125,7 @@ export function normalizeBaseConfig(raw: unknown): CtBaseProductConfig {
     preview: normalizeScene(c.preview && typeof c.preview === "object" ? c.preview : null),
     previewScenes: normalizeBaseScenes(c.previewScenes),
     scenesAuto: str(c.scenesAuto, 40) || null,
+    assembly: normalizeBaseAssembly(c.assembly),
   };
 }
 

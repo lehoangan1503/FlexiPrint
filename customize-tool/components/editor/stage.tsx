@@ -1137,8 +1137,8 @@ export function Stage(props: StageProps) {
                     {/* The band marker (alpha 1) stays invisible; every drawn line becomes solid. */}
                     <feFuncA type="discrete" tableValues="0 1 1 1 1 1 1 1" />
                   </feComponentTransfer>
-                  <feMorphology in="ink" operator="dilate" radius={0.6 * px} result="line" />
-                  <feMorphology in="line" operator="dilate" radius={1.2 * px} result="halo" />
+                  <feMorphology in="ink" operator="dilate" radius={0.3 * px} result="line" />
+                  <feMorphology in="line" operator="dilate" radius={0.8 * px} result="halo" />
                   <feFlood floodColor="#052e16" floodOpacity="0.85" />
                   <feComposite in2="halo" operator="in" result="dark" />
                   <feFlood floodColor="#22c55e" />

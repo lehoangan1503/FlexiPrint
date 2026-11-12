@@ -25,13 +25,13 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { CT_CONFIG, CT_TABLES } from "../config";
+import { r2PublicUrl } from "./r2";
 import type { CtAiStyle, CtAiStyleBody, CtAiStyleRef, CtPublicAiStyle } from "../types";
 import { CT_AI_STYLE_MAX_REFS, CT_AI_STYLE_MODEL, CT_AI_STYLE_PROMPT_MAX, aiStyleAsksName, aiStyleTileUrl, normalizeAiStyleParams } from "../lib/ai-style-models";
 import { aiStyleId, aiStyleRef } from "../lib/photo-styles";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctDownload, ctUpload } from "./storage";
 import { processPhoto } from "./ai/photo";
-import { siteUrl } from "./site-url";
 
 type CtAiStyleRow = Omit<CtAiStyle, "owner" | "can_edit">;
 
@@ -175,8 +175,9 @@ export async function publicAiStyles(db: Reader, refs: CtAiStyleRef[]): Promise<
 
 /** The stock sample every demo is made from unless the editor uploads their own (a pet photo, made once with
  * GPT Image 2.5 — scripts in .scratch-e2e, 2026-10-15). On this instance's own domain: it was hard-coded to the VPS
- * (flexiprint.next.lc), which is gone, so "Tạo ảnh demo" on flexi2 failed with "fetch failed" (2026-11-11). */
-export const AI_STYLE_SAMPLE_URL = `${siteUrl()}/files/shared/customize-tool/ai-styles/sample-pet.jpg`;
+ * (flexiprint.next.lc), which is gone, so "Tạo ảnh demo" on flexi2 failed with "fetch failed" (2026-11-11).
+ * Same root as every other file (R2_PUBLIC_URL when set, else this instance's /files/). */
+export const AI_STYLE_SAMPLE_URL = r2PublicUrl("shared/customize-tool/ai-styles/sample-pet.jpg");
 
 /** POST ai-styles/refs [files] — store style reference pictures (≤ 4 per style, saved later in params.refUrls) → { urls }. */
 export async function uploadAiStyleRefs(s: CtSession, form: FormData | null): Promise<NextResponse> {

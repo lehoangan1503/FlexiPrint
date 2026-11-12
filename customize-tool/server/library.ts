@@ -33,7 +33,7 @@ import { asLayerClipart, asMainOption, asVersion, memberRole, normalizeCategoryR
 import { normalizeProductConfig, normalizeSubOptions } from "../lib/design";
 import { isAdmin } from "./ai-styles";
 import { readImageInfo } from "./image-size";
-import { r2PublicUrl } from "./r2";
+import { r2KeyOfUrl } from "./r2";
 import { ctLibraryPath, ctRemove, ctUpload } from "./storage";
 import { ctServiceClient, type CtServiceClient, type CtSession, type CtSupabase } from "./supabase";
 
@@ -751,9 +751,9 @@ export async function loadProductAssets(db: Db, product: CtProduct, items: CtReg
 
 type PresetRow = Omit<CtPreset, "can_edit">;
 
-/** A url of a file in our own storage (R2). */
+/** A url of a file in our own storage (R2) — the custom-domain form or the old /files/ form. */
 export function isOwnUploadUrl(u: unknown): u is string {
-  return typeof u === "string" && u.startsWith(r2PublicUrl(""));
+  return r2KeyOfUrl(u) !== null;
 }
 
 export async function listPresets(s: CtSession, kind: string | null): Promise<NextResponse> {

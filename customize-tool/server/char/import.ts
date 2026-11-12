@@ -48,7 +48,7 @@ import { findProductFolder, productFolder } from "../artworks";
 import * as h from "../handlers";
 import { readImageInfo } from "../image-size";
 import { insertClipart } from "../library";
-import { r2Get, r2Keys, r2Objects, r2PublicUrl } from "../r2";
+import { R2_CACHE_SHORT, r2Get, r2KeyOfUrl, r2Keys, r2Objects, r2PublicUrl } from "../r2";
 import { ctLibraryPath, ctRemove, ctUpload } from "../storage";
 import type { CtSession } from "../supabase";
 import { charFolder, saveCharFile, saveCharRaw } from "./files";
@@ -96,9 +96,8 @@ function cleanPath(raw: string): string | null {
 
 /** The bucket key of a file this import uploaded (its public url) — null for any other url. */
 function keyOf(root: string, url: string): string | null {
-  const prefix = r2PublicUrl(`${root}/`);
-  if (!url.startsWith(prefix)) return null;
-  return `${root}/${url.slice(prefix.length).split("/").map(decodeURIComponent).join("/")}`;
+  const key = r2KeyOfUrl(url);
+  return key && key.startsWith(`${root}/`) && key.length > root.length + 1 ? key : null;
 }
 
 /**
@@ -208,7 +207,8 @@ async function uploadFiles(s: CtSession, p: CtCharProject, form: FormData): Prom
   }
   // Stored side by side (one after the other, a 30-file request took ~45 s: each R2 write waits ~0.3 s+).
   const out = await Promise.all(
-    todo.map(async ({ path, blob }): Promise<CtCharImportFile> => ({ path, url: await ctUpload(`${root}/${path}`, Buffer.from(await blob.arrayBuffer()), MIME[extOf(path)] ?? "application/octet-stream"), size: blob.size })),
+    // Same key when the folder is uploaded again → short cache.
+    todo.map(async ({ path, blob }): Promise<CtCharImportFile> => ({ path, url: await ctUpload(`${root}/${path}`, Buffer.from(await blob.arrayBuffer()), MIME[extOf(path)] ?? "application/octet-stream", R2_CACHE_SHORT), size: blob.size })),
   );
   return NextResponse.json({ files: out });
 }
@@ -229,7 +229,7 @@ async function startImport(s: CtSession, p: CtCharProject, body: unknown): Promi
 /** The uploaded files read: a known format is built in the background, any other goes to @flexiprint. */
 async function startFrom(s: CtSession, p: CtCharProject, files: CtCharImportFile[]): Promise<{ status: string; summary?: string[]; problems?: string[] }> {
   const root = importRoot(p, s.user.id);
-  const indexUrl = await ctUpload(`${root}/_index.json`, Buffer.from(JSON.stringify(files)), "application/json");
+  const indexUrl = await ctUpload(`${root}/_index.json`, Buffer.from(JSON.stringify(files)), "application/json", R2_CACHE_SHORT);
   const db = jobDb(s);
   await setImported(db, p.id, { status: "analyzing", files: files.length, bytes: files.reduce((n, f) => n + f.size, 0), indexUrl, error: "", summary: [], problems: [] });
   const texts = await readTexts(root, files);
@@ -405,7 +405,7 @@ async function unpackZip(s: CtSession, p: CtCharProject): Promise<CtCharImportFi
             stream.on("error", no);
           }),
         );
-        out.push({ path: rel, url: await ctUpload(`${root}/${rel}`, data, MIME[extOf(rel)] ?? "application/octet-stream"), size: data.length });
+        out.push({ path: rel, url: await ctUpload(`${root}/${rel}`, data, MIME[extOf(rel)] ?? "application/octet-stream", R2_CACHE_SHORT), size: data.length });
         if (++done % 25 === 0) await setImported(db, p.id, { done, beat: new Date().toISOString() });
       }
     };
@@ -470,7 +470,7 @@ async function startBuild(db: Db, userId: string, projectId: string, manifest: C
   const p = await loadProject(db, projectId);
   if (!p) throw new Error("Không tìm thấy bộ nhân vật");
   const owner = p.user_id ?? userId;
-  const manifestUrl = await ctUpload(`${importRoot(p, owner)}/_manifest.json`, Buffer.from(JSON.stringify(manifest)), "application/json");
+  const manifestUrl = await ctUpload(`${importRoot(p, owner)}/_manifest.json`, Buffer.from(JSON.stringify(manifest)), "application/json", R2_CACHE_SHORT);
   const total = manifestPlacements(manifest);
   await setImported(db, projectId, { status: "building", format, manifestUrl, summary, problems, done: 0, total, error: "", beat: new Date().toISOString() });
   void buildImport(db, owner, projectId, manifest).catch(async (e: Error) => {
@@ -997,7 +997,7 @@ export async function rethumbImport(s: CtSession, p: CtCharProject, fixes: CtImp
   // Files read as needed, never kept (n00-POD-02's are ~430 MB).
   const fileOf = readKey;
   const publicRoot = r2PublicUrl("");
-  const keyOfUrl = (url: string) => (url.startsWith(publicRoot) ? url.slice(publicRoot.length).split("/").map(decodeURIComponent).join("/") : null);
+  const keyOfUrl = (url: string) => r2KeyOfUrl(url);
   const optionName = (a: CtAsset) => a.name.split(" · ").slice(1).join(" · ");
   const lower = (t: string) => t.trim().toLowerCase();
   const used = new Set<number>();

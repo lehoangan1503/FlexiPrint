@@ -41,6 +41,14 @@ As on the VPS, the app and layer-kit call Supabase / `/files/` at `https://flexi
 uses `/opt/flexi2/certs/local.crt` (signed by `ca.crt`, made with openssl) and `docker-compose.flexi2.yml` makes the
 containers trust it (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`). Browsers never see :443.
 
+## Files from cdn.teein.top (2026-11-12)
+
+`.env` has `R2_PUBLIC_URL=https://cdn.teein.top` (an R2 Custom Domain on bucket `anr2`, CORS *): new file urls are
+`https://cdn.teein.top/flexi2/<key>` and browsers load them from Cloudflare, not through the app. Urls stored before
+keep the `https://flexi2.next.lc/files/<key>` form — they still load and are still recognised as our own files
+(`r2KeyOfUrl`). New objects carry `Cache-Control: public, max-age=31536000, immutable`; older ones get the custom
+domain's default (4 h). Rollback: remove the line from `.env`, `docker compose up -d app`.
+
 ## Update
 
 ```bash

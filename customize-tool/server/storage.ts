@@ -4,7 +4,7 @@
  */
 
 import { CT_CONFIG } from "../config";
-import { r2PublicUrl, r2Put, r2Remove } from "./r2";
+import { R2_CACHE_IMMUTABLE, r2PublicUrl, r2Put, r2Remove } from "./r2";
 
 const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
 
@@ -19,9 +19,10 @@ export function ctLibraryPath(userId: string, categoryId: string | null, role: s
   return `${userId}/${CT_CONFIG.storagePrefix}/library/${categoryId ?? "none"}/${role}/${crypto.randomUUID()}.${ext}`;
 }
 
-export async function ctUpload(path: string, body: Buffer, mime: string): Promise<string> {
+/** Store a file, return its public url. `cacheControl`: keys written again in place pass R2_CACHE_SHORT. */
+export async function ctUpload(path: string, body: Buffer, mime: string, cacheControl: string = R2_CACHE_IMMUTABLE): Promise<string> {
   try {
-    await r2Put(path, body, mime);
+    await r2Put(path, body, mime, cacheControl);
   } catch (e) {
     throw new Error(`Upload thất bại: ${e instanceof Error ? e.message : String(e)}`);
   }

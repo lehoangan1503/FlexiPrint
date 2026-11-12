@@ -6,8 +6,8 @@ metal, wood) and print files with a laser cut path.
 
 - **App**: Next.js 16 (standalone) — editor, dashboard, admin, public storefront API.
 - **Auth + DB**: self-hosted Supabase (Postgres, GoTrue, PostgREST), schema `flexiprint`.
-- **Files**: Cloudflare R2, served from the bucket's custom domain when `R2_PUBLIC_URL` is set (flexi2: cdn.teein.top),
-  else by the app at `/files/*` behind an nginx cache (old `/files/` urls keep working either way).
+- **Files**: Cloudflare R2, served by the app at `/files/*` behind an nginx cache (stored urls, the editor); storefront
+  answers use the bucket's custom domain when `R2_STOREFRONT_URL` is set (flexi2: cdn.teein.top).
 - **Services** (`services/`, Python, no AI): `bg-remover` (BiRefNet cut-out), `face-detect` (face crops),
   `material-render` (print files + cut SVG), `layer-kit` (v2 layer sets).
 - **Storefront**: `customize-tool/shopify/` — theme section `flexi2-product.liquid` + `flexi2-customizer.js` (Shopify store CHERIVIA, live theme, own files only).

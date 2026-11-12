@@ -176,7 +176,7 @@ export async function publicAiStyles(db: Reader, refs: CtAiStyleRef[]): Promise<
 /** The stock sample every demo is made from unless the editor uploads their own (a pet photo, made once with
  * GPT Image 2.5 — scripts in .scratch-e2e, 2026-10-15). On this instance's own domain: it was hard-coded to the VPS
  * (flexiprint.next.lc), which is gone, so "Tạo ảnh demo" on flexi2 failed with "fetch failed" (2026-11-11).
- * Same root as every other file (R2_PUBLIC_URL when set, else this instance's /files/). */
+ * This instance's /files/ like every stored url (the store gets it on the custom domain, router.ts). */
 export const AI_STYLE_SAMPLE_URL = r2PublicUrl("shared/customize-tool/ai-styles/sample-pet.jpg");
 
 /** POST ai-styles/refs [files] — store style reference pictures (≤ 4 per style, saved later in params.refUrls) → { urls }. */

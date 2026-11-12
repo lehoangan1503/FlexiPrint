@@ -1,17 +1,17 @@
 /**
- * Cloudflare R2 (S3 API) — the only file store. Public urls: with R2_PUBLIC_URL set
- * (e.g. https://cdn.teein.top — an R2 Custom Domain on the bucket, CORS *), the browser
- * loads `${R2_PUBLIC_URL}/<R2_KEY_PREFIX>/<key>` straight from Cloudflare; without it the
- * app serves objects at `${APP_URL}/files/<key>` (src/app/files/[...key]) with long cache
- * headers, nginx caching in front. Both forms are recognised as our own files (urls
- * already stored in the DB keep the /files/ form and keep working) — r2KeyOfUrl.
- * Rollback: drop R2_PUBLIC_URL.
+ * Cloudflare R2 (S3 API) — the only file store. Stored / editor urls are always
+ * `${APP_URL}/files/<key>` (src/app/files/[...key]; nginx caches in front) — the team works
+ * from Vietnam, where that path is fast and Cloudflare's is slow (2026-11-12: ~0.08 s vs 0.5–2.8 s).
+ * Storefront answers (router: every `public/*` response) swap our file urls for
+ * `${R2_STOREFRONT_URL}/<R2_KEY_PREFIX>/<key>` — an R2 Custom Domain on the bucket (CORS *),
+ * fast for the US customers; editor answers swap any such url back to /files/ (r2RewriteUrls).
+ * Both forms are recognised as our own files (r2KeyOfUrl). Rollback: drop R2_STOREFRONT_URL.
  *
  * Env: R2_ENDPOINT (https://<account>.r2.cloudflarestorage.com), R2_BUCKET,
  *      R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, APP_URL (public origin),
  *      R2_KEY_PREFIX (optional, e.g. "flexiprint" — every object lives under it, so the
  *      bucket can be shared with other projects; callers never see it),
- *      R2_PUBLIC_URL (optional, origin of the bucket's custom domain, no trailing slash).
+ *      R2_STOREFRONT_URL (optional, origin of the bucket's custom domain, e.g. https://cdn.teein.top).
  */
 
 import {
@@ -116,23 +116,46 @@ export async function r2ListOlderThan(prefix: string, cutoff: Date, limit: numbe
 }
 
 const encodeKey = (key: string) => key.split("/").map(encodeURIComponent).join("/");
-/** `${APP_URL}/files/` — the app route; every url stored before R2_PUBLIC_URL has this form. */
+/** `${APP_URL}/files/` — the app route: the root of every stored url. */
 const appFilesRoot = () => `${(process.env.APP_URL ?? "").replace(/\/$/, "")}${CT_CONFIG.filesPath}/`;
-/** `${R2_PUBLIC_URL}/<prefix>/` — null when the custom domain is not configured. */
-function cdnRoot(): string | null {
-  const origin = (process.env.R2_PUBLIC_URL ?? "").trim().replace(/\/+$/, "");
-  return origin ? `${origin}/${PREFIX ? `${encodeKey(PREFIX)}/` : ""}` : null;
+/** The custom domain's root with the key prefix. 2026-11-12 a few hours of uploads were stored with it
+ * (env R2_PUBLIC_URL, since renamed): known even with the variable unset, so those urls stay ours. */
+const KNOWN_CDN_ORIGINS = ["https://cdn.teein.top"];
+const cdnRootOf = (origin: string) => `${origin.replace(/\/+$/, "")}/${PREFIX ? `${encodeKey(PREFIX)}/` : ""}`;
+/** Storefront root — null when R2_STOREFRONT_URL is not set (the store then gets /files/ too). */
+function storefrontRoot(): string | null {
+  const origin = (process.env.R2_STOREFRONT_URL ?? "").trim();
+  return origin ? cdnRootOf(origin) : null;
+}
+function cdnRoots(): string[] {
+  const set = storefrontRoot();
+  const known = PREFIX ? KNOWN_CDN_ORIGINS.map(cdnRootOf) : [];
+  return [...new Set([...(set ? [set] : []), ...known])];
 }
 
-/** Public URL the browser / storefront loads the object from. `r2PublicUrl("")` is the current root. */
+/** The url stored in the DB and shown in the editor (`${APP_URL}/files/<key>`). `r2PublicUrl("")` is its root. */
 export function r2PublicUrl(key: string): string {
-  return `${cdnRoot() ?? appFilesRoot()}${encodeKey(key)}`;
+  return `${appFilesRoot()}${encodeKey(key)}`;
 }
 
-/** Every root a url of our own files may start with: the custom domain (if set) and the app's /files/. */
+/** Every root a url of our own files may start with: the app's /files/ and the custom domain. */
 export function r2PublicRoots(): string[] {
-  const cdn = cdnRoot();
-  return cdn ? [cdn, appFilesRoot()] : [appFilesRoot()];
+  return [appFilesRoot(), ...cdnRoots()];
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Every url of our files inside `text` (a JSON body) moved to one root: "storefront" → the custom domain
+ * (unchanged when R2_STOREFRONT_URL is unset), "editor" → /files/. Plain string swap of the roots: a url is
+ * `<root><encoded key>`, and the key part stays as it is.
+ */
+export function r2RewriteUrls(text: string, to: "storefront" | "editor"): string {
+  const target = to === "storefront" ? storefrontRoot() : appFilesRoot();
+  if (!target) return text;
+  const from = r2PublicRoots().filter((r) => r !== target);
+  if (!from.some((r) => text.includes(r))) return text;
+  return text.replace(new RegExp(from.map(escapeRe).join("|"), "g"), target);
 }
 
 /** The caller key of one of our own file urls (either form), null for any other url. */

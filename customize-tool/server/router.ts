@@ -120,7 +120,8 @@
  */
 
 import { NextRequest } from "next/server";
-import type { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { r2RewriteUrls } from "./r2";
 import type {
   CtAiStyleBody,
   CtCategoryBody,
@@ -202,8 +203,26 @@ async function dispatchPublic(req: NextRequest, path: string[]): Promise<NextRes
   return h.jsonError("Not found", 404);
 }
 
+/**
+ * File urls in a JSON answer moved to the side that reads it (r2.ts r2RewriteUrls): the storefront (`public/*`,
+ * Shopify customers in the US) gets the R2 custom domain, everyone else (the team in Vietnam) gets /files/ —
+ * also for the few urls stored on the custom domain on 2026-11-12. The DB is never touched.
+ */
+async function withFileUrls(res: NextResponse, to: "storefront" | "editor"): Promise<NextResponse> {
+  if (!(res.headers.get("content-type") ?? "").includes("application/json") || !res.body) return res;
+  const text = await res.text();
+  const out = r2RewriteUrls(text, to);
+  const headers = new Headers(res.headers);
+  headers.delete("content-length");
+  return new NextResponse(out, { status: res.status, statusText: res.statusText, headers });
+}
+
 async function dispatch(req: NextRequest, ctx: CtRouteContext): Promise<NextResponse> {
   const path = (await ctx.params).path ?? [];
+  return withFileUrls(await dispatchRaw(req, path), path[0] === "public" ? "storefront" : "editor");
+}
+
+async function dispatchRaw(req: NextRequest, path: string[]): Promise<NextResponse> {
   // `?async=1` (lib/job-fetch.ts): a POST still running after a few seconds becomes a job to poll (server/jobs.ts).
   // The body is read whole first — the request ends with the 202 while the work goes on.
   if (req.method === "POST" && req.nextUrl.searchParams.get("async") === "1" && path[0] !== "mcp") {

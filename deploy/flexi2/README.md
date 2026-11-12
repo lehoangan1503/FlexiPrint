@@ -43,12 +43,15 @@ containers trust it (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`). Browsers neve
 
 ## Files from cdn.teein.top (2026-11-12)
 
-`.env` has `R2_PUBLIC_URL=https://cdn.teein.top` (an R2 Custom Domain on bucket `anr2`, CORS *): new file urls are
-`https://cdn.teein.top/flexi2/<key>` and browsers load them from Cloudflare, not through the app. Urls stored before
-keep the `https://flexi2.next.lc/files/<key>` form — they still load and are still recognised as our own files
-(`r2KeyOfUrl`). New objects carry `Cache-Control: public, max-age=31536000, immutable`; older ones get the custom
-domain's default (4 h). Rollback: remove the line from `.env`, `docker compose up -d app`.
-Optional, not run: `deploy/flexi2/rewrite-files-urls.sh` counts (default) or rewrites (`--apply`) the old urls in the DB.
+`.env` has `R2_STOREFRONT_URL=https://cdn.teein.top` (an R2 Custom Domain on bucket `anr2`, CORS *). Urls are stored
+and shown to the team as `https://flexi2.next.lc/files/<key>` (from Vietnam ~0.08 s; Cloudflare 0.5–2.8 s over
+Viettel). Every storefront answer (`/api/customize-tool/public/*`: template, uploads, tasks, jobs) swaps them for
+`https://cdn.teein.top/flexi2/<key>` (US customers ~0.05 s), so old templates go through the CDN without a
+re-publish; editor answers swap the other way. On 2026-11-12, for a few hours, new uploads were stored on cdn (76
+assets, 148 cells in all) — editor answers show them as /files/, so they were left as they are. New objects carry
+`Cache-Control: public, max-age=31536000, immutable`. Rollback: remove the line from `.env`, `docker compose up -d app`
+(the store then gets /files/ again). `deploy/flexi2/rewrite-files-urls.sh` counts (default) or rewrites (`--apply`)
+urls in the DB — not needed now, not run.
 
 ## Update
 

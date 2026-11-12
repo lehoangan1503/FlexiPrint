@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Package } from "lucide-react";
 import { createAdminServiceClient } from "@/lib/supabase/server";
+import { r2RewriteUrls } from "../../../../../customize-tool/server/r2";
 import { resolveCreatorNames } from "@/lib/supabase/creator";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -58,7 +59,7 @@ export default async function AdminProductsPage() {
                     <Link href={`/products/${p.id}`} className="flex items-center gap-2 hover:underline">
                       {p.thumbnail_url ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={p.thumbnail_url} alt="" className="h-9 w-9 rounded object-cover" />
+                        <img src={r2RewriteUrls(p.thumbnail_url, "editor")} alt="" className="h-9 w-9 rounded object-cover" />
                       ) : (
                         <span className="h-9 w-9 rounded bg-muted" />
                       )}

@@ -5,7 +5,7 @@
  * teeinblue chứ không phải cái thước kẻ 2 bên góc"). Since 2026-11-12: always 7 lines each way (the artwork in 8 ×
  * 8 cells, whatever the zoom), the middle one the centre. Drawn in world units inside an
  * SVG whose viewBox is the artwork, so it pans and zooms with it; it never takes clicks.
- * Shown in Thiết kế and File in; the toggle is remembered per browser.
+ * Shown in Thiết kế and File in; on whenever the editor opens.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -17,27 +17,18 @@ const STORE_KEY = "ct-editor-grid";
 /** Lines across the artwork in each direction (asked 2026-11-12: fixed 7 × 7, not by zoom) — the 4th is the centre. */
 export const GRID_LINES = 7;
 
-/** An on/off switch remembered in this browser (on by default). */
+/** An on/off switch, ON every time the editor opens (asked 2026-11-12: "lưới, khuôn mặc định bật" — no longer
+ * remembered off between visits). `key` names it (old remembered values are dropped). */
 export function useStoredToggle(key: string): [boolean, () => void] {
   const [on, setOn] = useState(true);
   useEffect(() => {
     try {
-      const v = window.localStorage.getItem(key);
-      if (v !== null) setOn(v === "1");
+      window.localStorage.removeItem(key);
     } catch {
-      /* storage blocked: keep the default */
+      /* storage blocked */
     }
   }, [key]);
-  const toggle = useCallback(() => {
-    setOn((v) => {
-      try {
-        window.localStorage.setItem(key, v ? "0" : "1");
-      } catch {
-        /* ignore */
-      }
-      return !v;
-    });
-  }, [key]);
+  const toggle = useCallback(() => setOn((v) => !v), []);
   return [on, toggle];
 }
 

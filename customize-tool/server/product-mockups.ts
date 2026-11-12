@@ -248,7 +248,9 @@ export function isGlass(material: string | undefined, label = ""): boolean {
 }
 
 export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: string, looks = 0, first = 1, extra = ""): string {
-  const glass = isGlass(material, label);
+  // A photo of the real piece decides its material: a name with "glass" in it (Printbelle "Stained Glass" is FROSTED)
+  // does not make it clear crystal (2026-11-12).
+  const glass = material === "glass_clear" || (!looks && isGlass(material, label));
   const nums = Array.from({ length: looks }, (_, i) => first + i).join(", ");
   const size = spec?.widthMm && spec.heightMm ? ` (${Math.round(spec.widthMm)} × ${Math.round(spec.heightMm)} mm)` : "";
   const hole = spec?.cuts.length ? " including the punched hole exactly where the drawing shows it (the small shape inside the outline)" : "";
@@ -559,9 +561,16 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
   const what = dieCut
     ? `${config.material.id === "acrylic_white" ? "white-backed" : "clear"} acrylic ornament, die-cut along the artwork's outline with a thin clear border, a small round clear tab with a hole at the top centre, hung by a gold cord through that hole`
     : piece;
+  // With a phôi photo the reference already shows the real piece: its material comes from it, never from the name
+  // (2026-11-12: base "Round Window Hanging Stained Glass" — a FROSTED glass phôi — came out as clear faceted crystal
+  // because the name has "Glass" in it). Without a phôi (art on white), the clear-glass words are still said.
+  const fromPhoi = !!(config.scene.url && config.scene.box.w > 0);
+  const glass = !dieCut && !fromPhoi && isGlass(config.material.id, piece);
+  const keepLook = fromPhoi
+    ? " The product's material, colour, surface texture and finish (frosted / sandblasted, clear, matte, glossy, wood grain…), its rim / edge and any chain, hook or hanger are EXACTLY as in the reference picture: do not make it clearer, shinier or more transparent, do not add facets, bevels or sparkle it does not have."
+    : "";
   for (const sc of want) {
-    const glass = !dieCut && isGlass(config.material.id, piece);
-    const prompt = `Square lifestyle product photo of this exact ${what}${glass ? `, ${GLASS_LOOK}` : ""} ${sc}. The product is shown as a real physical object in a fitting, beautiful setting (the finished product with any hanger, ribbon or stand it would really have). The WHOLE product is in the picture, centred and big — about 70 % of the picture's width — with clear empty space between it and all four edges of the picture: no part of it (its ends, its edges, its tab) is cut off or touches the frame.${dieCut ? " The acrylic is glossy and see-through where nothing is printed, its cut edge catching the light." : ""}${KEEP_PRINT}`;
+    const prompt = `Square lifestyle product photo of this exact ${what}${glass ? `, ${GLASS_LOOK}` : ""} ${sc}.${keepLook} The product is shown as a real physical object in a fitting, beautiful setting (the finished product with any hanger, ribbon or stand it would really have). The WHOLE product is in the picture, centred and big — about 70 % of the picture's width — with clear empty space between it and all four edges of the picture: no part of it (its ends, its edges, its tab) is cut off or touches the frame.${dieCut ? " The acrylic is glossy and see-through where nothing is printed, its cut edge catching the light." : ""}${KEEP_PRINT}`;
     const { data: row } = await db
       .from(CT_TABLES.packImages)
       .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: sc, prompt, refs: [frontAsset.url], aspect: sceneAspect, model })

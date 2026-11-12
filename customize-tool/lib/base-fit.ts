@@ -83,7 +83,17 @@ export function baseFrameRegion(productId: string, id: string, print: CtProductP
   const base = { id, product_id: productId, kind: "image" as const, sort_order: 0 };
   const face = spec.faces[0];
   if (face) {
-    if (!face.maskUrl) return null;
+    // A khuôn drawn only as a picture of lines (Printbelle Template.tif of a flat piece: blanket body + hood + pocket,
+    // 2026-11-12): its guide over the design, cut to its sheet.
+    if (!face.maskUrl) {
+      if (!face.guideUrl) return null;
+      return {
+        ...base,
+        name: `Khuôn in — ${print.name}`,
+        shape: { type: "rect", x: place.x, y: place.y, w: place.w, h: place.h, radius: 0 },
+        config: { ...config, guideUrl: face.guideUrl },
+      };
+    }
     return {
       ...base,
       name: `Khuôn in — ${print.name}`,
@@ -188,26 +198,32 @@ export function withBase(
   if (!base) return { config, regions, frame: null, place: null };
   const cut = base.config.cut;
   const tpl = template && template.id === base.config.templateId ? template : null;
-  const print = cut.mode !== "none" && tpl ? productPrintOfTemplate(tpl) : null;
+  // The base's khuôn in rules the print file whatever its cut (2026-11-12: a flat Wearable Hooded Blanket base with the
+  // Printbelle HWHB khuôn was ignored because it is "in phẳng" — an artwork dropped from an acrylic set kept printing
+  // like acrylic).
+  const print = tpl ? productPrintOfTemplate(tpl) : null;
   // An artwork made on a khuôn before 2026-11-08 has its own khuôn layer: it stays (it is that khuôn).
   const ownFrame = regions.some((r) => r.config?.materialFrame);
   // Where the khuôn's sheet sits on the canvas: placed by the product (a fixed khuôn), else just fitted (its guides).
   const sheetBox = print ? sheetPlace(main, print.spec, cut.mode === "khuon" ? placement : DEFAULT_PLACEMENT) : null;
-  const place = cut.mode === "khuon" ? sheetBox : null;
+  // Cut along the art (alpha): the khuôn is only guides. Fixed khuôn / flat print: the design sits in the khuôn.
+  const place = cut.mode !== "alpha" ? sheetBox : null;
   const frame = place && print && !ownFrame ? baseFrameRegion(input.productId, frameId, print, place) : null;
 
   const widthMm = canvasWidthMm(base, print, sheetBox, main);
   const material: CtMaterialConfig = {
     ...config.material,
     id: base.config.material,
-    shape: cut.mode === "alpha" ? "contour" : config.material.shape,
+    // Only a base cut along the art cuts along it (an artwork from an acrylic set keeps no "contour" of its own).
+    shape: cut.mode === "alpha" ? "contour" : config.material.shape === "contour" ? "main" : config.material.shape,
     widthMm: widthMm > 0 ? Math.round(widthMm * 10) / 10 : config.material.widthMm,
     borderMm: cut.mode === "alpha" ? cut.borderMm : config.material.borderMm,
   };
   const pxPerMm = widthMm > 0 ? main.width / widthMm : 0;
-  // Always on (2026-11-10): the khuôn's shape (inside its solid line), else the design's own outline.
+  // On for every cut piece (2026-11-10): the khuôn's shape (inside its solid line), else the design's own outline. A
+  // flat print (blanket, shirt — nothing is cut) has none: the file is the design on the khuôn (2026-11-12).
   const printSilhouette: CtPrintSilhouette = {
-    enabled: true,
+    enabled: cut.mode !== "none",
     offset: cut.mode === "alpha" ? Math.min(60, Math.max(0, Math.round(cut.borderMm * pxPerMm))) : 0,
     hole: cut.mode === "alpha" && cut.hole,
     holeSize: cut.holeSize,

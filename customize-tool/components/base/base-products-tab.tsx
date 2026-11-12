@@ -6,17 +6,17 @@
  * many products are made on it and their mockups. A card opens the base product's page (/base-products/:id).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Download, Loader2, Plus } from "lucide-react";
+import { Download, Loader2, Plus, Search } from "lucide-react";
 import type { CtBaseProductRow } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { normalizeBaseConfig } from "../../lib/base-product";
 import { formatUsd } from "../../lib/pricing";
 import { priceSummary } from "../product-create";
 import { ctPrompt } from "../dialogs";
-import { CHECKER_STYLE, CtButton } from "../ui";
+import { CHECKER_STYLE, CtButton, CtInput } from "../ui";
 import { BaseImportDialog } from "./base-import-dialog";
 
 /** " · giá vốn $4.50 – $6.20" of an imported base's fulfiller variants. */
@@ -33,6 +33,17 @@ export function BaseProductsTab({ admin }: { admin: boolean }) {
   const [bases, setBases] = useState<CtBaseProductRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  // Search (asked 2026-11-12): name, fulfiller + catalog id, khuôn name, product type — every word must match.
+  const [search, setSearch] = useState("");
+  const shown = useMemo(() => {
+    const words = search.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/\s+/).filter(Boolean);
+    if (!bases || !words.length) return bases;
+    const fold = (t: string) => t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return bases.filter((b) => {
+      const hay = fold([b.name, b.config.fulfillment.provider, b.config.fulfillment.catalogId, b.config.source?.catalogId ?? "", b.config.productType, b.template?.name ?? ""].join(" "));
+      return words.every((w) => hay.includes(w));
+    });
+  }, [bases, search]);
 
   useEffect(() => {
     ctApi
@@ -55,6 +66,10 @@ export function BaseProductsTab({ admin }: { admin: boolean }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
+        <div className="relative shrink-0">
+          <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <CtInput className="h-9 w-56 pl-8" placeholder="Tìm product base…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
         <p className="text-sm text-muted-foreground">Loại sản phẩm bán: biến thể + giá (bảng giá Notion), khuôn in + phôi. Mockup ở đây là mockup của các sản phẩm làm từ nó.</p>
         {admin && (
           <div className="ml-auto flex shrink-0 gap-2">
@@ -72,9 +87,11 @@ export function BaseProductsTab({ admin }: { admin: boolean }) {
         <div className="flex justify-center py-20">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
+      ) : !shown?.length ? (
+        <div className="py-20 text-center text-sm text-muted-foreground">{search.trim() ? `Không có product base nào khớp “${search.trim()}”` : "Chưa có product base"}</div>
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {bases.map((b) => {
+          {shown.map((b) => {
             const pic = b.mockup_url ?? b.template?.blankUrl ?? b.config.preview.url ?? b.config.source?.photos[0] ?? null;
             return (
               <Link key={b.id} href={`/base-products/${b.id}`} className="overflow-hidden rounded-xl border bg-card hover:border-foreground/40">

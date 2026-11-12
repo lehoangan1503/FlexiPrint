@@ -833,6 +833,30 @@ export function CustomizeEditor({ productId }: { productId: string }) {
     setTool("select");
   };
 
+  const dropClipartRef = useRef(dropClipart);
+  dropClipartRef.current = dropClipart;
+  /**
+   * Image files dragged from the computer onto the canvas (asked 2026-11-12: "vùng thiết kế artwork cho kéo thả image
+   * vào sẽ thành 1 layer"): each is uploaded as the artwork's own picture and placed like a library clipart — a layer
+   * of its own at the drop point (several files: a little apart).
+   */
+  const dropFiles = async (files: File[], at: CtPoint) => {
+    if (!product) return;
+    const pics = files.filter((f) => f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|avif|svg)$/i.test(f.name));
+    if (!pics.length) return flash("Chỉ thả được file ảnh (PNG, JPG, WebP…)");
+    if (!main) return flash("Chưa có version — kéo 1 bộ / artwork từ Thư viện vào trước, rồi thả ảnh");
+    flash(pics.length > 1 ? `Đang tải ${pics.length} ảnh lên…` : `Đang tải “${pics[0].name}” lên…`);
+    const step = Math.round(Math.min(main.width, main.height) * 0.04);
+    for (const [i, f] of pics.entries()) {
+      try {
+        const asset = await ctApi.uploadAsset(product.id, f, { role: "sub", name: f.name.replace(/\.[a-z0-9]+$/i, "") });
+        dropClipartRef.current({ asset, family: [asset] }, { x: at.x + i * step, y: at.y + i * step });
+      } catch (e) {
+        flash(e instanceof Error ? `${f.name}: ${e.message}` : `Không tải được ${f.name}`);
+      }
+    }
+  };
+
   /**
    * Where a dropped clipart's frame goes (artboard px): its own pixel size when it fits the artboard (a v2 layer file,
    * an artwork: exactly the frame), else contain-fitted into it — centred on the drop point, kept on the artboard.
@@ -1419,6 +1443,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     hoverRegionId={hoverRegionId}
                     photoBusy={photoBusy}
                     onDropClipart={dropClipart}
+                    onDropFiles={(files, at) => void dropFiles(files, at)}
                     versionId={shownMainId ?? main.id}
                     mainSelected={mainSelected}
                     onSelectMain={(on) => {
@@ -1469,7 +1494,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               selection={selection}
               print={viewConfig.print}
               baseName={viewBase?.name ?? null}
-              printSilhouette={viewConfig.printSilhouette}
+              printSilhouette={viewBase ? viewConfig.printSilhouette : null}
             />
           ) : view === "preview" && !main ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Cần có version trước — kéo 1 clipart từ tab Thư viện vào canvas.</div>

@@ -113,6 +113,8 @@ export interface StageProps {
   photoBusy?: Record<string, string>;
   /** A library clipart dropped on the canvas, at main-asset pixel coordinates. */
   onDropClipart?: (drag: CtLibraryDrag, at: CtPoint) => void;
+  /** Image files dragged from the computer onto the artwork (2026-11-12): each one becomes a layer. */
+  onDropFiles?: (files: File[], at: CtPoint) => void;
   /** Background photo drawn behind the design (Thiết kế → Nền). */
   scene?: CtProductScene;
   /** The version shown, whose picture frame can be selected / moved / resized. */
@@ -328,6 +330,8 @@ export function Stage(props: StageProps) {
   }, []);
 
   const px = 1 / zoom; // one screen pixel in world units
+  /** Where the khuôn's guide picture lies: the khuôn layer's own box. */
+  const guideBox = props.materialFrame ? shapeBounds(props.materialFrame.shape) : { x: 0, y: 0, w: main?.width ?? 0, h: main?.height ?? 0 };
   /** What a click at `w` lands on: a layer id, null = the version's picture, undefined = nothing (or no pick map yet). */
   const pickLayer = (w: CtPoint): string | null | undefined => {
     const m = pickMap.current;
@@ -1051,7 +1055,8 @@ export function Stage(props: StageProps) {
       }}
       onDoubleClick={() => tool === "polygon" && closePolygon(draft)}
       onDragOver={(e) => {
-        if (!props.onDropClipart || !e.dataTransfer.types.includes(CLIPART_DRAG)) return;
+        const files = !!props.onDropFiles && e.dataTransfer.types.includes("Files");
+        if (!files && (!props.onDropClipart || !e.dataTransfer.types.includes(CLIPART_DRAG))) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "copy";
         setDropping(true);
@@ -1061,6 +1066,11 @@ export function Stage(props: StageProps) {
       }}
       onDrop={(e) => {
         setDropping(false);
+        if (props.onDropFiles && e.dataTransfer.files.length) {
+          e.preventDefault();
+          props.onDropFiles([...e.dataTransfer.files], toWorld(e.clientX, e.clientY));
+          return;
+        }
         const raw = e.dataTransfer.getData(CLIPART_DRAG);
         if (!raw || !props.onDropClipart) return;
         e.preventDefault();
@@ -1114,7 +1124,8 @@ export function Stage(props: StageProps) {
           {/* Khuôn vật liệu: what is printed / made into the vật liệu — outside it dimmed, its cut-out parts hatched. */}
           {/* A khuôn drawn as a picture (khuôn in face): its own cut line + safe zone. */}
           {props.showOverlay && props.materialFrame?.config.guideUrl && (
-            <image href={props.materialFrame.config.guideUrl} x={0} y={0} width={main.width} height={main.height} preserveAspectRatio="none" pointerEvents="none" />
+            // Over the khuôn's own box (a base's khuôn may sit smaller than the canvas, lib/base-fit sheetPlace).
+            <image href={props.materialFrame.config.guideUrl} x={guideBox.x} y={guideBox.y} width={guideBox.w} height={guideBox.h} preserveAspectRatio="none" pointerEvents="none" />
           )}
           {props.showOverlay && props.materialFrame && !props.materialFrame.config.maskUrl && (
             <g pointerEvents="none">

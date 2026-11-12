@@ -66,7 +66,8 @@ export interface PrintPanelProps {
   print?: CtProductPrint | null;
   /** The product base the artwork is viewed on: its khuôn / cut / silhouette rule the file (set on the base's page). */
   baseName?: string | null;
-  /** How the silhouette above the print is made (CtProductConfig.printSilhouette; always on). */
+  /** How the silhouette above the print is made (CtProductConfig.printSilhouette): the base's rule when viewed on a
+   * base (off for a flat print, 2026-11-12); null = no base: always on, from the print's outline. */
   printSilhouette: CtPrintSilhouette | null;
 }
 
@@ -104,7 +105,8 @@ export function PrintPanel(props: PrintPanelProps) {
   const cutFrame = frame && !size?.id ? frame : null;
   const cutPath = cutFrame && !cutFrame.config.maskUrl ? frameSvgPath(cutFrame) : "";
   const mirror = !!props.print?.spec.mirror;
-  const sil = props.printSilhouette?.enabled ? props.printSilhouette : DEFAULT_SILHOUETTE;
+  const sil = props.printSilhouette ?? DEFAULT_SILHOUETTE;
+  const silOn = sil.enabled;
   const spec = props.print?.spec ?? null;
   /** The khuôn's own lines on the design (solid = cut, dashed = safe zone) — on a sheet cut to the khuôn only. */
   const lines: KhuonLines | null = (() => {
@@ -214,7 +216,8 @@ export function PrintPanel(props: PrintPanelProps) {
         { name: `${base}-thiet-ke-tren-khuon.png`, data: await bytes(p.onKhuon) },
         { name: `${base}-silhouette-khuon.png`, data: await bytes(p.blank) },
       ];
-      entries.push({ name: `${base}-print-khong-silhouette.png`, data: await bytes(sheet) });
+      if (silOn) entries.push({ name: `${base}-print-khong-silhouette.png`, data: await bytes(sheet) });
+      else entries.splice(2, 1);
       if (cutPath) entries.push({ name: `${base}-cut.svg`, data: new TextEncoder().encode(cutSvg(cutPath, main.width, main.height, mirror, material.id !== "none" ? material.widthMm : 0)) });
       const href = URL.createObjectURL(zip(entries));
       const a = document.createElement("a");
@@ -239,7 +242,7 @@ export function PrintPanel(props: PrintPanelProps) {
         <div className="flex rounded-md border p-0.5">
           {(
             [
-              ["pair", "Thiết kế trong khuôn + silhouette"],
+              ["pair", silOn ? "Thiết kế trong khuôn + silhouette" : "Thiết kế trong khuôn"],
               ["file", "print.png"],
             ] as Array<["pair" | "file", string]>
           ).map(([k, label]) => (
@@ -252,7 +255,7 @@ export function PrintPanel(props: PrintPanelProps) {
           {props.baseName && `Trên base ${props.baseName} · `}
           {frame ? `Khuôn "${frame.name}"` : material.shape === "contour" ? "Cắt theo viền hình (alpha)" : "Toàn khung (không có khuôn)"}
           {props.print?.spec.mirror && " · + nửa đối xứng"}
-          {" · print.png: nửa trên = silhouette, nửa dưới = bản in"}
+          {silOn ? " · print.png: nửa trên = silhouette, nửa dưới = bản in" : " · in phẳng: print.png = bản in (không silhouette)"}
           {shot && ` · ${shot.w}×${shot.h}px`}
           {dpi > 0 && ` · ${mm}mm ≈ ${dpi} dpi`}
         </span>
@@ -279,7 +282,9 @@ export function PrintPanel(props: PrintPanelProps) {
               ["onKhuon", "Thiết kế nằm trong khuôn", lines ? "Nét liền = đường cắt (mọi nội dung nằm trong) · nét đứt = vùng an toàn cho option / ảnh khách" : "Bản in đặt đúng trên khuôn, đường hồng = đường cắt"],
               ["blank", "Silhouette khuôn (full đen)", "Như Teeinblue — cùng kích thước px, đặt bản bên trái chồng lên là ra sản phẩm"],
             ] as Array<["onKhuon" | "blank", string, string]>
-          ).map(([k, title, hint]) => (
+          )
+            .filter(([k]) => silOn || k === "onKhuon")
+            .map(([k, title, hint]) => (
             <figure key={k} className="flex min-h-0 flex-col items-center gap-2">
               <figcaption className="text-center text-xs">
                 <div className="font-semibold">{title}</div>

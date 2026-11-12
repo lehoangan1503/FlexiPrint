@@ -64,16 +64,26 @@ export function GridLines({ width, height, zoom }: GridLinesProps) {
   const cx = width / 2;
   const cy = height / 2;
   return (
+    // 2026-11-12 "tăng độ đậm của nét lưới, mờ quá": each line = a dark halo under a light line, so it shows on dark
+    // pictures, on the checker and on white alike.
     <g pointerEvents="none" shapeRendering="crispEdges">
       {xs.map((x) => (
-        <line key={`x${x}`} x1={x} y1={0} x2={x} y2={height} stroke="rgba(150,150,150,0.6)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        <g key={`x${x}`}>
+          <line x1={x} y1={0} x2={x} y2={height} stroke="rgba(0,0,0,0.55)" strokeWidth={3} vectorEffect="non-scaling-stroke" />
+          <line x1={x} y1={0} x2={x} y2={height} stroke="rgba(255,255,255,0.85)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        </g>
       ))}
       {ys.map((y) => (
-        <line key={`y${y}`} x1={0} y1={y} x2={width} y2={y} stroke="rgba(150,150,150,0.6)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        <g key={`y${y}`}>
+          <line x1={0} y1={y} x2={width} y2={y} stroke="rgba(0,0,0,0.55)" strokeWidth={3} vectorEffect="non-scaling-stroke" />
+          <line x1={0} y1={y} x2={width} y2={y} stroke="rgba(255,255,255,0.85)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        </g>
       ))}
-      <line x1={cx} y1={0} x2={cx} y2={height} stroke="rgba(14,165,233,0.7)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-      <line x1={0} y1={cy} x2={width} y2={cy} stroke="rgba(14,165,233,0.7)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-      <rect x={0} y={0} width={width} height={height} fill="none" stroke="rgba(150,150,150,0.8)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+      <line x1={cx} y1={0} x2={cx} y2={height} stroke="rgba(0,0,0,0.6)" strokeWidth={4} vectorEffect="non-scaling-stroke" />
+      <line x1={cx} y1={0} x2={cx} y2={height} stroke="#0ea5e9" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+      <line x1={0} y1={cy} x2={width} y2={cy} stroke="rgba(0,0,0,0.6)" strokeWidth={4} vectorEffect="non-scaling-stroke" />
+      <line x1={0} y1={cy} x2={width} y2={cy} stroke="#0ea5e9" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+      <rect x={0} y={0} width={width} height={height} fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
     </g>
   );
 }

@@ -1128,25 +1128,14 @@ export function Stage(props: StageProps) {
           {/* A khuôn drawn as a picture (khuôn in face): its own cut line + safe zone. */}
           {props.showOverlay && showKhuon && props.materialFrame?.config.guideUrl && (
             // Over the khuôn's own box (a base's khuôn may sit smaller than the canvas, lib/base-fit sheetPlace). Its
-            // lines redrawn bright green on a dark halo, ~2 screen px whatever the zoom (2026-11-12: the factory's thin
-            // navy lines were faint and hard to see on a design).
+            // own lines in green (2026-11-12: the factory's navy was faint on a design; "chỉ đổi màu xanh thôi, đừng
+            // làm to với đậm viền").
             <g pointerEvents="none">
               <defs>
                 <filter id="ct-khuon-lines" x="0" y="0" width="1" height="1" colorInterpolationFilters="sRGB">
-                  <feComponentTransfer in="SourceAlpha" result="ink">
-                    {/* The band marker (alpha 1) stays invisible; every drawn line becomes solid. */}
-                    <feFuncA type="discrete" tableValues="0 1 1 1 1 1 1 1" />
-                  </feComponentTransfer>
-                  <feMorphology in="ink" operator="dilate" radius={0.3 * px} result="line" />
-                  <feMorphology in="line" operator="dilate" radius={0.8 * px} result="halo" />
-                  <feFlood floodColor="#052e16" floodOpacity="0.85" />
-                  <feComposite in2="halo" operator="in" result="dark" />
+                  {/* Same lines, same thickness — only the colour is green. */}
                   <feFlood floodColor="#22c55e" />
-                  <feComposite in2="line" operator="in" result="green" />
-                  <feMerge>
-                    <feMergeNode in="dark" />
-                    <feMergeNode in="green" />
-                  </feMerge>
+                  <feComposite in2="SourceAlpha" operator="in" />
                 </filter>
               </defs>
               <image href={props.materialFrame.config.guideUrl} x={guideBox.x} y={guideBox.y} width={guideBox.w} height={guideBox.h} preserveAspectRatio="none" filter="url(#ct-khuon-lines)" />

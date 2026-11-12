@@ -2021,8 +2021,10 @@ export interface CtCategoryHistoryEntry {
 
 /** content = "Tạo content với FlexiPrint" of the Deploy page (input.content, result CtContentResult). */
 /** char = a step of a v2 bộ nhân vật (input.char, result CtCharTaskResult — types/char.ts). */
+/** mockup = a mockup photo the image model refused (safety): @flexiprint rewrites its prompt and draws it again
+ * (input.mockup, result CtMockupFixResult). */
 /** (Older rows may hold the removed kinds create / revise / pack_image; they are no longer listed or run.) */
-export type CtAgentTaskKind = "content" | "char";
+export type CtAgentTaskKind = "content" | "char" | "mockup";
 
 /** waiting = the agent asked the editor something (ask_user) and ended its turn until they answer. */
 export type CtAgentTaskStatus = "pending" | "running" | "waiting" | "done" | "failed" | "cancelled";
@@ -2093,6 +2095,8 @@ export interface CtAgentTaskInput {
   content?: CtContentTaskInput;
   /** char: the bộ nhân vật and the step the agent does for it. */
   char?: CtCharTaskInput;
+  /** mockup: the refused mockup job whose prompt the agent rewrites. */
+  mockup?: CtMockupTaskInput;
   /** Fingerprint of the agent's MCP tool list when the task was made: the agent_ide session fixes its tool list when it
    * starts, so a task after a deploy that changed the tools opens a fresh session instead of continuing the old one. */
   mcpTools?: string;
@@ -2126,6 +2130,36 @@ export interface CtContentResult {
   proposal?: string;
 }
 
+/**
+ * A mockup task (asked 2026-11-12): a mockup job of a product the image model refused ("rejected by the safety system")
+ * — the agent reads the prompt and the reference picture, rewrites the prompt and draws the same job again
+ * (MCP retry_mockup). Filled on the server from the job row, not from the browser.
+ */
+export interface CtMockupTaskInput {
+  productId: string;
+  productName: string;
+  /** The ct_pack_images row of the job. */
+  jobId: string;
+  /** The scene line the editor wrote. */
+  scene: string;
+  /** The prompt that was refused, and the model's answer. */
+  prompt: string;
+  error: string;
+  /** The front picture (the print on the phôi) the model draws from. */
+  refUrl: string;
+  /** What the editor added (may be empty). */
+  request: string;
+}
+
+export interface CtMockupFixResult {
+  summary: string;
+  /** The prompt the job was drawn again with. */
+  prompt: string;
+  jobId: string;
+  reply?: string;
+  proposal?: string;
+}
+
 export interface CtAgentTask {
   id: string;
   user_id: string | null;
@@ -2136,7 +2170,7 @@ export interface CtAgentTask {
   progress: CtAgentTaskProgress[];
   runs: CtAgentTaskRun[];
   questions: CtAgentQuestion[];
-  result: CtContentResult | CtCharTaskResult | null;
+  result: CtContentResult | CtCharTaskResult | CtMockupFixResult | null;
   error: string;
   agent_job_id: string;
   agent_session_id: string;

@@ -18,7 +18,7 @@ import { takeInbox, unreadMessages } from "../agent/inbox";
 const PROTOCOL_VERSION = "2025-06-18";
 
 const INSTRUCTIONS =
-  "FlexiPrint clipart library (read-only) and web-app tasks. Read the resource flexiprint://guide/overview first (no resource support: the read_guide tool). Tasks from the web app (kind content | char): get_task → work → submit_result (or fail_task).";
+  "FlexiPrint clipart library (read-only) and web-app tasks. Read the resource flexiprint://guide/overview first (no resource support: the read_guide tool). Tasks from the web app (kind content | char | mockup): get_task → work → submit_result (or fail_task).";
 
 interface RpcRequest {
   jsonrpc?: string;

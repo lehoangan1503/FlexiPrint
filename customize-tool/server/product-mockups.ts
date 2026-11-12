@@ -34,7 +34,7 @@ function jsonError(message: string, status: number): NextResponse {
   return NextResponse.json({ error: message }, { status });
 }
 
-const jobName = (productId: string) => `mockup:${productId}`;
+export const jobName = (productId: string) => `mockup:${productId}`;
 
 export const KEEP_PRINT =
   " The printed artwork on the product must stay EXACTLY as in the reference picture: the same characters, the same colours, " +
@@ -522,16 +522,6 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
   const productId = product.id;
   const config = normalizeProductConfig(product.config);
   const piece = config.print?.name || product.name;
-  const toProduct = async (data: Buffer, name: string): Promise<CtAsset> => {
-    const f = new FormData();
-    f.set("file", new Blob([new Uint8Array(data)], { type: "image/jpeg" }), `${name}.jpg`);
-    f.set("role", "mockup");
-    f.set("name", name);
-    const res = await uploadAsset(s, productId, f);
-    const json = (await res.json()) as { asset?: CtAsset; error?: string };
-    if (!res.ok || !json.asset) throw new Error(json.error ?? "Không lưu được mockup");
-    return json.asset;
-  };
 
   // The front one: the artwork laid exactly on the phôi (its own light and shade), no AI. A die-cut acrylic: its plate
   // made from the artwork's outline (+ the border, the hanging tab). Without a phôi: on white.
@@ -578,22 +568,63 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
       .single<CtPackImage>();
     if (row) rows.push(row);
   }
-  for (const row of rows)
-    void (async () => {
-      let last = "";
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const out = await drawImage(model, row.prompt, [frontAsset.url], sceneAspect, "crop");
-          const jpeg = await squared(await sharp(out.data).flatten({ background: "#ffffff" }).png().toBuffer());
-          const asset = await toProduct(jpeg, `mockup_${row.description.split(/\s+/).slice(0, 4).join("_")}`);
-          const m = await sharp(jpeg).metadata();
-          await db.from(CT_TABLES.packImages).update({ status: "done", url: asset.url, mime: "image/jpeg", width: m.width ?? null, height: m.height ?? null, error: "" }).eq("id", row.id);
-          return;
-        } catch (e) {
-          last = e instanceof Error ? e.message : String(e);
-        }
-      }
-      await db.from(CT_TABLES.packImages).update({ status: "failed", error: last.slice(0, 1000) }).eq("id", row.id);
-    })();
+  for (const row of rows) drawMockupJob(s, productId, row);
   return { jobs: rows, front: frontAsset };
+}
+
+/** A finished mockup photo added to the product's pictures. */
+async function mockupToProduct(s: CtSession, productId: string, data: Buffer, name: string): Promise<CtAsset> {
+  const f = new FormData();
+  f.set("file", new Blob([new Uint8Array(data)], { type: "image/jpeg" }), `${name}.jpg`);
+  f.set("role", "mockup");
+  f.set("name", name);
+  const res = await uploadAsset(s, productId, f);
+  const json = (await res.json()) as { asset?: CtAsset; error?: string };
+  if (!res.ok || !json.asset) throw new Error(json.error ?? "Không lưu được mockup");
+  return json.asset;
+}
+
+/** One mockup job drawn in the background from its row (prompt, the front picture in refs) → done (a product picture) / failed. */
+function drawMockupJob(s: CtSession, productId: string, row: CtPackImage): void {
+  const db = ctServiceClient() ?? s.supabase;
+  void (async () => {
+    let last = "";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const out = await drawImage(CT_IMAGE_MODEL, row.prompt, row.refs.slice(0, 1), row.aspect || MOCKUP_ASPECT, "crop");
+        const jpeg = await squared(await sharp(out.data).flatten({ background: "#ffffff" }).png().toBuffer());
+        const asset = await mockupToProduct(s, productId, jpeg, `mockup_${row.description.split(/\s+/).slice(0, 4).join("_")}`);
+        const m = await sharp(jpeg).metadata();
+        await db.from(CT_TABLES.packImages).update({ status: "done", url: asset.url, mime: "image/jpeg", width: m.width ?? null, height: m.height ?? null, error: "" }).eq("id", row.id);
+        return;
+      } catch (e) {
+        last = e instanceof Error ? e.message : String(e);
+        // Refused by the model's safety system: the same prompt is refused again — no second try.
+        if (isSafetyRefusal(last)) break;
+      }
+    }
+    await db.from(CT_TABLES.packImages).update({ status: "failed", error: last.slice(0, 1000) }).eq("id", row.id);
+  })();
+}
+
+/** The image model refused the request on safety grounds (gpt-image: "rejected by the safety system … safety_violations=[…]"). */
+export function isSafetyRefusal(error: string): boolean {
+  return /safety system|safety_violations|moderation_blocked|content policy/i.test(error);
+}
+
+/**
+ * A failed mockup job drawn again with a new prompt (asked 2026-11-12: a scene refused for "sensitive words" goes to
+ * @flexiprint, which rewrites the prompt and sends it again) — the same job row, so its card in the Mockups tab turns
+ * back to running and then to the photo.
+ */
+export async function retryMockupJob(s: CtSession, productId: string, jobId: string, prompt: string): Promise<CtPackImage> {
+  const db = ctServiceClient() ?? s.supabase;
+  const { data: row } = await db.from(CT_TABLES.packImages).select("*").eq("id", jobId).eq("name", jobName(productId)).maybeSingle<CtPackImage>();
+  if (!row) throw new Error("Không có job mockup này");
+  if (row.status === "running") throw new Error("Job đang chạy — chờ nó xong");
+  if (!row.refs.length) throw new Error("Job không có ảnh tham chiếu (front)");
+  const { data: next, error } = await db.from(CT_TABLES.packImages).update({ prompt, status: "running", error: "", url: null }).eq("id", jobId).select("*").single<CtPackImage>();
+  if (error || !next) throw new Error(error?.message ?? "Không cập nhật được job");
+  drawMockupJob(s, productId, next);
+  return next;
 }

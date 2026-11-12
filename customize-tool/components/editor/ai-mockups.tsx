@@ -9,14 +9,16 @@
  *   Mockups     the front one (exact: the print on the phôi with its own shading) + one AI photo per scene line.
  *   Phôi + thiết kế  (asked 2026-10-29) the artwork chosen in Thiết kế laid on the phôi at its box, live — which
  *               product the mockups will be made of, before making them.
+ *   Refused     (asked 2026-11-12) a photo the image model refused on safety grounds: "Gửi @flexiprint sửa prompt" — the
+ *               agent rewrites the prompt and draws the same job again (agent task kind mockup, server/mcp/mockup-tools.ts).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RefreshCw, Sparkles, Trash2, Upload, Wallpaper } from "lucide-react";
-import type { CtAsset, CtPackImage, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtSelection } from "../../types";
+import { Bot, Loader2, RefreshCw, Sparkles, Trash2, Upload, Wallpaper } from "lucide-react";
+import type { CtAgentTask, CtAsset, CtPackImage, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
-import { displayAssets } from "../../lib/library";
+import { defaultCategoryRules, displayAssets } from "../../lib/library";
 import { ctConfirm } from "../dialogs";
 import { CHECKER_STYLE, CtButton, CtTextarea, cx } from "../ui";
 
@@ -41,6 +43,11 @@ export interface AiMockupsPanelProps {
 
 /** Longest side of the artwork drawn on the phôi + thiết kế picture. */
 const ART_PREVIEW_SIDE = 700;
+
+/** The image model refused the request on safety grounds (as server/product-mockups.ts isSafetyRefusal). */
+const isSafetyRefusal = (error: string) => /safety system|safety_violations|moderation_blocked|content policy/i.test(error);
+
+const isOpenTask = (t: CtAgentTask) => t.status === "pending" || t.status === "running" || t.status === "waiting";
 
 /** Scenes that suit the product, as a start (the editor rewrites them). */
 function defaultScenes(name: string): string[] {
@@ -93,10 +100,67 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
     }
   }, [product.id]);
 
+  // @flexiprint's prompt fixes of refused photos: the latest task of each job.
+  const [fixes, setFixes] = useState<CtAgentTask[]>([]);
+  const [sending, setSending] = useState<string | null>(null);
+  const fixOf = useMemo(() => {
+    const m = new Map<string, CtAgentTask>();
+    for (const t of fixes) {
+      const id = t.input.mockup?.jobId;
+      if (id && !m.has(id)) m.set(id, t);
+    }
+    return m;
+  }, [fixes]);
+  const fixing = fixes.filter(isOpenTask);
+  const loadFixes = useCallback(async () => {
+    try {
+      setFixes(await ctApi.listAgentTasks("mockup", product.id));
+    } catch {
+      // Only a progress view.
+    }
+  }, [product.id]);
+
   useEffect(() => {
-    const t = setTimeout(() => void loadJobs(), 0);
+    const t = setTimeout(() => {
+      void loadJobs();
+      void loadFixes();
+    }, 0);
     return () => clearTimeout(t);
-  }, [loadJobs]);
+  }, [loadJobs, loadFixes]);
+
+  // While the agent works on a refused photo: its progress, and the job it draws again.
+  useEffect(() => {
+    if (!fixing.length) return;
+    const t = setInterval(async () => {
+      const before = new Set(fixing.map((f) => f.id));
+      await Promise.all([loadJobs(), loadFixes()]);
+      try {
+        const done = (await ctApi.listAgentTasks("mockup", product.id)).filter((f) => before.has(f.id) && !isOpenTask(f));
+        for (const f of done) props.flash(f.status === "done" && f.result ? `@flexiprint: ${f.result.summary}` : `@flexiprint không sửa được: ${f.error || f.status}`);
+      } catch {
+        // Next round.
+      }
+    }, 4000);
+    return () => clearInterval(t);
+    // props.flash is a fresh closure each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fixing.length, loadJobs, loadFixes, product.id]);
+
+  const sendFix = async (job: CtPackImage) => {
+    setSending(job.id);
+    try {
+      const t = await ctApi.createAgentTask({
+        kind: "mockup",
+        input: { category: { id: null, name: "", spec: "", rules: defaultCategoryRules() }, note: "", images: [], refUrls: [], mockup: { productId: product.id, productName: product.name, jobId: job.id, scene: job.description, prompt: "", error: "", refUrl: "", request: "" } },
+      });
+      setFixes((cur) => [t, ...cur.filter((x) => x.id !== t.id)]);
+      props.flash("Đã gửi @flexiprint — agent xem prompt, bỏ chữ nhạy cảm rồi tạo lại ảnh này");
+    } catch (e) {
+      props.flash(e instanceof Error ? e.message : "Không gửi được cho @flexiprint");
+    } finally {
+      setSending(null);
+    }
+  };
 
   // While AI photos are being made: poll, and add each finished one to the product's pictures.
   useEffect(() => {
@@ -262,9 +326,14 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
               .filter((j) => j.status !== "done")
               .map((j) => (
                 <figure key={j.id} className="overflow-hidden rounded-lg border bg-card">
-                  <div className={cx("flex aspect-[4/5] items-center justify-center p-2 text-center text-[11px]", j.status === "failed" ? "text-destructive" : "text-muted-foreground")}>
-                    {j.status === "running" ? <Loader2 className="h-5 w-5 animate-spin" /> : j.error || "Lỗi"}
-                  </div>
+                  {j.status === "running" ? (
+                    <div className="flex aspect-[4/5] flex-col items-center justify-center gap-1.5 p-2 text-center text-[11px] text-muted-foreground">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      {fixOf.get(j.id) && isOpenTask(fixOf.get(j.id)!) && <span>Đang tạo lại với prompt @flexiprint sửa…</span>}
+                    </div>
+                  ) : (
+                    <FailedJob job={j} fix={fixOf.get(j.id) ?? null} sending={sending === j.id} onFix={() => void sendFix(j)} />
+                  )}
                   <figcaption className="truncate border-t p-1.5 text-[11px] text-muted-foreground" title={j.description}>
                     {j.description}
                   </figcaption>
@@ -312,6 +381,38 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+/** A failed mockup photo: the model's answer, and — refused on safety grounds — the agent's prompt fix. */
+function FailedJob({ job, fix, sending, onFix }: { job: CtPackImage; fix: CtAgentTask | null; sending: boolean; onFix: () => void }) {
+  const refused = isSafetyRefusal(job.error);
+  const working = fix !== null && isOpenTask(fix);
+  const lastLine = fix?.progress?.length ? fix.progress[fix.progress.length - 1].text : "";
+  return (
+    <div className="flex aspect-[4/5] flex-col gap-1.5 p-2 text-[11px]">
+      <div className="min-h-0 flex-1 overflow-y-auto text-center text-destructive" title={job.prompt}>
+        {job.error || "Lỗi"}
+      </div>
+      {working ? (
+        <div className="rounded border border-primary/30 bg-primary/5 p-1.5 text-muted-foreground">
+          <div className="flex items-center gap-1 font-medium text-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" /> @flexiprint đang sửa prompt
+          </div>
+          {lastLine && <div className="mt-0.5 line-clamp-3">{lastLine}</div>}
+        </div>
+      ) : (
+        <>
+          {fix?.status === "failed" && <div className="line-clamp-3 text-muted-foreground">@flexiprint: {fix.error}</div>}
+          {fix?.status === "done" && fix.result && <div className="line-clamp-3 text-muted-foreground">@flexiprint: {fix.result.summary}</div>}
+          {refused && (
+            <CtButton size="sm" variant="outline" disabled={sending} onClick={onFix} title="@flexiprint xem prompt và ảnh tham chiếu, bỏ / thay chữ nhạy cảm, rồi tạo lại ảnh này ngay">
+              {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bot className="h-3.5 w-3.5" />} {fix ? "Gửi lại @flexiprint" : "Gửi @flexiprint sửa prompt"}
+            </CtButton>
+          )}
+        </>
+      )}
     </div>
   );
 }

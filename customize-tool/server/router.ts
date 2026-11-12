@@ -58,7 +58,7 @@
  *   GET    ai/photo                      → { ai, cutout, aiStyles } capabilities
  *   GET    ai/agent-status               → CtAgentStatus (the @flexiprint agent on agent_ide: configured / online)
  *   GET    ai/agent-tasks?kind=&collection= → { tasks } latest tasks of a kind (content: a product's, char: a bộ nhân vật's)
- *   POST   ai/agent-tasks                {kind: content|char, input: CtAgentTaskInput} → CtAgentTask, sent to agent_ide (server/agent/tasks.ts)
+ *   POST   ai/agent-tasks                {kind: content|char|mockup, input: CtAgentTaskInput} → CtAgentTask, sent to agent_ide (server/agent/tasks.ts)
  *   GET    ai/agent-tasks/:id            → CtAgentTask (progress, then result in the built-in LLM's shape)
  *   POST   ai/agent-tasks/:id/answer     {question_id, choices, text} — answer the agent's question (ask_user)
  *   POST   ai/agent-tasks/:id/inject     {text, attachments, tab, section} — "Gửi chen" while the agent works (server/agent/inbox.ts)

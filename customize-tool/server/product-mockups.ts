@@ -27,6 +27,7 @@ import { CT_IMAGE_MODEL } from "../lib/image-models";
 import { ctRemove, ctUpload } from "./storage";
 import { fetchImage } from "./char/files";
 import { lightOnBlank } from "../lib/blank-shading";
+import { materialPreset } from "../lib/materials";
 import { uploadAsset } from "./handlers";
 import { ctServiceClient, type CtSession } from "./supabase";
 
@@ -47,7 +48,7 @@ export const KEEP_PRINT =
  * The print on the blank photo, inside `box` (photo px, may reach past the photo), lit by the blank's own shading —
  * or, with the fulfiller's `overlay` (CtProductScene.overlay), pasted flat with the overlay laid over it.
  */
-export async function frontMockup(blank: Buffer, print: Buffer, box: CtProductScene["box"], overlay: Buffer | null = null): Promise<Buffer> {
+export async function frontMockup(blank: Buffer, print: Buffer, box: CtProductScene["box"], overlay: Buffer | null = null, opaque = false): Promise<Buffer> {
   const meta = await sharp(blank).metadata();
   const W = meta.width ?? 0;
   const H = meta.height ?? 0;
@@ -65,10 +66,15 @@ export async function frontMockup(blank: Buffer, print: Buffer, box: CtProductSc
     .extract({ left: x - bx, top: y - by, width: w, height: hh })
     .raw()
     .toBuffer();
-  if (overlay) {
-    const over = await sharp(overlay).resize(W, H, { fit: "fill" }).ensureAlpha().png().toBuffer();
+  if (overlay || opaque) {
+    // An opaque print (white ink under it, lib/materials whiteInk) is not lit by a clear phôi's glare / backdrop.
+    const over = overlay ? await sharp(overlay).resize(W, H, { fit: "fill" }).ensureAlpha().png().toBuffer() : null;
     const flat = await sharp(art, { raw: { width: w, height: hh, channels: 4 } }).png().toBuffer();
-    const laid = await sharp(blank).ensureAlpha().composite([{ input: flat, left: x, top: y }, { input: over, left: 0, top: 0 }]).png().toBuffer();
+    const laid = await sharp(blank)
+      .ensureAlpha()
+      .composite([{ input: flat, left: x, top: y }, ...(over ? [{ input: over, left: 0, top: 0 }] : [])])
+      .png()
+      .toBuffer();
     return sharp(laid).flatten({ background: "#ffffff" }).jpeg({ quality: 92 }).toBuffer();
   }
   // The phôi's own light on the print: its shading darkens it, its gloss highlights lie over it (lib/blank-shading).
@@ -278,6 +284,13 @@ async function maskDrawing(spec: CtPrintSpec, maskUrl: string): Promise<Buffer> 
 export const GLASS_LOOK =
   "made of thick, perfectly clear crystal glass (not acrylic, not frosted): see-through where nothing is printed, its rim cut in many small bevelled facets like a diamond that sparkle and refract the light";
 
+/**
+ * A clear acrylic phôi (lib/materials "acrylic_clear", asked 2026-11-13: "phôi phải thật sự trong suốt và clean"): the
+ * print is pasted flat on it, so a frosted / milky face or a glare streak shows around and through the preview.
+ */
+export const CLEAR_ACRYLIC_LOOK =
+  "perfectly clear, colourless, glossy see-through acrylic like clean window glass: NOT frosted, NOT milky, NOT hazy, no texture — what is behind it shows through sharp and unchanged; NO glare, reflection, light streak or highlight anywhere across its face — only its thin cut edge catches a fine line of light";
+
 export function isGlass(material: string | undefined, label = ""): boolean {
   return material === "glass_clear" || /\b(glass|crystal)\b|kính|thuỷ tinh|thủy tinh|pha lê/i.test(label);
 }
@@ -303,6 +316,7 @@ export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: 
     "Plain flat medium-grey seamless backdrop (#9a9a9a), soft even studio light, a faint natural shadow.",
     "Nothing attached or around it: no ribbon, no string, no hook, no hanger, no props, no hands.",
     glass ? `The piece is ${GLASS_LOOK}; the grey backdrop shows through it.` : "",
+    !glass && material === "acrylic_clear" ? `The piece is ${CLEAR_ACRYLIC_LOOK}; the grey backdrop shows through it.` : "",
     looks
       ? `Reference picture${looks > 1 ? "s" : ""} ${nums} show${looks > 1 ? "" : "s"} the REAL piece the editor sells (a photo of the blank, or of the finished product with a print on it): copy its material, colour, finish and the hole's look exactly — but leave out every print, picture, text, ribbon and prop on it, keep the outline${spec ? " of the drawing" : " they show"}, and never copy its camera angle: a tilted or perspective reference is still shot front-on here. A reference that shows no physical piece is ignored.`
       : "",
@@ -570,7 +584,13 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
   const dieCut = config.print?.kind === "cut" || (config.material.id.startsWith("acrylic") && config.material.shape === "contour");
   let front: Buffer;
   if (config.scene.url && config.scene.box.w > 0)
-    front = await frontMockup(await fetchImage(config.scene.url), print, config.scene.box, config.scene.overlay ? await fetchImage(config.scene.overlay).catch(() => null) : null);
+    front = await frontMockup(
+      await fetchImage(config.scene.url),
+      print,
+      config.scene.box,
+      config.scene.overlay ? await fetchImage(config.scene.overlay).catch(() => null) : null,
+      materialPreset(config.material.id).whiteInk,
+    );
   else if (dieCut) {
     const pw = (await sharp(print).metadata()).width ?? 1024;
     const mm = config.print?.spec.widthMm || config.material.widthMm || 90;

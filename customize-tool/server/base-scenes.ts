@@ -36,7 +36,7 @@ import { fetchImage } from "./char/files";
 import { loadBaseProduct } from "./base-products";
 import { templateRow } from "./print-templates";
 import { addTemplateBlank } from "./print-blanks";
-import { makeBlank, pieceBounds, sheetBoxOn } from "./product-mockups";
+import { CLEAR_ACRYLIC_LOOK, makeBlank, pieceBounds, sheetBoxOn } from "./product-mockups";
 import { ctRemove, ctUpload } from "./storage";
 import { jsonError, record, str } from "./ai/llm";
 import { ctServiceClient, type CtServiceClient, type CtSession, type CtSupabase } from "./supabase";
@@ -85,7 +85,7 @@ function productFacts(base: CtBaseProduct, template: CtPrintTemplate | null): st
     .join("; ");
 }
 
-function scenePrompt(o: { facts: string; where: string; photos: number; piece: boolean }): string {
+function scenePrompt(o: { facts: string; where: string; photos: number; piece: boolean; clear?: boolean }): string {
   const first = o.piece ? 2 : 1;
   const nums = Array.from({ length: o.photos }, (_, i) => first + i).join(", ");
   return [
@@ -106,6 +106,7 @@ function scenePrompt(o: { facts: string; where: string; photos: number; piece: b
     o.piece
       ? "Its printable face stays completely BLANK: one even surface of its own material, no print, pattern, picture, text, logo, stitching or dashed line — the design is added on it later. Nothing covers, overlaps or touches its face: furniture, props and decor stay around it toward the edges of the picture, some partly cropped by the frame, at real-world scale next to the piece."
       : "",
+    o.piece && o.clear ? `The piece is ${CLEAR_ACRYLIC_LOOK}.` : "",
     "Natural light with soft realistic shadows, photorealistic, warm and inviting, like a premium online-store lifestyle photo. No people, no hands, no text, no watermark.",
   ]
     .filter(Boolean)
@@ -275,7 +276,7 @@ async function drawBaseScene(o: {
       expect = { x: (SIDE - w) / 2, y: (SIDE - h) / 2, w, h };
     }
     refs.push(...photos);
-    const prompt = scenePrompt({ facts: productFacts(base, template), where, photos: photos.length, piece: !alpha });
+    const prompt = scenePrompt({ facts: productFacts(base, template), where, photos: photos.length, piece: !alpha, clear: base.config.material === "acrylic_clear" });
 
     let picture: Buffer | null = null;
     let last = "";

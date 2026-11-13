@@ -56,6 +56,12 @@ export async function drawOnScene(
   bleed: { x: number; y: number } = { x: 0, y: 0 },
   /** Pasted as it is (layers laid on a version's AI phôi): not lit by the photo, no plate. */
   flat = false,
+  /**
+   * The print is opaque (a material printed over white ink: clear acrylic / glass, lib/materials whiteInk): pasted as
+   * it is, not lit by the photo — what is seen through a clear phôi (its glare, the dark backdrop behind it) is not the
+   * print's light, and lit by it the print got white blobs, dark corners and faded-out edges (2026-11-13).
+   */
+  opaque = false,
 ): Promise<HTMLCanvasElement> {
   const scene = normalizeScene(raw);
   if (!scene.url) return design;
@@ -91,7 +97,7 @@ export async function drawOnScene(
     ctx.drawImage(design, dx, dy, dw, dh);
     return out;
   }
-  if (!bg || !lightDesign(ctx, design, dx, dy, dw, dh)) ctx.drawImage(design, dx, dy, dw, dh);
+  if (opaque || !bg || !lightDesign(ctx, design, dx, dy, dw, dh)) ctx.drawImage(design, dx, dy, dw, dh);
   return out;
 }
 

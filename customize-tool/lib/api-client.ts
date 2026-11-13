@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtBasePlacement, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseScenesAuto, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
+import type { CtSheetOverflow, CtBasePlacement, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseScenesAuto, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
   CtFulfillCatalogPage, CtFulfillProvider, CtTeeinblueStatus, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind, CtStoreList } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
@@ -124,7 +124,7 @@ export const ctApi = {
   connectTeeinblue: (code: string) => call<CtTeeinblueStatus>("base-import/teeinblue", json("POST", { code })),
   /** A fulfiller's base: Printbelle khuôn (if none) + phôi with its overlay · Merchize template / mockup links. */
   /** Read the base's sewn pieces (hood + body) off its khuôn + phôi; swap = hood halves the other way; off = none. */
-  baseAssembly: (id: string, body: { swap?: boolean; off?: boolean }) => call<{ base: CtBaseProduct; note: string; reapplied: number }>(`base-products/${id}/assembly`, json("POST", body)),
+  baseAssembly: (id: string, body: { swap?: boolean; off?: boolean; overflow?: CtSheetOverflow }) => call<{ base: CtBaseProduct; note: string; reapplied: number }>(`base-products/${id}/assembly`, json("POST", body)),
   refreshFulfillerBase: (baseId: string) => call<{ reapplied: number; failed: string[]; note: string; phoi: boolean }>("base-import/refresh", json("POST", { baseId })),
   createProduct: (name: string) => call<{ product: CtProduct }>("products", json("POST", { name })).then((r) => r.product),
   getBundle: (id: string) => call<CtProductBundle>(`products/${id}`),

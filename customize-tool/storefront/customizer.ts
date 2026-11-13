@@ -61,6 +61,7 @@ import { ctGoogleFontsHref } from "../config";
 import { canvasToBlob, compositeBleed, drawComposite, loadImage, mirrorSheet, printFrame, renderComposite, silhouetteCutOf, withSilhouette } from "../lib/compositor";
 import { isHidden, layoutFor, onVersion } from "../lib/layout";
 import { drawOnScene } from "../lib/scene";
+import { previewPieces } from "../lib/assembly";
 import { renderZoneMockup, zoneFills } from "../lib/zone-mockup";
 import { printSize } from "../lib/print-template";
 import { renderSlide, type CtSlotArt } from "../lib/mockup";
@@ -692,7 +693,7 @@ export class Customizer {
     const b = cut ? { x: 0, y: 0 } : compositeBleed({ main: this.main, assets: this.tpl.assets, regions: this.regions, selection: shown, layouts: this.tpl.config.layouts });
     const bleed = { x: b.x / this.main.width, y: b.y / this.main.height };
     // A sheet of sewn pieces (hooded blanket, lib/assembly): the photo shows the product sewn from it.
-    const off = await this.product(shown, side, !!own, cut, this.tpl.config.assembly?.pieces ?? null)
+    const off = await this.product(shown, side, !!own, cut, previewPieces(this.tpl.config.assembly))
       .then((c) => drawOnScene(scene, c, side, bleed))
       .catch(() => null);
     if (!off || token !== this.renderToken) return;

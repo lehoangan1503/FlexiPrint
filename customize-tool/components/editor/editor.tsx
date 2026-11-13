@@ -1583,7 +1583,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               artworkBusy={artworks.busy}
               artworkFolder={artworks.folderName}
               print={viewConfig.print}
-              hoodFold={!!viewConfig.assembly}
+              sheetOverflow={viewConfig.assembly?.overflow ?? null}
               phoiAi={
                 viewBase && viewBase.config.cut.mode === "alpha"
                   ? { done: mains.filter((m) => phoiStatus.phoi.some((v) => v.mainId === m.id && v.baseId === viewBase.id)).length, total: mains.length, onOpen: () => setPhoiOpen(true) }

@@ -2,7 +2,12 @@
  * A base's print sheet of sewn pieces (lib/assembly), read off its khuôn + its phôi (2026-11-12, Printbelle Wearable
  * Hooded Blanket). The khuôn itself is never changed — this only says where each piece shows on the product:
  *
- *   POST base-products/:id/assembly  { swap?: boolean, off?: boolean } → { base, note, reapplied }
+ *   POST base-products/:id/assembly  { swap?, overflow?: "wrap" | "hood", off? } → { base, note, reapplied }
+ *
+ * Every piece the khuôn closes is kept (2026-11-13: "không bỏ qua bất kì bản vẽ nào"): pockets = role "other" —
+ * printed with what lands on them, not on the preview photo. A sheet with no hood (another garment) is kind "sheet":
+ * the overflow rule only, the preview shows the sheet as before. A new kind of khuôn whose pieces need their own
+ * logic gets its own reader here (CtSheetKind).
  *
  *  - pieces of the khuôn: the guide's grey band (server/printbelle-khuon.ts keeps it as a transparent marker, alpha
  *    BAND_ALPHA; guides read before 2026-11-12 had it opaque grey 222) closes each piece;
@@ -19,7 +24,7 @@
 import sharp from "sharp";
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../config";
-import type { CtBaseAssembly, CtBaseProduct, CtBounds, CtProduct, CtProductScene, CtSewnPiece, CtShape } from "../types";
+import type { CtBaseAssembly, CtBaseProduct, CtBounds, CtProduct, CtProductScene, CtSewnPiece, CtShape, CtSheetOverflow } from "../types";
 import type { CtPrintTemplate } from "../types/print";
 import { fetchImage } from "./char/files";
 import { loadBaseProduct } from "./base-products";
@@ -251,31 +256,51 @@ export function sewPieces(pieces: SheetPiece[], parts: PreviewParts, swap: boole
   };
   if (!swap) out.push(half(R, "left", "Nón (nửa trái, mảnh phải)"), half(L, "right", "Nón (nửa phải, mảnh trái)"));
   else out.push(half(L, "left", "Nón (nửa trái, mảnh trái)"), half(R, "right", "Nón (nửa phải, mảnh phải)"));
+  // The rest (pockets): printed with whatever lands on them, not on the photo (seen from behind).
+  const rest = pieces.slice(1).filter((p) => p !== L && p !== R);
+  rest.forEach((p, i) => out.push(otherPiece(p, i)));
   const note =
     `Ô thân = thân chăn trên preview (mép trên ở y ${Math.round(parts.body.y)}px của tờ) · ` +
-    `2 mảnh nón = nón trên preview (vùng ${Math.round(x0)}–${Math.round(x1)} × ${Math.round(top)}–${Math.round(bottom)}px), mỗi mảnh nửa nón · phần layer tràn lên trên mép ô thân in xuống 2 mảnh nón, cùng cỡ` +
+    `2 mảnh nón = nón trên preview (vùng ${Math.round(x0)}–${Math.round(x1)} × ${Math.round(top)}–${Math.round(bottom)}px), mỗi mảnh nửa nón` +
     (swap ? " · đã đổi nửa nón" : "") +
-    (pieces.length > 3 ? ` · ${pieces.length - 3} mảnh khác (túi…) không hiện trên preview` : "");
+    (rest.length ? ` · ${rest.length} mảnh khác (túi…) vẫn in, không hiện trên preview nhìn từ sau` : "");
   return { pieces: out, note };
 }
 
+function otherPiece(p: SheetPiece, i: number): CtSewnPiece {
+  return { name: `Mảnh ${i + 1}${p.fill > 0.95 ? " (vuông — túi)" : ""}`, role: "other", shape: p.shape, from: p.box, to: p.box };
+}
+
+/** Any other sheet of pieces (no hood on the phôi): the biggest = body, the rest kept as they are; preview unsewn. */
+function plainSheet(pieces: SheetPiece[]): CtSewnPiece[] {
+  const [body, ...rest] = pieces;
+  return [{ name: "Thân", role: "body", shape: body.shape, from: body.box, to: body.box }, ...rest.map(otherPiece)];
+}
+
+const OVERFLOW_NOTE: Record<CtSheetOverflow, string> = {
+  wrap: "phần layer tràn lên trên mép tờ hiện lại từ mép dưới tờ lên, cùng vị trí ngang — rơi vào mảnh nào (nón, túi…) in ở mảnh đó",
+  hood: "luật chăn có nón: phần layer tràn lên trên mép ô thân (quanh giữa thân) in xuống 2 mảnh nón",
+};
+
 /** Reads the base's assembly (see the file comment); a string = why there is none. */
-export async function readAssembly(base: CtBaseProduct, template: CtPrintTemplate | null, swap: boolean): Promise<CtBaseAssembly | string> {
+export async function readAssembly(base: CtBaseProduct, template: CtPrintTemplate | null, swap: boolean, overflow: CtSheetOverflow = "wrap"): Promise<CtBaseAssembly | string> {
   if (!template) return "Base chưa có khuôn in";
   const face = template.spec.faces[0];
   if (!face?.guideUrl) return "Khuôn in không có ảnh nét khuôn (guide)";
-  const scene = overlayScene(base);
-  if (!scene) return "Phôi không có lớp phủ (overlay) để biết nón / thân nằm đâu trên preview";
   const W = template.spec.width;
   const H = template.spec.height;
   const guide = await fetchImage(face.guideUrl);
   const pieces = await sheetPieces(guide, W, H);
-  if (pieces.length < 3) return `Khuôn chỉ có ${pieces.length} mảnh — không phải tờ ráp nhiều mảnh`;
-  const parts = await previewParts(scene, W, H);
-  if (!parts) return "Không đọc được hình sản phẩm trên lớp phủ phôi";
-  const sewn = sewPieces(pieces, parts, swap);
-  if (typeof sewn === "string") return sewn;
-  return { pieces: sewn.pieces, guideUrl: null, swap, note: sewn.note, at: new Date().toISOString() };
+  if (pieces.length < 2) return `Khuôn chỉ có ${pieces.length} mảnh — không phải tờ ráp nhiều mảnh`;
+  const at = new Date().toISOString();
+  // A hooded blanket (its own logic): the hood read off the phôi, the preview sewn. Anything else: the sheet only.
+  const scene = overlayScene(base);
+  const parts = scene ? await previewParts(scene, W, H) : null;
+  const sewn = parts && pieces.length >= 3 ? sewPieces(pieces, parts, swap) : "Phôi không có lớp phủ (overlay) để biết nón / thân nằm đâu trên preview";
+  if (typeof sewn !== "string") return { kind: "hooded-blanket", overflow, pieces: sewn.pieces, guideUrl: null, swap, note: `${sewn.note} · ${OVERFLOW_NOTE[overflow]}`, at };
+  if (overflow === "hood") return sewn;
+  const list = plainSheet(pieces);
+  return { kind: "sheet", overflow, pieces: list, guideUrl: null, swap: false, note: `Tờ ${list.length} mảnh (không thấy nón trên phôi: ${sewn}) · xem trước = tờ in như cũ · ${OVERFLOW_NOTE.wrap}`, at };
 }
 
 /** Saves the assembly into the base (read fresh — other fields stay) and lays every product on it again. */
@@ -291,7 +316,7 @@ async function saveAssembly(db: Db, baseId: string, assembly: CtBaseAssembly | n
 
 /** POST base-products/:id/assembly */
 export async function makeBaseAssembly(s: CtSession, baseId: string, raw: unknown): Promise<NextResponse> {
-  const body = raw && typeof raw === "object" ? (raw as { swap?: unknown; off?: unknown }) : {};
+  const body = raw && typeof raw === "object" ? (raw as { swap?: unknown; off?: unknown; overflow?: unknown }) : {};
   const base = await loadBaseProduct(s.supabase, baseId);
   if (!base) return NextResponse.json({ error: "Không tìm thấy product base" }, { status: 404 });
   try {
@@ -299,7 +324,8 @@ export async function makeBaseAssembly(s: CtSession, baseId: string, raw: unknow
       const r = await saveAssembly(s.supabase, baseId, null);
       return NextResponse.json({ base: r.base, note: "Đã bỏ ráp mảnh: file in = thiết kế nằm nguyên trên tờ khuôn", reapplied: r.reapplied });
     }
-    const read = await readAssembly(base, await loadTemplate(s.supabase, base.config.templateId), body.swap === true);
+    const overflow: CtSheetOverflow = body.overflow === "hood" || body.overflow === "wrap" ? body.overflow : (base.config.assembly?.overflow ?? "wrap");
+    const read = await readAssembly(base, await loadTemplate(s.supabase, base.config.templateId), body.swap === true, overflow);
     if (typeof read === "string") return NextResponse.json({ error: read }, { status: 422 });
     const r = await saveAssembly(s.supabase, baseId, read);
     return NextResponse.json({ base: r.base, note: read.note, reapplied: r.reapplied });
@@ -314,7 +340,8 @@ export async function autoAssembly(db: Db, userId: string, baseId: string): Prom
     const base = await loadBaseProduct(db, baseId);
     if (!base || base.config.assembly) return null;
     const read = await readAssembly(base, await loadTemplate(db, base.config.templateId), false);
-    if (typeof read === "string") return null;
+    // Automatically only for a khuôn whose logic is known (the hooded blanket); another sheet = by hand on the base page.
+    if (typeof read === "string" || read.kind !== "hooded-blanket") return null;
     await saveAssembly(db, baseId, read);
     return "ráp mảnh nón + thân";
   } catch (e) {

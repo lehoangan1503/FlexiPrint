@@ -132,7 +132,7 @@ export interface StageProps {
   drawInto?: { label: string; onShape: (shape: CtShape) => void } | null;
   /** The khuôn in the product is made on (types/print.ts): its guide sheet, safe zone and zones over the canvas. */
   printSpec?: CtPrintSpec | null;
-  /** A sewn khuôn (hooded blanket): what reaches above the body's top edge shows on the hood pieces (lib/assembly). */
+  /** A sheet of sewn pieces: what reaches above its top cut line shows again lower on it (lib/assembly overflowFolds). */
   assembly?: CtPrintAssembly | null;
   /** A bộ nhân vật's layers (CtRegionConfig.charSet) — the canvas picks the whole set, never one of them. */
   setOf?: (regionId: string) => string[] | null;

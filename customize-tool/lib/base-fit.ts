@@ -214,7 +214,7 @@ export function withBase(
   // the sheet; only the preview is sewn from it (each piece where it shows on the product).
   const sewn = base.config.assembly && print && place && cut.mode !== "alpha" ? base.config.assembly : null;
   const pieces = sewn && place && print ? assemblyOnCanvas(sewn, print.spec.width, place) : [];
-  const assembly: CtPrintAssembly | null = pieces.length ? { pieces, sheetGuide: null } : null;
+  const assembly: CtPrintAssembly | null = sewn && pieces.length ? { kind: sewn.kind, overflow: sewn.overflow, pieces, sheetGuide: null } : null;
 
   const widthMm = canvasWidthMm(base, print, sheetBox, main);
   const material: CtMaterialConfig = {

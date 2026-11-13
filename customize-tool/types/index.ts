@@ -443,8 +443,8 @@ export interface CtRegionConfig {
    */
   previewOnly?: boolean;
   /**
-   * A base whose khuôn is sewn pieces (hooded blanket, lib/assembly): what of this layer reaches above the body's top
-   * edge is printed on the hood pieces — unless this is set ("Phần tràn lên trên → in lên nón" off).
+   * A base whose khuôn is sewn pieces (lib/assembly overflowFolds): what of this layer reaches above the sheet's top
+   * cut line is printed again lower on the sheet — unless this is set (Layer › "Phần tràn lên trên mép khuôn" off).
    */
   noHood?: boolean;
   /**
@@ -1841,8 +1841,8 @@ export interface CtBaseProductConfig {
 export interface CtSewnPiece {
   /** "Thân", "Nón (nửa trái)", "Nón (nửa phải)" */
   name: string;
-  /** The blanket's body, or a hood piece. */
-  role: "body" | "hood";
+  /** The blanket's body, a hood piece, or any other piece of the sheet (a pocket — not on the preview photo). */
+  role: "body" | "hood" | "other";
   /** A hood piece: which half of the hood (seen from behind, as the preview) it carries. */
   half?: "left" | "right";
   /** The piece's outline on the print sheet (its cut line, a little past it). */
@@ -1854,7 +1854,25 @@ export interface CtSewnPiece {
 }
 
 /** CtBaseProductConfig.assembly — read off the khuôn (its pieces) + the phôi's overlay (where the hood is). */
+/**
+ * What a layer reaching above the sheet's top cut line prints (asked 2026-11-13, lib/assembly overflowFolds):
+ *  - "wrap"  the general rule for any sheet of sewn pieces: it shows again from the sheet's bottom cut line up, at the
+ *            same x — on whatever piece lies there (hood, pocket…) or none; the editor never pushes it anywhere;
+ *  - "hood"  the hooded blanket's own rule (2026-11-12): the part above the body's MIDDLE is moved onto the 2 hood
+ *            pieces, each its half of the hood (as sewn) — pockets get nothing.
+ */
+export type CtSheetOverflow = "wrap" | "hood";
+
+/**
+ * Which sheet logic read the pieces (server/base-assembly.ts) — one per kind of khuôn, more added when a new khuôn
+ * cannot use these: "hooded-blanket" = body + 2 hood pieces (+ pockets), the preview sewn (body → blanket, hood
+ * pieces → hood); "sheet" = pieces only, the preview is the sheet on the phôi as before.
+ */
+export type CtSheetKind = "hooded-blanket" | "sheet";
+
 export interface CtBaseAssembly {
+  kind: CtSheetKind;
+  overflow: CtSheetOverflow;
   pieces: CtSewnPiece[];
   /** Not used since 2026-11-12 (the khuôn is never moved or redrawn): null. */
   guideUrl: string | null;
@@ -1871,6 +1889,8 @@ export interface CtBaseAssembly {
 /** CtProductConfig.assembly — the base's assembly laid on the artwork canvas (lib/base-fit withBase): the preview is
  * sewn from the sheet (each piece drawn where it shows on the product); the print file is the sheet as it is. */
 export interface CtPrintAssembly {
+  kind: CtSheetKind;
+  overflow: CtSheetOverflow;
   pieces: CtSewnPiece[];
   /** Not used since 2026-11-12. */
   sheetGuide: ({ url: string } & CtBounds) | null;

@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { CT_FONTS } from "../../config";
 import type { CtProductPrint } from "../../types/print";
+import type { CtSheetOverflow } from "../../types";
 import { outsideSafe } from "../print/layer-print-section";
 import { useLayerInk, type CtLayerInk } from "./use-layer-ink";
 import type {
@@ -131,8 +132,8 @@ export interface InspectorProps {
   onZoneOption: (regionId: string, optionId: string | null) => void;
   /** The khuôn in the product is made on: placement / fill / print-only per layer, the safe zone check. */
   print?: CtProductPrint | null;
-  /** The base's khuôn is sewn pieces (hooded blanket): a layer's part above the body's top edge goes on the hood. */
-  hoodFold?: boolean;
+  /** The base's khuôn is sewn pieces: where a layer's part above the sheet's top cut line is printed (its rule). */
+  sheetOverflow?: CtSheetOverflow | null;
   /** The bộ nhân vật picked as a whole (its layers' ids) — its row in Layers selects it. */
   selectedSet: string[] | null;
   onSelectSet: (ids: string[]) => void;
@@ -951,10 +952,17 @@ function RegionProps(props: InspectorProps & { region: CtRegion; ink: CtLayerInk
           />
         </CtField>
       )}
-      {props.hoodFold && !cfg.materialFrame && !cfg.fill && (
-        <label className="flex items-start gap-2 text-[11px]" title="Khuôn may nhiều mảnh (chăn có nón): phần layer nhô lên trên mép trên ô thân được in xuống 2 mảnh nón ở dưới tờ khuôn — như khi may, nón nằm ngay trên mép thân.">
+      {props.sheetOverflow && !cfg.materialFrame && !cfg.fill && (
+        <label
+          className="flex items-start gap-2 text-[11px]"
+          title={
+            props.sheetOverflow === "hood"
+              ? "Luật chăn có nón: phần layer nhô lên trên mép trên ô thân được in xuống 2 mảnh nón."
+              : "Tờ khuôn nhiều mảnh: phần layer nhô lên trên mép trên tờ hiện lại từ mép dưới tờ lên, đúng vị trí ngang của nó — rơi vào mảnh nào (nón, túi…) thì in ở mảnh đó."
+          }
+        >
           <input type="checkbox" className="mt-0.5 accent-sky-500" checked={!cfg.noHood} onChange={(e) => set((r) => ({ ...r, config: { ...r.config, noHood: e.target.checked ? undefined : true } }))} />
-          Phần tràn lên trên mép khuôn → in xuống 2 mảnh nón
+          {props.sheetOverflow === "hood" ? "Phần tràn lên trên mép khuôn → in xuống 2 mảnh nón" : "Phần tràn lên trên mép khuôn → hiện ở dưới tờ, cùng vị trí"}
         </label>
       )}
       {outsideSafe(props.print ?? null, region, props.ink.get(region.id)) && (

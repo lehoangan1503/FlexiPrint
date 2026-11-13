@@ -1,4 +1,11 @@
 /**
+ * Since 2026-11-13 (asked: "phần vượt qua sẽ được hiển thị ở dưới, nhưng phải tôn trọng vị trí của chính cái frame
+ * đang bị overflow … không ưu tiên vào 2 vòm tròn … không bỏ qua bất kì bản vẽ nào … editor tự kéo thả không ép vào
+ * khuôn nào cả"): the general rule is `wrap` (overflowFolds) — what crosses the sheet's top cut line shows again from
+ * its bottom cut line up, at the same x, on whatever piece lies there (hood, pocket) or none. The hooded blanket's
+ * first rule (below, `hood`: the overflow over the body's middle moved onto the 2 hood pieces) stays as its own logic.
+ * Every piece of the sheet is kept (role "other" = a pocket: printed, not on the preview photo).
+ *
  * A print sheet of sewn pieces (2026-11-12, the Printbelle Wearable Hooded Blanket — the user: "preview hiện cái đầu ở
  * trên nón là đúng, nhưng file in gửi xuống sẽ sai — phần artwork đó phải nằm ở bản vẽ của nón", then: "mình không tự ý
  * lật, thay đổi và xoá khuôn in của xưởng — mình phân tích clipart và cắt ảnh artwork như 3 ảnh tham khảo"):
@@ -15,7 +22,7 @@
  * The base holds it in the khuôn's sheet px (server/base-assembly.ts reads it); withBase lays it on the canvas.
  */
 
-import type { CtBaseAssembly, CtBounds, CtPrintAssembly, CtSewnPiece, CtShape } from "../types";
+import type { CtBaseAssembly, CtBounds, CtPrintAssembly, CtSewnPiece, CtShape, CtSheetKind, CtSheetOverflow } from "../types";
 import { shapeBounds } from "./geometry";
 
 function num(v: unknown): number | null {
@@ -65,11 +72,21 @@ function pieces(raw: unknown): CtSewnPiece[] {
     const from = bounds(p.from);
     const to = bounds(p.to);
     if (!sh || !from || !to) continue;
-    const role = p.role === "hood" ? "hood" : "body";
+    const role = p.role === "hood" || p.role === "other" ? p.role : "body";
     const half: Pick<CtSewnPiece, "half"> = role === "hood" && (p.half === "left" || p.half === "right") ? { half: p.half } : {};
     out.push({ name: typeof p.name === "string" ? p.name.slice(0, 60) : "", role, ...half, shape: sh, from, to });
   }
   return out.slice(0, 12);
+}
+
+/** Saved before 2026-11-13 = no field: the general rule (wrap) — the user's rule for every sheet since. */
+function overflow(raw: unknown): CtSheetOverflow {
+  return raw === "hood" ? "hood" : "wrap";
+}
+
+function kind(raw: unknown, list: CtSewnPiece[]): CtSheetKind {
+  if (raw === "sheet" || raw === "hooded-blanket") return raw;
+  return list.some((p) => p.role === "hood") ? "hooded-blanket" : "sheet";
 }
 
 export function normalizeBaseAssembly(raw: unknown): CtBaseAssembly | null {
@@ -78,6 +95,8 @@ export function normalizeBaseAssembly(raw: unknown): CtBaseAssembly | null {
   const list = pieces(a.pieces);
   if (!list.length) return null;
   return {
+    kind: kind(a.kind, list),
+    overflow: overflow(a.overflow),
     pieces: list,
     guideUrl: typeof a.guideUrl === "string" && a.guideUrl ? a.guideUrl : null,
     swap: a.swap === true,
@@ -93,7 +112,7 @@ export function normalizePrintAssembly(raw: unknown): CtPrintAssembly | null {
   if (!list.length) return null;
   const g = a.sheetGuide && typeof a.sheetGuide === "object" ? (a.sheetGuide as { url?: unknown }) : null;
   const gb = g ? bounds(g) : null;
-  return { pieces: list, sheetGuide: g && typeof g.url === "string" && g.url && gb ? { url: g.url, ...gb } : null };
+  return { kind: kind(a.kind, list), overflow: overflow(a.overflow), pieces: list, sheetGuide: g && typeof g.url === "string" && g.url && gb ? { url: g.url, ...gb } : null };
 }
 
 /** A point / box / shape moved by `k` then (dx, dy). */
@@ -132,12 +151,19 @@ export function sheetToDesign(s: CtShape, p: CtSewnPiece): CtShape {
   return moveShapeBy(s, k, p.from.x - p.to.x * k, p.from.y - p.to.y * k);
 }
 
+/** The pieces the preview sews onto the product photo (body + hood); null = the sheet is shown as it is. */
+export function previewPieces(a: CtPrintAssembly | null | undefined): CtSewnPiece[] | null {
+  if (!a || a.kind !== "hooded-blanket") return null;
+  const list = a.pieces.filter((p) => p.role !== "other");
+  return list.length ? list : null;
+}
+
 export interface CtHoodFold {
-  /** The hood piece's outline (canvas px). */
+  /** Where it lands (canvas px): a hood piece's outline, or the sheet's box (wrap). */
   shape: CtShape;
-  /** What it takes: the box above the body's top edge, its half of the hood (canvas px). */
+  /** What it takes: the box above the top cut line (canvas px). */
   src: CtBounds;
-  /** src → the piece: a move only (the hood is printed at the same size as the body). */
+  /** src → where it lands: a move only (printed at the same size as the body). */
   dx: number;
   dy: number;
 }
@@ -159,4 +185,25 @@ export function hoodFolds(a: CtPrintAssembly): CtHoodFold[] {
       const src = { x: p.half === "left" ? cx - p.to.w : cx, y: top - p.to.h, w: p.to.w, h: p.to.h };
       return { shape: p.shape, src, dx: p.to.x - src.x, dy: p.to.y - src.y };
     });
+}
+
+/**
+ * The general rule (CtSheetOverflow "wrap", 2026-11-13): the sheet read as a band rolled top ↔ bottom — what a layer
+ * reaches above the sheet's top cut line shows again from its bottom cut line up, at the same x and size. Nothing
+ * is pushed onto a piece: it lands on whatever lies there (a hood piece, a pocket, or the gap between them).
+ */
+export function wrapFolds(a: CtPrintAssembly): CtHoodFold[] {
+  if (!a.pieces.length) return [];
+  const x0 = Math.min(...a.pieces.map((p) => p.to.x));
+  const y0 = Math.min(...a.pieces.map((p) => p.to.y));
+  const x1 = Math.max(...a.pieces.map((p) => p.to.x + p.to.w));
+  const y1 = Math.max(...a.pieces.map((p) => p.to.y + p.to.h));
+  const h = y1 - y0;
+  if (!(h > 0) || !(x1 > x0)) return [];
+  return [{ shape: { type: "rect", x: x0, y: y0, w: x1 - x0, h, radius: 0 }, src: { x: x0, y: y0 - h, w: x1 - x0, h }, dx: 0, dy: h }];
+}
+
+/** What reaches above the sheet's top goes where the base's rule says (CtSheetOverflow). */
+export function overflowFolds(a: CtPrintAssembly): CtHoodFold[] {
+  return a.overflow === "hood" ? hoodFolds(a) : wrapFolds(a);
 }

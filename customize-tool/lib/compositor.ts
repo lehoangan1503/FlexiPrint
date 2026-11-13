@@ -13,7 +13,7 @@ import { activeRegions, isStaticLayer, normalizeRegion, regionChoices, regionFor
 import { mainFrameFor, resolveLayout } from "./layout";
 import { frameRegionFor, frameSvgPath, renditionFrameBox, traceFrame } from "./material-frame";
 import { scaleShape } from "./print-template";
-import { hoodFolds } from "./assembly";
+import { overflowFolds } from "./assembly";
 
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 
@@ -77,8 +77,8 @@ export interface CompositeInput {
    */
   assembled?: CtSewnPiece[] | null;
   /**
-   * The base's sewn pieces on this canvas (CtProductConfig.assembly): what reaches above the body's top edge is drawn
-   * again on the hood pieces (lib/assembly hoodFolds) — in the editor, the print file and the preview alike.
+   * The base's sewn pieces on this canvas (CtProductConfig.assembly): what reaches above the sheet's top cut line is
+   * drawn again lower on it (lib/assembly overflowFolds) — in the editor, the print file and the preview alike.
    */
   assembly?: CtPrintAssembly | null;
 }
@@ -165,6 +165,8 @@ async function drawAssembled(ctx: CanvasRenderingContext2D, input: CompositeInpu
   const { scale } = input;
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   for (const piece of pieces) {
+    // A piece the photo does not show (a pocket): printed, not drawn here.
+    if (piece.role === "other") continue;
     // Sheet → product: its sheet box drawn into its product box, whole — the corners a rounded piece leaves (a hood
     // piece's crown seam) show the sheet's background there, not a notch in the photo.
     const p = { shape: { type: "rect" as const, ...piece.from, radius: 0 }, from: piece.to, to: piece.from };
@@ -371,10 +373,10 @@ export async function drawComposite(ctx: CanvasRenderingContext2D, input: Compos
   }
   for (const r of above) await draw(r);
 
-  // A sewn khuôn (hooded blanket): what reaches above the body's top edge is printed on the hood pieces — each piece
-  // gets its half of what is up there, at print size, its bottom on the body's top edge (lib/assembly hoodFolds).
-  // Backgrounds (fills) are not folded: the pieces keep the background they lie on.
-  const folds = !size && input.assembly ? hoodFolds(input.assembly) : [];
+  // A sheet of sewn pieces: what reaches above its top cut line is printed again lower on the sheet, by the base's rule
+  // (lib/assembly overflowFolds): "wrap" = from the bottom cut line up, same x, on whatever piece lies there; "hood" =
+  // onto the 2 hood pieces. Backgrounds (fills) are not folded: the pieces keep the background they lie on.
+  const folds = !size && input.assembly ? overflowFolds(input.assembly) : [];
   for (const fold of folds) {
     ctx.save();
     clipShape(ctx, fold.shape);

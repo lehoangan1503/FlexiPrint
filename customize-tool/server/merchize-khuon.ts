@@ -7,6 +7,7 @@
  *    matching the base's print area wins. services/layer-kit /psd/template reads it by layer names:
  *      gray    `gray` = print area, `safe zone` = safe lines            → one khuôn
  *      shapes  `safe zone` group of named shapes (Heart / Circle …)     → one khuôn per shape, the first on the base
+ *      rects   unnamed outline shapes (fleece blankets) → whole sheet printed, innermost outline = safe → one khuôn
  *      cut     "Cut-out Shape" + "Printed Design" (custom shape)        → no khuôn: the base cuts along the design
  *      manual  anything else                                            → the team makes the khuôn (links kept)
  * 3. Phôi: the same folder's "Mockup" PSDs → /psd/mockup: the blank product (design rendered white), the overlay
@@ -74,7 +75,7 @@ interface KitFace {
 }
 
 interface KitTemplate {
-  family: "gray" | "shapes" | "cut" | "manual";
+  family: "gray" | "shapes" | "rects" | "cut" | "manual";
   width: number;
   height: number;
   faces: KitFace[];

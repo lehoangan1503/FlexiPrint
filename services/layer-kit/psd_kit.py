@@ -6,6 +6,8 @@ file for every size, the factory cuts per size). Families seen over the whole ca
 
     guide > gray (+ safe zone, note, full size)   gray = the print area, safe zone = dashed safe lines
     guide > safe zone group of named shapes       one shape per variant (Heart / Circle … Ceramic Ornament)
+    guide > nested outline shapes ("Shape 1/2")   the whole sheet printed; the lines told by their colour in a legend
+                                                  (fleece blankets FLEB / LFBKUS: purple = actual size, green = safe)
     "Cut-out Shape" + "Printed Design"            cut to the design's own outline — no fixed khuôn
     anything else                                 not read (the team makes the khuôn by hand)
 
@@ -201,7 +203,55 @@ def classify(psd) -> tuple[str, dict]:
         shapes = [c for c in safe if not re.fullmatch(r"bg|background|layer \d+|color fill.*", name_of(c), re.I)]
         if len(shapes) >= 2:
             return "shapes", {"shapes": shapes}
+    outlines = nested_outlines(psd)
+    if outlines:
+        return "rects", {"outlines": outlines}
     return "manual", {}
+
+
+def nested_outlines(psd) -> list:
+    """Unnamed outline shapes drawn inside the sheet (not on its edge), each spanning most of it: "Shape 1" (safe, green),
+    "Shape 2" (actual size, purple) in Merchize's fleece blankets. Outermost first."""
+    W, H = psd.width, psd.height
+    out = []
+    for layer in psd.descendants():
+        if layer.is_group() or layer.kind != "shape" or not layer.is_visible():
+            continue
+        x0, y0, x1, y1 = layer.bbox
+        if x1 - x0 < 0.6 * W or y1 - y0 < 0.6 * H:
+            continue
+        if x0 <= 0.005 * W and y0 <= 0.005 * H and x1 >= 0.995 * W and y1 >= 0.995 * H:
+            continue  # the sheet's own frame
+        out.append(layer)
+    out.sort(key=lambda l: -(l.bbox[2] - l.bbox[0]) * (l.bbox[3] - l.bbox[1]))
+    return out[:4]
+
+
+def outline_px(layer, W: int, H: int) -> np.ndarray:
+    """An outline shape's stroke on the sheet (RGBA, the rest clear): its pixels unlike the shape's own fill. Rendered
+    with composite(): topil() leaves out the stroke (a vector effect) and comes back CMYK without alpha."""
+    px = np.zeros((H, W, 4), np.uint8)
+    img = layer.composite()
+    if img is not None:
+        arr = np.asarray(img.convert("RGBA"))
+        x0, y0 = layer.bbox[0], layer.bbox[1]
+        xs, ys = max(0, x0), max(0, y0)
+        xe, ye = min(W, x0 + arr.shape[1]), min(H, y0 + arr.shape[0])
+        if xe > xs and ye > ys:
+            px[ys:ye, xs:xe] = arr[ys - y0 : ye - y0, xs - x0 : xe - x0]
+    on = px[..., 3] > 40
+    s = px[::8, ::8]
+    son = s[..., 3] > 40
+    if son.mean() > 0.3:  # a filled shape: the stroke is what differs from the fill
+        q = (s[son][:, :3] // 16).astype(np.int32)
+        keys, counts = np.unique(q[:, 0] * 256 * 256 + q[:, 1] * 256 + q[:, 2], return_counts=True)
+        k = int(keys[counts.argmax()])
+        fill = np.array([(k >> 16) * 16 + 8, ((k >> 8) & 255) * 16 + 8, (k & 255) * 16 + 8], np.int16)
+        on &= np.abs(px[..., :3].astype(np.int16) - fill).max(axis=2) > 48
+    lines = np.zeros_like(px)
+    lines[on] = px[on]
+    lines[on, 3] = 255
+    return lines
 
 
 def read_template(path: str) -> dict:
@@ -230,6 +280,22 @@ def read_template(path: str) -> dict:
             safe = safe_shapes(sat & mask, W, H)
             m = Image.fromarray(np.where(mask, 255, 0).astype(np.uint8), "L")
             out["faces"].append({"name": name_of(layer), "mask": b64png(m), "guide": b64png(guide_of(mask, lines)), "safe": safe})
+    elif family == "rects":
+        # The whole sheet is printed ("artwork must cover the entire gray area"); the innermost outline = safe area,
+        # the outer ones (actual size / fold) are drawn into the guide in their own colours.
+        mask = np.ones((H, W), bool)
+        lines = np.zeros((H, W, 4), np.uint8)
+        inner = None
+        for layer in parts["outlines"]:
+            px = outline_px(layer, W, H)
+            on = px[..., 3] > 0
+            lines[on] = px[on]
+            inner = on
+        safe = safe_shapes(inner, W, H) if inner is not None else []
+        if not safe:
+            return {**out, "family": "manual"}
+        m = Image.fromarray(np.full((H, W), 255, np.uint8), "L")
+        out["faces"].append({"name": "Mặt in", "mask": b64png(m), "guide": b64png(guide_of(mask, lines)), "safe": safe})
     return out
 
 

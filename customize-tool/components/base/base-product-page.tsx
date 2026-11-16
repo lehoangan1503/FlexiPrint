@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Download, ExternalLink, Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, Download, ExternalLink, Loader2, Plus, Save, Trash2, X } from "lucide-react";
 import { CT_CONFIG } from "../../config";
 import type { CtBaseProductConfig, CtBaseProductDetail, CtBaseScenesAuto, CtPriceTable, CtPrintArea } from "../../types";
 import type { CtPrintTemplate } from "../../types/print";
@@ -469,14 +469,15 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                   />
                 </div>
               ) : cfg.noKhuon || cfg.cut.mode === "alpha" ? (
-                <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
-                  <p className="flex-1">
-                    {cfg.cut.mode === "alpha" ? "Cắt theo viền thiết kế — không cần khuôn. " : "Đã xác nhận: loại sản phẩm này không cần khuôn. "}
-                    Artwork tạo cho base này dùng canvas = print area đầu tiên.
-                  </p>
+                <div className="mt-3 flex items-center gap-3 rounded-lg border border-emerald-500/50 bg-emerald-500/10 p-3 text-xs">
+                  <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <div className="flex-1">
+                    <div className="font-semibold text-emerald-700 dark:text-emerald-400">{cfg.cut.mode === "alpha" ? "Cắt theo viền thiết kế — không cần khuôn" : "Đã xác nhận: không cần khuôn"}</div>
+                    <div className="text-muted-foreground">Artwork tạo cho base này dùng canvas = print area đầu tiên.</div>
+                  </div>
                   {cfg.noKhuon && (
-                    <CtButton size="sm" variant="ghost" onClick={() => patch({ noKhuon: false })}>
-                      Bỏ xác nhận
+                    <CtButton size="sm" variant="outline" onClick={() => patch({ noKhuon: false })} title="Base này cần khuôn — hiện lại cảnh báo. Nhớ bấm Lưu.">
+                      <X className="h-3.5 w-3.5" /> Bỏ xác nhận
                     </CtButton>
                   )}
                 </div>
@@ -613,7 +614,9 @@ function NoKhuonWarning({ cfg, name, fulfiller, onNoKhuon }: { cfg: CtBaseProduc
   };
   return (
     <div className="mt-3 space-y-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-xs">
-      <div className="font-medium text-amber-700 dark:text-amber-400">Chưa có khuôn in</div>
+      <div className="flex items-center gap-1.5 font-semibold text-amber-700 dark:text-amber-400">
+        <AlertTriangle className="h-4 w-4" /> Chưa có khuôn in
+      </div>
       <div className="text-foreground">{reason}</div>
       {issue && <div className="text-muted-foreground">Báo dev (bấm “Chép tin báo dev” rồi gửi) để thêm cách đọc file này, hoặc làm khuôn tay ở Quản lý khuôn.</div>}
       {links.length > 0 && (
@@ -632,7 +635,7 @@ function NoKhuonWarning({ cfg, name, fulfiller, onNoKhuon }: { cfg: CtBaseProduc
           </CtButton>
         )}
         <CtButton size="sm" variant="outline" onClick={onNoKhuon} title="Loại sản phẩm này không cần khuôn (vd. búp bê): artwork dùng canvas = print area. Nhớ bấm Lưu.">
-          Không cần khuôn
+          <CheckCircle2 className="h-3.5 w-3.5" /> Xác nhận không cần khuôn
         </CtButton>
       </div>
     </div>

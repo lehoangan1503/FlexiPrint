@@ -439,7 +439,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
               }
             >
               <CtField label="Khuôn in">
-                <CtSelect<string> value={cfg.templateId ?? ""} onChange={(templateId) => patch({ templateId, cut: templateId && cfg.cut.mode === "none" ? { ...cfg.cut, mode: "khuon" } : cfg.cut })} options={templates.map((t) => ({ value: t.id, label: `${t.name} · ${t.spec.width}×${t.spec.height}` }))} placeholder="Chưa có khuôn (canvas = print area)" />
+                <CtSelect<string> value={cfg.templateId ?? ""} onChange={(templateId) => patch({ templateId, noKhuon: templateId ? false : cfg.noKhuon, cut: templateId && cfg.cut.mode === "none" ? { ...cfg.cut, mode: "khuon" } : cfg.cut })} options={templates.map((t) => ({ value: t.id, label: `${t.name} · ${t.spec.width}×${t.spec.height}` }))} placeholder="Chưa có khuôn (canvas = print area)" />
               </CtField>
               {template ? (
                 <div className="mt-3 space-y-3">
@@ -468,8 +468,20 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                     }}
                   />
                 </div>
+              ) : cfg.noKhuon || cfg.cut.mode === "alpha" ? (
+                <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+                  <p className="flex-1">
+                    {cfg.cut.mode === "alpha" ? "Cắt theo viền thiết kế — không cần khuôn. " : "Đã xác nhận: loại sản phẩm này không cần khuôn. "}
+                    Artwork tạo cho base này dùng canvas = print area đầu tiên.
+                  </p>
+                  {cfg.noKhuon && (
+                    <CtButton size="sm" variant="ghost" onClick={() => patch({ noKhuon: false })}>
+                      Bỏ xác nhận
+                    </CtButton>
+                  )}
+                </div>
               ) : (
-                <p className="mt-2 text-xs text-muted-foreground">Không khuôn: artwork tạo cho base này dùng canvas = print area đầu tiên.</p>
+                <NoKhuonWarning cfg={cfg} name={detail.base.name} fulfiller={fulfiller} onNoKhuon={() => patch({ noKhuon: true })} />
               )}
             </Section>
 
@@ -576,5 +588,53 @@ export function BaseProductView({ baseId }: { baseId: string }) {
         )}
       </div>
     </CtTooltipProvider>
+  );
+}
+
+/**
+ * A base without a khuôn that nobody confirmed needs none (2026-11-16, boss: "phải làm thông báo editor thấy báo dev"):
+ * why the fulfiller's file gave none (source.khuonIssue), its links, a ready message for the dev, and the confirm button.
+ */
+function NoKhuonWarning({ cfg, name, fulfiller, onNoKhuon }: { cfg: CtBaseProductConfig; name: string; fulfiller: "printbelle" | "merchize" | null; onNoKhuon: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const issue = cfg.source?.khuonIssue ?? null;
+  const who = fulfiller === "merchize" ? "Merchize" : "Printbelle";
+  const reason = issue ?? (fulfiller ? `Chưa lấy khuôn từ ${who} — bấm “Khuôn + phôi ${who}” ở trên.` : "Chọn khuôn ở trên hoặc tạo trong Quản lý khuôn.");
+  const links = (cfg.source?.links ?? []).filter((l) => /drive\.google|\.psd|\.tif/i.test(`${l.url} ${l.label}`));
+  const copy = async () => {
+    const text = `Base “${name}” (${cfg.fulfillment.provider} ${cfg.fulfillment.catalogId}) chưa có khuôn: ${issue ?? reason}\n${window.location.href}${links.length ? `\nFile xưởng: ${links.map((l) => l.url).join(" · ")}` : ""}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      window.prompt("Chép tin này gửi dev:", text);
+    }
+  };
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-xs">
+      <div className="font-medium text-amber-700 dark:text-amber-400">Chưa có khuôn in</div>
+      <div className="text-foreground">{reason}</div>
+      {issue && <div className="text-muted-foreground">Báo dev (bấm “Chép tin báo dev” rồi gửi) để thêm cách đọc file này, hoặc làm khuôn tay ở Quản lý khuôn.</div>}
+      {links.length > 0 && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {links.map((l) => (
+            <a key={l.url} href={l.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+              <ExternalLink className="h-3 w-3" /> {l.label}
+            </a>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2 pt-1">
+        {issue && (
+          <CtButton size="sm" variant="outline" onClick={() => void copy()}>
+            {copied ? "Đã chép" : "Chép tin báo dev"}
+          </CtButton>
+        )}
+        <CtButton size="sm" variant="outline" onClick={onNoKhuon} title="Loại sản phẩm này không cần khuôn (vd. búp bê): artwork dùng canvas = print area. Nhớ bấm Lưu.">
+          Không cần khuôn
+        </CtButton>
+      </div>
+    </div>
   );
 }

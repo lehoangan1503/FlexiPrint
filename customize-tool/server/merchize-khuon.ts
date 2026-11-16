@@ -104,6 +104,8 @@ export interface MerchizeKhuonImport {
   links: CtBaseSourceLink[];
   /** What was made and what is left to do by hand, for the base's notes. */
   notes: string[];
+  /** Why no khuôn could be made (shown on the base page so the editor reports it); null = made, cut-to-shape or not asked. */
+  khuonIssue: string | null;
 }
 
 async function putPng(userId: string, data: Buffer): Promise<string> {
@@ -157,16 +159,20 @@ function pickTemplate(all: PsdFile[], sheet: { width: number; height: number } |
  * refresh). Never throws: what can't be made becomes a note.
  */
 export async function importMerchizeKhuon(s: CtSession, sku: string, baseName: string, sheet: { width: number; height: number } | null, wantKhuon = true): Promise<MerchizeKhuonImport> {
-  const out: MerchizeKhuonImport = { templateId: null, cut: null, preview: null, links: [], notes: [] };
+  const out: MerchizeKhuonImport = { templateId: null, cut: null, preview: null, links: [], notes: [], khuonIssue: null };
+  const issue = (text: string) => {
+    out.notes.push(`${text} — làm khuôn tay`);
+    if (wantKhuon) out.khuonIssue = text;
+  };
   try {
     const page = await merchizePage(sku);
     if (!page) {
-      out.notes.push("merchize.com không có sản phẩm này — làm khuôn + phôi tay");
+      issue("merchize.com không có sản phẩm này (không có file khuôn, phôi cũng làm tay)");
       return out;
     }
     out.links = page.links;
     if (!page.folders.length) {
-      out.notes.push("Merchize không để file khuôn công khai cho mã này — làm khuôn + phôi tay");
+      issue("Merchize không để file khuôn công khai cho mã này (phôi cũng làm tay)");
       return out;
     }
     // The folder holding the template that fits the print area.
@@ -184,7 +190,7 @@ export async function importMerchizeKhuon(s: CtSession, sku: string, baseName: s
       }
     }
     if (!chosen) {
-      out.notes.push(anyTemplate ? `File khuôn Merchize không khớp vùng in ${sheet ? `${sheet.width}×${sheet.height}` : ""} — chọn khuôn tay` : "Thư mục Merchize không có file khuôn PSD — làm khuôn tay");
+      issue(anyTemplate ? `File khuôn Merchize không khớp vùng in ${sheet ? `${sheet.width}×${sheet.height}` : ""}` : "Thư mục Merchize không có file khuôn PSD");
       return out;
     }
     const { folderId, folder, file } = chosen;
@@ -198,7 +204,7 @@ export async function importMerchizeKhuon(s: CtSession, sku: string, baseName: s
         out.cut = "alpha";
         out.notes.push(`${file.name}: sản phẩm cắt theo hình thiết kế — base cắt theo viền (alpha), không cần khuôn`);
       } else if (t.family === "manual" || !t.faces.length) {
-        out.notes.push(`${file.name}: khuôn PSD không theo quy ước layer (gray / safe zone) — làm khuôn tay`);
+        issue(`File ${file.name} vẽ khuôn theo kiểu chưa đọc tự động được`);
       } else {
         const ids: string[] = [];
         for (const face of t.faces.slice(0, 12)) {
@@ -244,7 +250,7 @@ export async function importMerchizeKhuon(s: CtSession, sku: string, baseName: s
     }
     return out;
   } catch (e) {
-    out.notes.push(`Không lấy được khuôn Merchize: ${e instanceof Error ? e.message : "lỗi"} — làm tay`);
+    issue(`Không lấy được khuôn Merchize: ${e instanceof Error ? e.message : "lỗi"} (thử bấm lại)`);
     return out;
   }
 }

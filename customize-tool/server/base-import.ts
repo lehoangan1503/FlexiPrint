@@ -336,6 +336,7 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
       templateId = khuon.templateId;
       if (templateId) cutMode = "khuon";
       if (khuon.folderUrl && made.config.source) made.config.source = { ...made.config.source, links: [{ label: "Printbelle: khuôn + mẫu (Google Drive)", url: khuon.folderUrl }] };
+      if (!templateId && made.config.source) made.config.source = { ...made.config.source, khuonIssue: khuon.note };
       note = `Import từ Printbelle (API) ${catalogId} · ${khuon.note}`;
     } else {
       const { product, created } = await merchizeProduct(catalogId);
@@ -348,7 +349,7 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
       templateId = mz.templateId;
       if (mz.cut) cutMode = mz.cut;
       if (mz.preview) made.config.preview = mz.preview;
-      if (made.config.source) made.config.source = { ...made.config.source, links: mz.links };
+      if (made.config.source) made.config.source = { ...made.config.source, links: mz.links, ...(mz.khuonIssue ? { khuonIssue: mz.khuonIssue } : {}) };
       note = `Import từ Merchize ${catalogId} qua Teeinblue (base #${product.id}${created ? ", đã archive bên Teeinblue" : ", base có sẵn bên Teeinblue — không đổi"}) · ${mz.notes.join(" · ")}`;
     }
     const table = priceTableForTitle(await priceTables(s), made.name);
@@ -414,7 +415,7 @@ export async function refreshFulfillerBase(s: CtSession, raw: unknown): Promise<
         templateId,
         cut: templateId && cfg.cut.mode === "none" ? { ...cfg.cut, mode: "khuon" } : cfg.cut,
         preview: preview.url ? preview : cfg.preview,
-        source: { ...source, links: khuon.folderUrl ? [{ label: "Printbelle: khuôn + mẫu (Google Drive)", url: khuon.folderUrl }] : source.links },
+        source: { ...source, links: khuon.folderUrl ? [{ label: "Printbelle: khuôn + mẫu (Google Drive)", url: khuon.folderUrl }] : source.links, khuonIssue: templateId ? undefined : khuon.note },
         notes: `${cfg.notes}\n${day} lấy lại từ Printbelle: ${khuon.note}${phoi ? " · phôi + lớp phủ của Printbelle" : " · Printbelle không có ảnh phôi"}`.trim(),
       });
     } else {
@@ -428,7 +429,7 @@ export async function refreshFulfillerBase(s: CtSession, raw: unknown): Promise<
         templateId,
         cut: mz.cut && (cfg.cut.mode === "none" || !cfg.templateId) ? { ...cfg.cut, mode: mz.cut, borderMm: mz.cut === "alpha" && !cfg.cut.borderMm ? 2 : cfg.cut.borderMm } : cfg.cut,
         preview: mz.preview ?? cfg.preview,
-        source: { ...source, links: mz.links.length ? mz.links : source.links },
+        source: { ...source, links: mz.links.length ? mz.links : source.links, khuonIssue: templateId || mz.cut === "alpha" ? undefined : (mz.khuonIssue ?? source.khuonIssue) },
         notes: `${cfg.notes}\n${day} lấy lại từ Merchize: ${note}`.trim(),
       });
     }

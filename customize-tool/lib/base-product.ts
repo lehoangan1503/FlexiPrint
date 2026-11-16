@@ -90,6 +90,7 @@ function normalizeSource(raw: unknown): CtBaseSource | null {
       .filter((l): l is { label: string; url: string } => typeof l.url === "string" && /^https:\/\//.test(l.url) && typeof l.label === "string")
       .slice(0, 12)
       .map((l) => ({ label: l.label.slice(0, 160), url: l.url.slice(0, 500) })),
+    ...(str(s.khuonIssue, 500) ? { khuonIssue: str(s.khuonIssue, 500) } : {}),
   };
 }
 
@@ -105,6 +106,7 @@ export function normalizeBaseConfig(raw: unknown): CtBaseProductConfig {
     material,
     priceTableId: uuidOrNull(c.priceTableId),
     templateId,
+    noKhuon: c.noKhuon === true && !templateId,
     printAreas: areas
       .filter((a): a is Record<string, unknown> => !!a && typeof a === "object")
       .map(

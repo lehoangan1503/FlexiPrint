@@ -1759,6 +1759,12 @@ export interface CtBaseSource {
    * Drive, linked from merchize.com — too varied to read automatically). Printbelle: its Template.tif folder.
    */
   links?: CtBaseSourceLink[];
+  /**
+   * Why no khuôn in was made from the fulfiller's file (2026-11-16): set by import / "Khuôn + phôi …" when the file is
+   * missing or drawn in a way the reader doesn't know, cleared when a khuôn is made. The base page shows it so the
+   * editor tells the dev (or makes the khuôn by hand).
+   */
+  khuonIssue?: string;
 }
 
 export interface CtBaseSourceLink {
@@ -1799,6 +1805,11 @@ export interface CtBaseProductConfig {
   priceTableId: string | null;
   /** The khuôn in of the piece (ct_print_templates): artworks for it start from its sheet, cut line and phôi. */
   templateId: string | null;
+  /**
+   * Confirmed on the base page (2026-11-16): this kind of product needs no khuôn (Poseable Doll — artwork = print area
+   * canvas). Hides the "chưa có khuôn" warning; false again once a khuôn is picked.
+   */
+  noKhuon: boolean;
   printAreas: CtPrintArea[];
   fulfillment: CtBaseProductFulfillment;
   notes: string;

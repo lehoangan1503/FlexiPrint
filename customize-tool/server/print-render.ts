@@ -268,7 +268,7 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
       const ph = pm.height ?? Math.round(p.h);
       const left = Math.round(p.cx - pw / 2);
       const top = Math.round(p.cy - ph / 2);
-      if (r.config.clip) pic = await sharp(pic).composite([{ input: maskSvg(pw, ph, translateShape(r.shape, -left, -top)), blend: "dest-in" }]).png().toBuffer();
+      if (r.config.clip && r.config.photo.input !== "name") pic = await sharp(pic).composite([{ input: maskSvg(pw, ph, translateShape(r.shape, -left, -top)), blend: "dest-in" }]).png().toBuffer();
       layers.push({ input: pic, left, top });
     } else if (r.kind === "photo" && guides) {
       svgs.push(

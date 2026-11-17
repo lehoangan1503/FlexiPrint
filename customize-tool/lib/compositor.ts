@@ -440,7 +440,9 @@ async function drawRegion(
   ctx.save();
   // Text is never clipped to its zone, like the print file (server/print-render): a name bent along a hat's brim
   // (arcTilt) reaches past its box, and the clip cut the first / last letters off (2026-10-22).
-  if (region.kind !== "text" && (region.config.clip || region.config.fill)) clipToShape(ctx, region);
+  // A name drawn by AI (photo zone input "name") is lettering too: the customer moves / enlarges it past the zone.
+  const lettering = region.kind === "photo" && region.config.photo.input === "name";
+  if (region.kind !== "text" && !lettering && (region.config.clip || region.config.fill)) clipToShape(ctx, region);
 
   if (region.kind === "image" && region.config.fill && sel.kind === "image" && sel.assetId) {
     const asset = byId.get(sel.assetId);
@@ -459,9 +461,11 @@ async function drawRegion(
     const f = photoFrameBox(bounds, resolvePhotoFrame(region.config.photo, region.shape, { width: img.naturalWidth, height: img.naturalHeight }));
     ctx.translate(f.cx, f.cy);
     ctx.rotate((f.rotation * Math.PI) / 180);
-    ctx.beginPath();
-    ctx.rect(-f.w / 2, -f.h / 2, f.w, f.h);
-    ctx.clip();
+    if (!lettering) {
+      ctx.beginPath();
+      ctx.rect(-f.w / 2, -f.h / 2, f.w, f.h);
+      ctx.clip();
+    }
     // Fitted inside the frame's margin: the photo at its own aspect, sized by the frame — it is only ever scaled here, once.
     const m = f.margin;
     drawPlaced(ctx, img, { x: -f.w / 2 + m, y: -f.h / 2 + m, w: Math.max(1, f.w - 2 * m), h: Math.max(1, f.h - 2 * m) }, sel.transform, region.config.photo.fit);

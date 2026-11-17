@@ -27,6 +27,7 @@ import { newId } from "../../lib/geometry";
 import { PriceTableEditor } from "../deploy/price-table-editor";
 import { PhoiRow } from "../print/phoi-tab";
 import { KhuonPreview, KhuonTab } from "../print/khuon-tab";
+import { PrintSheet } from "../print/print-sheet";
 import { ctConfirm } from "../dialogs";
 import { BaseCutSection, BasePreviewSection } from "./base-cut-preview";
 import { BaseAssemblySection } from "./base-assembly-section";
@@ -59,6 +60,8 @@ export function BaseProductView({ baseId }: { baseId: string }) {
   const [phoiBusy, setPhoiBusy] = useState<string | null>(null);
   /** The khuôn editor (draw / change a khuôn by AI, faces, sizes) — what the old Thư viện → Khuôn in tab was. */
   const [khuonOpen, setKhuonOpen] = useState(false);
+  /** The khuôn picture shown big (click on the small thumb, asked 2026-11-17). */
+  const [khuonView, setKhuonView] = useState(false);
   const [pbBusy, setPbBusy] = useState(false);
   /** The automatic 3 preview backgrounds (server/base-scenes.ts) while they are made. */
   const [auto, setAuto] = useState<CtBaseScenesAuto | null>(null);
@@ -445,9 +448,9 @@ export function BaseProductView({ baseId }: { baseId: string }) {
               {template ? (
                 <div className="mt-3 space-y-3">
                   <div className="flex gap-3">
-                    <div className="h-28 w-28 shrink-0 rounded-lg border bg-muted/40 p-2">
+                    <button type="button" onClick={() => setKhuonView(true)} title="Xem khuôn cỡ lớn" className="h-28 w-28 shrink-0 cursor-zoom-in rounded-lg border bg-muted/40 p-2 hover:border-primary">
                       <KhuonPreview spec={template.spec} className="h-full w-full" />
-                    </div>
+                    </button>
                     <div className="text-xs text-muted-foreground">
                       <div className="font-medium text-foreground">{template.name}</div>
                       <div>
@@ -579,6 +582,20 @@ export function BaseProductView({ baseId }: { baseId: string }) {
             <KhuonTab />
           </div>
         </CtModal>
+        {template && (
+          <CtModal open={khuonView} onOpenChange={setKhuonView} title={`${template.name} · ${template.spec.width}×${template.spec.height}px`} full keepOpenOnOutside={false}>
+            <div className="flex min-h-0 flex-1 gap-4 overflow-auto">
+              {(template.spec.faces.length > 1 ? template.spec.faces.map((_, i) => i) : [0]).map((i) => (
+                <div key={i} className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+                  {template.spec.faces.length > 1 && <div className="text-center text-xs text-muted-foreground">{template.spec.faces[i]?.name}</div>}
+                  <div className="min-h-0 flex-1 rounded-lg border p-3" style={CHECKER_STYLE}>
+                    <PrintSheet spec={template.spec} faceIndex={i} className="h-full w-full" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CtModal>
+        )}
         {editTable && table && (
           <PriceTableEditor
             table={table}

@@ -34,6 +34,7 @@ import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionFiel
   CtPresetKind,
   CtDeployBody,
   CtDeployResponse,
+  CtAutoDeployResult,
   CtPriceTable,
   CtPriceTableBody,
   CtShopifyCollection,
@@ -161,6 +162,8 @@ export const ctApi = {
   saveDesign: (id: string, body: CtSaveDesignBody) => call<{ ok: true }>(`products/${id}/design`, json("PUT", body)),
   publish: (id: string) => call<{ product: CtProduct; publish: CtPublishResponse }>(`products/${id}/publish`, { method: "POST" }),
   deploy: (id: string, body: CtDeployBody) => call<CtDeployResponse>(`products/${id}/deploy`, json("POST", body)),
+  /** The product list's bulk Deploy: one product with what it already has, or what it lacks. */
+  autoDeploy: (id: string) => call<CtAutoDeployResult>(`products/${id}/deploy/auto`, json("POST", {})),
   shopifyInfo: (id: string) => call<CtShopifyInfo>(`products/${id}/shopify`),
   /** `store`: the product's store (CtProduct.store_id); omitted = the user's current store. */
   searchShopifyProducts: (q: string, store?: string) =>
@@ -229,12 +232,16 @@ export const ctApi = {
   /** AI mockups of the product (server/product-mockups.ts): jobs newest first. */
   mockupJobs: (productId: string) => call<{ jobs: CtPackImage[] }>(`products/${productId}/mockups`).then((r) => r.jobs),
   /** The artwork laid on the phôi (exact) + one AI photo per scene (running in the background). */
-  makeMockups: (productId: string, print: Blob, scenes: string[]) => {
+  /** `text`: the box as typed, kept on the product (the bulk "Tạo mockup" uses it). */
+  makeMockups: (productId: string, print: Blob, scenes: string[], text?: string) => {
     const form = new FormData();
     form.append("print", print, "print.png");
     form.append("scenes", JSON.stringify(scenes));
+    if (text !== undefined) form.append("text", text);
     return call<{ jobs: CtPackImage[]; front: CtAsset }>(`products/${productId}/mockups`, { method: "POST", body: form });
   },
+  /** The product list's bulk "Tạo mockup": made on the server with the product's own prompts. */
+  autoMockups: (productId: string) => call<{ jobs: CtPackImage[]; front: CtAsset }>(`products/${productId}/mockups/auto`, json("POST", {})),
   /** An AI phôi trơn from the product's khuôn in → config.scene. */
   makeBlank: (productId: string) => call<{ product: CtProduct; asset: CtAsset }>(`products/${productId}/blank`, json("POST", {})),
 

@@ -22,6 +22,7 @@
  *   DELETE products/:id
  *   PUT    products/:id/design           CtSaveDesignBody
  *   POST   products/:id/publish          → snapshot into ct_templates (Shopify)
+ *   POST   products/:id/deploy/auto      {} → CtAutoDeployResult: deploy with what the product has, or what it lacks (server/auto-deploy.ts)
  *   POST   products/:id/deploy           CtDeployBody → publish + Shopify product with the price table's variants (server/shopify.ts)
  *   GET    products/:id/shopify          → CtShopifyInfo (shop + the linked Shopify product now)
  *   GET    products/:id/shopify/open     → 302 to the product on the store, link made now (page when on sale, else a fresh preview)
@@ -72,7 +73,8 @@
  *   POST   products/:id/artworks         multipart: file, versionId?, hash?, name?, selection → { artwork }
  *   POST   products/:id/artworks/prune   { versionIds } — artworks of removed versions are deleted
  *   GET    products/:id/mockups          → { jobs } AI mockups being made / made (server/product-mockups.ts)
- *   POST   products/:id/mockups          multipart: print, scenes (JSON) → front mockup on the phôi + AI scenes
+ *   POST   products/:id/mockups          multipart: print, scenes (JSON), text (the box, kept on the product) → front mockup on the phôi + AI scenes
+ *   POST   products/:id/mockups/auto     {} → the same, made on the server from the design's content + the product's own prompts (bulk)
  *   POST   products/:id/blank            {} → AI phôi trơn from the product's khuôn in → { product } (config.scene)
  *
  * AI photo-style library (global; owner or admin edits, see server/ai-styles.ts):
@@ -146,6 +148,7 @@ import * as versionPhoi from "./version-phoi";
 import * as photoTasks from "./photo-tasks";
 import * as fonts from "./fonts";
 import * as productMockups from "./product-mockups";
+import { autoDeploy } from "./auto-deploy";
 import * as packs from "./mockup-packs";
 import { dispatchChar } from "./char/router";
 import * as packImages from "./pack-images";
@@ -356,6 +359,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return body ? h.saveDesign(session, id, body) : h.jsonError("Body không hợp lệ", 400);
     } else if (sub === "publish" && method === "POST") {
       return h.publish(session, id, publicOrigin(req));
+    } else if (sub === "deploy" && path[3] === "auto" && method === "POST") {
+      return autoDeploy(session, id, publicOrigin(req));
     } else if (sub === "deploy" && method === "POST") {
       return h.deploy(session, id, await readJson<unknown>(req), publicOrigin(req));
     } else if (sub === "shopify" && path[3] === "open" && method === "GET") {
@@ -397,6 +402,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return artworks.pruneProductArtworks(session, id, await readJson<unknown>(req));
     } else if (sub === "mockups" && method === "GET") {
       return productMockups.listMockupJobs(session, id);
+    } else if (sub === "mockups" && path[3] === "auto" && method === "POST") {
+      return productMockups.autoProductMockups(session, id);
     } else if (sub === "mockups" && method === "POST") {
       return productMockups.makeProductMockups(session, id, await req.formData());
     } else if (sub === "blank" && method === "POST") {

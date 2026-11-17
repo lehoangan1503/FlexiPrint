@@ -20,6 +20,7 @@ import { ctApi } from "../../lib/api-client";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
 import { defaultCategoryRules, displayAssets } from "../../lib/library";
 import { ctConfirm } from "../dialogs";
+import { CT_MOCKUP_SCENE_MAX, CT_MOCKUP_SCENES_MAX, defaultScenes, sceneProblems, splitScenes } from "../../lib/mockup-scenes";
 import { CHECKER_STYLE, CtButton, CtTextarea, cx } from "../ui";
 
 export interface AiMockupsPanelProps {
@@ -49,18 +50,13 @@ const isSafetyRefusal = (error: string) => /safety system|safety_violations|mode
 
 const isOpenTask = (t: CtAgentTask) => t.status === "pending" || t.status === "running" || t.status === "waiting";
 
-/** Scenes that suit the product, as a start (the editor rewrites them). */
-function defaultScenes(name: string): string[] {
-  const n = name.toLowerCase();
-  if (/ornament/.test(n)) return ["hanging by a red satin ribbon on a decorated Christmas tree with warm fairy lights", "held in a hand in front of a cosy fireplace, soft bokeh", "flat lay on a wooden table with pine branches, pine cones and wrapped gifts"];
-  if (/mug|cup|ly/.test(n)) return ["on a wooden breakfast table with coffee beans and morning light", "held in two hands by a window, cosy knit sweater"];
-  if (/bag|túi|tote/.test(n)) return ["carried on the shoulder of a woman walking in a sunny street", "flat lay on a bed with a magazine and sunglasses"];
-  return ["on a bright minimal table with soft daylight and a few matching props", "in a cosy home setting, warm natural light"];
-}
 
 export function AiMockupsPanel(props: AiMockupsPanelProps) {
   const { product, main, assets, regions, items, selection, config } = props;
-  const [scenes, setScenes] = useState(() => defaultScenes(config.print?.name || product.name).join("\n"));
+  // The product's own prompts as last used (kept on the product), else the defaults for its name.
+  const [scenes, setScenes] = useState(() => config.mockupScenes || defaultScenes(config.print?.name || product.name).join("\n"));
+  const parsed = useMemo(() => splitScenes(scenes), [scenes]);
+  const problems = useMemo(() => sceneProblems(parsed.scenes), [parsed]);
   const [jobs, setJobs] = useState<CtPackImage[]>([]);
   const [making, setMaking] = useState(false);
   const [blankBusy, setBlankBusy] = useState(false);
@@ -186,8 +182,8 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
       // printed goes on it.
       const canvas = await renderComposite({ main, assets: displayAssets(assets, "flat"), regions, items, selection, scale: 1, layouts: config.layouts, cutToFrame: true });
       const blob = await canvasToBlob(canvas, "image/png");
-      const lines = scenes.split("\n").map((l) => l.trim()).filter(Boolean);
-      const r = await ctApi.makeMockups(product.id, blob, lines);
+      const lines = parsed.scenes;
+      const r = await ctApi.makeMockups(product.id, blob, lines, scenes);
       setJobs((cur) => [...r.jobs, ...cur.filter((j) => !r.jobs.some((x) => x.id === j.id))]);
       props.flash(`AI đang tạo ${lines.length || 1} ảnh bối cảnh từ artwork trên phôi (1–2 phút / ảnh)`);
     } catch (e) {
@@ -300,12 +296,17 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
             <div>
               <h3 className="text-sm font-semibold">Mockup bằng AI</h3>
               <p className="text-xs text-muted-foreground">
-                Artwork hoàn chỉnh (nội dung đang chọn ở Thiết kế) được đặt đúng lên phôi → 1 ảnh chụp thẳng chính xác. Từ ảnh đó AI tạo ảnh sản phẩm trong từng bối cảnh dưới đây (mỗi dòng 1 ảnh), giữ nguyên hình in.
+                Artwork hoàn chỉnh (nội dung đang chọn ở Thiết kế) được đặt đúng lên phôi → 1 ảnh chụp thẳng chính xác. Từ ảnh đó AI tạo ảnh sản phẩm trong từng bối cảnh dưới đây, giữ nguyên hình in và chất liệu (hệ thống tự thêm). Mỗi dòng 1 ảnh; prompt dài nhiều dòng thì ngăn các prompt bằng một dòng trống hoặc một dòng chỉ có ---. Tối đa {CT_MOCKUP_SCENES_MAX} ảnh, mỗi prompt {CT_MOCKUP_SCENE_MAX} ký tự.
               </p>
             </div>
-            <CtTextarea rows={4} value={scenes} onChange={(e) => setScenes(e.target.value)} placeholder={"hanging on a Christmas tree with warm lights\nheld in a hand by the fireplace"} />
+            <CtTextarea rows={6} value={scenes} onChange={(e) => setScenes(e.target.value)} placeholder={"hanging on a Christmas tree with warm lights\n---\nheld in a hand by the fireplace,\nsoft bokeh lights behind"} />
+            <p className={cx("text-xs", problems.length ? "text-destructive" : "text-muted-foreground")}>
+              {problems.length
+                ? problems.join(" ")
+                : `Sẽ tạo ${parsed.scenes.length || 1} ảnh${parsed.scenes.length ? ` — ${parsed.split === "dash" ? "tách theo dòng ---" : parsed.split === "blank" ? "tách theo dòng trống" : "mỗi dòng 1 ảnh"}` : " bối cảnh mặc định"}.`}
+            </p>
             <div className="flex items-center gap-2">
-              <CtButton variant="primary" disabled={making} onClick={() => void make()}>
+              <CtButton variant="primary" disabled={making || problems.length > 0} onClick={() => void make()}>
                 {making ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} {making ? "Đang đặt lên phôi…" : "Tạo mockup"}
               </CtButton>
               {running.length > 0 && (

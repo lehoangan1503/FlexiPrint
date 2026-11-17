@@ -69,7 +69,7 @@ interface DeployState {
 }
 
 /** Everything a deploy of the product reads. */
-async function deployState(db: CtServiceClient, s: CtSession, product: CtProduct): Promise<DeployState> {
+export async function deployState(db: CtServiceClient, s: CtSession, product: CtProduct): Promise<DeployState> {
   const store = await storeOfProduct(db, product);
   const [base, info, tables, mockups, built, content] = await Promise.all([
     product.base_product_id ? loadBaseProduct(db, product.base_product_id) : Promise.resolve(null),
@@ -113,7 +113,7 @@ async function deployState(db: CtServiceClient, s: CtSession, product: CtProduct
 }
 
 /** What blocks a deploy (Vietnamese, the editor reads it). */
-function blockers(st: DeployState, pick: { kind: string; tableId: string | null; title: string; descriptionHtml: string; mediaIds: string[] }): string[] {
+export function blockers(st: DeployState, pick: { kind: string; tableId: string | null; title: string; descriptionHtml: string; mediaIds: string[] }): string[] {
   const out: string[] = [];
   if (pick.kind !== "product") out.push("Đây là ARTWORK, không phải sản phẩm — make_product_from_artwork (artwork + product base) rồi deploy sản phẩm đó.");
   if (!st.info.configured) out.push("Chưa cấu hình Shopify trên server (SHOPIFY_STORE_DOMAIN / CLIENT_ID / CLIENT_SECRET).");
@@ -136,7 +136,7 @@ function blockers(st: DeployState, pick: { kind: string; tableId: string | null;
 }
 
 /** The price table a deploy takes when none is named: the one the product was deployed with, else its material's. */
-function defaultTable(st: DeployState, product: CtProduct): string | null {
+export function defaultTable(st: DeployState, product: CtProduct): string | null {
   // The base product owns the prices (2026-11-07).
   if (st.base?.config.priceTableId) return st.base.config.priceTableId;
   const linked = product.shopify?.priceTableId;
@@ -145,7 +145,7 @@ function defaultTable(st: DeployState, product: CtProduct): string | null {
 }
 
 /** The mockups a deploy takes when none are named: the ones already on the Shopify product, else the scene mockups. */
-function defaultMedia(st: DeployState, product: CtProduct): string[] {
+export function defaultMedia(st: DeployState, product: CtProduct): string[] {
   const known = product.shopify ? Object.keys(product.shopify.media).filter((id) => st.mockups.some((a) => a.id === id)) : [];
   return known.length ? known : defaultDeployMedia(st.mockups);
 }

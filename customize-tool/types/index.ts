@@ -888,6 +888,12 @@ export interface CtProductConfig {
    * styled photo is laid on the version's phôi in the browser (faster, less real). Set only by deploy.
    */
   customerPhoi: boolean;
+  /**
+   * The Mockups box's text as last used to make mockups (asked 2026-11-17: the prompts stay with the product; a bulk
+   * "Tạo mockup" on the product list uses them). "" = never used: the defaults for the product's name
+   * (lib/mockup-scenes.ts). Written by the server when mockups are made, never by a design save.
+   */
+  mockupScenes: string;
 }
 
 /** CtProductConfig.previewBox — the sheet's box (photo px, like CtBaseProductConfig.preview.box) on the photo `url`. */
@@ -1109,7 +1115,7 @@ export interface CtMockupEdit {
 }
 
 /** What a published template carries (no design samples). */
-export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox">;
+export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupScenes">;
 
 /**
  * What a ct_products row is (migration 031, asked 2026-11-07 — Teeinblue's Artwork / Campaign):
@@ -2538,6 +2544,18 @@ export interface CtDeployResponse {
   /** Staff preview of the product page (works while the store has a password; expires after a while). */
   previewUrl: string | null;
   warnings: string[];
+}
+
+/** POST products/:id/deploy/auto (the product list's bulk Deploy): deployed, or skipped with what it lacks. */
+export interface CtAutoDeployResult {
+  ok: boolean;
+  /** What blocks the deploy (Vietnamese); [] when it ran. */
+  missing: string[];
+  /** The deploy itself failed. */
+  error?: string;
+  url?: string;
+  warnings?: string[];
+  product?: CtProduct;
 }
 
 /** A Shopify product as the Deploy page shows it (prefill, "link an existing product"). */

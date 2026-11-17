@@ -263,6 +263,8 @@ export async function saveDesign(s: CtSession, productId: string, body: CtSaveDe
             ...normalizeProductConfig(body.config),
             versionPhoi: normalizeProductConfig(owned.config).versionPhoi,
             customerPhoi: normalizeProductConfig(owned.config).customerPhoi,
+            // Written when mockups are made (server/product-mockups.ts).
+            mockupScenes: normalizeProductConfig(owned.config).mockupScenes,
             // Set on the deploy page only (POST products/:id/preview-box).
             previewBox: normalizeProductConfig(owned.config).previewBox,
           },

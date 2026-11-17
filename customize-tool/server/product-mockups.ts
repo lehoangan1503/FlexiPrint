@@ -30,6 +30,7 @@ import { lightOnBlank } from "../lib/blank-shading";
 import { materialPreset } from "../lib/materials";
 import { uploadAsset } from "./handlers";
 import { ctServiceClient, type CtSession } from "./supabase";
+import { CT_MOCKUP_TEXT_MAX, defaultScenes, sceneProblems, splitScenes } from "../lib/mockup-scenes";
 
 function jsonError(message: string, status: number): NextResponse {
   return NextResponse.json({ error: message }, { status });
@@ -547,10 +548,18 @@ function parseScenes(raw: FormDataEntryValue | null): string[] {
   if (typeof raw !== "string" || !raw) return [];
   try {
     const v: unknown = JSON.parse(raw);
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim().slice(0, 400)).slice(0, 6) : [];
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim()) : [];
   } catch {
     return [];
   }
+}
+
+/** The Mockups box's text kept on the product (CtProductConfig.mockupScenes) — the bulk "Tạo mockup" uses it. */
+async function keepSceneText(s: CtSession, product: CtProduct, text: string): Promise<void> {
+  const config = normalizeProductConfig(product.config);
+  const next = text.slice(0, CT_MOCKUP_TEXT_MAX);
+  if (config.mockupScenes === next) return;
+  await s.supabase.from(CT_TABLES.products).update({ config: { ...config, mockupScenes: next } }).eq("id", product.id);
 }
 
 /** POST products/:id/mockups */
@@ -559,10 +568,41 @@ export async function makeProductMockups(s: CtSession, productId: string, form: 
   if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
   const file = form.get("print");
   if (!(file instanceof Blob) || !file.size) return jsonError("Thiếu artwork", 400);
+  // Nothing is cut silently (2026-11-17): too many / too long prompts are refused with the reason.
+  const scenes = parseScenes(form.get("scenes"));
+  const problems = sceneProblems(scenes);
+  if (problems.length) return jsonError(problems.join(" "), 400);
   try {
-    return NextResponse.json(await productMockups(s, product, Buffer.from(await file.arrayBuffer()), parseScenes(form.get("scenes"))), { status: 202 });
+    const out = await productMockups(s, product, Buffer.from(await file.arrayBuffer()), scenes);
+    const text = form.get("text");
+    if (typeof text === "string") await keepSceneText(s, product, text).catch(() => undefined);
+    return NextResponse.json(out, { status: 202 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không lưu được mockup", 500);
+  }
+}
+
+/**
+ * POST products/:id/mockups/auto (the product list's bulk "Tạo mockup", asked 2026-11-17): the same mockups as the
+ * editor's button, made on the server — the print with the design's own content (Thiết kế, config.samples) and the
+ * product's own prompts (its Mockups box as last used, else the defaults for its name).
+ */
+export async function autoProductMockups(s: CtSession, productId: string): Promise<NextResponse> {
+  const product = await ownedProduct(s, productId);
+  if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
+  if ((product.kind ?? "artwork") !== "product") return jsonError("Đây là artwork — mockup làm trên sản phẩm", 400);
+  const config = normalizeProductConfig(product.config);
+  const scenes = config.mockupScenes.trim() ? splitScenes(config.mockupScenes).scenes : defaultScenes(config.print?.name || product.name);
+  const problems = sceneProblems(scenes);
+  if (problems.length) return jsonError(`Prompt của sản phẩm: ${problems.join(" ")}`, 400);
+  const { loadArtwork, renderArtwork } = await import("./print-render");
+  const bundle = await loadArtwork(s.supabase, productId);
+  if (!bundle) return jsonError("Không đọc được thiết kế của sản phẩm", 404);
+  try {
+    const print = await renderArtwork(bundle, config.samples, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print");
+    return NextResponse.json(await productMockups(s, product, print, scenes), { status: 202 });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không tạo được mockup", 500);
   }
 }
 
@@ -646,10 +686,37 @@ async function mockupToProduct(s: CtSession, productId: string, data: Buffer, na
   return json.asset;
 }
 
+/**
+ * Mockup photos drawn at once, all products together (2026-11-17: a bulk "Tạo mockup" of 20 products would send ~60
+ * at the same time to the image model). The rest wait their turn (still "running" on their card).
+ */
+const MOCKUP_PARALLEL = 4;
+let drawing = 0;
+const waiting: Array<() => void> = [];
+async function mockupSlot(): Promise<() => void> {
+  if (drawing >= MOCKUP_PARALLEL) await new Promise<void>((resolve) => waiting.push(resolve));
+  drawing++;
+  return () => {
+    drawing--;
+    waiting.shift()?.();
+  };
+}
+
 /** One mockup job drawn in the background from its row (prompt, the front picture in refs) → done (a product picture) / failed. */
 function drawMockupJob(s: CtSession, productId: string, row: CtPackImage): void {
   const db = ctServiceClient() ?? s.supabase;
   void (async () => {
+    const release = await mockupSlot();
+    try {
+      await drawMockupNow(db, s, productId, row);
+    } finally {
+      release();
+    }
+  })();
+}
+
+async function drawMockupNow(db: NonNullable<ReturnType<typeof ctServiceClient>> | CtSession["supabase"], s: CtSession, productId: string, row: CtPackImage): Promise<void> {
+  {
     let last = "";
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -666,7 +733,7 @@ function drawMockupJob(s: CtSession, productId: string, row: CtPackImage): void 
       }
     }
     await db.from(CT_TABLES.packImages).update({ status: "failed", error: last.slice(0, 1000) }).eq("id", row.id);
-  })();
+  }
 }
 
 /** The image model refused the request on safety grounds (gpt-image: "rejected by the safety system … safety_violations=[…]"). */

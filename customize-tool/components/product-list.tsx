@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Layers, Loader2, Plus, Search, ShoppingBag, Trash2 } from "lucide-react";
+import { Layers, Loader2, Plus, Rocket, Search, ShoppingBag, Sparkles, Trash2, X } from "lucide-react";
 import { CT_CONFIG } from "../config";
 import type { CtProductKind, CtProductListRow, CtProductStatus } from "../types";
 import { ctApi } from "../lib/api-client";
@@ -21,17 +21,30 @@ import { ctConfirm } from "./dialogs";
 import { FilterChips, type CtFilterOption } from "./filter-chips";
 
 /** The list's filters (asked 2026-11-03); a new one = one more entry here + its test in FILTER_TEST. */
-type ProductFilter = "all" | "deployed" | "not-deployed";
+type ProductFilter = "all" | "deployed" | "not-deployed" | "no-mockup";
 const FILTERS: Array<CtFilterOption<ProductFilter>> = [
   { value: "all", label: "Tất cả" },
   { value: "deployed", label: "Đã deploy" },
   { value: "not-deployed", label: "Chưa deploy" },
+  { value: "no-mockup", label: "Chưa có mockup" },
 ];
 const FILTER_TEST: Record<ProductFilter, (p: CtProductListRow) => boolean> = {
   all: () => true,
   deployed: (p) => !!p.shopify,
   "not-deployed": (p) => !p.shopify,
+  "no-mockup": (p) => !p.mockup_url,
 };
+
+/** Most products one bulk "Tạo mockup" takes (each makes 2–3 AI photos). */
+const BULK_MOCKUP_MAX = 20;
+
+/** One line of a bulk run's report. */
+interface BulkLine {
+  id: string;
+  name: string;
+  state: "wait" | "run" | "ok" | "skip" | "fail";
+  text: string;
+}
 
 const STATUS_LABEL: Record<CtProductStatus, string> = { draft: "Nháp", ready: "Sẵn sàng", archived: "Lưu trữ" };
 const STATUS_CLASS: Record<CtProductStatus, string> = {
@@ -64,6 +77,60 @@ export function CustomizeProductList({
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ProductFilter>("all");
   const shown = products.filter(FILTER_TEST[filter]);
+  // Bulk (asked 2026-11-17): tick products, then "Tạo mockup" (each with its own prompts) or "Deploy".
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [bulk, setBulk] = useState<{ title: string; lines: BulkLine[]; running: boolean } | null>(null);
+  const pickedRows = shown.filter((p) => picked.has(p.id));
+  const toggle = (id: string) =>
+    setPicked((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const runBulk = async (kind: "mockup" | "deploy") => {
+    const rows = pickedRows;
+    if (!rows.length) return;
+    if (kind === "mockup" && rows.length > BULK_MOCKUP_MAX) {
+      setError(`Tạo mockup tối đa ${BULK_MOCKUP_MAX} sản phẩm mỗi lần — đang chọn ${rows.length}.`);
+      return;
+    }
+    const ok = await ctConfirm(
+      kind === "mockup"
+        ? { title: `Tạo mockup cho ${rows.length} sản phẩm?`, message: "Mỗi sản phẩm dùng prompt mockup của chính nó (ô Mockup lần cuối dùng, chưa dùng thì bối cảnh mặc định theo loại) và nội dung đang chọn ở Thiết kế. Mỗi ảnh AI 1–2 phút, chạy nền.", confirmLabel: "Tạo mockup" }
+        : { title: `Deploy ${rows.length} sản phẩm lên Shopify?`, message: "Sản phẩm đủ title, mô tả, bảng giá và mockup thì được deploy (đang bán). Sản phẩm thiếu thì bỏ qua và ghi rõ thiếu gì.", confirmLabel: "Deploy" },
+    );
+    if (!ok) return;
+    const lines: BulkLine[] = rows.map((p) => ({ id: p.id, name: p.name, state: "wait", text: "Chờ…" }));
+    const title = kind === "mockup" ? "Tạo mockup hàng loạt" : "Deploy hàng loạt";
+    const set = (i: number, patch: Partial<BulkLine>) => {
+      lines[i] = { ...lines[i], ...patch };
+      setBulk({ title, lines: [...lines], running: true });
+    };
+    setBulk({ title, lines: [...lines], running: true });
+    for (let i = 0; i < rows.length; i++) {
+      set(i, { state: "run", text: kind === "mockup" ? "Đang đặt thiết kế lên phôi…" : "Đang deploy…" });
+      try {
+        if (kind === "mockup") {
+          const r = await ctApi.autoMockups(rows[i].id);
+          set(i, { state: "ok", text: `AI đang tạo ${r.jobs.length} ảnh (mở sản phẩm → Mockups để xem)` });
+        } else {
+          const r = await ctApi.autoDeploy(rows[i].id);
+          if (r.ok) {
+            set(i, { state: "ok", text: `Đã deploy${r.warnings?.length ? ` — ${r.warnings.join(" ")}` : ""}` });
+            const shopify = r.product?.shopify;
+            if (shopify) setProducts((list) => list.map((x) => (x.id === rows[i].id ? { ...x, shopify } : x)));
+          } else if (r.error) set(i, { state: "fail", text: r.error });
+          else set(i, { state: "skip", text: `Bỏ qua — thiếu: ${r.missing.join(" ")}` });
+        }
+      } catch (e) {
+        set(i, { state: "fail", text: e instanceof Error ? e.message : "Lỗi" });
+      }
+    }
+    setBulk({ title, lines: [...lines], running: false });
+    setPicked(new Set());
+  };
 
   const load = useCallback(async (q: string) => {
     setLoading(true);
@@ -122,6 +189,52 @@ export function CustomizeProductList({
         />
       )}
 
+      {kind === "product" && shown.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm">
+          <button
+            className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={() => setPicked(pickedRows.length === shown.length ? new Set() : new Set(shown.map((p) => p.id)))}
+          >
+            {pickedRows.length === shown.length ? "Bỏ chọn tất cả" : `Chọn tất cả (${shown.length})`}
+          </button>
+          <span className="text-xs text-muted-foreground">Đã chọn {pickedRows.length}</span>
+          <div className="ml-auto flex gap-2">
+            <CtButton size="sm" variant="outline" disabled={!pickedRows.length || !!bulk?.running} onClick={() => void runBulk("mockup")} title={`Mỗi sản phẩm dùng prompt mockup của chính nó — tối đa ${BULK_MOCKUP_MAX} sản phẩm mỗi lần`}>
+              <Sparkles className="h-3.5 w-3.5" /> Tạo mockup
+            </CtButton>
+            <CtButton size="sm" variant="primary" disabled={!pickedRows.length || !!bulk?.running} onClick={() => void runBulk("deploy")} title="Sản phẩm đủ thì deploy, thiếu thì bỏ qua và báo thiếu gì">
+              <Rocket className="h-3.5 w-3.5" /> Deploy
+            </CtButton>
+          </div>
+        </div>
+      )}
+      {bulk && (
+        <div className="mb-4 rounded-lg border bg-card p-3 text-sm">
+          <div className="mb-2 flex items-center gap-2 font-medium">
+            {bulk.running && <Loader2 className="h-4 w-4 animate-spin" />}
+            {bulk.title}: {bulk.lines.filter((l) => l.state === "ok").length} xong · {bulk.lines.filter((l) => l.state === "skip").length} bỏ qua · {bulk.lines.filter((l) => l.state === "fail").length} lỗi / {bulk.lines.length}
+            {!bulk.running && (
+              <button className="ml-auto rounded p-1 text-muted-foreground hover:bg-accent" onClick={() => setBulk(null)} aria-label="Đóng">
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <ul className="max-h-64 space-y-1 overflow-y-auto text-xs">
+            {bulk.lines.map((l) => (
+              <li key={l.id} className="flex gap-2">
+                <span className={cx("w-16 shrink-0 font-medium", l.state === "ok" ? "text-emerald-600" : l.state === "skip" ? "text-amber-600" : l.state === "fail" ? "text-destructive" : "text-muted-foreground")}>
+                  {l.state === "ok" ? "Xong" : l.state === "skip" ? "Bỏ qua" : l.state === "fail" ? "Lỗi" : l.state === "run" ? "Đang chạy" : "Chờ"}
+                </span>
+                <Link href={`${CT_CONFIG.basePath}/${l.id}`} className="w-48 shrink-0 truncate hover:underline">
+                  {l.name}
+                </Link>
+                <span className="min-w-0 flex-1 text-muted-foreground">{l.text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {error && (
         <div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
           {error}
@@ -150,7 +263,12 @@ export function CustomizeProductList({
             const thumb = p.mockup_url ?? p.preview_url ?? p.thumbnail_url ?? p.main_asset?.url ?? null;
             const mine = admin || !currentUserId || p.user_id === currentUserId;
             return (
-              <div key={p.id} className="group overflow-hidden rounded-xl border bg-card">
+              <div key={p.id} className={cx("group relative overflow-hidden rounded-xl border bg-card", picked.has(p.id) && "ring-2 ring-sky-500")}>
+                {kind === "product" && (
+                  <label className="absolute left-2 top-2 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded bg-white/90 shadow ring-1 ring-black/20" title="Chọn để tạo mockup / deploy hàng loạt">
+                    <input type="checkbox" className="h-4 w-4 cursor-pointer accent-sky-500" checked={picked.has(p.id)} onChange={() => toggle(p.id)} />
+                  </label>
+                )}
                 <Link href={`${CT_CONFIG.basePath}/${p.id}`} className="block aspect-square" style={CHECKER_STYLE}>
                   {thumb ? (
                     <img src={thumb} alt={p.name} className={p.mockup_url ? "h-full w-full object-cover" : "h-full w-full object-contain p-2"} loading="lazy" />

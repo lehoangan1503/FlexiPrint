@@ -34,7 +34,7 @@ import { frameRegion, makeBaseArtwork, makeTemplateProduct, productPrintOf, type
 import { loadBaseProduct } from "../base-products";
 import { loadArtwork, renderArtwork, safeReport, type ArtworkBundle } from "../print-render";
 import { productOptions, selectionFromNames } from "../product-options";
-import { makeProductBlank, productMockups } from "../product-mockups";
+import { makeProductBlank, productMockups, productScenes, saveOwnMockupPrompt } from "../product-mockups";
 import { serviceSession } from "../char/product";
 import type { CtPackImage } from "../../types";
 import type { CtSession } from "../supabase";
@@ -690,7 +690,16 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
         mockups: {
           type: "array",
           items: { type: "object" },
-          description: '[{"label": "Christmas", "options": {"<layer>": "<option>"}, "scenes": ["<English: where the product is and what is around it — e.g. hanging on a decorated Christmas tree with warm bokeh lights>"]}] — 1–4 entries, 1–3 scenes each.',
+          description: `[{"label": "Christmas", "options": {"<layer>": "<option>"}, "scenes": ["<English: where the product is and what is around it — e.g. hanging on a decorated Christmas tree with warm bokeh lights>"]}] — 1–4 entries, 1–3 scenes each. An entry without scenes uses the product's own prompts, else its PRODUCT BASE's (get_base_mockup_prompt), else defaults for the piece.`,
+        },
+        save_scenes: {
+          type: "string",
+          description: 'Optional: keep these scene prompts on THIS product (its editor Mockups box; one per line, or split by an empty line / ---; max 6) — used instead of the base\'s from now on. "" = drop the product\'s own, back to the base\'s.',
+        },
+        save_refs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional: keep reference pictures (https urls, max 4) on THIS product for the setting / light / style, sent after the product's front picture instead of the base's. [] = back to the base's.",
         },
         task_id: { type: "string", description: "Agent: the task it is for (its user owns the mockups)." },
       },
@@ -704,19 +713,26 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       const list = (Array.isArray(args.mockups) ? args.mockups : []).slice(0, 4).map((x) => (x && typeof x === "object" ? (x as Record<string, unknown>) : {}));
       if (!list.length) throw new Error('"mockups" must list at least one {label, options, scenes}');
       const s = await sessionFor(ctx, bundle.product.user_id);
+      // The product's own prompts sent with the call are kept first (asked 2026-11-17), so these mockups use them.
+      const product = await saveOwnMockupPrompt(ctx.service ?? ctx.db, bundle.product, {
+        scenes: typeof args.save_scenes === "string" ? args.save_scenes : undefined,
+        refs: Array.isArray(args.save_refs) ? args.save_refs : undefined,
+      });
+      const kept = await productScenes(ctx.service ?? ctx.db, product);
       const out: Array<{ label: string; front: string; jobs: Array<{ id: string; scene: string; status: string }> }> = [];
       for (const m of list) {
         const options = m.options && typeof m.options === "object" ? (m.options as Record<string, unknown>) : {};
         const selection = selectionFromNames(bundle, Object.fromEntries(Object.entries(options).map(([k, v]) => [k, str(v)])));
-        const scenes = (Array.isArray(m.scenes) ? m.scenes : []).map(str).filter(Boolean).slice(0, 3);
+        const given = (Array.isArray(m.scenes) ? m.scenes : []).map(str).filter(Boolean).slice(0, 3);
+        const scenes = given.length ? given : kept.scenes;
         // With the version's own picture, like the editor's Tạo mockup (lib/compositor draws it): an artwork that IS one
         // picture (Girl Soccer blanket, 2026-11-17) gave an empty print and a blank front mockup.
         const print = await renderArtwork(bundle, selection, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print", { withMain: true });
         const label = str(m.label).slice(0, 60);
-        const r = await productMockups(s, bundle.product, print, scenes, label);
+        const r = await productMockups(s, product, print, scenes, label);
         out.push({ label, front: r.front.url, jobs: r.jobs.filter((j) => j.status === "running").map((j) => ({ id: j.id, scene: j.description, status: j.status })) });
       }
-      return json({ mockups: out, next: "wait_product_mockups with the job ids, then view_image each photo (the print must be unchanged on it)." });
+      return json({ mockups: out, defaultScenesFrom: kept.from, next: "wait_product_mockups with the job ids, then view_image each photo (the print must be unchanged on it)." });
     },
   },
   {

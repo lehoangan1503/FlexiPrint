@@ -1252,6 +1252,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                 <AiMockupsPanel
                   compact
                   product={product}
+                  baseMockup={bases.find((b) => b.id === product.base_product_id)?.config.mockup ?? null}
                   main={main}
                   assets={assets}
                   regions={allRegions}

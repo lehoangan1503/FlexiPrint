@@ -3,10 +3,22 @@
  * (base product page) and on the server (server/base-products.ts).
  */
 
-import type { CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseSource, CtBaseVariant, CtMaterialId, CtPrintArea, CtSideLoss } from "../types";
+import type { CtBaseMockup, CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseSource, CtBaseVariant, CtMaterialId, CtPrintArea, CtSideLoss } from "../types";
 import { newId } from "./geometry";
 import { normalizeScene } from "./scene";
 import { normalizeBaseAssembly } from "./assembly";
+import { CT_MOCKUP_TEXT_MAX } from "./mockup-scenes";
+import { CT_MOCKUP_WRAP_MAX, mockupRefList } from "./mockup-prompt";
+
+/** CtBaseProductConfig.mockup (texts kept as typed — line breaks split the scenes). */
+export function normalizeBaseMockup(raw: unknown): CtBaseMockup {
+  const m = raw && typeof raw === "object" ? (raw as Partial<Record<keyof CtBaseMockup, unknown>>) : {};
+  return {
+    scenes: typeof m.scenes === "string" ? m.scenes.slice(0, CT_MOCKUP_TEXT_MAX) : "",
+    wrap: typeof m.wrap === "string" ? m.wrap.slice(0, CT_MOCKUP_WRAP_MAX) : "",
+    refs: mockupRefList(m.refs),
+  };
+}
 
 const MATERIALS: CtMaterialId[] = ["none", "acrylic_white", "acrylic_clear", "glass_clear", "ceramic_gloss", "ceramic_matte", "aluminum", "wood"];
 
@@ -128,6 +140,7 @@ export function normalizeBaseConfig(raw: unknown): CtBaseProductConfig {
     previewScenes: normalizeBaseScenes(c.previewScenes),
     scenesAuto: str(c.scenesAuto, 40) || null,
     assembly: normalizeBaseAssembly(c.assembly),
+    mockup: normalizeBaseMockup(c.mockup),
   };
 }
 

@@ -29,7 +29,8 @@ import { fetchImage } from "./char/files";
 import { lightOnBlank } from "../lib/blank-shading";
 import { materialPreset } from "../lib/materials";
 import { uploadAsset } from "./handlers";
-import { ctServiceClient, type CtSession } from "./supabase";
+import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
+type MockDb = CtSession["supabase"] | CtServiceClient;
 import { CT_MOCKUP_TEXT_MAX, defaultScenes, sceneProblems, splitScenes } from "../lib/mockup-scenes";
 
 function jsonError(message: string, status: number): NextResponse {
@@ -38,10 +39,11 @@ function jsonError(message: string, status: number): NextResponse {
 
 export const jobName = (productId: string) => `mockup:${productId}`;
 
-export const KEEP_PRINT =
-  " The printed artwork on the product must stay EXACTLY as in the reference picture: the same characters, the same colours, " +
-  "the same text letter for letter, the same size and position on the product. Do not redraw, restyle, crop or change the print. " +
-  "Photorealistic product photography, natural soft light.";
+import { CLEAR_ACRYLIC_LOOK, CT_MOCKUP_REFS_MAX, GLASS_LOOK, KEEP_PRINT, defaultMockupWrap, fillMockupWrap, isGlass, mockupRefList, type CtMockupLook } from "../lib/mockup-prompt";
+import { normalizeBaseMockup } from "../lib/base-product";
+import type { CtBaseMockup } from "../types";
+// Moved to lib/mockup-prompt.ts (2026-11-17: the base page shows them); kept here for the old imports.
+export { CLEAR_ACRYLIC_LOOK, GLASS_LOOK, KEEP_PRINT, isGlass };
 
 // ---- the front mockup: the print laid exactly on the phôi --------------------------------------------------
 
@@ -280,22 +282,6 @@ async function maskDrawing(spec: CtPrintSpec, maskUrl: string): Promise<Buffer> 
 }
 
 /** The prompt of a phôi trơn: the bare piece, straight on, on a plain grey backdrop (so its box can be found). */
-/** A clear glass piece (lib/materials "glass_clear", asked 2026-10-28: a round glass ornament, not acrylic, its edge
- * cut in facets like a diamond) — said in the phôi and mockup prompts, or the model draws frosted acrylic. */
-export const GLASS_LOOK =
-  "made of thick, perfectly clear crystal glass (not acrylic, not frosted): see-through where nothing is printed, its rim cut in many small bevelled facets like a diamond that sparkle and refract the light";
-
-/**
- * A clear acrylic phôi (lib/materials "acrylic_clear", asked 2026-11-13: "phôi phải thật sự trong suốt và clean"): the
- * print is pasted flat on it, so a frosted / milky face or a glare streak shows around and through the preview.
- */
-export const CLEAR_ACRYLIC_LOOK =
-  "perfectly clear, colourless, glossy see-through acrylic like clean window glass: NOT frosted, NOT milky, NOT hazy, no texture — what is behind it shows through sharp and unchanged; NO glare, reflection, light streak or highlight anywhere across its face — only its thin cut edge catches a fine line of light";
-
-export function isGlass(material: string | undefined, label = ""): boolean {
-  return material === "glass_clear" || /\b(glass|crystal)\b|kính|thuỷ tinh|thủy tinh|pha lê/i.test(label);
-}
-
 export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: string, looks = 0, first = 1, extra = ""): string {
   // A photo of the real piece decides its material: a name with "glass" in it (Printbelle "Stained Glass" is FROSTED)
   // does not make it clear crystal (2026-11-12).
@@ -562,6 +548,54 @@ async function keepSceneText(s: CtSession, product: CtProduct, text: string): Pr
   await s.supabase.from(CT_TABLES.products).update({ config: { ...config, mockupScenes: next } }).eq("id", product.id);
 }
 
+/** The base's mockup prompts (CtBaseProductConfig.mockup); empty when the product has no base. */
+async function baseMockup(db: MockDb, product: CtProduct): Promise<CtBaseMockup> {
+  if (!product.base_product_id) return normalizeBaseMockup(null);
+  const { data } = await db.from(CT_TABLES.baseProducts).select("config").eq("id", product.base_product_id).maybeSingle<{ config: { mockup?: unknown } | null }>();
+  return normalizeBaseMockup(data?.config?.mockup);
+}
+
+/** The wrap sentence and reference pictures a product's mockups use: the product's own refs, else its base's; the base's wrap, else the default. */
+async function mockupSetup(db: MockDb, product: CtProduct, look: CtMockupLook): Promise<{ wrap: string; refs: string[] }> {
+  const base = await baseMockup(db, product);
+  const own = normalizeProductConfig(product.config).mockupRefs;
+  return { wrap: base.wrap.trim() || defaultMockupWrap(look), refs: (own.length ? own : base.refs).slice(0, CT_MOCKUP_REFS_MAX) };
+}
+
+/** The scene prompts a product's mockups use when none are given: its own Mockups box, else its base's, else the defaults for its name. */
+export async function productScenes(db: MockDb, product: CtProduct): Promise<{ scenes: string[]; from: "product" | "base" | "default" }> {
+  const config = normalizeProductConfig(product.config);
+  if (config.mockupScenes.trim()) return { scenes: splitScenes(config.mockupScenes).scenes, from: "product" };
+  const base = await baseMockup(db, product);
+  if (base.scenes.trim()) return { scenes: splitScenes(base.scenes).scenes, from: "base" };
+  return { scenes: defaultScenes(config.print?.name || product.name), from: "default" };
+}
+
+/**
+ * Keeps a product's own mockup prompts (sent over MCP — asked 2026-11-17: "prompt gửi kèm qua MCP lưu riêng vào sản
+ * phẩm"): scenes = the Mockups box text, refs = reference pictures. undefined = unchanged, "" / [] = back to the base's.
+ * Refuses (throws) what the editor would refuse.
+ */
+export async function saveOwnMockupPrompt(db: MockDb, product: CtProduct, own: { scenes?: string; refs?: unknown }): Promise<CtProduct> {
+  if (own.scenes === undefined && own.refs === undefined) return product;
+  const config = normalizeProductConfig(product.config);
+  const next = { ...config };
+  if (own.scenes !== undefined) {
+    const problems = sceneProblems(splitScenes(own.scenes).scenes);
+    if (problems.length) throw new Error(problems.join(" "));
+    next.mockupScenes = own.scenes.slice(0, CT_MOCKUP_TEXT_MAX);
+  }
+  if (own.refs !== undefined) {
+    const raw = Array.isArray(own.refs) ? own.refs : [];
+    const refs = mockupRefList(raw);
+    if (raw.length > refs.length) throw new Error(`Reference pictures: https urls only, at most ${CT_MOCKUP_REFS_MAX}, no repeats (${raw.length - refs.length} refused).`);
+    next.mockupRefs = refs;
+  }
+  const { data, error } = await db.from(CT_TABLES.products).update({ config: next }).eq("id", product.id).select("*").single<CtProduct>();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 /** POST products/:id/mockups */
 export async function makeProductMockups(s: CtSession, productId: string, form: FormData): Promise<NextResponse> {
   const product = await ownedProduct(s, productId);
@@ -592,9 +626,9 @@ export async function autoProductMockups(s: CtSession, productId: string): Promi
   if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
   if ((product.kind ?? "artwork") !== "product") return jsonError("Đây là artwork — mockup làm trên sản phẩm", 400);
   const config = normalizeProductConfig(product.config);
-  const scenes = config.mockupScenes.trim() ? splitScenes(config.mockupScenes).scenes : defaultScenes(config.print?.name || product.name);
+  const { scenes, from } = await productScenes(ctServiceClient() ?? s.supabase, product);
   const problems = sceneProblems(scenes);
-  if (problems.length) return jsonError(`Prompt của sản phẩm: ${problems.join(" ")}`, 400);
+  if (problems.length) return jsonError(`Prompt của ${from === "base" ? "product base" : "sản phẩm"}: ${problems.join(" ")}`, 400);
   const { loadArtwork, renderArtwork } = await import("./print-render");
   const bundle = await loadArtwork(s.supabase, productId);
   if (!bundle) return jsonError("Không đọc được thiết kế của sản phẩm", 404);
@@ -651,23 +685,15 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
   const want = scenes.length ? scenes : [`on a bright minimal surface with soft daylight and a few props that suit a ${piece}`];
   const model = CT_IMAGE_MODEL;
   const rows: CtPackImage[] = [];
-  // A die-cut acrylic is named by what it is (the khuôn's name is the team's Vietnamese one).
-  const what = dieCut
-    ? `${config.material.id === "acrylic_white" ? "white-backed" : "clear"} acrylic ornament, die-cut along the artwork's outline with a thin clear border, a small round clear tab with a hole at the top centre, hung by a gold cord through that hole`
-    : piece;
-  // With a phôi photo the reference already shows the real piece: its material comes from it, never from the name
-  // (2026-11-12: base "Round Window Hanging Stained Glass" — a FROSTED glass phôi — came out as clear faceted crystal
-  // because the name has "Glass" in it). Without a phôi (art on white), the clear-glass words are still said.
+  // The prompt around each scene and the reference pictures: the product base's (its page, CtBaseMockup — asked
+  // 2026-11-17: "prompt tạo mockup đưa ra khỏi code"), the product's own refs first; nothing set = the code's default.
   const fromPhoi = !!(config.scene.url && config.scene.box.w > 0);
-  const glass = !dieCut && !fromPhoi && isGlass(config.material.id, piece);
-  const keepLook = fromPhoi
-    ? " The product's material, colour, surface texture and finish (frosted / sandblasted, clear, matte, glossy, wood grain…), its rim / edge and any chain, hook or hanger are EXACTLY as in the reference picture: do not make it clearer, shinier or more transparent, do not add facets, bevels or sparkle it does not have."
-    : "";
+  const { wrap, refs } = await mockupSetup(db, product, { piece, materialId: config.material.id, dieCut, fromPhoi });
   for (const sc of want) {
-    const prompt = `Square lifestyle product photo of this exact ${what}${glass ? `, ${GLASS_LOOK}` : ""} ${sc}.${keepLook} The product is shown as a real physical object in a fitting, beautiful setting (the finished product with any hanger, ribbon or stand it would really have). The WHOLE product is in the picture, centred and big — about 70 % of the picture's width — with clear empty space between it and all four edges of the picture: no part of it (its ends, its edges, its tab) is cut off or touches the frame.${dieCut ? " The acrylic is glossy and see-through where nothing is printed, its cut edge catching the light." : ""}${KEEP_PRINT}`;
+    const prompt = fillMockupWrap(wrap, piece, sc, refs.length);
     const { data: row } = await db
       .from(CT_TABLES.packImages)
-      .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: sc, prompt, refs: [frontAsset.url], aspect: sceneAspect, model })
+      .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: sc, prompt, refs: [frontAsset.url, ...refs], aspect: sceneAspect, model })
       .select("*")
       .single<CtPackImage>();
     if (row) rows.push(row);
@@ -722,7 +748,7 @@ async function drawMockupNow(db: NonNullable<ReturnType<typeof ctServiceClient>>
     let last = "";
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const out = await drawImage(CT_IMAGE_MODEL, row.prompt, row.refs.slice(0, 1), row.aspect || MOCKUP_ASPECT, "crop");
+        const out = await drawImage(CT_IMAGE_MODEL, row.prompt, row.refs.slice(0, 1 + CT_MOCKUP_REFS_MAX), row.aspect || MOCKUP_ASPECT, "crop");
         const jpeg = await squared(await sharp(out.data).flatten({ background: "#ffffff" }).png().toBuffer());
         const asset = await mockupToProduct(s, productId, jpeg, `mockup_${row.description.split(/\s+/).slice(0, 4).join("_")}`);
         const m = await sharp(jpeg).metadata();

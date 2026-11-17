@@ -894,6 +894,8 @@ export interface CtProductConfig {
    * (lib/mockup-scenes.ts). Written by the server when mockups are made, never by a design save.
    */
   mockupScenes: string;
+  /** The product's own mockup reference pictures (https urls); [] = its base's (CtBaseMockup.refs). */
+  mockupRefs: string[];
 }
 
 /** CtProductConfig.previewBox — the sheet's box (photo px, like CtBaseProductConfig.preview.box) on the photo `url`. */
@@ -1115,7 +1117,7 @@ export interface CtMockupEdit {
 }
 
 /** What a published template carries (no design samples). */
-export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupScenes">;
+export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupScenes" | "mockupRefs">;
 
 /**
  * What a ct_products row is (migration 031, asked 2026-11-07 — Teeinblue's Artwork / Campaign):
@@ -1886,6 +1888,22 @@ export interface CtBaseProductConfig {
    * piece prints. null = the sheet is printed as the design lies on it.
    */
   assembly: CtBaseAssembly | null;
+  /** The AI mockup prompts of every product made on it (lib/mockup-prompt.ts). */
+  mockup: CtBaseMockup;
+}
+
+/**
+ * The mockup prompts kept on a product base (asked 2026-11-17: "prompt tạo mockup đưa ra khỏi code", one set per base,
+ * editable on the base page and over MCP by the base's maker or an admin). A product's own (CtProductConfig.mockupScenes,
+ * mockupRefs) wins over these; "" / [] = the next one down (product → base → lib/mockup-scenes.ts defaultScenes).
+ */
+export interface CtBaseMockup {
+  /** The scene prompts, one AI photo each — written like the editor's Mockups box (split by ---, empty line, or line). */
+  scenes: string;
+  /** The sentence wrapped around each scene ({product}, {scene}); "" = lib/mockup-prompt.ts defaultMockupWrap. */
+  wrap: string;
+  /** Reference pictures for the setting / style / light (https urls), sent after the product's own front picture. */
+  refs: string[];
 }
 
 /**

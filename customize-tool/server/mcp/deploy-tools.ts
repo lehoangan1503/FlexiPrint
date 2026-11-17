@@ -24,6 +24,10 @@ import { loadStores, storeOfProduct } from "../stores";
 import { siteUrl } from "../site-url";
 import { listBaseRows, loadBaseProduct } from "../base-products";
 import { makeProductFromArtwork } from "../artwork-link";
+import { saveOwnMockupPrompt } from "../product-mockups";
+import { normalizeBaseMockup } from "../../lib/base-product";
+import { CT_MOCKUP_REFS_MAX, CT_MOCKUP_WRAP_MAX, defaultMockupWrap, mockupRefList } from "../../lib/mockup-prompt";
+import { CT_MOCKUP_TEXT_MAX, defaultScenes, sceneProblems, splitScenes } from "../../lib/mockup-scenes";
 import { ensureVersionPhoi, jobName } from "../version-phoi";
 import { normalizeProductConfig } from "../../lib/design";
 import { CT_CONFIG, CT_TABLES } from "../../config";
@@ -269,6 +273,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
           variants: b.priceTable ? priceCells(b.priceTable.config).map((c) => ({ size: c.size?.label ?? "", pack: c.pack?.label ?? "", price: c.price, compareAt: c.compareAt })) : [],
           priceTable: b.priceTable?.name ?? null,
           products: b.products,
+          mockupPrompt: { scenes: b.config.mockup.scenes.trim() ? splitScenes(b.config.mockup.scenes).scenes.length : "default", ownWrap: !!b.config.mockup.wrap.trim(), refs: b.config.mockup.refs.length },
         })),
       });
     },
@@ -284,6 +289,8 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         artwork_id: { type: "string", description: "The artwork (a set's product id, an import's, render_artwork's)." },
         base_product_id: { type: "string", description: "From list_base_products — the one of the artwork's material / khuôn." },
         name: { type: "string", description: "Product title (theme), default = the artwork's name." },
+        mockup_scenes: { type: "string", description: "Optional: this product's own mockup scene prompts (English; one per line, or split by an empty line / ---; max 6), kept on it instead of the base's." },
+        mockup_refs: { type: "array", items: { type: "string" }, description: "Optional: this product's own reference pictures for its mockups (https urls, max 4) instead of the base's." },
       },
       required: ["artwork_id", "base_product_id"],
     },
@@ -296,9 +303,81 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       if (!artwork) throw new Error("No such artwork, or the task's user may not edit it");
       const base = await loadBaseProduct(db, str(args.base_product_id));
       if (!base) throw new Error("No such product base — list_base_products");
-      const product = await makeProductFromArtwork(db, userId, artwork, base, str(args.name) || undefined);
+      let product = await makeProductFromArtwork(db, userId, artwork, base, str(args.name) || undefined);
+      product = await saveOwnMockupPrompt(db, product, {
+        scenes: typeof args.mockup_scenes === "string" && args.mockup_scenes.trim() ? args.mockup_scenes : undefined,
+        refs: Array.isArray(args.mockup_refs) && args.mockup_refs.length ? args.mockup_refs : undefined,
+      });
       await progress(db, task?.id, `Đã tạo sản phẩm “${product.name}” từ artwork “${artwork.name}” trên ${base.name}`);
       return json({ product_id: product.id, editor: `${siteUrl()}${CT_CONFIG.basePath}/${product.id}`, next: "make_product_mockups on product_id, then check_deploy / deploy_product." });
+    },
+  },
+  {
+    name: "get_base_mockup_prompt",
+    description:
+      'The AI mockup prompts of a PRODUCT BASE, used by every product made on it that has none of its own: scenes (one photo each; "" = defaultScenes), wrap = the sentence around each scene ({product} = piece name, {scene} = one scene; "" = defaultWrap), refs = reference pictures for the setting / light / style, sent after the product\'s front picture. canEdit = you may change them with set_base_mockup_prompt (the base\'s maker or an admin).',
+    inputSchema: { type: "object", properties: { ...OPT_TASK_ARG, base_product_id: { type: "string", description: "From list_base_products." } }, required: ["base_product_id"] },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const { db } = await actorOf(ctx, args.task_id);
+      const base = await loadBaseProduct(db, str(args.base_product_id));
+      if (!base) throw new Error("No such product base — list_base_products");
+      const m = base.config.mockup;
+      return json({
+        base: { id: base.id, name: base.name },
+        scenes: m.scenes,
+        sceneList: m.scenes.trim() ? splitScenes(m.scenes).scenes : [],
+        defaultScenes: defaultScenes(base.name),
+        wrap: m.wrap,
+        defaultWrap: defaultMockupWrap({ piece: base.name, materialId: base.config.material, dieCut: base.config.cut.mode === "alpha", fromPhoi: !!base.config.preview.url }),
+        refs: m.refs,
+        canEdit: ctx.caller === "agent" || ctx.admin || (!!ctx.userId && base.user_id === ctx.userId),
+      });
+    },
+  },
+  {
+    name: "set_base_mockup_prompt",
+    description:
+      'Change a PRODUCT BASE\'s AI mockup prompts (only its maker or an admin). Give only what changes: scenes (English, one per line or split by an empty line / ---, max 6; "" = the defaults), wrap (max 4000 chars, keep {scene}; "" = the default sentence), refs (https urls, max 4 — the whole new list; [] = none). Products with prompts of their own keep theirs. One product\'s own prompts go with make_product_mockups save_scenes / save_refs instead.',
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...OPT_TASK_ARG,
+        base_product_id: { type: "string", description: "From list_base_products." },
+        scenes: { type: "string", description: "The scene prompts." },
+        wrap: { type: "string", description: "The sentence around each scene." },
+        refs: { type: "array", items: { type: "string" }, description: "Reference picture urls." },
+      },
+      required: ["base_product_id"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const { db } = await actorOf(ctx, args.task_id);
+      const id = str(args.base_product_id);
+      if (!UUID.test(id)) throw new Error("base_product_id is not a valid id");
+      const { data: row } = await db.from(CT_TABLES.baseProducts).select("user_id, name, config").eq("id", id).maybeSingle<{ user_id: string | null; name: string; config: Record<string, unknown> | null }>();
+      if (!row) throw new Error("No such product base — list_base_products");
+      if (ctx.caller === "user" && !ctx.admin && row.user_id !== ctx.userId) throw new Error("Only the base's maker or an admin may change its mockup prompts");
+      const m = normalizeBaseMockup(row.config?.mockup);
+      if (typeof args.scenes === "string") {
+        if (args.scenes.length > CT_MOCKUP_TEXT_MAX) throw new Error(`scenes: at most ${CT_MOCKUP_TEXT_MAX} characters`);
+        const problems = sceneProblems(splitScenes(args.scenes).scenes);
+        if (problems.length) throw new Error(problems.join(" "));
+        m.scenes = args.scenes;
+      }
+      if (typeof args.wrap === "string") {
+        if (args.wrap.length > CT_MOCKUP_WRAP_MAX) throw new Error(`wrap: at most ${CT_MOCKUP_WRAP_MAX} characters`);
+        m.wrap = args.wrap;
+      }
+      if (Array.isArray(args.refs)) {
+        const refs = mockupRefList(args.refs);
+        if (args.refs.length > refs.length) throw new Error(`refs: https urls only, at most ${CT_MOCKUP_REFS_MAX}, no repeats`);
+        m.refs = refs;
+      }
+      // Read fresh: only the mockup key changes (the base page's other fields stay).
+      const { error } = await db.from(CT_TABLES.baseProducts).update({ config: { ...(row.config ?? {}), mockup: m } }).eq("id", id);
+      if (error) throw new Error(error.message);
+      return json({ ok: true, base: { id, name: row.name }, mockup: m, note: "Used by the next mockups of every product on this base that has no prompts of its own." });
     },
   },
   {

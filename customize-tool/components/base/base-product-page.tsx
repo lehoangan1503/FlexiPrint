@@ -30,6 +30,7 @@ import { KhuonPreview, KhuonTab } from "../print/khuon-tab";
 import { ctConfirm } from "../dialogs";
 import { BaseCutSection, BasePreviewSection } from "./base-cut-preview";
 import { BaseAssemblySection } from "./base-assembly-section";
+import { BaseMockupSection } from "./base-mockup-section";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, CtSelect, CtTextarea, CtTooltipProvider } from "../ui";
 
 function Section({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
@@ -523,6 +524,10 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                   flash("Đã tạo nền — bấm Lưu để dùng làm nền xem trước");
                 }}
               />
+            </Section>
+
+            <Section title="Prompt mockup">
+              <BaseMockupSection name={detail.base.name} cfg={cfg} template={template} onChange={(mockup) => patch({ mockup })} />
             </Section>
 
             <Section title={`Mockups (${mockupCount}) · ${detail.uses.length} sản phẩm`}>

@@ -47,6 +47,7 @@ import { defaultScene, normalizeScene } from "./scene";
 import { isPrintKind, normalizePrintSpec } from "./print-template";
 import { normalizePrintAssembly } from "./assembly";
 import { CT_MOCKUP_TEXT_MAX } from "./mockup-scenes";
+import { mockupRefList } from "./mockup-prompt";
 
 export function defaultRegionConfig(kind: CtRegionKind): CtRegionConfig {
   return {
@@ -312,6 +313,7 @@ export function defaultProductConfig(): CtProductConfig {
     assembly: null,
     customerPhoi: false,
     mockupScenes: "",
+    mockupRefs: [],
   };
 }
 
@@ -400,6 +402,7 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     assembly: normalizePrintAssembly(raw?.assembly),
     customerPhoi: raw?.customerPhoi === true,
     mockupScenes: typeof raw?.mockupScenes === "string" ? raw.mockupScenes.slice(0, CT_MOCKUP_TEXT_MAX) : "",
+    mockupRefs: mockupRefList(raw?.mockupRefs),
   };
 }
 

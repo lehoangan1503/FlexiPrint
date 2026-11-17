@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Loader2, RefreshCw, Sparkles, Trash2, Upload, Wallpaper } from "lucide-react";
-import type { CtAgentTask, CtAsset, CtPackImage, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtSelection } from "../../types";
+import type { CtAgentTask, CtAsset, CtBaseMockup, CtPackImage, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
 import { defaultCategoryRules, displayAssets } from "../../lib/library";
@@ -40,6 +40,8 @@ export interface AiMockupsPanelProps {
   flash: (msg: string) => void;
   /** The product page's left column (2026-11-07): sections stacked, not side by side. */
   compact?: boolean;
+  /** The product base's mockup prompts (its page) — the box starts from them when the product has none of its own. */
+  baseMockup?: CtBaseMockup | null;
 }
 
 /** Longest side of the artwork drawn on the phôi + thiết kế picture. */
@@ -53,8 +55,11 @@ const isOpenTask = (t: CtAgentTask) => t.status === "pending" || t.status === "r
 
 export function AiMockupsPanel(props: AiMockupsPanelProps) {
   const { product, main, assets, regions, items, selection, config } = props;
-  // The product's own prompts as last used (kept on the product), else the defaults for its name.
-  const [scenes, setScenes] = useState(() => config.mockupScenes || defaultScenes(config.print?.name || product.name).join("\n"));
+  // The product's own prompts as last used (kept on the product), else its base's, else the defaults for its name.
+  const baseScenes = props.baseMockup?.scenes.trim() ?? "";
+  // null = not typed in yet: the box follows what it starts from (the bases load after the panel).
+  const [typed, setScenes] = useState<string | null>(null);
+  const scenes = typed ?? (config.mockupScenes || baseScenes || defaultScenes(config.print?.name || product.name).join("\n"));
   const parsed = useMemo(() => splitScenes(scenes), [scenes]);
   const problems = useMemo(() => sceneProblems(parsed.scenes), [parsed]);
   const [jobs, setJobs] = useState<CtPackImage[]>([]);

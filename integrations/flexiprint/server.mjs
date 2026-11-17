@@ -11,8 +11,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 
-const ENV_FILE = path.join(path.dirname(new URL(import.meta.url).pathname), ".env");
+const ENV_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), ".env");
 if (fs.existsSync(ENV_FILE)) {
   for (const line of fs.readFileSync(ENV_FILE, "utf8").split("\n")) {
     const m = /^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/.exec(line);

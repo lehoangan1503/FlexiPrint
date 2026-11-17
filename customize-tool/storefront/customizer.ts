@@ -1155,10 +1155,11 @@ export class Customizer {
         }
         this.nameOfPhoto.set(url, name);
         this.nameBusy = null;
-        // A new name keeps the size the customer picked for the last one.
-        const scale = sel?.transform.scale ?? 1;
-        this.change(r.id, { kind: "photo", url, transform: { ...IDENTITY_TRANSFORM, scale }, style: st, sourceUrl: null, optionId: null });
+        // A new name keeps where the customer placed the last one; the dialog opens to place it by hand.
+        const drawnSel: CtPhotoSelection = { kind: "photo", url, transform: { ...(sel?.transform ?? IDENTITY_TRANSFORM) }, style: st, sourceUrl: null, optionId: null };
+        this.change(r.id, drawnSel);
         if (url.startsWith("blob:")) void this.uploadLocal(url).catch(() => undefined);
+        if (!this.destroyed) this.openPhotoDialog(r, drawnSel);
       } catch (e) {
         this.nameBusy = null;
         this.showBadge(false);
@@ -1180,26 +1181,11 @@ export class Customizer {
     const parts: HTMLElement[] = [
       this.field(nameCfg.label || cfg.label || this.t("photoName", "Name"), el("div", {}, [el("div", { class: "ct-name" }, [el("div", { class: "ct-input-wrap" }, [input, counter]), ok]), status]), nameCfg.required || cfg.required),
     ];
-    // The drawn name's size (asked 2026-11-17): 40–100 % of what fits the zone (the zone is the largest it may be, so it
-    // never leaves the print area), around the zone's centre. Dragging redraws the preview; letting go keeps it.
+    // Placed by hand like a photo (asked 2026-11-17): the same dialog — drag to move, a corner to resize, ↻ to rotate.
     if (sel?.url) {
-      const url = sel.url;
-      const pct = (v: number) => Math.round(Math.min(1, Math.max(0.4, v)) * 100);
-      const value = el("span", { class: "ct-name-size__value", text: `${pct(sel.transform.scale)}%` });
-      const range = el("input", { class: "ct-name-size__range", type: "range", min: "40", max: "100", step: "1", value: String(pct(sel.transform.scale)) });
-      const at = (): CtPhotoSelection => {
-        const cur = this.selection[r.id];
-        const base = cur?.kind === "photo" && cur.url === url ? cur : sel;
-        return { ...base, transform: { ...base.transform, scale: Number(range.value) / 100 } };
-      };
-      range.addEventListener("input", () => {
-        value.textContent = `${range.value}%`;
-        // No form rebuild while dragging (it would drop the slider); only the preview.
-        this.selection = { ...this.selection, [r.id]: at() };
-        this.showStage();
-      });
-      range.addEventListener("change", () => this.change(r.id, at()));
-      parts.push(this.field(this.t("nameSize", "Size"), el("div", { class: "ct-name-size" }, [range, value]), false));
+      const edit = el("button", { type: "button", class: "ct-btn ct-btn--ghost ct-name__edit", text: this.t("editName", "Adjust size & position") });
+      edit.addEventListener("click", () => this.openPhotoDialog(r, sel));
+      parts.push(edit);
     }
     // More than one lettering style: the customer picks, then presses OK.
     if (styles.length > 1) {
@@ -1648,6 +1634,8 @@ export class Customizer {
   /** redraw: the photo is drawn again at once (a new name typed on the form). */
   private openPhotoDialog(r: CtRegion, current: CtPhotoSelection | null, redraw = false): void {
     const cfg = r.config.photo;
+    /** A name-only zone: the drawn name is placed here; the name + style are picked on the form, nothing to upload. */
+    const nameOnly = cfg.input === "name";
     const dialog = el("dialog", { class: "ct-dialog", "data-ct-owner": this.root.id || undefined });
     // The dialog lives on <body>, outside the section that sets the accent.
     dialog.style.setProperty("--ct-accent", getComputedStyle(this.root).getPropertyValue("--ct-accent"));
@@ -2244,9 +2232,9 @@ export class Customizer {
       if (sourceUrl && asksName(style)) void show(style);
     });
     const controls: HTMLElement[] = [];
-    if (cfg.styles.some(asksName)) controls.push(nameRow);
-    if (cfg.styles.length > 1) controls.push(el("div", { class: "ct-dialog__style" }, [el("span", { class: "ct-dialog__style-label", text: cfg.styleLabel || this.t("filter", "Filter") }), styleRow]));
-    controls.push(el("div", { class: "ct-dialog__tools" }, [pick, adjust, file, hint]));
+    if (!nameOnly && cfg.styles.some(asksName)) controls.push(nameRow);
+    if (!nameOnly && cfg.styles.length > 1) controls.push(el("div", { class: "ct-dialog__style" }, [el("span", { class: "ct-dialog__style-label", text: cfg.styleLabel || this.t("filter", "Filter") }), styleRow]));
+    controls.push(el("div", { class: "ct-dialog__tools" }, nameOnly ? [adjust, hint] : [pick, adjust, file, hint]));
     if (photoUrl) pick.textContent = this.t("changePhoto", "Change photo");
     dialog.append(
       el("div", { class: "ct-dialog__head" }, [el("strong", { text: cfg.label }), status]),

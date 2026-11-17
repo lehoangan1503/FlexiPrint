@@ -21,5 +21,7 @@ export interface CtNewsArticle {
   createdAt: string;
   /** One or two lines under the title in the list. */
   summary: string;
+  /** The card's picture in the list (path from the site root); default = the article's first picture. */
+  thumb?: string;
   blocks: CtNewsBlock[];
 }

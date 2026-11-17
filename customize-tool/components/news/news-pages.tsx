@@ -5,7 +5,7 @@
  */
 
 import Link from "next/link";
-import { ArrowLeft, Info, Newspaper, TriangleAlert } from "lucide-react";
+import { ArrowLeft, CalendarDays, Info, Newspaper, TriangleAlert } from "lucide-react";
 import type { CtNewsArticle, CtNewsBlock } from "../../news/types";
 
 const dateText = (iso: string) => {
@@ -102,11 +102,12 @@ function Block({ b }: { b: CtNewsBlock }) {
   }
 }
 
-function Shell({ back, title, children }: { back: string; title: string; children: React.ReactNode }) {
+function Shell({ back, title, wide, children }: { back: string; title: string; wide?: boolean; children: React.ReactNode }) {
+  const width = wide ? "max-w-6xl" : "max-w-3xl";
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-20 border-b bg-card/80 backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4">
+        <div className={`mx-auto flex h-14 ${width} items-center gap-3 px-4`}>
           <Link href={back} className="rounded p-1.5 hover:bg-accent">
             <ArrowLeft className="h-4 w-4" />
           </Link>
@@ -114,29 +115,48 @@ function Shell({ back, title, children }: { back: string; title: string; childre
           <span className="truncate text-lg font-semibold">{title}</span>
         </div>
       </header>
-      <main className="mx-auto max-w-3xl px-4 py-8">{children}</main>
+      <main className={`mx-auto ${width} px-4 py-8`}>{children}</main>
     </div>
   );
 }
 
+const thumbOf = (a: CtNewsArticle): string | null => a.thumb ?? a.blocks.find((b): b is Extract<CtNewsBlock, { kind: "img" }> => b.kind === "img")?.src ?? null;
+
 export function NewsList({ articles }: { articles: CtNewsArticle[] }) {
   return (
-    <Shell back="/dashboard" title="Bài viết · Hướng dẫn">
+    <Shell back="/dashboard" title="Bài viết · Hướng dẫn" wide>
       {articles.length === 0 ? (
         <p className="text-muted-foreground">Chưa có bài nào.</p>
       ) : (
-        <ul className="divide-y rounded-xl border">
-          {articles.map((a) => (
-            <li key={a.slug}>
-              <Link href={`/news/${a.slug}`} className="block px-4 py-3 hover:bg-accent">
-                <div className="flex items-baseline gap-3">
-                  <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{dateText(a.createdAt)}</span>
-                  <span className="font-semibold">{a.title}</span>
-                </div>
-                <p className="mt-0.5 line-clamp-2 pl-[5.25rem] text-sm text-muted-foreground">{a.summary}</p>
-              </Link>
-            </li>
-          ))}
+        <ul className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {articles.map((a) => {
+            const thumb = thumbOf(a);
+            return (
+              <li key={a.slug}>
+                <Link
+                  href={`/news/${a.slug}`}
+                  className="group flex h-full flex-col overflow-hidden rounded-2xl border bg-card shadow-sm transition hover:-translate-y-0.5 hover:border-sky-500/50 hover:shadow-lg"
+                >
+                  <div className="aspect-[16/10] overflow-hidden bg-muted">
+                    {thumb ? (
+                      <img src={thumb} alt="" className="h-full w-full object-cover object-top transition duration-300 group-hover:scale-105" loading="lazy" />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-muted-foreground">
+                        <Newspaper className="h-8 w-8" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-1 flex-col gap-2 p-4">
+                    <h2 className="font-semibold leading-snug group-hover:text-sky-600">{a.title}</h2>
+                    <p className="line-clamp-3 text-sm text-muted-foreground">{a.summary}</p>
+                    <div className="mt-auto flex items-center gap-1.5 pt-2 text-xs text-muted-foreground">
+                      <CalendarDays className="h-3.5 w-3.5" /> {dateText(a.createdAt)}
+                    </div>
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </Shell>
@@ -147,8 +167,10 @@ export function NewsArticleView({ article }: { article: CtNewsArticle }) {
   return (
     <Shell back="/news" title="Bài viết">
       <article className="space-y-4">
-        <div className="text-xs text-muted-foreground">{dateText(article.createdAt)}</div>
         <h1 className="text-3xl font-bold tracking-tight">{article.title}</h1>
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <CalendarDays className="h-3.5 w-3.5" /> {dateText(article.createdAt)}
+        </div>
         <p className="text-muted-foreground">{article.summary}</p>
         {article.blocks.map((b, i) => (
           <Block key={i} b={b} />

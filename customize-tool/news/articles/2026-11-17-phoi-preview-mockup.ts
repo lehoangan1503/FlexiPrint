@@ -6,6 +6,7 @@ export const phoiPreviewMockup: CtNewsArticle = {
   slug: "phoi-preview-mockup",
   title: "Phôi, ảnh xem trước và mockup: đổi ở đâu, để làm gì",
   createdAt: "2026-11-17",
+  thumb: `${IMG}/product-mockup.png`,
   summary: "Product base giữ phôi + ảnh xem trước dùng chung cho mọi sản phẩm; trang Deploy chỉnh khung riêng 1 sản phẩm; trang sản phẩm chỉ tạo mockup. Cách vẽ lại nền bằng AI, nhờ @flexiprint, cập nhật store.",
   blocks: [
     { kind: "h", text: "Tóm tắt" },

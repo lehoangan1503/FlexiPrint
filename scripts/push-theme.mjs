@@ -78,7 +78,8 @@ const theme = THEME ? themes.nodes.find((t) => t.name === THEME || t.id.endsWith
 if (!theme) throw new Error(`Không thấy theme "${THEME || "MAIN"}". Có: ${themes.nodes.map((t) => `${t.name} (${t.id.split("/").pop()}, ${t.role})`).join(", ")}`);
 
 const skipAssets = process.env.SKIP_ASSETS === "1";
-if (!skipAssets) execFileSync("npm", ["run", "-s", "build:ct-storefront"], { cwd: root, stdio: "inherit" });
+// SKIP_BUILD=1: send the committed flexi2-customizer.* as they are (a machine without node_modules, e.g. the server).
+if (!skipAssets && process.env.SKIP_BUILD !== "1") execFileSync("npm", ["run", "-s", "build:ct-storefront"], { cwd: root, stdio: "inherit" });
 
 const src = (p) => fs.readFileSync(path.join(root, "customize-tool/shopify", p), "utf8");
 const template = JSON.parse(src("templates/product.customize.json"));

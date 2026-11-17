@@ -137,7 +137,7 @@ export function NewsList({ articles }: { articles: CtNewsArticle[] }) {
                   href={`/news/${a.slug}`}
                   className="group flex h-full flex-col overflow-hidden rounded-2xl border bg-card shadow-sm transition hover:-translate-y-0.5 hover:border-sky-500/50 hover:shadow-lg"
                 >
-                  <div className="aspect-[16/10] overflow-hidden bg-muted">
+                  <div className="aspect-[4/3] overflow-hidden bg-muted">
                     {thumb ? (
                       <img src={thumb} alt="" className="h-full w-full object-cover object-top transition duration-300 group-hover:scale-105" loading="lazy" />
                     ) : (

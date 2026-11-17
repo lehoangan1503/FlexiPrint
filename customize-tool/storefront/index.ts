@@ -31,7 +31,7 @@ function boot(): void {
     const uploadUrl = root.dataset.ctUploadUrl;
     // Themes published before photo styles lack data-ct-photo-url; it sits next to the upload endpoint.
     const photoUrl = root.dataset.ctPhotoUrl ?? uploadUrl?.replace("/public/uploads/", "/public/photo/");
-    if (templateUrl && uploadUrl && photoUrl) void new Customizer(root, form, { template: templateUrl, uploadUrl, photoUrl }).start();
+    if (templateUrl && uploadUrl && photoUrl) void new Customizer(root, form, { template: templateUrl, templateFallback: root.dataset.ctTemplateFallback, uploadUrl, photoUrl }).start();
   }
 }
 

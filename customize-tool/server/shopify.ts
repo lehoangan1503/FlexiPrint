@@ -235,6 +235,8 @@ export interface ShopifyDeployInput {
   /** Product images, in order (absolute URLs Shopify can fetch). */
   media: Array<{ asset: CtAsset; url: string }>;
   templateVersion: number;
+  /** The template's CDN copy (server/template-cdn.ts) → metafield customize_tool.template_url; null = removed. */
+  templateUrl: string | null;
 }
 
 interface ExistingProduct {
@@ -335,6 +337,8 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
       { namespace: CT_METAFIELD_NS, key: "pricing", type: "json", value: JSON.stringify(shopifyPricing(cfg)) },
       // The collection flexi2-product.liquid shows in the breadcrumb (Home › Ornaments › product).
       ...(input.primaryCollectionId ? [{ namespace: CT_METAFIELD_NS, key: "breadcrumb_collection", type: "collection_reference", value: input.primaryCollectionId }] : []),
+      // The storefront loads the template from the CDN (fast in the US), flexi2 when this is missing.
+      ...(input.templateUrl ? [{ namespace: CT_METAFIELD_NS, key: "template_url", type: "single_line_text_field", value: input.templateUrl }] : []),
     ],
     collections: picked.filter((c) => !c.smart).map((c) => c.id),
     ...(manageMedia ? { files: [...files, ...foreign] } : {}),
@@ -366,6 +370,8 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
   userErrors(data.productSet.userErrors);
   const p = data.productSet.product;
   if (!p) throw new ShopifyError("Shopify không trả về sản phẩm");
+
+  if (!input.templateUrl && existing) await setTemplateUrlMetafield(st, p.id, null).catch(() => undefined);
 
   if (!input.primaryCollectionId && existing) {
     await gql<{ metafieldsDelete: { userErrors: UserError[] } }>(
@@ -459,6 +465,27 @@ export async function previewLinks(st: ShopifyStore, productGids: string[]): Pro
 }
 
 /** Publish on the Online Store channel. true, or why not (missing scope…). */
+/**
+ * customize_tool.template_url of a Shopify product: the template's CDN copy (server/template-cdn.ts); null removes it
+ * (flexi2-product.liquid then loads the template from flexi2).
+ */
+export async function setTemplateUrlMetafield(st: ShopifyStore, productGid: string, url: string | null): Promise<void> {
+  if (url) {
+    const r = await gql<{ metafieldsSet: { userErrors: UserError[] } }>(
+      st,
+      `mutation($m: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $m) { userErrors { field message } } }`,
+      { m: [{ ownerId: productGid, namespace: CT_METAFIELD_NS, key: "template_url", type: "single_line_text_field", value: url }] },
+    );
+    userErrors(r.metafieldsSet.userErrors);
+  } else {
+    await gql<{ metafieldsDelete: { userErrors: UserError[] } }>(
+      st,
+      `mutation($m: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $m) { userErrors { field message } } }`,
+      { m: [{ ownerId: productGid, namespace: CT_METAFIELD_NS, key: "template_url" }] },
+    );
+  }
+}
+
 async function publishToOnlineStore(st: ShopifyStore, productId: string): Promise<true | string> {
   const pubs = await gql<{ publications: { nodes: Array<{ id: string; name: string; catalog: { title: string } | null }> } }>(
     st,

@@ -50,8 +50,9 @@ import { renameProductFolder } from "./artworks";
 import { loadPriceTable } from "./price-tables";
 import { loadBaseProduct } from "./base-products";
 import { applyBase } from "./artwork-link";
-import { createCollection, deployToShopify, listCollections, previewLinks, searchShopifyProducts, shopifyConfigured, shopifyInfo } from "./shopify";
+import { createCollection, deployToShopify, listCollections, previewLinks, searchShopifyProducts, setTemplateUrlMetafield, shopifyConfigured, shopifyInfo } from "./shopify";
 import { currentStoreId, storeFor, storeOfProduct } from "./stores";
+import { templateToCdn, withLiveAiStyles } from "./template-cdn";
 import { priceTableProblems } from "../lib/pricing";
 import { cleanCustomerName } from "../lib/ai-style-models";
 
@@ -304,7 +305,12 @@ export async function publish(s: CtSession, productId: string, origin: string): 
   if (!product) return jsonError("Không có quyền publish sản phẩm này", 403);
   const r = await publishTemplate(s, product, origin);
   if ("error" in r) return jsonError(r.error, r.status);
-  return NextResponse.json(r);
+  // Already on Shopify: its page reads the new version from the CDN (server/template-cdn.ts).
+  if (r.product.shopify?.productId) {
+    const store = await storeOfProduct(s.supabase, r.product).catch(() => null);
+    if (store) await setTemplateUrlMetafield(store, r.product.shopify.productId, r.cdnUrl).catch((e: Error) => console.warn("[ct] template_url", e.message));
+  }
+  return NextResponse.json({ product: r.product, publish: r.publish });
 }
 
 /** The storefront template of the saved design as the next version would carry it (publish, and the MCP check_deploy). */
@@ -358,7 +364,7 @@ async function publishTemplate(
   s: CtSession,
   product: CtProduct,
   origin: string,
-): Promise<{ product: CtProduct; publish: CtPublishResponse } | { error: string; status: number }> {
+): Promise<{ product: CtProduct; publish: CtPublishResponse; cdnUrl: string | null } | { error: string; status: number }> {
   const productId = product.id;
   const built = await productTemplate(s, product);
   if ("error" in built) return built;
@@ -380,6 +386,8 @@ async function publishTemplate(
   return {
     product: updated,
     publish: { version, publishedAt, templateUrl: `${origin}${CT_CONFIG.apiBase}/public/templates/${productId}` },
+    // The copy the storefront reads (server/template-cdn.ts); null = it reads flexi2.
+    cdnUrl: await templateToCdn(s.supabase, template),
   };
 }
 
@@ -489,6 +497,7 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
       pricing: table.config,
       media,
       templateVersion: pub.publish.version,
+      templateUrl: pub.cdnUrl,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Deploy Shopify thất bại";
@@ -598,13 +607,10 @@ export async function publicTemplate(productId: string, version: number | null):
   const { data, error } = await q.maybeSingle<{ template: CtTemplate }>();
   if (error) return publicError(error.message, 500);
   if (!data) return publicError("Template chưa được publish", 404);
-  const template = data.template;
   // Whether a style asks the customer's name is read now (its tick / a [NAME] in its prompt), not frozen at deploy:
   // ticking it reaches the store without deploying the product again (asked 2026-11-11). Names / demos stay as published.
-  if (template.aiStyles?.length) {
-    const asks = new Set((await publicAiStyles(db, template.aiStyles.map((x) => x.ref))).filter((x) => x.askName).map((x) => x.ref));
-    template.aiStyles = template.aiStyles.map(({ askName: _was, ...x }) => (asks.has(x.ref) ? { ...x, askName: true } : x));
-  }
+  // (The CDN copy is written again when a style is saved — server/template-cdn.ts.)
+  const template = await withLiveAiStyles(db, data.template);
   // Short shared cache: a new Publish reaches the storefront within ~a minute,
   // a pinned version never changes.
   const cache = version ? "public, max-age=31536000, immutable" : "public, max-age=30, s-maxage=30, stale-while-revalidate=300";

@@ -131,6 +131,8 @@ export async function updateAiStyle(s: CtSession, id: string, body: CtAiStyleBod
   const { data, error } = await s.supabase.from(CT_TABLES.aiStyles).update(cleanBody(body)).eq("id", id).select(COLUMNS).maybeSingle<CtAiStyleRow>();
   if (error) return jsonError(error.message, 500);
   if (!data) return jsonError("Không có quyền sửa style này", 403);
+  // The templates on the CDN carry whether a style asks the name: written again (server/template-cdn.ts).
+  void import("./template-cdn").then((m) => m.syncAllTemplateCdnLater());
   const style: CtAiStyle = { ...withDefaults(data), owner: data.user_id === s.user.id ? "Bạn" : data.user_id ? "Người dùng khác" : "Built-in", can_edit: true };
   return NextResponse.json({ style });
 }

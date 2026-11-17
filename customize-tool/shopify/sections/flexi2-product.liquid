@@ -42,6 +42,10 @@
   if ct_id != blank and api_base != blank
     assign is_custom = true
   endif
+  comment
+    The template's CDN copy (server/template-cdn.ts, fast for US customers); flexi2's endpoint stays the fallback.
+  endcomment
+  assign ct_template_cdn = product.metafields.customize_tool.template_url.value | default: product.metafields.customize_tool.template_url | strip
   assign ct_pricing = product.metafields.customize_tool.pricing.value
   assign pack_option = ct_pricing.packOption | default: ''
   assign product_form_id = 'product-form-' | append: section.id
@@ -71,7 +75,12 @@
   class="ct-product page-width"
   data-ct-product
   {% if is_custom %}
-    data-ct-template-url="{{ api_base }}/api/customize-tool/public/templates/{{ ct_id | url_encode }}"
+    {%- if ct_template_cdn != blank -%}
+      data-ct-template-url="{{ ct_template_cdn }}"
+      data-ct-template-fallback="{{ api_base }}/api/customize-tool/public/templates/{{ ct_id | url_encode }}"
+    {%- else -%}
+      data-ct-template-url="{{ api_base }}/api/customize-tool/public/templates/{{ ct_id | url_encode }}"
+    {%- endif -%}
     data-ct-upload-url="{{ api_base }}/api/customize-tool/public/uploads/{{ ct_id | url_encode }}"
     data-ct-photo-url="{{ api_base }}/api/customize-tool/public/photo/{{ ct_id | url_encode }}"
     data-ct-shopify-product-id="{{ product.id }}"

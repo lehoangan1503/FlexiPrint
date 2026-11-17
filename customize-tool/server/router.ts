@@ -57,6 +57,7 @@
  *
  * Cron (Bearer CT_CRON_SECRET, no session):
  *   POST   cron/cleanup                  delete cached photo results older than 24 h
+ *   POST   cron/template-cdn             every deployed product's template copied to the CDN + its Shopify metafield (server/template-cdn.ts)
  *
  * Editor photo tools:
  *   GET    ai/photo                      → { ai, cutout, aiStyles } capabilities
@@ -149,6 +150,7 @@ import * as photoTasks from "./photo-tasks";
 import * as fonts from "./fonts";
 import * as productMockups from "./product-mockups";
 import { autoDeploy } from "./auto-deploy";
+import { cronTemplateCdn } from "./template-cdn";
 import * as packs from "./mockup-packs";
 import { dispatchChar } from "./char/router";
 import * as packImages from "./pack-images";
@@ -239,6 +241,7 @@ async function dispatchRaw(req: NextRequest, path: string[]): Promise<NextRespon
 async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
   if (path[0] === "public") return dispatchPublic(req, path);
   if (path[0] === "cron" && path[1] === "cleanup" && req.method === "POST") return h.cronCleanup(req.headers.get("authorization"));
+  if (path[0] === "cron" && path[1] === "template-cdn" && req.method === "POST") return cronTemplateCdn(req.headers.get("authorization"));
   if (path[0] === "cron" && path[1] === "base-scenes" && req.method === "POST") return cronBaseScenes(req.headers.get("authorization"), await readJson<unknown>(req));
   if (path[0] === "mcp" && path.length === 1) return mcpEndpoint(req);
 

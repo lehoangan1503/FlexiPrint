@@ -133,6 +133,12 @@ function cdnRoots(): string[] {
   return [...new Set([...(set ? [set] : []), ...known])];
 }
 
+/** The key's url on the storefront's custom domain; null when R2_STOREFRONT_URL is not set. */
+export function r2StorefrontUrl(key: string): string | null {
+  const root = storefrontRoot();
+  return root ? `${root}${encodeKey(key)}` : null;
+}
+
 /** The url stored in the DB and shown in the editor (`${APP_URL}/files/<key>`). `r2PublicUrl("")` is its root. */
 export function r2PublicUrl(key: string): string {
   return `${appFilesRoot()}${encodeKey(key)}`;

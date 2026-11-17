@@ -186,6 +186,8 @@ export interface CtCartPreview {
 export interface CtCustomizerOptions {
   /** URL of the published template (storefront) or the template itself (editor preview). */
   template: string | CtTemplate;
+  /** Where the template is read when `template` (its CDN copy) does not answer: flexi2's endpoint. */
+  templateFallback?: string;
   /** Public upload endpoint; null = preview mode: nothing is uploaded or added to a cart. */
   uploadUrl: string | null;
   /** Photo processing endpoint (style + cut-out). */
@@ -476,9 +478,13 @@ export class Customizer {
     if (typeof this.options.template === "string") {
       this.optionsHost.append(el("div", { class: "ct-loading", text: this.t("loading", "Loading personalization…") }));
       try {
-        const res = await fetch(this.options.template, { mode: "cors" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        tpl = (await res.json()) as CtTemplate;
+        const load = async (url: string) => {
+          const res = await fetch(url, { mode: "cors" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return (await res.json()) as CtTemplate;
+        };
+        const fallback = this.options.templateFallback;
+        tpl = fallback ? await load(this.options.template).catch((e) => (console.warn("[ct] template CDN failed, flexi2", e), load(fallback))) : await load(this.options.template);
       } catch (e) {
         // No template = plain product page; keep the form usable.
         this.optionsHost.replaceChildren();

@@ -8,7 +8,9 @@
  *     its folds stay, the fingers holding it stay in front), stretched so the face has the khuôn's aspect and fills
  *     more of the frame. The model copies the reference's framing closely (a 0.81 blanket came back 0.80 every time
  *     until the reference itself was 0.74), so the reference carries the wanted shape.
- *  2. The model draws a new photo of the same shot — new room, new person — the face still flat magenta.
+ *     A flat rectangular product (the blanket) gets flatRef instead: a magenta rectangle on plain grey — the model
+ *     then hangs it straight, no person, soft folds only (asked the same day after the first try came back held + curved).
+ *  2. The model draws a new photo — new room (and new person when the photo is kept) — the face still flat magenta.
  *  3. splitKeyed — ONE picture keyed into the two Merchize files, pixel for pixel: the overlay (opaque photo off the
  *     face and over it — fingers —, see-through on the face with its folds as black / white shade) and the phôi trơn
  *     (that overlay over white = a white blank). The face's bounds give the box.
@@ -31,6 +33,13 @@ export interface OverlayRef {
   png: Buffer;
   /** Where the printable face is on it (px of the reference). */
   face: KeyBounds;
+  /**
+   * A layout guide (magenta rectangle on plain grey) instead of the fulfiller's photo: the product is a flat
+   * rectangle (a blanket), drawn hanging straight with no person — the photo's person, hands and curve came back
+   * every time otherwise (user 2026-11-17: "không cần có người và cong cong, thẳng thẳng 1 xíu … hiện được càng nhiều
+   * nội dung artwork càng tốt").
+   */
+  flat: boolean;
 }
 
 export interface KeyedScene {
@@ -138,6 +147,10 @@ export async function overlayRef(phoi: Buffer, overlay: Buffer, aspect: number):
   bigParts(hole, W, H);
   const was = maskBounds(hole, W, H);
   if (!was) throw new Error("Lớp phủ của phôi không có vùng sản phẩm (trong suốt) — không vẽ lại được");
+  let inside = 0;
+  for (let y = was.y; y < was.y + was.h; y++) for (let x = was.x; x < was.x + was.w; x++) inside += hole[y * W + x];
+  // Nearly fills its bounds (fingers at the corners, a wavy hem) = a flat rectangle; a worn / shaped piece keeps the photo.
+  if (inside / (was.w * was.h) > FLAT_FILL) return flatRef(aspect);
   const painted = await sharp(phoi)
     .removeAlpha()
     .resize(W, H, { fit: "fill" })
@@ -160,7 +173,26 @@ export async function overlayRef(phoi: Buffer, overlay: Buffer, aspect: number):
     .extract({ left: pad - offX, top: pad - offY, width: SIDE, height: SIDE })
     .png()
     .toBuffer();
-  return { png, face: { x: offX + was.x * sx, y: offY + was.y * sy, w: was.w * sx, h: was.h * sy } };
+  return { png, face: { x: offX + was.x * sx, y: offY + was.y * sy, w: was.w * sx, h: was.h * sy }, flat: false };
+}
+
+/** Share of its bounds a flat rectangular product's face covers on the fulfiller's photo (Merchize blanket ≈ 0.9). */
+const FLAT_FILL = 0.8;
+
+/**
+ * The layout guide for a flat rectangular product: plain soft grey, the face a magenta rectangle with the khuôn's
+ * aspect, as big as the frame allows (86 % of its height, ≤ 90 % of its width), centred.
+ */
+export async function flatRef(aspect: number): Promise<OverlayRef> {
+  let h = 0.86 * SIDE;
+  let w = h * aspect;
+  if (w > 0.9 * SIDE) {
+    w = 0.9 * SIDE;
+    h = w / aspect;
+  }
+  const face = { x: Math.round((SIDE - w) / 2), y: Math.round((SIDE - h) / 2), w: Math.round(w), h: Math.round(h) };
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SIDE}" height="${SIDE}"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eeebe6"/><stop offset="1" stop-color="#d6d0c8"/></linearGradient></defs><rect width="${SIDE}" height="${SIDE}" fill="url(#g)"/><rect x="${face.x}" y="${face.y}" width="${face.w}" height="${face.h}" fill="#ff00ff"/></svg>`;
+  return { png: await sharp(Buffer.from(svg)).png().toBuffer(), face, flat: true };
 }
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);

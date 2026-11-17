@@ -265,7 +265,7 @@ function SceneMaker(props: {
       <div className="font-medium text-foreground">Nền bối cảnh (AI)</div>
       {overlay && (
         <p className="text-muted-foreground">
-          Phôi có lớp phủ của nhà in (người cầm, nếp vải): AI vẽ lại cả ảnh theo nền bạn chọn, sản phẩm to hơn và đúng tỉ lệ khuôn in, rồi tự tách lại phôi trơn + lớp phủ + khung như ảnh nhà in.
+          Phôi có lớp phủ của nhà in: AI vẽ lại cả ảnh theo nền bạn chọn — sản phẩm phẳng (chăn) treo thẳng, không người, to và đúng tỉ lệ khuôn in — rồi tự tách lại phôi trơn + lớp phủ + khung như ảnh nhà in. Ô tự mô tả chỉ cần tả nơi đặt / phong cách; kích thước, mặt in và cách tách hệ thống tự lo.
         </p>
       )}
       {!ready ? (

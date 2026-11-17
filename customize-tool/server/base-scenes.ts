@@ -346,7 +346,7 @@ async function drawOverlayScene(o: {
   const dir = `${o.userId}/${CT_CONFIG.storagePrefix}/bases/${base.id}/scenes`;
   const refPath = `${dir}/ref-${crypto.randomUUID()}.png`;
   const refUrl = await ctUpload(refPath, ref.png, "image/png");
-  const prompt = overlayPrompt({ facts: productFacts(base, o.template), where: o.where });
+  const prompt = (ref.flat ? flatPrompt : overlayPrompt)({ facts: productFacts(base, o.template), where: o.where });
   try {
     // The model now and then shapes the face its own way (or loses the magenta): a second picture, the closer one kept.
     let best: { keyed: KeyedScene; off: number } | null = null;
@@ -379,6 +379,23 @@ async function drawOverlayScene(o: {
   } finally {
     await ctRemove([refPath]).catch(() => undefined);
   }
+}
+
+/**
+ * A flat rectangular product (blanket) on the layout guide: hung straight, facing the camera, no person, only soft
+ * folds — as much of the design seen as possible. `where` (a template or the editor's own words) only sets the place
+ * and mood; the face's size, colour and "nothing covers it" are always these rules, so any wording still keys.
+ */
+function flatPrompt(o: { facts: string; where: string }): string {
+  return [
+    "Picture 1 is a LAYOUT GUIDE, not a photo: the MAGENTA rectangle is exactly where the product's printable face must be (a customer's design is printed there later); the plain grey around it is empty space for the scene.",
+    `About this product (from its store listing): ${o.facts}.`,
+    `Make ONE photorealistic lifestyle photograph for an online store, square frame: ${o.where}.`,
+    "The product hangs or is displayed flat and straight, its face square to the camera — for example hung from a bed rail, a wooden blanket ladder, a rod or a chair back, or pinned flat to a wall, whatever suits the place — so the whole printable face is seen at once. No person, no hands, nothing in front of it.",
+    "The magenta face keeps EXACTLY the size, place and outline of the magenta rectangle in picture 1 — same width, same height, same edges in the frame; do not zoom, move, shrink, widen or crop it. Its edges stay straight or almost straight: no perspective, no tilt, not rolled, bent, curved or turned away from the camera. Whatever it hangs from sits just above its top edge, not over the face.",
+    "Its face is plain solid MAGENTA (pure #FF00FF) all over, like a chroma-key screen, but real soft fabric: only gentle natural folds and light wrinkles across it — the kind a hanging fleece blanket has — shown as slightly darker and lighter shades of that same magenta. No print, no pattern, no picture, no text, no hem, seam or border of another colour on it. Nothing else in the photo is magenta, pink or purple.",
+    "No text, no watermark.",
+  ].join(" ");
 }
 
 function overlayPrompt(o: { facts: string; where: string }): string {

@@ -1377,7 +1377,8 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
           <CtField label="Tối đa ký tự">
             <CtInput type="number" min={1} max={40} value={nameCfg.maxChars} onChange={(e) => setName({ maxChars: Number(e.target.value) || 1 })} />
           </CtField>
-          <CtCheckbox checked={nameCfg.required} onChange={(v) => setName({ required: v })} label="Bắt buộc nhập tên trước khi thêm vào giỏ" />
+          {/* A name-only zone has one "required" tick (above): it asks for the drawn name. */}
+          {!nameOnly && <CtCheckbox checked={nameCfg.required} onChange={(v) => setName({ required: v })} label="Bắt buộc nhập tên trước khi thêm vào giỏ" />}
         </div>
       )}
 

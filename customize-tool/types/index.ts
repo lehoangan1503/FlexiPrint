@@ -896,6 +896,12 @@ export interface CtProductConfig {
   mockupScenes: string;
   /** The product's own mockup reference pictures (https urls); [] = its base's (CtBaseMockup.refs). */
   mockupRefs: string[];
+  /**
+   * Each mockup a different custom pick of what the customer can change (asked 2026-11-17: version, options, names, a
+   * different sample person in each photo zone — lib/mockup-variants.ts). The Mockups box's tick as last used; on by
+   * default. Written by the server when mockups are made, never by a design save.
+   */
+  mockupVary: boolean;
 }
 
 /** CtProductConfig.previewBox — the sheet's box (photo px, like CtBaseProductConfig.preview.box) on the photo `url`. */
@@ -1117,7 +1123,7 @@ export interface CtMockupEdit {
 }
 
 /** What a published template carries (no design samples). */
-export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupScenes" | "mockupRefs">;
+export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupScenes" | "mockupRefs" | "mockupVary">;
 
 /**
  * What a ct_products row is (migration 031, asked 2026-11-07 — Teeinblue's Artwork / Campaign):

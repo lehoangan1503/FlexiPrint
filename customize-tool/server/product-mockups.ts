@@ -16,7 +16,7 @@
 import sharp from "sharp";
 import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
-import type { CtAsset, CtBounds, CtPackImage, CtProduct, CtProductScene } from "../types";
+import type { CtAsset, CtBounds, CtPackImage, CtProduct, CtProductScene, CtSelection } from "../types";
 import type { CtPrintSpec } from "../types/print";
 import { normalizeProductConfig } from "../lib/design";
 import { shapePolygon } from "../lib/material-frame";
@@ -32,6 +32,8 @@ import { uploadAsset } from "./handlers";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 type MockDb = CtSession["supabase"] | CtServiceClient;
 import { CT_MOCKUP_TEXT_MAX, defaultScenes, sceneProblems, splitScenes } from "../lib/mockup-scenes";
+import { customizable, isCustomizable, mockupVariants } from "../lib/mockup-variants";
+import { fillVariantPhotos } from "./mockup-samples";
 
 function jsonError(message: string, status: number): NextResponse {
   return NextResponse.json({ error: message }, { status });
@@ -540,12 +542,13 @@ function parseScenes(raw: FormDataEntryValue | null): string[] {
   }
 }
 
-/** The Mockups box's text kept on the product (CtProductConfig.mockupScenes) — the bulk "Tạo mockup" uses it. */
-async function keepSceneText(s: CtSession, product: CtProduct, text: string): Promise<void> {
+/** The Mockups box's text kept on the product (CtProductConfig.mockupScenes) — the bulk "Tạo mockup" uses it — and
+ * whether its mockups were each a different custom pick (CtProductConfig.mockupVary). */
+async function keepSceneText(s: CtSession, product: CtProduct, text: string, vary: boolean | null): Promise<void> {
   const config = normalizeProductConfig(product.config);
   const next = text.slice(0, CT_MOCKUP_TEXT_MAX);
-  if (config.mockupScenes === next) return;
-  await s.supabase.from(CT_TABLES.products).update({ config: { ...config, mockupScenes: next } }).eq("id", product.id);
+  if (config.mockupScenes === next && (vary === null || config.mockupVary === vary)) return;
+  await s.supabase.from(CT_TABLES.products).update({ config: { ...config, mockupScenes: next, ...(vary === null ? {} : { mockupVary: vary }) } }).eq("id", product.id);
 }
 
 /** The base's mockup prompts (CtBaseProductConfig.mockup); empty when the product has no base. */
@@ -600,16 +603,20 @@ export async function saveOwnMockupPrompt(db: MockDb, product: CtProduct, own: {
 export async function makeProductMockups(s: CtSession, productId: string, form: FormData): Promise<NextResponse> {
   const product = await ownedProduct(s, productId);
   if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
-  const file = form.get("print");
-  if (!(file instanceof Blob) || !file.size) return jsonError("Thiếu artwork", 400);
+  // One print for every scene, or one per scene (each mockup a different custom pick, lib/mockup-variants.ts).
+  const files = form.getAll("print").flatMap((f) => (f instanceof Blob && f.size > 0 ? [f] : []));
+  if (!files.length) return jsonError("Thiếu artwork", 400);
   // Nothing is cut silently (2026-11-17): too many / too long prompts are refused with the reason.
   const scenes = parseScenes(form.get("scenes"));
   const problems = sceneProblems(scenes);
   if (problems.length) return jsonError(problems.join(" "), 400);
+  if (files.length > 1 && files.length !== Math.max(1, scenes.length)) return jsonError(`${files.length} artwork cho ${scenes.length} prompt — mỗi prompt 1 artwork`, 400);
   try {
-    const out = await productMockups(s, product, Buffer.from(await file.arrayBuffer()), scenes);
+    const prints = await Promise.all(files.map(async (f) => Buffer.from(await f.arrayBuffer())));
+    const out = await productMockups(s, product, prints.length === 1 ? prints[0] : prints, scenes);
     const text = form.get("text");
-    if (typeof text === "string") await keepSceneText(s, product, text).catch(() => undefined);
+    const vary = form.get("vary");
+    if (typeof text === "string") await keepSceneText(s, product, text, vary === "1" ? true : vary === "0" ? false : null).catch(() => undefined);
     return NextResponse.json(out, { status: 202 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không lưu được mockup", 500);
@@ -618,8 +625,10 @@ export async function makeProductMockups(s: CtSession, productId: string, form: 
 
 /**
  * POST products/:id/mockups/auto (the product list's bulk "Tạo mockup", asked 2026-11-17): the same mockups as the
- * editor's button, made on the server — the print with the design's own content (Thiết kế, config.samples) and the
- * product's own prompts (its Mockups box as last used, else the defaults for its name).
+ * editor's button, made on the server — the product's own prompts (its Mockups box as last used, else the defaults for
+ * its name), each drawn from a different custom pick (lib/mockup-variants.ts: version, options, names, a sample
+ * person in each photo zone — server/mockup-samples.ts) unless the box was last used with that off; a product with
+ * nothing to customise, or with it off: the design's own content (Thiết kế, config.samples).
  */
 export async function autoProductMockups(s: CtSession, productId: string): Promise<NextResponse> {
   const product = await ownedProduct(s, productId);
@@ -635,8 +644,15 @@ export async function autoProductMockups(s: CtSession, productId: string): Promi
   try {
     // With the version's own picture, like the editor's Tạo mockup (lib/compositor draws it): an artwork that IS one
     // picture (Girl Soccer blanket, 2026-11-17) gave an empty print and a blank front mockup.
-    const print = await renderArtwork(bundle, config.samples, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print", { withMain: true });
-    return NextResponse.json(await productMockups(s, product, print, scenes), { status: 202 });
+    const side = Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000);
+    const render = (selection: CtSelection) => renderArtwork(bundle, selection, side, "print", { withMain: true });
+    if (config.mockupVary && isCustomizable(customizable(bundle.regions, bundle.items, bundle.assets))) {
+      const variants = mockupVariants({ regions: bundle.regions, items: bundle.items, assets: bundle.assets, base: config.samples, defaultMainId: product.main_asset_id, count: Math.max(1, scenes.length) });
+      await fillVariantPhotos(s, product, bundle.regions, variants);
+      const prints = await Promise.all(variants.map((v) => render(v.selection)));
+      return NextResponse.json(await productMockups(s, product, prints, scenes), { status: 202 });
+    }
+    return NextResponse.json(await productMockups(s, product, await render(config.samples), scenes), { status: 202 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không tạo được mockup", 500);
   }
@@ -650,34 +666,37 @@ export async function autoProductMockups(s: CtSession, productId: string): Promi
  * product's pictures, and what Deploy sends to Shopify, are the scene photos. `label` names the option set when
  * several prints of one product are mocked up ("Christmas — Snowflakes").
  */
-export async function productMockups(s: CtSession, product: CtProduct, print: Buffer, scenes: string[], label = ""): Promise<{ jobs: CtPackImage[]; front: { url: string } }> {
+export async function productMockups(s: CtSession, product: CtProduct, print: Buffer | Buffer[], scenes: string[], label = ""): Promise<{ jobs: CtPackImage[]; front: { url: string } }> {
   const productId = product.id;
   const config = normalizeProductConfig(product.config);
   const piece = config.print?.name || product.name;
+  // One print for every scene, or one per scene (asked 2026-11-17: each mockup a different custom pick —
+  // lib/mockup-variants.ts): scene i is drawn from print i.
+  const prints = Array.isArray(print) ? print : [print];
+  if (!prints.length) throw new Error("Thiếu artwork");
 
   // The front one: the artwork laid exactly on the phôi (its own light and shade), no AI. A die-cut acrylic: its plate
   // made from the artwork's outline (+ the border, the hanging tab). Without a phôi: on white.
   const dieCut = config.print?.kind === "cut" || (config.material.id.startsWith("acrylic") && config.material.shape === "contour");
-  let front: Buffer;
-  if (config.scene.url && config.scene.box.w > 0)
-    front = await frontMockup(
-      await fetchImage(config.scene.url),
-      print,
-      config.scene.box,
-      config.scene.overlay ? await fetchImage(config.scene.overlay).catch(() => null) : null,
-      materialPreset(config.material.id).whiteInk,
-    );
-  else if (dieCut) {
-    const pw = (await sharp(print).metadata()).width ?? 1024;
-    const mm = config.print?.spec.widthMm || config.material.widthMm || 90;
-    front = await acrylicFront(print, Math.max(4, Math.round((config.material.borderMm || 2.5) * (pw / mm))));
-  } else {
-    const m = await sharp(print).metadata();
-    const pad = Math.round(Math.max(m.width ?? 0, m.height ?? 0) * 0.08);
-    front = await sharp(print).flatten({ background: "#ffffff" }).extend({ top: pad, bottom: pad, left: pad, right: pad, background: "#ffffff" }).jpeg({ quality: 92 }).toBuffer();
-  }
-  front = await squared(front);
-  const frontAsset = { url: await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/${productId}/mockup-ref/${crypto.randomUUID()}.jpg`, front, "image/jpeg") };
+  const blank = config.scene.url && config.scene.box.w > 0 ? await fetchImage(config.scene.url) : null;
+  const overlay = blank && config.scene.overlay ? await fetchImage(config.scene.overlay).catch(() => null) : null;
+  const frontOf = async (art: Buffer): Promise<{ url: string }> => {
+    let front: Buffer;
+    if (blank) front = await frontMockup(blank, art, config.scene.box, overlay, materialPreset(config.material.id).whiteInk);
+    else if (dieCut) {
+      const pw = (await sharp(art).metadata()).width ?? 1024;
+      const mm = config.print?.spec.widthMm || config.material.widthMm || 90;
+      front = await acrylicFront(art, Math.max(4, Math.round((config.material.borderMm || 2.5) * (pw / mm))));
+    } else {
+      const m = await sharp(art).metadata();
+      const pad = Math.round(Math.max(m.width ?? 0, m.height ?? 0) * 0.08);
+      front = await sharp(art).flatten({ background: "#ffffff" }).extend({ top: pad, bottom: pad, left: pad, right: pad, background: "#ffffff" }).jpeg({ quality: 92 }).toBuffer();
+    }
+    front = await squared(front);
+    return { url: await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/${productId}/mockup-ref/${crypto.randomUUID()}.jpg`, front, "image/jpeg") };
+  };
+  const fronts = await Promise.all(prints.map(frontOf));
+  const frontAsset = fronts[0];
   const db = ctServiceClient() ?? s.supabase;
 
   // One square for every scene (a 4:5 one was drawn 2:3 and cropped — the ornament's ends were cut off, 2026-10-22).
@@ -689,11 +708,11 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
   // 2026-11-17: "prompt tạo mockup đưa ra khỏi code"), the product's own refs first; nothing set = the code's default.
   const fromPhoi = !!(config.scene.url && config.scene.box.w > 0);
   const { wrap, refs } = await mockupSetup(db, product, { piece, materialId: config.material.id, dieCut, fromPhoi });
-  for (const sc of want) {
+  for (const [i, sc] of want.entries()) {
     const prompt = fillMockupWrap(wrap, piece, sc, refs.length);
     const { data: row } = await db
       .from(CT_TABLES.packImages)
-      .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: sc, prompt, refs: [frontAsset.url, ...refs], aspect: sceneAspect, model })
+      .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: sc, prompt, refs: [(fronts[i] ?? frontAsset).url, ...refs], aspect: sceneAspect, model })
       .select("*")
       .single<CtPackImage>();
     if (row) rows.push(row);

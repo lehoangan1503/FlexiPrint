@@ -128,7 +128,7 @@ async function centerFaces(data: Buffer, w: number, h: number, targets: FaceTarg
 
 /** The browser's finishing steps (lib/photo-process) on the server's answer: key, fade, trim → PNG. With 2+ safe areas
  * of the khuôn in the zone (`targets`) each figure is centred on its own area instead (front + back of a doll). */
-async function finishPhoto(out: PhotoResult, cutout: boolean, fadeCrop: boolean, face: boolean, targets: FaceTargets | null): Promise<Buffer> {
+export async function finishPhoto(out: PhotoResult, cutout: boolean, fadeCrop: boolean, face: boolean, targets: FaceTargets | null): Promise<Buffer> {
   const { data, info } = await sharp(out.image.data).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const w = info.width;
   const h = info.height;

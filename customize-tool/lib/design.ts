@@ -314,6 +314,7 @@ export function defaultProductConfig(): CtProductConfig {
     customerPhoi: false,
     mockupScenes: "",
     mockupRefs: [],
+    mockupVary: true,
   };
 }
 
@@ -403,6 +404,7 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     customerPhoi: raw?.customerPhoi === true,
     mockupScenes: typeof raw?.mockupScenes === "string" ? raw.mockupScenes.slice(0, CT_MOCKUP_TEXT_MAX) : "",
     mockupRefs: mockupRefList(raw?.mockupRefs),
+    mockupVary: raw?.mockupVary !== false,
   };
 }
 

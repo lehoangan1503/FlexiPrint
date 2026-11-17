@@ -9,18 +9,22 @@
  *   Mockups     the front one (exact: the print on the phôi with its own shading) + one AI photo per scene line.
  *   Phôi + thiết kế  (asked 2026-10-29) the artwork chosen in Thiết kế laid on the phôi at its box, live — which
  *               product the mockups will be made of, before making them.
+ *   Bản custom  (asked 2026-11-17) "Mỗi ảnh 1 bản custom khác nhau": each prompt gets its own random pick of what the
+ *               customer can change (lib/mockup-variants.ts) — version, options, a different name, a different sample
+ *               person in each photo zone (server/mockup-samples.ts) — rendered here, one print per prompt.
  *   Refused     (asked 2026-11-12) a photo the image model refused on safety grounds: "Gửi @flexiprint sửa prompt" — the
  *               agent rewrites the prompt and draws the same job again (agent task kind mockup, server/mcp/mockup-tools.ts).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Loader2, RefreshCw, Sparkles, Trash2, Upload, Wallpaper } from "lucide-react";
-import type { CtAgentTask, CtAsset, CtBaseMockup, CtPackImage, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtSelection } from "../../types";
+import type { CtAgentTask, CtAsset, CtBaseMockup, CtPackImage, CtPhotoStyleRef, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
 import { defaultCategoryRules, displayAssets } from "../../lib/library";
 import { ctConfirm } from "../dialogs";
 import { CT_MOCKUP_SCENE_MAX, CT_MOCKUP_SCENES_MAX, defaultScenes, sceneProblems, splitScenes } from "../../lib/mockup-scenes";
+import { customizable, customizableText, isCustomizable, mockupVariants } from "../../lib/mockup-variants";
 import { CHECKER_STYLE, CtButton, CtTextarea, cx } from "../ui";
 
 export interface AiMockupsPanelProps {
@@ -63,7 +67,15 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
   const parsed = useMemo(() => splitScenes(scenes), [scenes]);
   const problems = useMemo(() => sceneProblems(parsed.scenes), [parsed]);
   const [jobs, setJobs] = useState<CtPackImage[]>([]);
-  const [making, setMaking] = useState(false);
+  const [making, setMaking] = useState<"" | "samples" | "print">("");
+  // Each mockup a different custom pick (on by default when there is something to customise).
+  const custom = useMemo(() => customizable(regions, items, assets), [regions, items, assets]);
+  const canVary = isCustomizable(custom);
+  const [vary, setVary] = useState(config.mockupVary);
+  const varying = vary && canVary;
+  /** The last "Tạo mockup"'s designs, one per prompt (local blobs), to see what each photo is made of. */
+  const [picks, setPicks] = useState<Array<{ url: string; label: string; scene: string }>>([]);
+  useEffect(() => () => picks.forEach((p) => URL.revokeObjectURL(p.url)), [picks]);
   const [blankBusy, setBlankBusy] = useState(false);
   const mockups = useMemo(() => assets.filter((a) => a.role === "mockup" && a.product_id === product.id).sort((a, b) => b.created_at.localeCompare(a.created_at)), [assets, product.id]);
   const running = jobs.filter((j) => j.status === "running");
@@ -181,20 +193,54 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
   }, [running.length, loadJobs, product.id]);
 
   const make = async () => {
-    setMaking(true);
+    setMaking("print");
     try {
       // The finished artwork: the print file (whole edit frame cut to the khuôn) — the phôi is blank, everything
       // printed goes on it.
-      const canvas = await renderComposite({ main, assets: displayAssets(assets, "flat"), regions, items, selection, scale: 1, layouts: config.layouts, cutToFrame: true });
-      const blob = await canvasToBlob(canvas, "image/png");
+      const printOf = async (sel: CtSelection) =>
+        canvasToBlob(await renderComposite({ main, assets: displayAssets(assets, "flat"), regions, items, selection: sel, scale: 1, layouts: config.layouts, cutToFrame: true }), "image/png");
       const lines = parsed.scenes;
-      const r = await ctApi.makeMockups(product.id, blob, lines, scenes);
+      if (!varying) {
+        const r = await ctApi.makeMockups(product.id, await printOf(selection), lines, scenes, canVary ? false : undefined);
+        setJobs((cur) => [...r.jobs, ...cur.filter((j) => !r.jobs.some((x) => x.id === j.id))]);
+        props.flash(`AI đang tạo ${lines.length || 1} ảnh bối cảnh từ artwork trên phôi (1–2 phút / ảnh)`);
+        return;
+      }
+      // One random custom pick per prompt; its photo zones filled with a different sample person / pet by the server.
+      const variants = mockupVariants({ regions, items, assets, base: selection, defaultMainId: main.id, count: Math.max(1, lines.length) });
+      const byZone = new Map<string, Array<{ variant: number; style: CtPhotoStyleRef; name: string }>>();
+      variants.forEach((v, i) => v.photos.forEach((p) => byZone.set(p.regionId, [...(byZone.get(p.regionId) ?? []), { variant: i, style: p.style, name: p.name }])));
+      const problems: string[] = [];
+      if (byZone.size) {
+        setMaking("samples");
+        await Promise.all(
+          [...byZone].map(async ([regionId, list]) => {
+            try {
+              const samples = await ctApi.mockupSamples(product.id, regionId, list.map(({ style, name }) => ({ style, name })));
+              samples.forEach((smp, k) => {
+                const v = variants[list[k].variant];
+                const sel = v.selection[regionId];
+                if (smp.url && sel?.kind === "photo") v.selection[regionId] = { ...sel, url: smp.url };
+                else if (smp.error) problems.push(smp.error);
+              });
+            } catch (e) {
+              problems.push(e instanceof Error ? e.message : "Không tạo được ảnh khách mẫu");
+            }
+          }),
+        );
+        setMaking("print");
+      }
+      const prints: Blob[] = [];
+      for (const v of variants) prints.push(await printOf(v.selection));
+      setPicks(prints.map((b, i) => ({ url: URL.createObjectURL(b), label: variants[i].label, scene: lines[i] ?? "" })));
+      const r = await ctApi.makeMockups(product.id, prints, lines, scenes, true);
       setJobs((cur) => [...r.jobs, ...cur.filter((j) => !r.jobs.some((x) => x.id === j.id))]);
-      props.flash(`AI đang tạo ${lines.length || 1} ảnh bối cảnh từ artwork trên phôi (1–2 phút / ảnh)`);
+      const missed = [...new Set(problems)];
+      props.flash(`AI đang tạo ${prints.length} ảnh, mỗi ảnh 1 bản custom khác nhau (1–2 phút / ảnh)${missed.length ? ` — ảnh khách mẫu lỗi: ${missed.join("; ")}` : ""}`);
     } catch (e) {
       props.flash(e instanceof Error ? e.message : "Không tạo được mockup");
     } finally {
-      setMaking(false);
+      setMaking("");
     }
   };
 
@@ -306,7 +352,11 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
               )}
             </div>
             <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
-              {props.compact ? "Nội dung mẫu của artwork — tham khảo khi tạo mockup." : "Nội dung đang chọn ở Thiết kế — mockup tạo từ đúng sản phẩm này. Đổi lựa chọn ở Thiết kế để xem bản khác."}
+              {varying
+                ? "Nội dung mẫu của artwork — mỗi mockup sẽ là 1 bản custom ngẫu nhiên khác."
+                : props.compact
+                  ? "Nội dung mẫu của artwork — tham khảo khi tạo mockup."
+                  : "Nội dung đang chọn ở Thiết kế — mockup tạo từ đúng sản phẩm này. Đổi lựa chọn ở Thiết kế để xem bản khác."}
             </p>
           </div>
           <div className={cx("flex min-w-0 flex-col gap-2", props.compact && "col-span-2")}>
@@ -322,9 +372,20 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                 ? problems.join(" ")
                 : `Sẽ tạo ${parsed.scenes.length || 1} ảnh${parsed.scenes.length ? ` — ${parsed.split === "dash" ? "tách theo dòng ---" : parsed.split === "blank" ? "tách theo dòng trống" : "mỗi dòng 1 ảnh"}` : " bối cảnh mặc định"}.`}
             </p>
+            {canVary && (
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border bg-muted/30 p-2 text-xs">
+                <input type="checkbox" className="mt-0.5" checked={vary} onChange={(e) => setVary(e.target.checked)} />
+                <span>
+                  <span className="font-medium">Mỗi ảnh 1 bản custom khác nhau (ngẫu nhiên)</span>
+                  <span className="block text-muted-foreground">
+                    Sản phẩm cho khách đổi: {customizableText(custom)}. Mỗi prompt lấy ngẫu nhiên version / option / tên khác nhau{custom.photos ? ", ảnh khách là người (thú cưng) mẫu khác nhau chạy qua style của vùng (~1 phút)" : ""}. Tắt = mọi ảnh dùng nội dung đang chọn ở Thiết kế.
+                  </span>
+                </span>
+              </label>
+            )}
             <div className="flex items-center gap-2">
-              <CtButton variant="primary" disabled={making || problems.length > 0} onClick={() => void make()}>
-                {making ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} {making ? "Đang đặt lên phôi…" : "Tạo mockup"}
+              <CtButton variant="primary" disabled={making !== "" || problems.length > 0} onClick={() => void make()}>
+                {making ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} {making === "samples" ? "Đang tạo ảnh khách mẫu…" : making ? "Đang đặt lên phôi…" : "Tạo mockup"}
               </CtButton>
               {running.length > 0 && (
                 <span className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -337,6 +398,26 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
             </div>
           </div>
         </section>
+
+        {picks.length > 0 && (
+          <section>
+            <div className="mb-2 text-sm font-semibold">Bản custom của từng ảnh (lần tạo vừa rồi)</div>
+            <div className={cx("grid gap-3", props.compact ? "grid-cols-3" : "grid-cols-3 sm:grid-cols-4 lg:grid-cols-6")}>
+              {picks.map((p, i) => (
+                <figure key={p.url} className="overflow-hidden rounded-lg border bg-card">
+                  <div className="flex aspect-square items-center justify-center" style={CHECKER_STYLE}>
+                    {/* eslint-disable-next-line @next/next/no-img-element -- a local blob */}
+                    <img src={p.url} alt={p.label || `Bản ${i + 1}`} className="h-full w-full object-contain" />
+                  </div>
+                  <figcaption className="border-t p-1.5 text-[11px] leading-snug">
+                    <div className="truncate font-medium" title={p.label}>{p.label || `Bản ${i + 1}`}</div>
+                    <div className="truncate text-muted-foreground" title={p.scene}>{p.scene || "bối cảnh mặc định"}</div>
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
+          </section>
+        )}
 
         {(running.length > 0 || jobs.some((j) => j.status === "failed")) && (
           <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">

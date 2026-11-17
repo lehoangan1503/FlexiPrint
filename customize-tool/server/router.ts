@@ -79,6 +79,8 @@
  *   GET    products/:id/mockups          → { jobs } AI mockups being made / made (server/product-mockups.ts)
  *   POST   products/:id/mockups          multipart: print, scenes (JSON), text (the box, kept on the product) → front mockup on the phôi + AI scenes
  *   POST   products/:id/mockups/auto     {} → the same, made on the server from the design's content + the product's own prompts (bulk)
+ *   POST   products/:id/mockups/samples  { regionId, items: [{ style, name }] } → { samples } a different sample person / pet per
+ *                                        item, styled like the zone (server/mockup-samples.ts) — the random custom mockups
  *   POST   products/:id/blank            {} → AI phôi trơn from the product's khuôn in → { product } (config.scene)
  *
  * AI photo-style library (global; owner or admin edits, see server/ai-styles.ts):
@@ -152,6 +154,7 @@ import * as versionPhoi from "./version-phoi";
 import * as photoTasks from "./photo-tasks";
 import * as fonts from "./fonts";
 import * as productMockups from "./product-mockups";
+import * as mockupSamples from "./mockup-samples";
 import { autoDeploy } from "./auto-deploy";
 import { cronTemplateCdn } from "./template-cdn";
 import * as packs from "./mockup-packs";
@@ -416,6 +419,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return productMockups.listMockupJobs(session, id);
     } else if (sub === "mockups" && path[3] === "auto" && method === "POST") {
       return productMockups.autoProductMockups(session, id);
+    } else if (sub === "mockups" && path[3] === "samples" && method === "POST") {
+      return mockupSamples.mockupSamples(session, id, await readJson<unknown>(req));
     } else if (sub === "mockups" && method === "POST") {
       return productMockups.makeProductMockups(session, id, await req.formData());
     } else if (sub === "blank" && method === "POST") {

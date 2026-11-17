@@ -12,11 +12,34 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RotateCcw, Save, ScanLine } from "lucide-react";
-import type { CtProduct, CtProductScene, CtRenderAsset, CtSelection, CtTemplate } from "../../types";
+import {
+  Loader2,
+  Maximize2,
+  Minimize2,
+  RotateCcw,
+  Save,
+  ScanLine,
+} from "lucide-react";
+import type {
+  CtProduct,
+  CtProductScene,
+  CtRenderAsset,
+  CtSelection,
+  CtTemplate,
+} from "../../types";
 import { ctApi } from "../../lib/api-client";
-import { compositeBleed, loadImage, printFrame, renderComposite } from "../../lib/compositor";
-import { defaultSelection, fontsUsed, normalizeProductConfig, normalizeRegion } from "../../lib/design";
+import {
+  compositeBleed,
+  loadImage,
+  printFrame,
+  renderComposite,
+} from "../../lib/compositor";
+import {
+  defaultSelection,
+  fontsUsed,
+  normalizeProductConfig,
+  normalizeRegion,
+} from "../../lib/design";
 import { drawOnScene } from "../../lib/scene";
 import { materialPreset } from "../../lib/materials";
 import { previewPieces } from "../../lib/assembly";
@@ -28,7 +51,7 @@ type Box = CtProductScene["box"];
 /** Overlay alpha below this = the product shows there (the artwork is seen through). */
 const SHOWS = 200;
 /** Long side of the pictures drawn here (px). */
-const SIDE = 720;
+const SIDE = 1100;
 
 interface Hole {
   /** White where the product shows, clear elsewhere — photo px scaled to SIDE. */
@@ -46,8 +69,19 @@ interface Hidden {
   right: number;
 }
 
-export function PreviewBoxCard({ product, tpl, onSaved }: { product: CtProduct; tpl: CtTemplate; onSaved: (p: CtProduct) => void }) {
-  const config = useMemo(() => normalizeProductConfig(product.config), [product.config]);
+export function PreviewBoxCard({
+  product,
+  tpl,
+  onSaved,
+}: {
+  product: CtProduct;
+  tpl: CtTemplate;
+  onSaved: (p: CtProduct) => void;
+}) {
+  const config = useMemo(
+    () => normalizeProductConfig(product.config),
+    [product.config],
+  );
   const scene = config.scene;
   const saved = scene.box;
   const own = !!scene.url && config.previewBox?.url === scene.url;
@@ -55,24 +89,56 @@ export function PreviewBoxCard({ product, tpl, onSaved }: { product: CtProduct; 
   const [busy, setBusy] = useState<"save" | "reset" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hole, setHole] = useState<Hole | null>(null);
-  const [design, setDesign] = useState<{ canvas: HTMLCanvasElement; bleed: { x: number; y: number } } | null>(null);
+  const [design, setDesign] = useState<{
+    canvas: HTMLCanvasElement;
+    bleed: { x: number; y: number };
+  } | null>(null);
   const [hidden, setHidden] = useState<Hidden | null>(null);
+  /** Full-screen view (asked 2026-11-17: "to thì full width màn hình cho dễ nhìn dễ chỉnh"). */
+  const [big, setBig] = useState(false);
   const photoRef = useRef<HTMLCanvasElement>(null);
   const resultRef = useRef<HTMLCanvasElement>(null);
   const artRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => setBox(saved), [saved]);
-  const dirty = Math.abs(box.x - saved.x) > 0.5 || Math.abs(box.y - saved.y) > 0.5 || Math.abs(box.w - saved.w) > 0.5;
+  const dirty =
+    Math.abs(box.x - saved.x) > 0.5 ||
+    Math.abs(box.y - saved.y) > 0.5 ||
+    Math.abs(box.w - saved.w) > 0.5;
 
   const main = useMemo((): CtRenderAsset | null => {
     const m = tpl.assets.find((a) => a.id === tpl.mainAssetId);
     return m ? { ...m, width: tpl.width, height: tpl.height } : null;
   }, [tpl]);
   const regions = useMemo(() => tpl.regions.map(normalizeRegion), [tpl]);
-  const selection = useMemo((): CtSelection => defaultSelection(regions, tpl.items, tpl.assets, tpl.mainAssetId), [regions, tpl]);
+  const selection = useMemo(
+    (): CtSelection =>
+      defaultSelection(regions, tpl.items, tpl.assets, tpl.mainAssetId),
+    [regions, tpl],
+  );
   // The preview this card draws must be the storefront's: no AI phôi of the shown version, no pack / clothes mockup.
-  const shownPhoi = (tpl.config.versionPhoi ?? []).some((v) => v.mainId === tpl.mainAssetId);
-  const usable = !!scene.url && !!main && !shownPhoi && !tpl.config.mockupEdit && !(tpl.config.zoneMockups ?? []).length;
+  const shownPhoi = (tpl.config.versionPhoi ?? []).some(
+    (v) => v.mainId === tpl.mainAssetId,
+  );
+  const usable =
+    !!scene.url &&
+    !!main &&
+    !shownPhoi &&
+    !tpl.config.mockupEdit &&
+    !(tpl.config.zoneMockups ?? []).length;
+
+  // Esc leaves the full-screen view; the page behind does not scroll meanwhile.
+  useEffect(() => {
+    if (!big) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setBig(false);
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = overflow;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [big]);
 
   // Text layers draw with their own fonts.
   useEffect(() => {
@@ -108,16 +174,47 @@ export function PreviewBoxCard({ product, tpl, onSaved }: { product: CtProduct; 
     if (!usable || !main) return;
     let cancelled = false;
     const run = async () => {
-      if (document.fonts?.ready) await document.fonts.ready.catch(() => undefined);
-      const input = { main, assets: tpl.assets, regions, items: tpl.items, selection, layouts: tpl.config.layouts, assembly: tpl.config.assembly };
-      const cut = !!printFrame({ main, assets: tpl.assets, regions, selection });
+      if (document.fonts?.ready)
+        await document.fonts.ready.catch(() => undefined);
+      const input = {
+        main,
+        assets: tpl.assets,
+        regions,
+        items: tpl.items,
+        selection,
+        layouts: tpl.config.layouts,
+        assembly: tpl.config.assembly,
+      };
+      const cut = !!printFrame({
+        main,
+        assets: tpl.assets,
+        regions,
+        selection,
+      });
       const assembled = previewPieces(tpl.config.assembly);
       const b = cut ? { x: 0, y: 0 } : compositeBleed(input);
-      const scale = Math.min(1, (SIDE * 2) / Math.max(main.width + 2 * b.x, main.height + 2 * b.y));
-      const canvas = await renderComposite({ ...input, scale, bleed: !cut && !assembled, display: true, cutToFrame: cut, assembled });
-      if (!cancelled) setDesign({ canvas, bleed: { x: b.x / main.width, y: b.y / main.height } });
+      const scale = Math.min(
+        1,
+        (SIDE * 2) / Math.max(main.width + 2 * b.x, main.height + 2 * b.y),
+      );
+      const canvas = await renderComposite({
+        ...input,
+        scale,
+        bleed: !cut && !assembled,
+        display: true,
+        cutToFrame: cut,
+        assembled,
+      });
+      if (!cancelled)
+        setDesign({
+          canvas,
+          bleed: { x: b.x / main.width, y: b.y / main.height },
+        });
     };
-    run().catch((e: Error) => !cancelled && setError(`Không vẽ được artwork: ${e.message}`));
+    run().catch(
+      (e: Error) =>
+        !cancelled && setError(`Không vẽ được artwork: ${e.message}`),
+    );
     return () => {
       cancelled = true;
     };
@@ -133,7 +230,14 @@ export function PreviewBoxCard({ product, tpl, onSaved }: { product: CtProduct; 
     const shown: CtProductScene = { ...scene, box };
     void (async () => {
       const bg = await loadImage(scene.url as string).catch(() => null);
-      const result = await drawOnScene(shown, design.canvas, SIDE, design.bleed, false, materialPreset(tpl.config.material.id).whiteInk).catch(() => null);
+      const result = await drawOnScene(
+        shown,
+        design.canvas,
+        SIDE,
+        design.bleed,
+        false,
+        materialPreset(tpl.config.material.id).whiteInk,
+      ).catch(() => null);
       if (cancelled) return;
       // 1. photo + frame
       const p = photoRef.current;
@@ -167,15 +271,31 @@ export function PreviewBoxCard({ product, tpl, onSaved }: { product: CtProduct; 
       const a = artRef.current;
       const ag = a?.getContext("2d");
       if (a && ag && main) {
-        const aw = Math.round((SIDE * main.width) / Math.max(main.width, main.height));
-        const ah = Math.round((SIDE * main.height) / Math.max(main.width, main.height));
+        const aw = Math.round(
+          (SIDE * main.width) / Math.max(main.width, main.height),
+        );
+        const ah = Math.round(
+          (SIDE * main.height) / Math.max(main.width, main.height),
+        );
         a.width = aw;
         a.height = ah;
         ag.clearRect(0, 0, aw, ah);
         // the design canvas may carry bleed around the main: draw only the main's part
-        const bx = design.bleed.x * design.canvas.width / (1 + 2 * design.bleed.x);
-        const by = design.bleed.y * design.canvas.height / (1 + 2 * design.bleed.y);
-        ag.drawImage(design.canvas, bx, by, design.canvas.width - 2 * bx, design.canvas.height - 2 * by, 0, 0, aw, ah);
+        const bx =
+          (design.bleed.x * design.canvas.width) / (1 + 2 * design.bleed.x);
+        const by =
+          (design.bleed.y * design.canvas.height) / (1 + 2 * design.bleed.y);
+        ag.drawImage(
+          design.canvas,
+          bx,
+          by,
+          design.canvas.width - 2 * bx,
+          design.canvas.height - 2 * by,
+          0,
+          0,
+          aw,
+          ah,
+        );
         if (hole) {
           const red = document.createElement("canvas");
           red.width = aw;
@@ -186,7 +306,13 @@ export function PreviewBoxCard({ product, tpl, onSaved }: { product: CtProduct; 
             g.fillRect(0, 0, aw, ah);
             g.globalCompositeOperation = "destination-out";
             const s = aw / box.w; // photo px → artwork px
-            g.drawImage(hole.mask, -box.x * s, -box.y * s, scene.width * s, scene.height * s);
+            g.drawImage(
+              hole.mask,
+              -box.x * s,
+              -box.y * s,
+              scene.width * s,
+              scene.height * s,
+            );
             const md = g.getImageData(0, 0, aw, ah).data;
             setHidden(hiddenOf(md, aw, ah));
             g.globalCompositeOperation = "source-in";
@@ -204,7 +330,9 @@ export function PreviewBoxCard({ product, tpl, onSaved }: { product: CtProduct; 
         ag.setLineDash([aw / 40, aw / 60]);
         ag.lineWidth = Math.max(3, aw / 110);
         ag.strokeStyle = "#22c55e";
-        for (const sh of safe) if ("w" in sh && "h" in sh) ag.strokeRect(sh.x * sk, sh.y * sk, sh.w * sk, sh.h * sk);
+        for (const sh of safe)
+          if ("w" in sh && "h" in sh)
+            ag.strokeRect(sh.x * sk, sh.y * sk, sh.w * sk, sh.h * sk);
         ag.restore();
       }
     })();
@@ -249,81 +377,198 @@ export function PreviewBoxCard({ product, tpl, onSaved }: { product: CtProduct; 
     }
   };
   const pct = (v: number) => `${Math.round(v * 100)}%`;
-  const range = (label: string, value: number, min: number, max: number, step: number, show: string, on: (v: number) => void) => (
+  const range = (
+    label: string,
+    value: number,
+    min: number,
+    max: number,
+    step: number,
+    show: string,
+    on: (v: number) => void,
+  ) => (
     <label className="flex items-center gap-2 text-xs">
       <span className="w-16 shrink-0 text-muted-foreground">{label}</span>
-      <input type="range" className="min-w-0 flex-1 accent-sky-500" min={min} max={max} step={step} value={value} onChange={(e) => on(Number(e.target.value))} />
-      <span className="w-20 shrink-0 text-right font-mono tabular-nums">{show}</span>
+      <input
+        type="range"
+        className="min-w-0 flex-1 accent-sky-500"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => on(Number(e.target.value))}
+      />
+      <span className="w-20 shrink-0 text-right font-mono tabular-nums">
+        {show}
+      </span>
     </label>
   );
 
   return (
-    <section className="space-y-3 rounded-xl border bg-card p-4">
-      <div>
-        <h2 className="text-sm font-semibold">Vị trí trên ảnh xem trước</h2>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">
-          Chỉ đổi ảnh xem trước trên store và mockup mặt trước của sản phẩm này. File in gửi xưởng không đổi. Lưu xong bấm Deploy cập nhật để store nhận.
-          {own ? " Đang dùng vị trí riêng của sản phẩm." : " Đang dùng khung của product base."}
-        </p>
-      </div>
-      <div className="grid grid-cols-3 gap-2">
-        <figure className="min-w-0 space-y-1">
-          <canvas ref={photoRef} className="w-full rounded-md border" />
-          <figcaption className="text-[11px] text-muted-foreground">Ảnh phôi + khung (hồng). {hole ? "Vùng xanh: phần sản phẩm thấy được." : ""}</figcaption>
-        </figure>
-        <figure className="min-w-0 space-y-1">
-          <canvas ref={resultRef} className="w-full rounded-md border" />
-          <figcaption className="text-[11px] text-muted-foreground">Khách thấy trên store.</figcaption>
-        </figure>
-        <figure className="min-w-0 space-y-1">
-          <canvas ref={artRef} className="w-full rounded-md border" />
-          <figcaption className="text-[11px] text-muted-foreground">Artwork: đỏ = bị ảnh che (vẫn in), nét đứt xanh lá = vùng an toàn.</figcaption>
-        </figure>
-      </div>
-      {hidden && (
-        <div className="grid grid-cols-4 gap-2 text-xs">
-          {(
-            [
-              ["Mất trên", hidden.top],
-              ["Mất dưới", hidden.bottom],
-              ["Mất trái", hidden.left],
-              ["Mất phải", hidden.right],
-            ] as const
-          ).map(([k, v]) => (
-            <div key={k} className={cx("rounded-md border px-2 py-1.5", v >= 0.08 && "border-red-500/60 bg-red-500/10")}>
-              <div className="text-[11px] text-muted-foreground">{k}</div>
-              <div className="font-mono text-sm tabular-nums">{pct(v)}</div>
-            </div>
-          ))}
-        </div>
+    <section
+      className={cx(
+        "space-y-3 bg-card",
+        big
+          ? "fixed inset-0 z-50 overflow-auto bg-background px-6 py-5"
+          : "rounded-xl border p-4",
       )}
-      <div className="space-y-1.5">
-        {range("Dọc", cyNow, cy0 - saved.h * 0.3, cy0 + saved.h * 0.3, 1, `y ${Math.round(box.y)}`, (v) => setFrame({ cy: v }))}
-        {range("Ngang", cxNow, cx0 - saved.w * 0.3, cx0 + saved.w * 0.3, 1, `x ${Math.round(box.x)}`, (v) => setFrame({ cx: v }))}
-        {range("Cỡ", sizeNow, 0.7, 1.4, 0.005, pct(sizeNow), (v) => setFrame({ size: v }))}
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        {hole && (
-          <CtButton size="sm" variant="outline" onClick={cover} disabled={!!busy}>
-            <ScanLine className="h-3.5 w-3.5" /> Phủ vừa sản phẩm
-          </CtButton>
+      role={big ? "dialog" : undefined}
+      aria-modal={big || undefined}
+      aria-label={big ? "Vị trí trên ảnh xem trước" : undefined}
+    >
+      <div
+        className={cx(
+          "flex items-start gap-3",
+          big && "mx-auto max-w-[1800px]",
         )}
-        {dirty && (
-          <CtButton size="sm" variant="ghost" onClick={() => setBox(saved)} disabled={!!busy}>
-            Bỏ thay đổi
-          </CtButton>
-        )}
-        {own && (
-          <CtButton size="sm" variant="ghost" onClick={() => void save(null)} disabled={!!busy}>
-            {busy === "reset" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />} Về khung của base
-          </CtButton>
-        )}
-        <span className="ml-auto" />
-        <CtButton size="sm" variant="primary" onClick={() => void save(box)} disabled={!dirty || !!busy}>
-          {busy === "save" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Lưu vị trí
+      >
+        <div className="min-w-0 flex-1">
+          <h2 className={cx("font-semibold", big ? "text-base" : "text-sm")}>
+            Vị trí trên ảnh xem trước
+          </h2>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            Chỉ đổi ảnh xem trước trên store và mockup mặt trước của sản phẩm
+            này. File in gửi xưởng không đổi. Lưu xong bấm Deploy cập nhật để
+            store nhận.
+            {own
+              ? " Đang dùng vị trí riêng của sản phẩm."
+              : " Đang dùng khung của product base."}
+          </p>
+        </div>
+        <CtButton
+          size="icon"
+          variant="ghost"
+          onClick={() => setBig(!big)}
+          title={big ? "Thu nhỏ (Esc)" : "Phóng to toàn màn hình"}
+          aria-label={big ? "Thu nhỏ" : "Phóng to"}
+        >
+          {big ? (
+            <Minimize2 className="h-4 w-4" />
+          ) : (
+            <Maximize2 className="h-4 w-4" />
+          )}
         </CtButton>
       </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      <div className={cx("space-y-3", big && "mx-auto max-w-[1800px]")}>
+        <div className={cx("grid grid-cols-3", big ? "gap-4" : "gap-2")}>
+          <figure className="min-w-0 space-y-1">
+            <canvas ref={photoRef} className="w-full rounded-md border" />
+            <figcaption className="text-[11px] text-muted-foreground">
+              Ảnh phôi + khung (hồng).{" "}
+              {hole ? "Vùng xanh: phần sản phẩm thấy được." : ""}
+            </figcaption>
+          </figure>
+          <figure className="min-w-0 space-y-1">
+            <canvas ref={resultRef} className="w-full rounded-md border" />
+            <figcaption className="text-[11px] text-muted-foreground">
+              Khách thấy trên store.
+            </figcaption>
+          </figure>
+          <figure className="min-w-0 space-y-1">
+            <canvas ref={artRef} className="w-full rounded-md border" />
+            <figcaption className="text-[11px] text-muted-foreground">
+              Artwork: đỏ = bị ảnh che (vẫn in), nét đứt xanh lá = vùng an toàn.
+            </figcaption>
+          </figure>
+        </div>
+        {hidden && (
+          <div className="grid grid-cols-4 gap-2 text-xs">
+            {(
+              [
+                ["Mất trên", hidden.top],
+                ["Mất dưới", hidden.bottom],
+                ["Mất trái", hidden.left],
+                ["Mất phải", hidden.right],
+              ] as const
+            ).map(([k, v]) => (
+              <div
+                key={k}
+                className={cx(
+                  "rounded-md border px-2 py-1.5",
+                  v >= 0.08 && "border-red-500/60 bg-red-500/10",
+                )}
+              >
+                <div className="text-[11px] text-muted-foreground">{k}</div>
+                <div className="font-mono text-sm tabular-nums">{pct(v)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="space-y-1.5">
+          {range(
+            "Dọc",
+            cyNow,
+            cy0 - saved.h * 0.3,
+            cy0 + saved.h * 0.3,
+            1,
+            `y ${Math.round(box.y)}`,
+            (v) => setFrame({ cy: v }),
+          )}
+          {range(
+            "Ngang",
+            cxNow,
+            cx0 - saved.w * 0.3,
+            cx0 + saved.w * 0.3,
+            1,
+            `x ${Math.round(box.x)}`,
+            (v) => setFrame({ cx: v }),
+          )}
+          {range("Cỡ", sizeNow, 0.7, 1.4, 0.005, pct(sizeNow), (v) =>
+            setFrame({ size: v }),
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {hole && (
+            <CtButton
+              size="sm"
+              variant="outline"
+              onClick={cover}
+              disabled={!!busy}
+            >
+              <ScanLine className="h-3.5 w-3.5" /> Phủ vừa sản phẩm
+            </CtButton>
+          )}
+          {dirty && (
+            <CtButton
+              size="sm"
+              variant="ghost"
+              onClick={() => setBox(saved)}
+              disabled={!!busy}
+            >
+              Bỏ thay đổi
+            </CtButton>
+          )}
+          {own && (
+            <CtButton
+              size="sm"
+              variant="ghost"
+              onClick={() => void save(null)}
+              disabled={!!busy}
+            >
+              {busy === "reset" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5" />
+              )}{" "}
+              Về khung của base
+            </CtButton>
+          )}
+          <span className="ml-auto" />
+          <CtButton
+            size="sm"
+            variant="primary"
+            onClick={() => void save(box)}
+            disabled={!dirty || !!busy}
+          >
+            {busy === "save" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Save className="h-3.5 w-3.5" />
+            )}{" "}
+            Lưu vị trí
+          </CtButton>
+        </div>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+      </div>
     </section>
   );
 }

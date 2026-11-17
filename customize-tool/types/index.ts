@@ -856,6 +856,13 @@ export interface CtProductConfig {
   /** Product side: the id of the khuôn layer its base put into it (lib/base-fit) — replaced when the base changes. */
   baseFrameId: string | null;
   /**
+   * Product side (2026-11-17, deploy page "Vị trí trên ảnh xem trước"): this product's own place of the khuôn's sheet on
+   * its preview photo, used instead of the base's box while the photo is `url`. Preview only (store, Xem trước, front
+   * mockups) — the print file never reads it. Written by the server only (POST products/:id/preview-box). null = the
+   * base's box.
+   */
+  previewBox: CtPreviewBox | null;
+  /**
    * The phôi AI of each version, per base (2026-11-08, asked: "preview của khách thì dùng ảnh AI gen phôi preview"): a
    * photo of the version's fixed parts made into the real piece (a clear acrylic cut along it, hanging on the base's
    * background) — the customer's picks and texts are laid on it live. Preview only: the print file never uses it.
@@ -872,6 +879,17 @@ export interface CtProductConfig {
    * styled photo is laid on the version's phôi in the browser (faster, less real). Set only by deploy.
    */
   customerPhoi: boolean;
+}
+
+/** CtProductConfig.previewBox — the sheet's box (photo px, like CtBaseProductConfig.preview.box) on the photo `url`. */
+export interface CtPreviewBox {
+  url: string;
+  box: { x: number; y: number; w: number; h: number };
+}
+
+/** POST products/:id/preview-box — where the artwork canvas should sit on the preview photo (photo px); null = the base's. */
+export interface CtPreviewBoxBody {
+  box: { x: number; y: number; w: number; h: number } | null;
 }
 
 /** CtProductConfig.versionPhoi — one version's AI phôi on one base. */
@@ -1082,7 +1100,7 @@ export interface CtMockupEdit {
 }
 
 /** What a published template carries (no design samples). */
-export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId">;
+export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox">;
 
 /**
  * What a ct_products row is (migration 031, asked 2026-11-07 — Teeinblue's Artwork / Campaign):

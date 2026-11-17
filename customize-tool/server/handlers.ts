@@ -253,11 +253,18 @@ export async function saveDesign(s: CtSession, productId: string, body: CtSaveDe
   if (body.config) {
     const { error: cfgErr } = await s.supabase
       .from(CT_TABLES.products)
-      // The versions' AI phôi are written by the server alone (server/version-phoi.ts) and customerPhoi by deploy:
+      // The versions' AI phôi are written by the server alone (server/version-phoi.ts), customerPhoi by deploy and
+      // previewBox by the deploy page's preview position:
       // the stored values stay.
       .update({
         config: withArtworkRevision(
-          { ...normalizeProductConfig(body.config), versionPhoi: normalizeProductConfig(owned.config).versionPhoi, customerPhoi: normalizeProductConfig(owned.config).customerPhoi },
+          {
+            ...normalizeProductConfig(body.config),
+            versionPhoi: normalizeProductConfig(owned.config).versionPhoi,
+            customerPhoi: normalizeProductConfig(owned.config).customerPhoi,
+            // Set on the deploy page only (POST products/:id/preview-box).
+            previewBox: normalizeProductConfig(owned.config).previewBox,
+          },
           owned,
         ),
       })

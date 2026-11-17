@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtSheetOverflow, CtBasePlacement, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseScenesAuto, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
+import type { CtSheetOverflow, CtBasePlacement, CtPreviewBoxBody, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseScenesAuto, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
   CtFulfillCatalogPage, CtFulfillProvider, CtTeeinblueStatus, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind, CtStoreList } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
@@ -153,6 +153,8 @@ export const ctApi = {
   /** The artwork's canvas made exactly its base's khuôn (server/artwork-fit.ts). */
   fitArtworkToBase: (id: string) => call<{ changed: boolean; width: number; height: number }>(`products/${id}/fit-base`, json("POST", {})),
   setPlacement: (id: string, placement: CtBasePlacement) => call<{ product: CtProduct }>(`products/${id}/placement`, json("POST", placement)).then((r) => r.product),
+  /** The artwork's place on the preview photo, this product only (photo px); null = the base's. Preview only. */
+  setPreviewBox: (id: string, box: CtPreviewBoxBody["box"]) => call<{ product: CtProduct }>(`products/${id}/preview-box`, json("POST", { box })).then((r) => r.product),
   syncFromArtwork: (id: string) => call<{ product: CtProduct }>(`products/${id}/artwork-sync`, { method: "POST" }).then((r) => r.product),
   syncManyFromArtwork: (artworkId: string, ids: string[]) =>
     call<{ updated: string[]; failed: Array<{ id: string; error: string }> }>(`products/${artworkId}/artwork-products/sync`, json("POST", { ids })),

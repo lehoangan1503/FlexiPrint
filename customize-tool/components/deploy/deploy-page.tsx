@@ -40,6 +40,7 @@ import { formatUsd, priceCell, priceCells, priceTableFor, priceTableProblems, us
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtSelect, CtTextarea, cx } from "../ui";
 import { PriceTableEditor } from "./price-table-editor";
 import { ContentAgent } from "./content-agent";
+import { PreviewBoxCard } from "./preview-box-card";
 import { ImportStatus } from "../char/import-status";
 
 const STATUS_OPTIONS: Array<{ value: CtShopifyStatus; label: string }> = [
@@ -338,6 +339,8 @@ export function DeployPage({ productId }: { productId: string }) {
           </Card>
 
           {/* Images */}
+          {template.tpl && <PreviewBoxCard product={product} tpl={template.tpl} onSaved={(p) => setBundle({ ...bundle, product: p })} />}
+
           <Card title={`Ảnh sản phẩm (${media.length})`} hint="Mockup đã lưu của sản phẩm (tab Mockups), theo thứ tự chọn — ảnh 1 là ảnh chính. Bỏ chọn hết = giữ nguyên ảnh đang có trên Shopify.">
             {pictures.length === 0 ? (
               <p className="text-xs text-muted-foreground">Chưa có mockup — tạo ở tab Mockups trong editor. Không có ảnh, trang sản phẩm mở thẳng thiết kế live.</p>

@@ -117,6 +117,16 @@ function canvasOnPhoto(sheetBox: FitBox, place: FitBox, main: { width: number; h
   return { x: sheetBox.x - place.x * s, y: sheetBox.y - place.y * s, w: main.width * s, h: main.height * s };
 }
 
+/**
+ * The sheet box that puts the artwork canvas at `target` on the photo, when `sheet` puts it at `now` (deploy page,
+ * CtProductConfig.previewBox). The sheet → canvas map (canvasOnPhoto / containIn) is a move + uniform scale, so the
+ * same move + scale carries over from the canvas to the sheet.
+ */
+export function sheetBoxForCanvas(sheet: FitBox, now: FitBox, target: FitBox): FitBox {
+  const k = target.w / now.w;
+  return { x: target.x + (sheet.x - now.x) * k, y: target.y + (sheet.y - now.y) * k, w: sheet.w * k, h: sheet.h * k };
+}
+
 /** The canvas contain-fitted (centred) in a photo's box — the box keeps the print area's shape, the canvas its own. */
 function containIn(box: FitBox, main: { width: number; height: number }): FitBox {
   const k = Math.min(box.w / main.width, box.h / main.height);
@@ -239,12 +249,15 @@ export function withBase(
   let scene: CtProductScene = config.scene;
   const photo = base.config.preview;
   const blank = print?.spec.blanks[0];
+  // The product's own place of the sheet on this photo (deploy page, preview only), else the base's.
+  const sheetOn = (url: string, box: FitBox): FitBox => (config.previewBox?.url === url ? config.previewBox.box : box);
   if (cut.mode === "alpha" && photo.url) {
-    scene = { url: photo.url, width: photo.width, height: photo.height, box: containIn(photo.box, main), plate: { border: widthMm > 0 ? cut.borderMm / widthMm : 0.025 } };
+    scene = { url: photo.url, width: photo.width, height: photo.height, box: containIn(sheetOn(photo.url, photo.box), main), plate: { border: widthMm > 0 ? cut.borderMm / widthMm : 0.025 } };
   } else if (photo.url) {
-    scene = { url: photo.url, width: photo.width, height: photo.height, box: place ? canvasOnPhoto(photo.box, place, main) : containIn(photo.box, main), ...(photo.overlay ? { overlay: photo.overlay } : {}) };
+    const sheet = sheetOn(photo.url, photo.box);
+    scene = { url: photo.url, width: photo.width, height: photo.height, box: place ? canvasOnPhoto(sheet, place, main) : containIn(sheet, main), ...(photo.overlay ? { overlay: photo.overlay } : {}) };
   } else if (blank && place) {
-    scene = { url: blank.url, width: blank.width, height: blank.height, box: canvasOnPhoto(blank.box, place, main) };
+    scene = { url: blank.url, width: blank.width, height: blank.height, box: canvasOnPhoto(sheetOn(blank.url, blank.box), place, main) };
   }
 
   return {

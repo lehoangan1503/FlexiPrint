@@ -20,10 +20,10 @@
 
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../config";
-import type { CtArtworkLink, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtCreateFromArtworkBody, CtProduct, CtProductConfig, CtRegion, CtRegionItem } from "../types";
+import type { CtArtworkLink, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtCreateFromArtworkBody, CtPreviewBoxBody, CtProduct, CtProductConfig, CtRegion, CtRegionItem } from "../types";
 import type { CtPrintTemplate } from "../types/print";
 import { normalizePlacement, normalizeProductConfig } from "../lib/design";
-import { withBase } from "../lib/base-fit";
+import { sheetBoxForCanvas, withBase } from "../lib/base-fit";
 import { jsonError, ownedProduct } from "./handlers";
 import type { CtServiceClient, CtSession } from "./supabase";
 import { loadBaseProduct } from "./base-products";
@@ -167,6 +167,56 @@ export async function setPlacement(s: CtSession, id: string, body: unknown): Pro
   if (error || !data) return jsonError(error?.message ?? "Không lưu được", 500);
   try {
     return NextResponse.json({ product: await applyBase(s.supabase, data) });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không ghép được artwork lên base", 500);
+  }
+}
+
+/**
+ * POST products/:id/preview-box CtPreviewBoxBody — where the artwork canvas sits on the preview photo, for this product
+ * only (deploy page, 2026-11-17: "chỉnh được ảnh preview vị trí ok, còn file gửi xuống vẫn không bị ảnh hưởng"). Stored
+ * as the sheet's box on that photo (CtProductConfig.previewBox), so a later placement / base change still lays the
+ * canvas right; null = back to the base's box. Only config.scene moves: the print file never reads it.
+ */
+export async function setPreviewBox(s: CtSession, id: string, body: unknown): Promise<NextResponse> {
+  const product = await ownedProduct(s, id);
+  if (!product) return jsonError("Không tìm thấy sản phẩm", 404);
+  const config = normalizeProductConfig(product.config);
+  const scene = config.scene;
+  if (!scene.url) return jsonError("Sản phẩm chưa có ảnh xem trước", 400);
+  const raw = body && typeof body === "object" ? (body as Partial<CtPreviewBoxBody>).box : undefined;
+  const ok = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+  const target = raw && ok(raw.x) && ok(raw.y) && ok(raw.w) && ok(raw.h) && raw.w > 0 && raw.h > 0 ? { x: raw.x, y: raw.y, w: raw.w, h: raw.h } : null;
+  if (raw !== null && !target) return jsonError("Khung không hợp lệ", 400);
+  if (target && (target.w > scene.width * 5 || target.h > scene.height * 5)) return jsonError("Khung quá lớn so với ảnh", 400);
+
+  const base = product.base_product_id ? await loadBaseProduct(s.supabase, product.base_product_id) : null;
+  let next: CtProductConfig;
+  if (!base || product.kind !== "product") {
+    // No base (an older product): its scene is its own — move it directly (no way back to a base's box).
+    if (!target) return NextResponse.json({ product });
+    next = { ...config, scene: { ...scene, box: target } };
+  } else if (!target) {
+    next = { ...config, previewBox: null };
+  } else {
+    // The sheet's box on this photo now: the product's own, else the base's preview / the khuôn's first phôi.
+    const template = await loadTemplate(s.supabase, base.config.templateId);
+    const blank = template?.spec.blanks[0];
+    const sheet =
+      config.previewBox?.url === scene.url
+        ? config.previewBox.box
+        : base.config.preview.url === scene.url
+          ? base.config.preview.box
+          : blank?.url === scene.url
+            ? blank.box
+            : null;
+    if (!sheet) return jsonError("Ảnh xem trước của sản phẩm không phải ảnh của base — mở lại sản phẩm để cập nhật base rồi thử lại", 409);
+    next = { ...config, previewBox: { url: scene.url, box: sheetBoxForCanvas(sheet, scene.box, target) } };
+  }
+  const { data, error } = await s.supabase.from(CT_TABLES.products).update({ config: next }).eq("id", id).select("*").single<CtProduct>();
+  if (error || !data) return jsonError(error?.message ?? "Không lưu được", 500);
+  try {
+    return NextResponse.json({ product: base ? await applyBase(s.supabase, data) : data });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không ghép được artwork lên base", 500);
   }

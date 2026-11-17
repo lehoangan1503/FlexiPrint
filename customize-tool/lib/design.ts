@@ -7,6 +7,7 @@ import { CT_FONTS } from "../config";
 import { CT_BASE_OPTION, CT_MAIN_KEY } from "../types";
 import type {
   CtBasePlacement,
+  CtPreviewBox,
   CtVersionPhoi,
   CtImageConfig,
   CtMainOptionConfig,
@@ -292,6 +293,7 @@ export function defaultProductConfig(): CtProductConfig {
     artworkLink: null,
     placement: { scale: 1, x: 0, y: 0 },
     baseFrameId: null,
+    previewBox: null,
     versionPhoi: [],
     viewBaseId: null,
     assembly: null,
@@ -313,6 +315,16 @@ export function normalizeVersionPhoi(raw: unknown): CtVersionPhoi[] {
     out.set(`${p.baseId}|${p.mainId}`, { baseId: p.baseId, mainId: p.mainId, url: p.url, width: n(p.width), height: n(p.height), box: { x: n(b.x), y: n(b.y), w: n(b.w), h: n(b.h) }, at: typeof p.at === "string" ? p.at : "", ...(p.source === "folder" ? { source: "folder" as const } : {}) });
   }
   return [...out.values()];
+}
+
+/** CtProductConfig.previewBox: a stored photo URL and a box of positive size; anything else = none. */
+export function normalizePreviewBox(raw: unknown): CtPreviewBox | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Partial<CtPreviewBox>;
+  const b = p.box;
+  const ok = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+  if (typeof p.url !== "string" || !p.url || !b || !ok(b.x) || !ok(b.y) || !ok(b.w) || !ok(b.h) || b.w <= 0 || b.h <= 0) return null;
+  return { url: p.url, box: { x: b.x, y: b.y, w: b.w, h: b.h } };
 }
 
 /** CtProductConfig.placement: scale 0.2–5, x / y −1…1. */
@@ -368,6 +380,7 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     artworkLink: normalizeArtworkLink(raw?.artworkLink),
     placement: normalizePlacement(raw?.placement),
     baseFrameId: typeof raw?.baseFrameId === "string" && raw.baseFrameId ? raw.baseFrameId : null,
+    previewBox: normalizePreviewBox(raw?.previewBox),
     versionPhoi: normalizeVersionPhoi(raw?.versionPhoi),
     viewBaseId: typeof raw?.viewBaseId === "string" && raw.viewBaseId ? raw.viewBaseId : null,
     assembly: normalizePrintAssembly(raw?.assembly),

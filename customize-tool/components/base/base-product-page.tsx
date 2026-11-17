@@ -541,12 +541,12 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                   {detail.uses.map((u) => (
                     <div key={u.id}>
                       <div className="mb-1.5 flex items-center gap-2 text-xs">
-                        <Link href={`${CT_CONFIG.basePath}/${u.id}`} className="truncate font-medium hover:underline">
+                        <Link href={`${CT_CONFIG.basePath}/${u.id}`} target="_blank" rel="noreferrer" className="truncate font-medium hover:underline">
                           {u.name}
                         </Link>
                         {u.artwork && <span className="truncate text-muted-foreground">· artwork “{u.artwork.name}”</span>}
                         {u.shopify && <span className="rounded bg-sky-500/15 px-1 text-[10px] text-sky-600">Shopify</span>}
-                        <Link href={`${CT_CONFIG.basePath}/${u.id}`} className="ml-auto text-muted-foreground hover:text-foreground" aria-label="Mở sản phẩm">
+                        <Link href={`${CT_CONFIG.basePath}/${u.id}`} target="_blank" rel="noreferrer" title="Mở sản phẩm (tab mới)" className="ml-auto text-muted-foreground hover:text-foreground" aria-label="Mở sản phẩm">
                           <ExternalLink className="h-3.5 w-3.5" />
                         </Link>
                       </div>

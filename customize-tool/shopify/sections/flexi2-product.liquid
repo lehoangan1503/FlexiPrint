@@ -38,8 +38,14 @@
   if last_char == '/'
     assign api_base = api_base | remove_last: '/'
   endif
+  comment
+    A product with nothing to customize (deploy sets customize_tool.static, server/shopify.ts) is a plain product:
+    no template, no flexi2 call; its one print file goes on every order (customize_tool.print_url).
+  endcomment
+  assign ct_static = product.metafields.customize_tool.static.value
+  assign ct_static_print = product.metafields.customize_tool.print_url.value | default: product.metafields.customize_tool.print_url | strip
   assign is_custom = false
-  if ct_id != blank and api_base != blank
+  if ct_id != blank and api_base != blank and ct_static != true
     assign is_custom = true
   endif
   comment
@@ -267,6 +273,9 @@
 
       {%- if is_custom -%}
         <div class="ct-options" data-ct-options></div>
+      {%- elsif ct_static == true and ct_static_print != blank -%}
+        <input type="hidden" name="properties[_ct_print]" value="{{ ct_static_print | escape }}">
+        <input type="hidden" name="properties[_ct_template]" value="{{ ct_id | escape }}@static">
       {%- endif -%}
 
       <div class="ct-qty">

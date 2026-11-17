@@ -134,3 +134,15 @@ export function auditOptions(tpl: CtTemplate): CtOptionAudit {
   if (tpl.config.mockupEdit) lines.push({ level: "ok", text: "Mockup edit: khách chỉnh thiết kế ngay trên mockup đã chọn." });
   return { versions, lines };
 }
+
+/**
+ * Nothing for the customer to choose or type (asked 2026-11-17, "sản phẩm không custom"): one version, no sub-options,
+ * no field. Deploy then marks the Shopify product static — its page never calls flexi2 (server/shopify.ts).
+ */
+export function isStaticTemplate(tpl: CtTemplate): boolean {
+  const mains = tpl.config.main.enabled ? mainVersions(tpl.assets, tpl.mainAssetId) : tpl.assets.filter((a) => a.id === tpl.mainAssetId);
+  if (mains.length > 1) return false;
+  if (tpl.config.main.enabled && mains[0] && mainSubOptions(tpl.assets, tpl.config.main, mains[0].id).length) return false;
+  if (tpl.config.mockupEdit) return false;
+  return auditOptions(tpl).versions.every((v) => v.fields.length === 0);
+}

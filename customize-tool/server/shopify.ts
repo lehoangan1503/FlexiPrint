@@ -237,6 +237,8 @@ export interface ShopifyDeployInput {
   templateVersion: number;
   /** The template's CDN copy (server/template-cdn.ts) → metafield customize_tool.template_url; null = removed. */
   templateUrl: string | null;
+  /** Static product (nothing to customize, lib/option-audit isStaticTemplate): its print file; null = customizable. */
+  staticPrintUrl: string | null;
 }
 
 interface ExistingProduct {
@@ -339,6 +341,13 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
       ...(input.primaryCollectionId ? [{ namespace: CT_METAFIELD_NS, key: "breadcrumb_collection", type: "collection_reference", value: input.primaryCollectionId }] : []),
       // The storefront loads the template from the CDN (fast in the US), flexi2 when this is missing.
       ...(input.templateUrl ? [{ namespace: CT_METAFIELD_NS, key: "template_url", type: "single_line_text_field", value: input.templateUrl }] : []),
+      // Static: flexi2-product.liquid shows a plain product (no flexi2 call) and adds the print file to every order.
+      ...(input.staticPrintUrl
+        ? [
+            { namespace: CT_METAFIELD_NS, key: "static", type: "boolean", value: "true" },
+            { namespace: CT_METAFIELD_NS, key: "print_url", type: "single_line_text_field", value: input.staticPrintUrl },
+          ]
+        : []),
     ],
     collections: picked.filter((c) => !c.smart).map((c) => c.id),
     ...(manageMedia ? { files: [...files, ...foreign] } : {}),
@@ -372,6 +381,13 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
   if (!p) throw new ShopifyError("Shopify không trả về sản phẩm");
 
   if (!input.templateUrl && existing) await setTemplateUrlMetafield(st, p.id, null).catch(() => undefined);
+  if (!input.staticPrintUrl && existing) {
+    await gql<{ metafieldsDelete: { userErrors: UserError[] } }>(
+      st,
+      `mutation($m: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $m) { userErrors { field message } } }`,
+      { m: ["static", "print_url"].map((key) => ({ ownerId: p.id, namespace: CT_METAFIELD_NS, key })) },
+    ).catch(() => undefined);
+  }
 
   if (!input.primaryCollectionId && existing) {
     await gql<{ metafieldsDelete: { userErrors: UserError[] } }>(

@@ -53,6 +53,16 @@ import { applyBase } from "./artwork-link";
 import { createCollection, deployToShopify, listCollections, previewLinks, searchShopifyProducts, setTemplateUrlMetafield, shopifyConfigured, shopifyInfo } from "./shopify";
 import { currentStoreId, storeFor, storeOfProduct } from "./stores";
 import { templateToCdn, withLiveAiStyles } from "./template-cdn";
+import { isStaticTemplate } from "../lib/option-audit";
+
+/** The print file of a static product (its design's own content), stored once — every order carries its url. */
+async function staticPrintFile(s: CtSession, product: CtProduct): Promise<string | null> {
+  const { loadArtwork, renderArtwork } = await import("./print-render");
+  const bundle = await loadArtwork(s.supabase, product.id);
+  if (!bundle) return null;
+  const png = await renderArtwork(bundle, normalizeProductConfig(product.config).samples, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print");
+  return ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/${product.id}/static-print/${crypto.randomUUID()}.png`, png, "image/png");
+}
 import { priceTableProblems } from "../lib/pricing";
 import { cleanCustomerName } from "../lib/ai-style-models";
 
@@ -364,7 +374,7 @@ async function publishTemplate(
   s: CtSession,
   product: CtProduct,
   origin: string,
-): Promise<{ product: CtProduct; publish: CtPublishResponse; cdnUrl: string | null } | { error: string; status: number }> {
+): Promise<{ product: CtProduct; publish: CtPublishResponse; cdnUrl: string | null; template: CtTemplate } | { error: string; status: number }> {
   const productId = product.id;
   const built = await productTemplate(s, product);
   if ("error" in built) return built;
@@ -388,6 +398,7 @@ async function publishTemplate(
     publish: { version, publishedAt, templateUrl: `${origin}${CT_CONFIG.apiBase}/public/templates/${productId}` },
     // The copy the storefront reads (server/template-cdn.ts); null = it reads flexi2.
     cdnUrl: await templateToCdn(s.supabase, template),
+    template,
   };
 }
 
@@ -478,6 +489,17 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
   const pub = await publishTemplate(s, product, origin);
   if ("error" in pub) return pub;
 
+  // 1b. Nothing for the customer to pick or type: the page is a plain Shopify product (never calls flexi2) and every
+  // order carries the one print file (made now from the design's own content).
+  let staticPrintUrl: string | null = null;
+  if (isStaticTemplate(pub.template)) {
+    try {
+      staticPrintUrl = await staticPrintFile(s, product);
+    } catch (e) {
+      console.warn("[ct] static print file", productId, e instanceof Error ? e.message : e);
+    }
+  }
+
   // 2. The Shopify product: options + priced variants + metafields + images.
   let result: Awaited<ReturnType<typeof deployToShopify>>;
   try {
@@ -498,6 +520,7 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
       media,
       templateVersion: pub.publish.version,
       templateUrl: pub.cdnUrl,
+      staticPrintUrl,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Deploy Shopify thất bại";
@@ -506,7 +529,7 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
 
   const { data: updated, error } = await s.supabase.from(CT_TABLES.products).update({ shopify: result.link }).eq("id", productId).select("*").single<CtProduct>();
   if (error) return { error: missingShopifyColumn(error.message), status: 500 };
-  return { product: updated, publish: pub.publish, shopify: result.link, previewUrl: result.previewUrl, warnings: result.warnings };
+  return { product: updated, publish: pub.publish, shopify: result.link, previewUrl: result.previewUrl, warnings: [...(staticPrintUrl ? ["Sản phẩm không có gì cho khách chọn: trang bán là sản phẩm Shopify thường (không gọi flexi2), mỗi đơn kèm sẵn file in."] : []), ...result.warnings] };
 }
 
 function missingShopifyColumn(message: string): string {

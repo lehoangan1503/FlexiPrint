@@ -39,8 +39,12 @@ export interface CtStoredTask {
   createdAt: number;
   /** × on its card: gone from the list (and not brought back on its product page). */
   dismissed?: boolean;
-  /** Its "ready" was shown (the list opened for it, or the customer was on its page). */
+  /** Its "ready" was shown (the list opened for it, or the customer watched it in its photo dialog). */
   notified?: boolean;
+  /** Its start was shown (the list opened with its running card). */
+  announced?: boolean;
+  /** The progress bar's current leg: since when (ms) and from how far (0–1) — set when the phôi starts drawing. */
+  bar?: { at: number; from: number };
 }
 
 export function loadTasks(): CtStoredTask[] {
@@ -129,6 +133,19 @@ function byProduct(list: CtStoredTask[]): CtStoredTask[] {
 /** The picture of a finished task: the piece with the photo, else the photo alone. */
 const resultImage = (t: CtStoredTask) => t.task.phoi?.url ?? t.task.photoUrl ?? t.productImage;
 
+/**
+ * How far a running task looks (0–1), for its moving bar: the server says only the stage, so the bar eases toward the
+ * stage's usual end (the style ~30 s, the phôi ~2 min) and never reaches the end before the task does.
+ */
+function progressOf(t: CtStoredTask, now = Date.now()): number {
+  if (!taskWorking(t.task)) return 1;
+  const phoi = t.task.stage === "phoi" || !!t.task.phoiPending;
+  const leg = t.bar ?? { at: t.createdAt, from: 0 };
+  const el = Math.max(0, now - leg.at);
+  const span = phoi ? 0.97 - leg.from : 0.9 - leg.from;
+  return Math.max(0.04, leg.from + Math.max(0, span) * (1 - Math.exp(-el / (phoi ? 60_000 : 18_000))));
+}
+
 // ---------------------------------------------------------------------------------------------------------- poller
 
 async function pollOnce(t: CtStoredTask): Promise<void> {
@@ -140,7 +157,12 @@ async function pollOnce(t: CtStoredTask): Promise<void> {
     }
     if (!res.ok) return;
     const body = (await res.json()) as { task?: CtPhotoTask };
-    if (body.task && body.task.updatedAt !== t.task.updatedAt) updateTask(t.id, { task: body.task });
+    if (!body.task || body.task.updatedAt === t.task.updatedAt) return;
+    const wasPhoi = t.task.stage === "phoi" || !!t.task.phoiPending;
+    const isPhoi = body.task.stage === "phoi" || !!body.task.phoiPending;
+    // The phôi starts: the bar goes on from where it is, toward the phôi's longer end.
+    const bar = isPhoi && !wasPhoi ? { at: Date.now(), from: Math.min(0.9, progressOf(t)) } : t.bar;
+    updateTask(t.id, { task: body.task, bar });
   } catch {
     // Offline for a moment: asked again on the next round.
   }
@@ -157,9 +179,18 @@ async function pollOnce(t: CtStoredTask): Promise<void> {
  *     after everything is done
  */
 
+/*
+ * 2026-11-17 (asked: "chỗ này có cái gì chạy chạy cho ngta biết đang chạy … sợ nó quay quay bên góc này bọn nó ko
+ * nhìn thấy … quay xong em cho hiện card sản phẩm luôn, không muốn xem ngay thì thu nhỏ lại"):
+ *   - a task that starts opens the list with its card and a moving bar (also on its own product page, once its photo
+ *     dialog is closed — "Buy More")
+ *   - folded while one runs, the round button carries a "Creating…" pill with the same moving bar
+ *   - when it is done the list opens with the finished card and STAYS open until the customer taps "Minimize"
+ *     (no folding by itself any more); one the customer watched finish in its photo dialog is not announced again
+ */
+
 const UI_KEY = "flexi2:tasks-ui";
 const FEW = 2;
-const FOLD_MS = 9000;
 
 interface CtTasksUi {
   open: boolean;
@@ -195,8 +226,9 @@ const CSS = `
 .f2t__count[hidden]{display:none}
 .f2t__panel{pointer-events:auto;width:212px;max-height:calc(100vh - 200px);overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:10px;padding:10px;border-radius:18px;background:rgba(255,255,255,.97);box-shadow:0 14px 40px rgba(20,16,40,.22),0 1px 3px rgba(0,0,0,.08);border:1px solid rgba(0,0,0,.06);animation:f2t-in .3s cubic-bezier(.2,.9,.3,1.2)}
 .f2t__panel[hidden]{display:none}
-.f2t__head{display:flex;align-items:center;justify-content:space-between;padding:0 2px;font-size:13px;font-weight:700}
-.f2t__min{width:26px;height:26px;border:0;border-radius:50%;background:#f1f1f3;color:#555;font-size:16px;line-height:26px;cursor:pointer;padding:0}
+.f2t__head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 2px;font-size:13px;font-weight:700}
+.f2t__head>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.f2t__min{border:0;background:#f1f1f3;color:#555;cursor:pointer}
 .f2t__item{position:relative;display:flex;flex-direction:column;gap:6px;padding:6px 6px 10px;border-radius:14px;background:#fff;color:inherit;text-decoration:none;border:1px solid rgba(0,0,0,.07)}
 .f2t__item:hover{box-shadow:0 6px 18px rgba(20,16,40,.14)}
 .f2t__item.is-ready{border-color:#f3b46a;box-shadow:0 0 0 1px #f3b46a}
@@ -210,11 +242,22 @@ const CSS = `
 .f2t__item.is-failed .f2t__status{color:#b42318}
 .f2t__close{position:absolute;top:10px;right:10px;width:24px;height:24px;border:0;border-radius:50%;background:rgba(255,255,255,.9);color:#666;font-size:15px;line-height:24px;cursor:pointer;padding:0;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 .f2t__close:hover{color:#111}
+.f2t__bar{display:block;position:relative;height:6px;margin:0 4px;border-radius:3px;background:#f1e6dc;overflow:hidden}
+.f2t__bar i{position:absolute;inset:0 auto 0 0;width:4%;border-radius:3px;background:linear-gradient(90deg,#f0a35e,#e5793b);transition:width .6s ease-out;overflow:hidden}
+.f2t__bar i::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.65),transparent);transform:translateX(-100%);animation:f2t-shine 1.3s linear infinite}
+.f2t__pill{position:absolute;right:calc(100% + 10px);top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:5px;width:max-content;max-width:170px;padding:8px 12px;border-radius:14px;background:#fff;box-shadow:0 6px 20px rgba(20,16,40,.2),0 1px 3px rgba(0,0,0,.08);font-size:12px;font-weight:600;line-height:1.25;text-align:left;color:#1d1d1f;pointer-events:none}
+.f2t__pill[hidden]{display:none}
+.f2t__pill .f2t__bar{margin:0;width:130px;max-width:100%}
+.f2t.is-working .f2t__fab{animation:f2t-in .35s cubic-bezier(.2,.9,.3,1.2),f2t-pulse 1.8s ease-out infinite}
+.f2t__min{width:auto;height:28px;padding:0 10px 0 8px;border-radius:14px;font-size:12px;font-weight:600;line-height:28px;display:inline-flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap}
+.f2t__min:hover{background:#e6e6ea;color:#111}
 .f2t__more{border:0;background:#f4f2ef;border-radius:10px;padding:8px;font:inherit;font-size:12px;font-weight:600;color:#333;cursor:pointer}
 .f2t__more:hover{background:#ebe7e1}
 @keyframes f2t-in{from{opacity:0;transform:translateY(-8px) scale(.96)}to{opacity:1;transform:none}}
 @keyframes f2t-rot{to{transform:rotate(360deg)}}
-@media (max-width:600px){.f2t{top:auto;bottom:14px;right:12px;flex-direction:column-reverse}.f2t__panel{width:180px;max-height:calc(100vh - 120px)}}
+@keyframes f2t-shine{to{transform:translateX(100%)}}
+@keyframes f2t-pulse{0%{box-shadow:0 8px 24px rgba(20,16,40,.22),0 0 0 0 rgba(229,121,59,.55)}70%{box-shadow:0 8px 24px rgba(20,16,40,.22),0 0 0 14px rgba(229,121,59,0)}100%{box-shadow:0 8px 24px rgba(20,16,40,.22),0 0 0 0 rgba(229,121,59,0)}}
+@media (max-width:600px){.f2t{top:auto;bottom:14px;right:12px;flex-direction:column-reverse}.f2t__panel{width:206px;max-height:calc(100vh - 120px)}}
 `;
 
 function openUrl(t: CtStoredTask): string {
@@ -255,7 +298,16 @@ function card(t: CtStoredTask): HTMLElement {
     e.stopPropagation();
     updateTask(t.id, { dismissed: true });
   });
-  a.append(thumb, title, status, close);
+  a.append(thumb, title, status);
+  if (working) {
+    const bar = Object.assign(document.createElement("span"), { className: "f2t__bar" });
+    const fill = document.createElement("i");
+    fill.dataset.f2tTask = t.id;
+    fill.style.width = `${Math.round(progressOf(t) * 100)}%`;
+    bar.append(fill);
+    a.append(bar);
+  }
+  a.append(close);
   return a;
 }
 
@@ -280,14 +332,21 @@ export function startTaskCenter(): void {
   const fabImg = document.createElement("img");
   fabImg.alt = "";
   const count = Object.assign(document.createElement("span"), { className: "f2t__count" });
+  // Folded while one runs: "Creating…" and a moving bar beside the round button, so it is seen, not only a ring.
+  const pillText = document.createElement("span");
+  const pillFill = document.createElement("i");
+  const pillBar = Object.assign(document.createElement("span"), { className: "f2t__bar" });
+  pillBar.append(pillFill);
+  const pill = Object.assign(document.createElement("span"), { className: "f2t__pill" });
+  pill.append(pillText, pillBar);
   const fab = Object.assign(document.createElement("button"), { type: "button", className: "f2t__fab" });
-  fab.append(fabImg, Object.assign(document.createElement("span"), { className: "f2t__ring" }), count);
+  fab.append(fabImg, Object.assign(document.createElement("span"), { className: "f2t__ring" }), count, pill);
   const panel = Object.assign(document.createElement("div"), { className: "f2t__panel" });
   const listBox = Object.assign(document.createElement("div"), { className: "f2t__list" });
   listBox.style.cssText = "display:flex;flex-direction:column;gap:10px";
   const more = Object.assign(document.createElement("button"), { type: "button", className: "f2t__more" });
-  const min = Object.assign(document.createElement("button"), { type: "button", className: "f2t__min", textContent: "–", title: "Hide" });
-  min.setAttribute("aria-label", "Hide");
+  const min = Object.assign(document.createElement("button"), { type: "button", className: "f2t__min", textContent: "– Minimize", title: "Minimize" });
+  min.setAttribute("aria-label", "Minimize");
   const headText = document.createElement("span");
   const head = Object.assign(document.createElement("div"), { className: "f2t__head" });
   head.append(headText, min);
@@ -300,99 +359,79 @@ export function startTaskCenter(): void {
     saveUi(ui);
     render();
   };
-  let hovering = false;
-  let fold = 0;
-  /** The list was opened by itself (a task started / finished), not by the customer: it folds back when all is done. */
-  let auto = false;
-  host.addEventListener("mouseenter", () => (hovering = true));
-  host.addEventListener("mouseleave", () => (hovering = false));
-  fab.addEventListener("click", () => {
-    window.clearTimeout(fold);
-    fold = 0;
-    auto = false;
-    setUi({ open: !ui.open });
-  });
-  min.addEventListener("click", () => {
-    auto = false;
-    setUi({ open: false });
-  });
+  fab.addEventListener("click", () => setUi({ open: !ui.open }));
+  min.addEventListener("click", () => setUi({ open: false }));
   more.addEventListener("click", () => setUi({ all: !ui.all }));
+  // Opening a card = it was seen: the next page starts with the round button only.
+  listBox.addEventListener("click", (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    if (!target || target.closest(".f2t__close") || !target.closest(".f2t__item")) return;
+    ui = { ...ui, open: false };
+    saveUi(ui);
+  });
 
-  /** Ids known on this page: a new one (a task just started) opens the list. */
-  let known: Set<string> | null = null;
-  const foldLater = () => {
-    if (fold) return;
-    fold = window.setTimeout(function again() {
-      const busy = loadTasks().some((t) => !t.dismissed && taskWorking(t.task));
-      if (busy) return;
-      if (hovering) {
-        fold = window.setTimeout(again, 2500);
-        return;
-      }
-      fold = 0;
-      auto = false;
-      setUi({ open: false });
-    }, FOLD_MS);
-  };
+  const dialogOpen = () => !!document.querySelector("dialog.ct-dialog");
 
   function render(): void {
     if (!host.isConnected) document.body.append(host);
     const all = loadTasks().filter((t) => !t.dismissed);
     const list = byProduct(all);
-    const here = pageKey(location.href);
     if (!list.length) {
       host.hidden = true;
-      known = new Set();
       return;
     }
     host.hidden = false;
-    const working = list.some((t) => taskWorking(t.task));
-    // Started since this page opened → show it; finished and not announced yet → show it, then fold back.
-    // A task started on this very page is watched in its photo dialog: no list for it.
-    const started = known !== null && all.some((t) => !known?.has(t.id) && pageKey(t.productUrl) !== here);
-    const firstPaint = known === null;
-    // Left open on the page before: it folds back by itself once all is done.
-    if (firstPaint && ui.open) auto = true;
-    known = new Set(all.map((t) => t.id));
-    const fresh = all.filter((t) => taskReady(t.task) && !t.notified);
-    const announce = fresh.filter((t) => pageKey(t.productUrl) !== here);
-    if (fresh.length) {
-      // One write for all of them (it calls render again, with nothing fresh left).
-      const ids = new Set(fresh.map((t) => t.id));
-      queueMicrotask(() => {
-        const next = loadTasks().map((t) => (ids.has(t.id) ? { ...t, notified: true } : t));
-        try {
-          localStorage.setItem(STORE_KEY, JSON.stringify(next.slice(-20)));
-        } catch {
-          // ignore
-        }
-      });
+    const here = pageKey(location.href);
+    const inDialog = dialogOpen();
+    // Shown by itself: a task that started (its running card) and one that finished (its result) — never over a photo
+    // dialog; one that finished while the customer watched it in its own photo dialog is not announced again.
+    const marks = new Map<string, Partial<CtStoredTask>>();
+    let pop = false;
+    for (const t of all) {
+      if (taskReady(t.task)) {
+        if (t.notified) continue;
+        if (!inDialog) pop = true;
+        else if (pageKey(t.productUrl) !== here) continue;
+        marks.set(t.id, { notified: true, announced: true });
+      } else if (taskWorking(t.task) && !t.announced && !inDialog) {
+        marks.set(t.id, { announced: true });
+        pop = true;
+      }
     }
-    if (started || announce.length) {
+    if (marks.size) {
+      // Straight into storage (no event: this render already shows them).
+      const next = loadTasks().map((t) => ({ ...t, ...marks.get(t.id) }));
+      try {
+        localStorage.setItem(STORE_KEY, JSON.stringify(next.slice(-20)));
+      } catch {
+        // ignore
+      }
+    }
+    if (pop && !ui.open) {
       ui = { ...ui, open: true };
-      saveUi(ui);
-      auto = true;
-    } else if (firstPaint && !working && ui.open) {
-      // Everything was already done when this page opened: the round button only.
-      ui = { ...ui, open: false };
       saveUi(ui);
     }
 
-    if (auto && ui.open && !working) foldLater();
-    // Not over the photo dialog of the product page.
-    host.style.visibility = document.querySelector("dialog.ct-dialog") ? "hidden" : "";
+    host.style.visibility = inDialog ? "hidden" : "";
     const ready = list.filter((t) => taskReady(t.task));
-    host.classList.toggle("is-working", working);
+    const running = list.find((t) => taskWorking(t.task)) ?? null;
+    host.classList.toggle("is-working", !!running);
     host.classList.toggle("is-open", ui.open);
     const top = ready[0] ?? list[0];
     const pic = taskReady(top.task) ? resultImage(top) : top.productImage || resultImage(top);
     if (fabImg.getAttribute("src") !== pic) fabImg.src = pic;
     count.hidden = !ready.length;
     count.textContent = String(ready.length);
-    const label = working ? "Your designs — one is still being made" : `Your designs (${ready.length})`;
+    const label = running ? "Your designs — one is still being made" : `Your designs (${ready.length})`;
     fab.title = label;
     fab.setAttribute("aria-label", label);
     fab.setAttribute("aria-expanded", String(ui.open));
+    pill.hidden = ui.open || !running;
+    if (running) {
+      pillText.textContent = running.task.stage === "style" ? `Creating ${running.styleName || "your design"}…` : "Making your preview…";
+      pillFill.dataset.f2tTask = running.id;
+      pillFill.style.width = `${Math.round(progressOf(running) * 100)}%`;
+    }
     panel.hidden = !ui.open;
     headText.textContent = `Your designs (${list.length})`;
     const shown = ui.all ? list : list.slice(0, FEW);
@@ -401,13 +440,28 @@ export function startTaskCenter(): void {
     more.textContent = ui.all ? "Show less" : `Show all (${list.length})`;
   }
 
+  // The bars move between the polls.
+  window.setInterval(() => {
+    if (host.hidden || document.hidden) return;
+    const fills = Array.from(host.querySelectorAll<HTMLElement>("i[data-f2t-task]"));
+    if (!fills.length) return;
+    const byId = new Map(loadTasks().map((t) => [t.id, t]));
+    for (const f of fills) {
+      const t = byId.get(f.dataset.f2tTask ?? "");
+      if (t) f.style.width = `${Math.round(progressOf(t) * 100)}%`;
+    }
+  }, 700);
+
   onTasks(render);
   const begin = () => {
     render();
-    // The photo dialogs come and go on <body>.
+    // The photo dialogs come and go on <body>: closed ("Buy More") = the running card shows now.
+    let wasOpen = dialogOpen();
     new MutationObserver(() => {
-      const hide = !!document.querySelector("dialog.ct-dialog");
-      if ((host.style.visibility === "hidden") !== hide) host.style.visibility = hide ? "hidden" : "";
+      const open = dialogOpen();
+      if (open === wasOpen) return;
+      wasOpen = open;
+      render();
     }).observe(document.body, { childList: true });
   };
   if (document.body) begin();

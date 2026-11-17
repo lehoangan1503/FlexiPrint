@@ -599,7 +599,9 @@ export async function autoProductMockups(s: CtSession, productId: string): Promi
   const bundle = await loadArtwork(s.supabase, productId);
   if (!bundle) return jsonError("Không đọc được thiết kế của sản phẩm", 404);
   try {
-    const print = await renderArtwork(bundle, config.samples, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print");
+    // With the version's own picture, like the editor's Tạo mockup (lib/compositor draws it): an artwork that IS one
+    // picture (Girl Soccer blanket, 2026-11-17) gave an empty print and a blank front mockup.
+    const print = await renderArtwork(bundle, config.samples, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print", { withMain: true });
     return NextResponse.json(await productMockups(s, product, print, scenes), { status: 202 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không tạo được mockup", 500);

@@ -709,7 +709,9 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
         const options = m.options && typeof m.options === "object" ? (m.options as Record<string, unknown>) : {};
         const selection = selectionFromNames(bundle, Object.fromEntries(Object.entries(options).map(([k, v]) => [k, str(v)])));
         const scenes = (Array.isArray(m.scenes) ? m.scenes : []).map(str).filter(Boolean).slice(0, 3);
-        const print = await renderArtwork(bundle, selection, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print");
+        // With the version's own picture, like the editor's Tạo mockup (lib/compositor draws it): an artwork that IS one
+        // picture (Girl Soccer blanket, 2026-11-17) gave an empty print and a blank front mockup.
+        const print = await renderArtwork(bundle, selection, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print", { withMain: true });
         const label = str(m.label).slice(0, 60);
         const r = await productMockups(s, bundle.product, print, scenes, label);
         out.push({ label, front: r.front.url, jobs: r.jobs.filter((j) => j.status === "running").map((j) => ({ id: j.id, scene: j.description, status: j.status })) });

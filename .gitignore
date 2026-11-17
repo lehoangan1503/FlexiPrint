@@ -17,3 +17,7 @@ integrations/agent-ide/secrets/
 # layer-kit working images (big; sources live in R2 per project)
 tools/layer-kit/demo-*/
 backups/
+
+# Local test scratch (Playwright scripts, login cookies) — never commit
+.scratch-e2e/
+.playwright-mcp/

@@ -112,7 +112,7 @@ export const CT_MCP_MOCKUP_TOOLS: CtMcpTool[] = [
     description:
       "Mockup task (kind mockup): draw the refused mockup job again with your rewritten prompt (English, the whole prompt — not a diff). Runs in the background (~1–3 min) on the same job: its card in the editor's Mockups tab shows it. Then wait_product_mockups {product_id, job_ids: [job id]} and view_image the photo.",
     inputSchema: { type: "object", properties: { ...TASK_ARG, prompt: { type: "string", description: "The new prompt, whole, English." } }, required: ["task_id", "prompt"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task } = await loadTask(ctx, args.task_id);
       openTask(task);

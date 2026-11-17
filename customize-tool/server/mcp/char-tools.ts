@@ -626,7 +626,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     description:
       "A set whose characters are drawn alone, pose by pose (brief.poses — every set with 2+ characters since 2026-10-21): makes a POSE SET per pose (one character alone on its own square: masters, doll, 3b pictures and files of its own; the parent's references copied in) and draws 2 masters for each. Missing ones only — a pose that has a set keeps it (redraw its masters: char_draw_masters with set_id). → the pose sets; view_image their masters (char_wait with the ids), approve one per pose (char_approve_master {set_id, image_id}) — each then runs 3a → 3b → 3c by itself.",
     inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto" && task.input.char?.step !== "master") throw new Error("char_draw_poses is for chat requests");
@@ -648,7 +648,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id", "versions"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_compose is for chat requests");
@@ -684,7 +684,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id", "set_id", "polygons"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
       if (!project.layers) throw new Error("The pose set is not cut yet");
@@ -700,7 +700,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     description:
       "A lineup drawn version by version (brief.lineup.drawn): every VERSION SET of the task's set — set_id, version name, subjects, masters (id, url, approved), 3a / 3b / 3c status and failed checks — small (get_task carries the whole set and can be too big to read). Use the set_id with char_approve_master / char_run_edits / char_cut / char_status.",
     inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, project } = await openCharTask(ctx, args.task_id);
       if (!project.brief.lineup?.drawn && !project.brief.poses?.length) return json({ versions: [], note: "This set is not drawn version by version nor pose by pose." });
@@ -721,10 +721,11 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["name"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const db = taskDb(ctx);
-      const owner = await ownerFor(db, str(args.owner_email));
+      // A signed-in user owns what they make (an admin may name someone else).
+      const owner = ctx.caller === "user" && !(ctx.admin && str(args.owner_email)) ? ctx.userId! : await ownerFor(db, str(args.owner_email));
       const brief = parseCharBrief({ kind: args.kind === "photo" ? "photo" : "character", idea: clip(str(args.idea), 4000) });
       const { data: p, error } = await db.from(CT_TABLES.charProjects).insert({ user_id: owner, name: clip(str(args.name), 200) || "Bộ mới", brief }).select("*").single<CtCharProject>();
       if (error || !p) throw new Error(error?.message ?? "Could not create the set");
@@ -736,12 +737,13 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     name: "char_open_task",
     description: "agent_ide: a new chat task on an EXISTING set (set id or its /v2 url) to work on it from your session — returns task_id and the page url (print it). One per request / phase; submit_result when it is done.",
     inputSchema: { type: "object", properties: { project: { type: "string", description: "Set id or its page url (…/v2/<id>)." }, request: { type: "string", description: "What you are asked (their words)." } }, required: ["project"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const db = taskDb(ctx);
       const id = (str(args.project).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) ?? [""])[0];
       const p = id ? await loadProject(db, id) : null;
       if (!p) throw new Error("No such set");
+      if (ctx.caller === "user" && p.user_id !== ctx.userId && !ctx.admin) throw new Error("No such set, or it is not yours");
       const task = await selfTask(db, p.user_id ?? (await ownerFor(db, "")), p.id, str(args.request) || "(agent_ide)");
       return json({ project_id: p.id, task_id: task.id, url: setUrl(p.id), status: p.status });
     },
@@ -761,7 +763,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       let buf: Buffer;
@@ -796,7 +798,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id", "prompt"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
       if (task.input.char?.step !== "master" && task.input.char?.step !== "chat" && !(task.input.char?.step === "auto" && project.brief.versionOf)) throw new Error("char_draw_masters is for the master step");
@@ -823,7 +825,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id", "image_id", "prompt"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
       if (task.input.char?.step !== "master" && task.input.char?.step !== "chat" && !(task.input.char?.step === "auto" && project.brief.versionOf)) throw new Error("char_refine_master is for the master step");
@@ -848,7 +850,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
       if (!["edits", "chat", "auto"].includes(task.input.char?.step ?? "")) throw new Error("char_run_edits is for the edits step");
@@ -889,7 +891,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id", "pictures"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
       if (!["edits", "chat", "auto"].includes(task.input.char?.step ?? "")) throw new Error("char_plan_pictures is for chat / auto / edits requests");
@@ -927,7 +929,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     name: "char_wait",
     description: "Wait for pictures of a bộ nhân vật to finish (the server waits up to ~1 min per call) → each one's status, url, prompt, registration. \"still running\" → call again.",
     inputSchema: { type: "object", properties: { ...TASK_ARG, image_ids: { type: "array", items: { type: "string" }, description: "Ids from char_draw_masters / char_refine_master / char_run_edits." } }, required: ["task_id", "image_ids"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task } = await loadTask(ctx, args.task_id);
       const ids = (Array.isArray(args.image_ids) ? args.image_ids : [args.image_ids]).map(str).filter((x) => UUID.test(x)).slice(0, 40);
@@ -956,7 +958,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     name: "char_get_brief",
     description: "Bộ nhân vật: just the set's brief (CtCharBrief JSON) — small, unlike get_task which carries the whole set. Read it before char_update_brief.",
     inputSchema: { type: "object", properties: { ...TASK_ARG, ...SET_ARG }, required: ["task_id"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { project } = await openCharTask(ctx, args.task_id, args.set_id);
       return json({ brief: project.brief, masterApproved: !!project.master_id });
@@ -971,7 +973,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       properties: { ...TASK_ARG, brief: { type: "object", description: "The full CtCharBrief." }, patch: { type: "object", description: "Top-level keys of CtCharBrief to replace." } },
       required: ["task_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_update_brief is for chat requests");
@@ -1006,7 +1008,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       "Bộ nhân vật (chat): \"plan\" = find every 3c region again from the 3b pictures, then cut the files; \"build\" = cut the files from the current regions and remake the product. Runs in the background → char_status.",
     inputSchema: { type: "object", properties: { ...TASK_ARG,
         ...SET_ARG, what: { type: "string", description: "\"plan\" or \"build\"." } }, required: ["task_id", "what"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_cut is for chat requests");
@@ -1023,7 +1025,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     name: "char_status",
     description: "Bộ nhân vật (chat): wait (up to ~1 min) for the 3c regions / the layer cut to finish → their status, checks and the layer files.",
     inputSchema: { type: "object", properties: { ...TASK_ARG, ...SET_ARG }, required: ["task_id"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task } = await loadTask(ctx, args.task_id);
       const sid = str(args.set_id);
@@ -1058,7 +1060,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     description:
       "Bộ nhân vật (chat / auto): go back to an EARLIER attempt of a 3b picture (asked 2026-10-30: a redraw that came out worse replaced the better one). image_id = an attempt of that role from char_run_edits / char_wait. It becomes the picture the role uses; the pictures drawn from that role are listed in \"redraw\" — run them again (char_run_edits roles) so they lie on it, then char_cut \"plan\".",
     inputSchema: { type: "object", properties: { ...TASK_ARG, ...SET_ARG, image_id: { type: "string", description: "The earlier attempt (a 3b picture of the set, status done)." } }, required: ["task_id", "image_id"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
       if (!["edits", "chat", "auto"].includes(task.input.char?.step ?? "")) throw new Error("char_use_edit is for the edits, chat and auto steps");
@@ -1092,7 +1094,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       "Bộ nhân vật (chat): approve a finished master — ONLY when the editor's request hands you the whole set (they said to do everything / approve yourself). Starts the master at print size (3a); then char_run_edits for the 3b pictures, char_cut(\"plan\") and char_cut(\"build\").",
     inputSchema: { type: "object", properties: { ...TASK_ARG,
         ...SET_ARG, image_id: { type: "string", description: "The master (set.masters / char_wait)." } }, required: ["task_id", "image_id"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id, args.set_id);
       // A version set's master is the agent's to pick in the auto step too (the editor approved the whole set's).
@@ -1128,7 +1130,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_draw_backdrops is for chat requests");
@@ -1152,7 +1154,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_draw_elements is for chat requests");
@@ -1177,7 +1179,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_make_blank is for chat requests");
@@ -1219,7 +1221,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id", "name", "prompt"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       const { style, project: p } = await savePhotoStyle(db, task.user_id!, project, {
@@ -1241,7 +1243,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     name: "char_remove_photo_style",
     description: "Bộ ảnh khách: take a style off the photo zone (a style made for the set is deleted; a library style only stops being offered).",
     inputSchema: { type: "object", properties: { ...TASK_ARG, style_id: { type: "string", description: "get_task set.photoStyles[].id" } }, required: ["task_id", "style_id"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       const p = await removePhotoStyle(db, project, str(args.style_id));
@@ -1262,7 +1264,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       const ids = (Array.isArray(args.style_ids) ? args.style_ids : []).map(str).filter(Boolean);
@@ -1276,7 +1278,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     name: "char_style_demo",
     description: "Bộ ảnh khách: a finished test picture of a style becomes its demo (the picture the customer picks the style by on the store).",
     inputSchema: { type: "object", properties: { ...TASK_ARG, style_id: { type: "string", description: "The style." }, image_id: { type: "string", description: "One of its done tests." } }, required: ["task_id", "style_id", "image_id"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       await setStyleDemo(db, project, str(args.style_id), str(args.image_id));
@@ -1293,7 +1295,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       properties: { ...TASK_ARG, reset_zones: { type: "boolean", description: "true = customer photo zones from the set's own layout again (default: a zone the editor reshaped in the product is kept)." } },
       required: ["task_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_remake_product is for chat requests");
@@ -1325,7 +1327,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { project } = await openCharTask(ctx, args.task_id);
       if (!project.brief.imported) throw new Error("This set is not an imported one");
@@ -1364,7 +1366,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       properties: { ...TASK_ARG, path: { type: "string", description: "Its path in the folder (char_import_files)." }, offset: { type: "number", description: "Start at this character (paging)." } },
       required: ["task_id", "path"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { project } = await openCharTask(ctx, args.task_id);
       if (!project.brief.imported) throw new Error("This set is not an imported one");
@@ -1391,7 +1393,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id", "reference", "pieces"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { project } = await openCharTask(ctx, args.task_id);
       if (!project.brief.imported) throw new Error("This set is not an imported one");
@@ -1429,7 +1431,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id", "a", "b"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { project } = await openCharTask(ctx, args.task_id);
       if (!project.brief.imported) throw new Error("This set is not an imported one");
@@ -1458,7 +1460,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id", "manifest"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { project } = await openCharTask(ctx, args.task_id);
       if (!project.brief.imported) throw new Error("This set is not an imported one");
@@ -1479,7 +1481,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     description:
       'Bộ import: build the set and its product from a manifest of the uploaded folder (background, minutes for thousands of files — set.brief.imported shows done / total, problems; get_task again to see it). manifest = {name, canvas: {width, height} px, dpi, widthMm, material (CT material id or ""), cut: "alpha" (die-cut along the artwork) | "rect", title, description, versionLabel ("Number of grandkids"), variantLabel ("Layout", "" when a version has one variant), versions: [{name, variants: [{name, layers: [{key, label (customer-facing English), kind: "static" | "choice" | "linked", follows (linked: the leader\'s key), groupLabel ("Skin tone"), groups: [{name, swatch (#hex or ""), options: [{name, file (path in the folder), default (bool)}]}]}] bottom first, texts: [{key, label, sample, maxChars, font (Google family — or the family of fontFile), fontFile (path of a .ttf / .otf of the folder, optional), weight, size (letter height px), cx, cy, width, angle (deg clockwise), color, above (layer key it lies on, "" = top)}]}]}], sample (path of the finished look), mockups: [paths]}. A layer file is the whole canvas — or a smaller piece with a box {x, y, w, h, angle?} (canvas px, its whole picture incl. transparent margin, from char_import_locate) on the layer (all its options) or on one option: the build places it on a whole canvas. char_import_preview every version first.',
     inputSchema: { type: "object", properties: { ...TASK_ARG, manifest: { type: "object", description: "See the description." } }, required: ["task_id", "manifest"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (!project.brief.imported) throw new Error("This set is not an imported one");
@@ -1493,7 +1495,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
     description:
       "Bộ import: make (or reuse) the PRODUCT of the import's artwork on the artwork's product base (set from its material by the build) and send it to Shopify as a draft — a build stops at the artwork, nothing goes to Shopify by itself. Title, description from the import, variants + price from the base, the product's mockups (the folder's sales pictures). Waits for it (≤ 60 s). → set.brief.imported.shopify: status, previewUrl (staff preview in the draft theme, expires), adminUrl, priceTable, error.",
     inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (!project.brief.imported) throw new Error("This set is not an imported one");
@@ -1519,7 +1521,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (!project.brief.imported) throw new Error("This set is not an imported one");
@@ -1541,7 +1543,7 @@ export const CT_MCP_CHAR_TOOLS: CtMcpTool[] = [
       },
       required: ["task_id", "base_product_id", "name"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, project } = await openCharTask(ctx, args.task_id);
       if (task.input.char?.step !== "chat" && task.input.char?.step !== "auto") throw new Error("char_add_product is for chat requests");

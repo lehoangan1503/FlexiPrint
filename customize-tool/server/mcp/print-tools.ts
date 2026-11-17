@@ -649,7 +649,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       if (error) throw new Error(error.message);
       const { data: product } = await ctx.db.from(CT_TABLES.products).select("user_id, published_version").eq("id", bundle.product.id).maybeSingle<{ user_id: string; published_version: number | null }>();
       let published = false;
-      if (product?.published_version) published = (await h.publish(await serviceSession(ctx.db, product.user_id), bundle.product.id, siteUrl())).ok;
+      if (product?.published_version) published = (await h.publish(await serviceSession(ctx.service ?? ctx.db, product.user_id), bundle.product.id, siteUrl())).ok;
       return json({ product_id: bundle.product.id, set: { id: target.id, version: versionOf(target), name: target.name, shape }, published, next: `render_artwork {product_id, options: {<the version chooser>: "${versionOf(target)}"}} and look at the zone.` });
     },
   },
@@ -664,7 +664,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       const out = await makeVersionThumbs(ctx.db, productId);
       const { data: product } = await ctx.db.from(CT_TABLES.products).select("user_id, published_version").eq("id", productId).maybeSingle<{ user_id: string; published_version: number | null }>();
       let published = false;
-      if (product?.published_version && Object.keys(out.made).length) published = (await h.publish(await serviceSession(ctx.db, product.user_id), productId, siteUrl())).ok;
+      if (product?.published_version && Object.keys(out.made).length) published = (await h.publish(await serviceSession(ctx.service ?? ctx.db, product.user_id), productId, siteUrl())).ok;
       return json({ ...out, published, next: Object.keys(out.made).length ? "view_image a few of the urls." : "No versions to picture (one version, or versions off)." });
     },
   },

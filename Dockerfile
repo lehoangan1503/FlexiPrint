@@ -17,7 +17,8 @@ ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
     NEXT_PUBLIC_DB_SCHEMA=$NEXT_PUBLIC_DB_SCHEMA \
     NEXT_TELEMETRY_DISABLED=1 \
     NODE_OPTIONS=--max-old-space-size=1536
-RUN npm run build
+# The local MCP "flexiprint" (integrations/flexiprint) — downloadable at /flexiprint-mcp.mjs (HUONG-DAN-CAI-DAT.md).
+RUN cp integrations/flexiprint/server.mjs public/flexiprint-mcp.mjs && npm run build
 
 FROM node:22-alpine AS runner
 WORKDIR /app

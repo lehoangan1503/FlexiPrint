@@ -21,7 +21,23 @@ export async function loadTask(ctx: CtMcpContext, id: unknown): Promise<{ db: Ct
   const { data, error } = await db.from(CT_TABLES.agentTasks).select("*").eq("id", key).maybeSingle<CtAgentTask>();
   if (error) throw new Error(error.message);
   if (!data) throw new Error("No such task");
+  if (ctx.caller === "user") {
+    // A user's own task (admins: anyone's) that @flexiprint is not running (a web-app task sent to the agent stays its).
+    if (data.user_id !== ctx.userId && !ctx.admin) throw new Error("No such task, or it is not yours");
+    if (data.agent_job_id) throw new Error("@flexiprint is working on this task — open your own: char_open_task (a set) or work without task_id");
+  }
   return { db, task: data };
+}
+
+/** Who a tool works for: the task's user (agent, task_id required) or the signed-in user (task_id optional). */
+export async function actorOf(ctx: CtMcpContext, id: unknown): Promise<{ db: CtServiceClient; task: CtAgentTask | null; userId: string }> {
+  if (ctx.caller === "user" && !str(id)) {
+    if (!ctx.service || !ctx.userId) throw new Error("Not signed in");
+    return { db: ctx.service, task: null, userId: ctx.userId };
+  }
+  const { db, task } = await loadTask(ctx, id);
+  if (!task.user_id) throw new Error("The task has no user");
+  return { db, task, userId: task.user_id };
 }
 
 export function openTask(task: CtAgentTask): void {
@@ -44,4 +60,6 @@ export async function patchTask(db: CtServiceClient, id: string, patch: Partial<
 }
 
 export const TASK_ARG = { task_id: { type: "string", description: "The task id from the message." } };
+/** task_id of a tool a signed-in user calls without a task. */
+export const OPT_TASK_ARG = { task_id: { type: "string", description: "Agent: the task id from the message. A signed-in user: leave out." } };
 

@@ -46,6 +46,12 @@ this MCP. Everything you read here is live production data.
   the artwork's store, and deploy_product always sends it to the product's own store.
 
 ## Tools
+Two callers. The @flexiprint agent (task_id from the web app's message on every task tool). A signed-in editor
+through the local MCP "flexiprint" (integrations/flexiprint, since 2026-11-17): every tool too, on their own
+artworks / products / sets (admins: all) — product, base and deploy tools WITHOUT task_id; a bộ nhân vật through a task
+of its own (char_create_set for a new set, char_open_task for an existing one → task_id), finished with submit_result.
+Local tools of that MCP: flexiprint_import (a bộ folder on the machine), flexiprint_upload_image (a picture → url),
+flexiprint_save_files (urls → a folder).
 - Library reads: list_categories, get_category, list_cliparts, get_history, view_image.
 - Tasks from the web app: get_task, report_progress, ask_user, submit_result, fail_task.
 - v2 bộ nhân vật: the char_* tools (see flexiprint://guide/layer-rules). Chat requests (step "chat", the sticky chat

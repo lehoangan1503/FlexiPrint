@@ -7,7 +7,8 @@
  *   deploy_product   the same checks again, then the storefront template + the Shopify product (variants from the
  *                    price table, mockups as images); run again it updates the same Shopify product
  *
- * The task's user must be able to edit the product (its owner, or an admin — migration 026).
+ * The task's user — or the signed-in user (no task_id, the local MCP integrations/flexiprint, 2026-11-17) — must be
+ * able to edit the product (its owner, or an admin — migration 026).
  */
 
 import type { CtAgentTask, CtAsset, CtBaseProduct, CtContentResult, CtPriceTable, CtProduct, CtShopifyCollection, CtShopifyInfo } from "../../types";
@@ -27,26 +28,32 @@ import { ensureVersionPhoi, jobName } from "../version-phoi";
 import { normalizeProductConfig } from "../../lib/design";
 import { CT_CONFIG, CT_TABLES } from "../../config";
 import type { CtServiceClient, CtSession } from "../supabase";
-import { TASK_ARG, json, liveStatus, loadTask } from "./task-common";
+import { OPT_TASK_ARG, actorOf, json, liveStatus } from "./task-common";
 import type { CtMcpContext, CtMcpTool } from "./tools";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** A description shorter than this (its text, tags stripped) is not a product page. */
 const MIN_DESCRIPTION = 200;
 
-/** The task, a session of its user and the product they may edit. */
-async function openProduct(ctx: CtMcpContext, args: Record<string, unknown>): Promise<{ db: CtServiceClient; task: CtAgentTask; s: CtSession; product: CtProduct }> {
-  const { db, task } = await loadTask(ctx, args.task_id);
-  if (!task.user_id) throw new Error("The task has no user");
+/** Who works (the task's user, or the signed-in user — task_id optional for them) and a session as that user. */
+async function openActor(ctx: CtMcpContext, args: Record<string, unknown>): Promise<{ db: CtServiceClient; task: CtAgentTask | null; userId: string; s: CtSession }> {
+  const { db, task, userId } = await actorOf(ctx, args.task_id);
+  return { db, task, userId, s: await serviceSession(db, userId) };
+}
+
+/** The task (if any), a session of its user and the product they may edit. */
+async function openProduct(ctx: CtMcpContext, args: Record<string, unknown>): Promise<{ db: CtServiceClient; task: CtAgentTask | null; s: CtSession; product: CtProduct }> {
+  const { db, task, s } = await openActor(ctx, args);
   const id = str(args.product_id);
   if (!UUID.test(id)) throw new Error("product_id is not a valid id");
-  const s = await serviceSession(db, task.user_id);
   const product = await ownedProduct(s, id);
-  if (!product) throw new Error("No such product, or the task's user may not edit it");
+  if (!product) throw new Error("No such product, or you may not edit it");
   return { db, task, s, product };
 }
 
-async function progress(db: CtServiceClient, taskId: string, text: string): Promise<void> {
+/** One progress line on the task — nothing when the user works without one. */
+async function progress(db: CtServiceClient, taskId: string | undefined, text: string): Promise<void> {
+  if (!taskId) return;
   const { data: task } = await db.from(CT_TABLES.agentTasks).select("*").eq("id", taskId).single<CtAgentTask>();
   if (!task) return;
   await db
@@ -200,10 +207,10 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       "Before deploying a product to Shopify: what the deploy would use and what blocks it. → shopify (configured, the linked Shopify product now: title, description, url), priceTables (id, name, sizes / packs with prices, problems; default = linked or newest), template (builds? the customer fields the product page asks, warnings), mockups (id, url — the product's images), collections, lastContent (the title + description a content task wrote, if any), missing (Vietnamese: every blocker with defaults). Fill what is missing yourself, then deploy_product.",
     inputSchema: {
       type: "object",
-      properties: { ...TASK_ARG, product_id: { type: "string", description: "The FlexiPrint product (char_status gives the set's product id)." } },
-      required: ["task_id", "product_id"],
+      properties: { ...OPT_TASK_ARG, product_id: { type: "string", description: "The FlexiPrint product (char_status gives the set's product id)." } },
+      required: ["product_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, s, product } = await openProduct(ctx, args);
       const st = await deployState(db, s, product);
@@ -244,10 +251,10 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
     name: "list_base_products",
     description:
       "Product bases (like Teeinblue): the blank products sold — they OWN the physical piece: print area (= the canvas of an artwork made for it), khuôn in (fixed shape) or cut along the design (cut.mode khuon | alpha | none, border mm, silhouette, hanging hole), the preview photo / phôi (preview), material, Shopify product type, the price table (variants sizes × packs with prices), how many products use each. An artwork is only the design; a product (what is sold) = an artwork + one of these.",
-    inputSchema: { type: "object", properties: { ...TASK_ARG }, required: ["task_id"] },
-    callers: ["agent"],
+    inputSchema: { type: "object", properties: { ...OPT_TASK_ARG }, required: [] },
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
-      const { db } = await loadTask(ctx, args.task_id);
+      const { db } = await actorOf(ctx, args.task_id);
       const bases = await listBaseRows(db);
       return json({
         bases: bases.map((b) => ({
@@ -273,26 +280,24 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        ...TASK_ARG,
+        ...OPT_TASK_ARG,
         artwork_id: { type: "string", description: "The artwork (a set's product id, an import's, render_artwork's)." },
         base_product_id: { type: "string", description: "From list_base_products — the one of the artwork's material / khuôn." },
         name: { type: "string", description: "Product title (theme), default = the artwork's name." },
       },
-      required: ["task_id", "artwork_id", "base_product_id"],
+      required: ["artwork_id", "base_product_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
-      const { db, task } = await loadTask(ctx, args.task_id);
-      if (!task.user_id) throw new Error("The task has no user");
-      const s = await serviceSession(db, task.user_id);
+      const { db, task, userId, s } = await openActor(ctx, args);
       const id = str(args.artwork_id);
       if (!UUID.test(id)) throw new Error("artwork_id is not a valid id");
       const artwork = await ownedProduct(s, id);
       if (!artwork) throw new Error("No such artwork, or the task's user may not edit it");
       const base = await loadBaseProduct(db, str(args.base_product_id));
       if (!base) throw new Error("No such product base — list_base_products");
-      const product = await makeProductFromArtwork(db, task.user_id, artwork, base, str(args.name) || undefined);
-      await progress(db, task.id, `Đã tạo sản phẩm “${product.name}” từ artwork “${artwork.name}” trên ${base.name}`);
+      const product = await makeProductFromArtwork(db, userId, artwork, base, str(args.name) || undefined);
+      await progress(db, task?.id, `Đã tạo sản phẩm “${product.name}” từ artwork “${artwork.name}” trên ${base.name}`);
       return json({ product_id: product.id, editor: `${siteUrl()}${CT_CONFIG.basePath}/${product.id}`, next: "make_product_mockups on product_id, then check_deploy / deploy_product." });
     },
   },
@@ -302,14 +307,12 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       "The base an ARTWORK is viewed on (the editor's \"Xem trên base\"): render_artwork / check_artwork then draw and check it on that base's khuôn + safe zone, the AI phôi (make_version_phoi) are made for it. Changes nothing in the design; products keep their own base. base_product_id empty = none.",
     inputSchema: {
       type: "object",
-      properties: { ...TASK_ARG, artwork_id: { type: "string", description: "The artwork." }, base_product_id: { type: "string", description: "From list_base_products ('' = none)." } },
-      required: ["task_id", "artwork_id"],
+      properties: { ...OPT_TASK_ARG, artwork_id: { type: "string", description: "The artwork." }, base_product_id: { type: "string", description: "From list_base_products ('' = none)." } },
+      required: ["artwork_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
-      const { db, task } = await loadTask(ctx, args.task_id);
-      if (!task.user_id) throw new Error("The task has no user");
-      const s = await serviceSession(db, task.user_id);
+      const { db, task, userId, s } = await openActor(ctx, args);
       const artwork = await ownedProduct(s, str(args.artwork_id));
       if (!artwork) throw new Error("No such artwork, or the task's user may not edit it");
       if (artwork.kind === "product") throw new Error("That is a product — its base is set on the product page (make_product_from_artwork picks it)");
@@ -328,39 +331,35 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        ...TASK_ARG,
+        ...OPT_TASK_ARG,
         artwork_id: { type: "string", description: "The artwork." },
         base_product_id: { type: "string", description: "Default: the artwork's base (set_artwork_base)." },
         version_ids: { type: "array", items: { type: "string" }, description: "Only these versions (main asset ids from version_phoi_status)." },
         redo: { type: "boolean", description: "Draw again even when they have one." },
       },
-      required: ["task_id", "artwork_id"],
+      required: ["artwork_id"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
-      const { db, task } = await loadTask(ctx, args.task_id);
-      if (!task.user_id) throw new Error("The task has no user");
-      const s = await serviceSession(db, task.user_id);
+      const { db, task, userId, s } = await openActor(ctx, args);
       const artwork = await ownedProduct(s, str(args.artwork_id));
       if (!artwork) throw new Error("No such artwork, or the task's user may not edit it");
       if (artwork.kind === "product") throw new Error("Phôi are made on the ARTWORK (its products take them): pass the artwork id (config.artworkLink of the product)");
       const base = await loadBaseProduct(db, str(args.base_product_id) || artwork.base_product_id || "");
       if (!base) throw new Error("The artwork has no base — set_artwork_base or pass base_product_id");
       const ids = Array.isArray(args.version_ids) ? args.version_ids.map(str).filter(Boolean) : [];
-      const versions = await ensureVersionPhoi(db, task.user_id, artwork.id, base, { redo: args.redo === true, mainIds: ids });
-      await progress(db, task.id, `Phôi preview “${artwork.name}” trên ${base.name}: ${versions.filter((v) => v.status === "started").length} version gửi AI, ${versions.filter((v) => v.status === "have").length} đã có`);
+      const versions = await ensureVersionPhoi(db, userId, artwork.id, base, { redo: args.redo === true, mainIds: ids });
+      await progress(db, task?.id, `Phôi preview “${artwork.name}” trên ${base.name}: ${versions.filter((v) => v.status === "started").length} version gửi AI, ${versions.filter((v) => v.status === "have").length} đã có`);
       return json({ artwork_id: artwork.id, base: base.name, versions, next: "version_phoi_status after ~2 min; view_image the urls." });
     },
   },
   {
     name: "version_phoi_status",
     description: "The preview photos (phôi) of an artwork's versions per base: url, source (ai | folder = the import folder's own), and the AI jobs (running / failed with error).",
-    inputSchema: { type: "object", properties: { ...TASK_ARG, artwork_id: { type: "string", description: "The artwork." } }, required: ["task_id", "artwork_id"] },
-    callers: ["agent"],
+    inputSchema: { type: "object", properties: { ...OPT_TASK_ARG, artwork_id: { type: "string", description: "The artwork." } }, required: ["artwork_id"] },
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
-      const { db, task } = await loadTask(ctx, args.task_id);
-      if (!task.user_id) throw new Error("The task has no user");
-      const s = await serviceSession(db, task.user_id);
+      const { db, task, userId, s } = await openActor(ctx, args);
       const artwork = await ownedProduct(s, str(args.artwork_id));
       if (!artwork) throw new Error("No such artwork, or the task's user may not edit it");
       const { data: mains } = await db.from(CT_TABLES.assets).select("id,name").eq("product_id", artwork.id).eq("role", "main").order("sort_order").returns<Array<{ id: string; name: string }>>();
@@ -378,14 +377,14 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "list_artwork_products",
     description: "The products (what is sold) made from an artwork: id, name, base, whether it still holds the artwork's latest design (\"Có bản artwork mới\" = outdated), Shopify link.",
-    inputSchema: { type: "object", properties: { ...TASK_ARG, artwork_id: { type: "string", description: "The artwork." } }, required: ["task_id", "artwork_id"] },
-    callers: ["agent"],
+    inputSchema: { type: "object", properties: { ...OPT_TASK_ARG, artwork_id: { type: "string", description: "The artwork." } }, required: ["artwork_id"] },
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
-      const { db } = await loadTask(ctx, args.task_id);
+      const { db, s } = await openActor(ctx, args);
       const id = str(args.artwork_id);
       if (!UUID.test(id)) throw new Error("artwork_id is not a valid id");
-      const { data: art } = await db.from(CT_TABLES.products).select("config").eq("id", id).maybeSingle<Pick<CtProduct, "config">>();
-      if (!art) throw new Error("No such artwork");
+      const art = await ownedProduct(s, id);
+      if (!art) throw new Error("No such artwork, or you may not edit it");
       const revision = normalizeProductConfig(art.config).artworkRevision;
       const { data } = await db.from(CT_TABLES.products).select("id,name,base_product_id,config,shopify").eq("kind", "product").eq("config->artworkLink->>artworkId", id).order("created_at").returns<Array<Pick<CtProduct, "id" | "name" | "base_product_id" | "config" | "shopify">>>();
       const bases = new Map((await listBaseRows(db)).map((b) => [b.id, b.name]));
@@ -404,7 +403,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        ...TASK_ARG,
+        ...OPT_TASK_ARG,
         product_id: { type: "string", description: "The FlexiPrint product." },
         title: { type: "string", description: "Shopify title (US English)." },
         description_html: { type: "string", description: "Shopify description: p, ul/li, strong, h3 only." },
@@ -417,9 +416,9 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         collection_ids: { type: "array", items: { type: "string" }, description: "gid://shopify/Collection/… from check_deploy, smart ones too (default: the ones that fit the title)." },
         primary_collection_id: { type: "string", description: "The breadcrumb collection (one of collection_ids)." },
       },
-      required: ["task_id", "product_id", "title", "description_html"],
+      required: ["product_id", "title", "description_html"],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, s, product } = await openProduct(ctx, args);
       const st = await deployState(db, s, product);
@@ -443,13 +442,13 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       });
       const missing = blockers(st, { kind: product.kind ?? "artwork", tableId, title: body?.title ?? "", descriptionHtml: body?.descriptionHtml ?? "", mediaIds });
       if (!body || missing.length) throw new Error(`Chưa deploy được:\n- ${(missing.length ? missing : ["Thiếu title hoặc bảng giá."]).join("\n- ")}`);
-      await progress(db, task.id, `Đang deploy “${body.title}” lên Shopify (${body.status})…`);
+      await progress(db, task?.id, `Đang deploy “${body.title}” lên Shopify (${body.status})…`);
       const r = await runDeploy(s, product, body, siteUrl());
       if ("error" in r) {
-        await progress(db, task.id, `Deploy lỗi: ${r.error}`);
+        await progress(db, task?.id, `Deploy lỗi: ${r.error}`);
         throw new Error(r.error);
       }
-      await progress(db, task.id, `Đã deploy lên Shopify (${r.shopify.status}, template v${r.publish.version}): ${r.shopify.url || r.shopify.adminUrl}`);
+      await progress(db, task?.id, `Đã deploy lên Shopify (${r.shopify.status}, template v${r.publish.version}): ${r.shopify.url || r.shopify.adminUrl}`);
       return json({
         ok: true,
         shopify: { productId: r.shopify.productId, status: r.shopify.status, url: r.shopify.url, adminUrl: r.shopify.adminUrl, handle: r.shopify.handle },

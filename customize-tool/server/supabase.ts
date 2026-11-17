@@ -39,7 +39,7 @@ export interface CtSession {
 
 /**
  * A signed-in editor: the login cookie (the web app), or "Authorization: Bearer <their Supabase access token>" — the
- * import MCP on the editor's own machine (integrations/flexiprint-import) logs in with their account and sends it.
+ * local MCP on the editor's own machine (integrations/flexiprint) logs in with their account and sends it.
  */
 export async function ctSession(): Promise<CtSession | null> {
   const bearer = /^Bearer\s+(ey[\w-]+\.[\w-]+\.[\w-]+)$/.exec((await headers()).get("authorization") ?? "")?.[1];

@@ -1,7 +1,9 @@
 /**
  * flexiprint-mcp tools. Two callers (server/mcp/server.ts decides who is calling):
  *   - "agent"  — the @flexiprint agent on agent_ide (Bearer CT_AGENT_TOKEN): everything, tasks included;
- *   - "user"   — a signed-in editor (cookie): library reads with their own rights.
+ *   - "user"   — a signed-in editor (cookie or Bearer login token — the local MCP integrations/flexiprint): since
+ *                2026-11-17 every tool too (chúa thượng: product from a to z, deploy ACTIVE, bộ nhân vật), on their
+ *                own products / sets / self-opened tasks (admins: all).
  * Reads go through `db` (the service client for the agent, the user's client otherwise). A web-app task (kind
  * content | char) is answered with submit_result.
  */
@@ -26,9 +28,14 @@ export type LibraryDb = CtSupabase | CtServiceClient;
 
 export interface CtMcpContext {
   db: LibraryDb;
-  /** The service client — agent only (tasks). */
+  /** The service client. For a signed-in user (2026-11-17, MCP tổng) too: the tools that use it check ownership
+   * themselves (task-common.ts loadTask / actorOf — the user's own tasks and products, admins everything). */
   service: CtServiceClient | null;
   caller: CtMcpCaller;
+  /** The signed-in user ("user" caller) — null for the agent. */
+  userId: string | null;
+  /** That user is an admin (every product, every set). */
+  admin: boolean;
 }
 
 interface JsonSchema {
@@ -50,7 +57,8 @@ export interface CtMcpTool {
 }
 
 const ALL: CtMcpCaller[] = ["agent", "user"];
-const AGENT: CtMcpCaller[] = ["agent"];
+/** Task tools: a user works its OWN self-opened tasks (char_create_set / char_open_task) — loadTask checks. */
+const AGENT: CtMcpCaller[] = ALL;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CATEGORY_ARG = { type: "string", description: "The category's id or exact name." };
 

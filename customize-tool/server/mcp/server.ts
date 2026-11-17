@@ -3,7 +3,8 @@
  * one JSON reply). POST /api/customize-tool/mcp.
  *
  *   Bearer CT_AGENT_TOKEN  → "agent": the @flexiprint agent on agent_ide — every tool, tasks included
- *   login cookie           → "user": a signed-in editor (Claude Code on their own machine…) — library reads
+ *   login cookie / Bearer  → "user": a signed-in editor (the local MCP integrations/flexiprint) — every tool, on
+ *                            their own products, sets and self-opened tasks (admins: all)
  *
  * Tools: server/mcp/tools.ts. Resources (how the system works, the writing rules): server/mcp/guide.ts.
  */
@@ -14,11 +15,12 @@ import { ctServiceClient, ctSession } from "../supabase";
 import { CT_MCP_RESOURCES } from "./guide";
 import { CT_MCP_TOOLS, type CtMcpContext, type CtMcpOutput } from "./tools";
 import { takeInbox, unreadMessages } from "../agent/inbox";
+import { isAdmin } from "../ai-styles";
 
 const PROTOCOL_VERSION = "2025-06-18";
 
 const INSTRUCTIONS =
-  "FlexiPrint clipart library (read-only) and web-app tasks. Read the resource flexiprint://guide/overview first (no resource support: the read_guide tool). Tasks from the web app (kind content | char | mockup): get_task → work → submit_result (or fail_task).";
+  "FlexiPrint: clipart library, artworks, products, mockups, Shopify deploy, bộ nhân vật. Read the resource flexiprint://guide/overview first (no resource support: the read_guide tool). Agent: tasks from the web app (kind content | char | mockup): get_task → work → submit_result (or fail_task). A signed-in user: leave task_id out of the product / deploy tools; a bộ nhân vật works through its own task (char_create_set or char_open_task give the task_id).";
 
 interface RpcRequest {
   jsonrpc?: string;
@@ -45,10 +47,11 @@ function bearerIs(req: NextRequest, secret: string | undefined): boolean {
 export async function mcpContext(req: NextRequest): Promise<CtMcpContext | null> {
   if (bearerIs(req, process.env.CT_AGENT_TOKEN)) {
     const service = ctServiceClient();
-    return service ? { db: service, service, caller: "agent" } : null;
+    return service ? { db: service, service, caller: "agent", userId: null, admin: true } : null;
   }
   const session = await ctSession();
-  return session ? { db: session.supabase, service: null, caller: "user" } : null;
+  if (!session) return null;
+  return { db: session.supabase, service: ctServiceClient(), caller: "user", userId: session.user.id, admin: await isAdmin(session) };
 }
 
 function toContent(out: CtMcpOutput): { content: unknown[] } {

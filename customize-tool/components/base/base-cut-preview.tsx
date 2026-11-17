@@ -12,14 +12,15 @@
  * Every artwork viewed on the base and every product made on it read these (lib/base-fit).
  */
 
-import { useRef, useState } from "react";
-import { ImageIcon, Loader2, Sparkles, Trash2, Upload, X } from "lucide-react";
-import type { CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseScenesAuto, CtProductScene } from "../../types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Bot, ImageIcon, Loader2, RefreshCw, Sparkles, Store, Trash2, Upload, X } from "lucide-react";
+import type { CtAgentTask, CtBasePreviewResult, CtBaseScene, CtBaseScenePreset, CtBaseScenesAuto, CtBaseStoreState, CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtProductScene, CtSideLoss } from "../../types";
+import { defaultCategoryRules } from "../../lib/library";
 import type { CtPrintTemplate } from "../../types/print";
 import { printApi } from "../../lib/print-api";
 import { ctApi } from "../../lib/api-client";
 import { defaultScene } from "../../lib/scene";
-import { CHECKER_STYLE, CtButton, CtField, CtInput, CtSelect } from "../ui";
+import { CHECKER_STYLE, CtButton, CtField, CtInput, CtSelect, CtTextarea } from "../ui";
 
 const MODES: Array<{ value: CtBaseCutMode; label: string }> = [
   { value: "khuon", label: "Theo khuôn in (nét liền = cắt, nét đứt = vùng an toàn)" },
@@ -84,6 +85,10 @@ export function BasePreviewSection(props: {
   /** A new AI background: added to the list and made the preview. */
   onScene: (scene: CtBaseScene) => void;
   onScenes: (scenes: CtBaseScene[]) => void;
+  /** The base's last save (the store state is read again after it). */
+  savedAt: string;
+  /** Scenes made on the server meanwhile (@flexiprint): added to the page's list. */
+  onRemoteScenes: (scenes: CtBaseScene[]) => void;
 }) {
   const { preview, cut } = props.cfg;
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -190,6 +195,8 @@ export function BasePreviewSection(props: {
         </div>
       </div>
       <SceneMaker baseId={props.baseId} cfg={props.cfg} auto={props.auto} blank={blank ? { url: blank.url, width: blank.width, height: blank.height, box: blank.box } : null} onChange={props.onChange} onScene={props.onScene} onScenes={props.onScenes} />
+      <AgentPreviewBox baseId={props.baseId} scenes={props.cfg.previewScenes} onRemoteScenes={props.onRemoteScenes} onPick={props.onChange} />
+      <StoreSync baseId={props.baseId} savedAt={props.savedAt} />
     </div>
   );
 }
@@ -246,12 +253,13 @@ function SceneMaker(props: {
     props.onScenes(previewScenes.filter((x) => x.id !== sc.id));
     if (current?.id === sc.id) props.onChange(sc.plain);
   };
-  const tile = (key: string, url: string | null, label: string, on: boolean, pick: () => void, drop?: () => void) => (
+  const tile = (key: string, url: string | null, label: string, on: boolean, pick: () => void, drop?: () => void, loss?: CtSideLoss | null) => (
     <div key={key} className="group relative w-20 shrink-0">
       <button type="button" onClick={pick} className={`block w-20 overflow-hidden rounded-md border-2 ${on ? "border-sky-500" : "border-transparent hover:border-muted-foreground/40"}`}>
         {url ? <img src={url} alt={label} className="aspect-square w-full object-cover" /> : <div className="flex aspect-square w-full items-center justify-center bg-muted text-muted-foreground"><ImageIcon className="h-4 w-4" /></div>}
       </button>
       <div className="mt-0.5 truncate text-center text-[10px] text-muted-foreground">{label}</div>
+      {loss && <LossLine loss={loss} />}
       {drop && (
         <button type="button" onClick={drop} title="Xoá nền này" className="absolute right-0.5 top-0.5 hidden rounded bg-black/60 p-0.5 text-white group-hover:block">
           <X className="h-3 w-3" />
@@ -301,10 +309,182 @@ function SceneMaker(props: {
           {previewScenes
             .slice()
             .reverse()
-            .map((sc) => tile(sc.id, sc.scene.url, sc.preset === "custom" ? sc.prompt : PRESET_LABEL[sc.preset], current?.id === sc.id, () => props.onChange(sc.scene), () => remove(sc)))}
+            .map((sc) => tile(sc.id, sc.scene.url, sc.preset === "custom" ? sc.prompt : PRESET_LABEL[sc.preset], current?.id === sc.id, () => props.onChange(sc.scene), () => remove(sc), sc.loss))}
         </div>
       )}
       {current && !current.found && <p className="text-amber-600">Không dò lại được phôi trên ảnh này — xem khung xanh, lệch thì chỉnh bằng thanh trượt ở trên.</p>}
+    </div>
+  );
+}
+
+/** "che ≤ 1 %" / the worst side, red from 5 % (the print sheet's share the overlay hides, measured when drawn). */
+function LossLine({ loss }: { loss: CtSideLoss }) {
+  const sides: Array<[keyof CtSideLoss, string]> = [["top", "trên"], ["bottom", "dưới"], ["left", "trái"], ["right", "phải"]];
+  const [k, label] = sides.reduce((a, b) => (loss[b[0]] > loss[a[0]] ? b : a));
+  const v = Math.round(loss[k] * 100);
+  return (
+    <div
+      className={`truncate text-center text-[10px] ${v >= 5 ? "text-red-500" : "text-emerald-600"}`}
+      title={`Thiết kế bị che: trên ${Math.round(loss.top * 100)}% · dưới ${Math.round(loss.bottom * 100)}% · trái ${Math.round(loss.left * 100)}% · phải ${Math.round(loss.right * 100)}%`}
+    >
+      {v <= 1 ? "che ≤ 1%" : `che ${v}% ${label}`}
+    </div>
+  );
+}
+
+/**
+ * "Gửi @flexiprint" (asked 2026-11-17): the agent measures what the preview hides, looks at real designs on it, draws
+ * new preview photos and recommends one (server/mcp/base-preview-tools.ts). Its scenes land in the list below as they
+ * are made; the recommended one can be picked here, then Lưu.
+ */
+function AgentPreviewBox(props: { baseId: string; scenes: CtBaseScene[]; onRemoteScenes: (scenes: CtBaseScene[]) => void; onPick: (preview: CtProductScene) => void }) {
+  const [request, setRequest] = useState("");
+  const [task, setTask] = useState<CtAgentTask | null>(null);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const seen = useRef(0);
+  const { baseId } = props;
+  // The page passes a fresh function each render: read through a ref so the polling keeps its rhythm.
+  const remote = useRef(props.onRemoteScenes);
+  useEffect(() => {
+    remote.current = props.onRemoteScenes;
+  });
+  const live = !!task && ["pending", "running", "waiting"].includes(task.status);
+
+  const pull = useCallback(async () => {
+    const list = await ctApi.listAgentTasks("base_preview", baseId);
+    const t = list[0] ?? null;
+    setTask(t);
+    const n = (t?.progress ?? []).length;
+    // New lines (a scene drawn) or the end: the base's scenes read again.
+    if (t && (n !== seen.current || !["pending", "running", "waiting"].includes(t.status))) {
+      seen.current = n;
+      const d = await ctApi.getBaseProduct(baseId);
+      remote.current(d.base.config.previewScenes);
+    }
+  }, [baseId]);
+
+  useEffect(() => {
+    void pull().catch(() => undefined);
+    // Only on open: the polling below follows a running task.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseId]);
+  useEffect(() => {
+    if (!live) return;
+    const t = setInterval(() => void pull().catch(() => undefined), 6000);
+    return () => clearInterval(t);
+  }, [live, pull]);
+
+  const send = async () => {
+    setSending(true);
+    setError(null);
+    try {
+      const t = await ctApi.createAgentTask({
+        kind: "base_preview",
+        input: { category: { id: null, name: "", spec: "", rules: defaultCategoryRules() }, note: "", images: [], refUrls: [], basePreview: { baseId, baseName: "", request: request.trim() } },
+      });
+      setTask(t);
+      seen.current = 0;
+      setRequest("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không gửi được cho @flexiprint");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const result = task?.status === "done" ? (task.result as CtBasePreviewResult | null) : null;
+  const picked = result?.sceneId ? props.scenes.find((sc) => sc.id === result.sceneId) ?? null : null;
+  const lines = (task?.progress ?? []).slice(-4);
+  return (
+    <div className="space-y-2 border-t pt-3">
+      <div className="font-medium text-foreground">Nhờ @flexiprint làm preview</div>
+      <p className="text-muted-foreground">
+        Agent tự đo phần thiết kế bị che, ghép thử thiết kế thật của các sản phẩm lên ảnh, tìm nguyên nhân, vẽ vài nền mới rồi đề xuất 1 nền. Muốn agent đặt luôn làm preview thì ghi “đặt luôn”.
+      </p>
+      <CtTextarea rows={2} value={request} disabled={live} placeholder="VD: chăn treo giường tầng phòng bé, hợp các mẫu thể thao; hiện trọn tên ở dưới; đặt luôn" onChange={(e) => setRequest(e.target.value)} />
+      <div className="flex items-center gap-2">
+        <CtButton size="sm" variant="outline" disabled={live || sending} onClick={() => void send()}>
+          {sending || live ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bot className="h-3.5 w-3.5" />} {live ? "@flexiprint đang làm…" : "Gửi @flexiprint"}
+        </CtButton>
+        {live && task && (
+          <button type="button" className="text-[11px] text-muted-foreground hover:underline" onClick={() => void ctApi.cancelAgentTask(task.id).then(setTask).catch(() => undefined)}>
+            Dừng
+          </button>
+        )}
+      </div>
+      {live && lines.length > 0 && (
+        <ul className="space-y-0.5 text-muted-foreground">
+          {lines.map((l, i) => (
+            <li key={i} className="truncate">· {l.text}</li>
+          ))}
+        </ul>
+      )}
+      {task?.status === "failed" && <p className="text-amber-600">@flexiprint dừng: {task.error}</p>}
+      {result && (
+        <div className="space-y-1 rounded-md border p-2">
+          <p className="whitespace-pre-wrap">{result.summary}</p>
+          {picked && (
+            <CtButton size="sm" variant="outline" onClick={() => props.onPick(picked.scene)}>
+              Chọn nền agent đề xuất
+            </CtButton>
+          )}
+          {picked && <span className="ml-2 text-[11px] text-muted-foreground">rồi bấm Lưu{result.applied ? " (agent đã đặt sẵn trên server)" : ""}</span>}
+        </div>
+      )}
+      {error && <p className="text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * The store reads published templates only (asked 2026-11-17: "base thay đổi ảnh preview thì các sản phẩm dùng nó có
+ * thay đổi không?"): after a save, the products already on the store whose preview is still the old one, and one
+ * click to publish them again (template only — Shopify product, photos, price stay).
+ */
+function StoreSync(props: { baseId: string; savedAt: string }) {
+  const [state, setState] = useState<CtBaseStoreState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const load = useCallback(() => {
+    ctApi.baseStoreState(props.baseId).then(setState).catch(() => setState(null));
+  }, [props.baseId]);
+  useEffect(load, [load, props.savedAt]);
+  if (!state || !state.deployed) return null;
+  const run = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await ctApi.republishBase(props.baseId);
+      setNote(`Đã cập nhật ${r.published} sản phẩm — store nhận trong vài phút${r.failed.length ? ` · lỗi ${r.failed.length}: ${r.failed[0]}` : ""}`);
+      load();
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : "Không cập nhật được");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-1 border-t pt-3">
+      <div className="flex items-center gap-2">
+        <Store className="h-3.5 w-3.5 text-muted-foreground" />
+        {state.stale.length ? (
+          <span className="text-amber-600">
+            Trong flexi2 mọi sản phẩm đã theo base; trên store còn {state.stale.length}/{state.deployed} sản phẩm đã deploy đang hiện ảnh xem trước cũ.
+          </span>
+        ) : (
+          <span className="text-muted-foreground">Store đã khớp base ({state.deployed} sản phẩm đã deploy).</span>
+        )}
+        <button type="button" title="Kiểm tra lại" className="ml-auto rounded p-1 hover:bg-accent" onClick={load}>
+          <RefreshCw className="h-3 w-3" />
+        </button>
+      </div>
+      {state.stale.length > 0 && (
+        <CtButton size="sm" variant="primary" disabled={busy} onClick={() => void run()} title={state.stale.map((p) => p.name).join("\n")}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Store className="h-3.5 w-3.5" />} Cập nhật store ({state.stale.length} sản phẩm)
+        </CtButton>
+      )}
+      {note && <p className="text-muted-foreground">{note}</p>}
     </div>
   );
 }

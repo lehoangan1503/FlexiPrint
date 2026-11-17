@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtCloneBaseBody, CtCloneProductBody, CtSheetOverflow, CtBasePlacement, CtPreviewBoxBody, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseScenesAuto, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
+import type { CtBaseRepublishResult, CtBaseStoreState, CtCloneBaseBody, CtCloneProductBody, CtSheetOverflow, CtBasePlacement, CtPreviewBoxBody, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseScenesAuto, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
   CtFulfillCatalogPage, CtFulfillProvider, CtTeeinblueStatus, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind, CtStoreList } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
@@ -113,6 +113,8 @@ export const ctApi = {
   deleteBaseProduct: (id: string) => call<void>(`base-products/${id}`, { method: "DELETE" }),
   cloneBaseProduct: (id: string, body: CtCloneBaseBody = {}) => call<{ base: CtBaseProduct }>(`base-products/${id}/clone`, json("POST", body)).then((r) => r.base),
   /** An AI background of the base's preview (~1–2 min; already added to its previewScenes). */
+  baseStoreState: (id: string) => call<CtBaseStoreState>(`base-products/${id}/republish`),
+  republishBase: (id: string) => call<CtBaseRepublishResult>(`base-products/${id}/republish`, json("POST", {})),
   makeBaseScene: (id: string, body: CtBaseSceneRequest) => call<{ scene: CtBaseScene }>(`base-products/${id}/scenes`, json("POST", body)).then((r) => r.scene),
   /** The 3 ready backgrounds (+ an AI phôi when the base has none), made in the background — and their state. */
   startBaseScenes: (id: string) => call<CtBaseScenesAuto>(`base-products/${id}/scenes/auto`, json("POST", {})),

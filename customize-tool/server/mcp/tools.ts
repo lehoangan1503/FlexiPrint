@@ -20,6 +20,7 @@ import { CT_MCP_DEPLOY_TOOLS } from "./deploy-tools";
 import { CT_MCP_CHAR_TOOLS, charTaskView, submitCharResult } from "./char-tools";
 import { CT_MCP_RESOURCES } from "./guide";
 import { CT_MCP_MOCKUP_TOOLS, mockupTaskView, submitMockupResult } from "./mockup-tools";
+import { CT_MCP_BASE_PREVIEW_TOOLS, basePreviewTaskView, submitBasePreviewResult } from "./base-preview-tools";
 import { TASK_ARG, json, liveStatus, loadTask, openQuestion, openTask, patchTask } from "./task-common";
 
 export type CtMcpCaller = "agent" | "user";
@@ -241,7 +242,7 @@ const taskTools: CtMcpTool[] = [
   {
     name: "get_task",
     description:
-      "A task the editor sent from the web app. kind content: the Shopify title + description of a product (follow its \"instructions\"). kind char: a step of a v2 bộ nhân vật (brainstorm | master | edits — the brief, its pictures, the planned edits and \"instructions\"; work with the char_* tools). kind mockup: a mockup photo the image model refused (safety) — rewrite its prompt, retry_mockup, wait_product_mockups.",
+      "A task the editor sent from the web app. kind content: the Shopify title + description of a product (follow its \"instructions\"). kind char: a step of a v2 bộ nhân vật (brainstorm | master | edits — the brief, its pictures, the planned edits and \"instructions\"; work with the char_* tools). kind mockup: a mockup photo the image model refused (safety) — rewrite its prompt, retry_mockup, wait_product_mockups. kind base_preview: a product base whose store preview hides part of the artwork — base_preview_check, render_base_preview, make_base_scene, base_scene_status.",
     inputSchema: { type: "object", properties: TASK_ARG, required: ["task_id"] },
     callers: AGENT,
     run: async (ctx, args) => {
@@ -251,6 +252,7 @@ const taskTools: CtMcpTool[] = [
       const { input } = task;
       if (task.kind === "char") return json(await charTaskView(db, task));
       if (task.kind === "mockup") return json(await mockupTaskView(db, task));
+      if (task.kind === "base_preview") return json(await basePreviewTaskView(db, task));
       if (task.kind === "content") {
         const c = input.content;
         const { data: before } = c
@@ -340,7 +342,7 @@ const taskTools: CtMcpTool[] = [
   },
   {
     name: "submit_result",
-    description: "Finish a task with its result JSON (content: {summary, title, description_html}; mockup: {summary, prompt}; char: per the task's \"instructions\").",
+    description: "Finish a task with its result JSON (content: {summary, title, description_html}; mockup: {summary, prompt}; base_preview: {summary, scene_id, applied}; char: per the task's \"instructions\").",
     inputSchema: { type: "object", properties: { ...TASK_ARG, result: { type: "object", description: "The result JSON." } }, required: ["task_id", "result"] },
     callers: AGENT,
     run: async (ctx, args) => {
@@ -358,6 +360,11 @@ const taskTools: CtMcpTool[] = [
       }
       if (task.kind === "mockup") {
         const { result, message } = await submitMockupResult(db, task, raw, summary);
+        await patchTask(db, task.id, { status: "done", result, finished_at: new Date().toISOString() });
+        return json({ ok: true, message });
+      }
+      if (task.kind === "base_preview") {
+        const { result, message } = submitBasePreviewResult(task, raw, summary);
         await patchTask(db, task.id, { status: "done", result, finished_at: new Date().toISOString() });
         return json({ ok: true, message });
       }
@@ -387,4 +394,4 @@ const taskTools: CtMcpTool[] = [
   },
 ];
 
-export const CT_MCP_TOOLS: CtMcpTool[] = [...categoryTools, ...taskTools, ...CT_MCP_CHAR_TOOLS, ...CT_MCP_PRINT_TOOLS, ...CT_MCP_DEPLOY_TOOLS, ...CT_MCP_MOCKUP_TOOLS];
+export const CT_MCP_TOOLS: CtMcpTool[] = [...categoryTools, ...taskTools, ...CT_MCP_CHAR_TOOLS, ...CT_MCP_PRINT_TOOLS, ...CT_MCP_DEPLOY_TOOLS, ...CT_MCP_MOCKUP_TOOLS, ...CT_MCP_BASE_PREVIEW_TOOLS];

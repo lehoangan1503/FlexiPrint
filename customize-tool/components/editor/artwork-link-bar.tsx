@@ -10,12 +10,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowUpCircle, Copy, ExternalLink, Layers, Loader2, Plus } from "lucide-react";
+import { ArrowUpCircle, ExternalLink, Layers, Loader2, Plus } from "lucide-react";
 import type { CtArtworkProductRow, CtArtworkSource } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { CT_CONFIG } from "../../config";
 import { CtButton, cx } from "../ui";
-import { CloneProductDialog, CreateProductDialog } from "../product-create";
+import { CreateProductDialog } from "../product-create";
 
 interface Status {
   revision: number;
@@ -35,13 +35,12 @@ export interface ArtworkLinkBarProps {
   onFlash: (text: string) => void;
 }
 
-export function ArtworkLinkBar({ productId, productName, baseId = null, dirty, savedTick, onFlash }: ArtworkLinkBarProps) {
+export function ArtworkLinkBar({ productId, productName, dirty, savedTick, onFlash }: ArtworkLinkBarProps) {
   const [status, setStatus] = useState<Status | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
-  const [cloning, setCloning] = useState(false);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(() => {
@@ -80,18 +79,6 @@ export function ArtworkLinkBar({ productId, productName, baseId = null, dirty, s
     };
     return (
       <div className="ml-2 flex shrink-0 items-center gap-1.5 text-[11px]">
-        <CloneProductDialog open={cloning} onOpenChange={setCloning} product={{ id: productId, name: productName, baseId }} />
-        <button
-          onClick={() => {
-            // The product page often counts as edited right after opening (layout fitted on load): ask, don't block.
-            if (dirty && !window.confirm("Bản sao lấy bản ĐÃ LƯU của sản phẩm — thay đổi chưa lưu không theo sang. Tiếp tục?")) return;
-            setCloning(true);
-          }}
-          className="flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-accent"
-          title="Tạo 1 sản phẩm giống hệt (cùng base hoặc base khác) — chưa lên Shopify cho tới khi Deploy"
-        >
-          <Copy className="h-3 w-3" /> Nhân bản
-        </button>
         <Link href={href(src.id)} target="_blank" className="flex max-w-56 items-center gap-1 rounded-md border px-2 py-1 hover:bg-accent" title="Mở artwork gốc (tab mới)">
           <Layers className="h-3 w-3 shrink-0" />
           <span className="truncate">Từ artwork “{src.name}” · bản {src.linkedRevision}</span>

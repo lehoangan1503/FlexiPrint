@@ -29,7 +29,7 @@
 import sharp from "sharp";
 import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
-import type { CtBaseProduct, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseScenesAuto, CtBounds, CtMaterialId, CtProductScene } from "../types";
+import type { CtBaseProduct, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseScenesAuto, CtBounds, CtMaterialId, CtProductScene, CtSideLoss } from "../types";
 import type { CtPrintSpec, CtPrintTemplate } from "../types/print";
 import { normalizeBaseConfig } from "../lib/base-product";
 import { normalizeScene } from "../lib/scene";
@@ -42,7 +42,7 @@ import { templateRow } from "./print-templates";
 import { addTemplateBlank } from "./print-blanks";
 import { CLEAR_ACRYLIC_LOOK, makeBlank, pieceBounds, sheetBoxOn } from "./product-mockups";
 import { ctRemove, ctUpload } from "./storage";
-import { coverBox, overlayRef, splitKeyed, type KeyedScene } from "./overlay-key";
+import { coverBox, overlayRef, sideLoss, splitKeyed, type KeyedScene } from "./overlay-key";
 import { jsonError, record, str } from "./ai/llm";
 import { ctServiceClient, type CtServiceClient, type CtSession, type CtSupabase } from "./supabase";
 
@@ -374,8 +374,9 @@ async function drawOverlayScene(o: {
     ]);
     const box = sheetBoxOn(coverBox(keyed.face, aspect), sheet);
     const scene: CtProductScene = { url, width: keyed.width, height: keyed.height, box, overlay: overlayUrl };
+    const loss = await sideLoss(keyed.overlay, keyed.width, keyed.height, box).catch(() => null);
     console.info(`[ct] base overlay scene ${base.name} ${o.preset}: face ${Math.round(keyed.face.w)}×${Math.round(keyed.face.h)} (${(keyed.face.w / keyed.face.h).toFixed(3)} vs ${aspect.toFixed(3)}), fill ${keyed.fill.toFixed(2)}`);
-    return { id: newId(), preset: o.preset, prompt: o.prompt, scene, plain: o.plain, found: true, at: new Date().toISOString() };
+    return { id: newId(), preset: o.preset, prompt: o.prompt, scene, plain: o.plain, found: true, at: new Date().toISOString(), loss };
   } finally {
     await ctRemove([refPath]).catch(() => undefined);
   }
@@ -545,3 +546,53 @@ export async function cronBaseScenes(authorization: string | null, raw: unknown)
   })();
   return NextResponse.json({ started: list.map((b) => ({ id: b.id, name: b.name })) });
 }
+
+// ---------------------------------------------------------------------------
+// For @flexiprint (server/mcp/base-preview-tools.ts): measure a preview, draw one in the background
+// ---------------------------------------------------------------------------
+
+/** Share of the sheet the scene's overlay hides on each side; null = no overlay (the photo hides nothing by itself). */
+export async function previewLoss(scene: CtProductScene): Promise<CtSideLoss | null> {
+  if (!scene.url || !scene.overlay || !scene.box.w || !scene.box.h) return null;
+  return sideLoss(await fetchImage(scene.overlay), scene.width, scene.height, scene.box);
+}
+
+export interface CtSceneJob {
+  baseId: string;
+  status: "running" | "done" | "failed";
+  scene: CtBaseScene | null;
+  error: string;
+  at: number;
+}
+
+const sceneJobs = new Map<string, CtSceneJob>();
+
+/**
+ * One background drawn like the base page's buttons (from the base's phôi trơn — the plain one behind the picked
+ * scene), added to its previewScenes when done. Not set as the preview. → job id (kept in memory ~1 h).
+ */
+export function startSceneJob(db: Db, userId: string, baseId: string, preset: CtBaseScenePreset, prompt: string): string {
+  const id = crypto.randomUUID();
+  const job: CtSceneJob = { baseId, status: "running", scene: null, error: "", at: Date.now() };
+  sceneJobs.set(id, job);
+  for (const [k, j] of sceneJobs) if (Date.now() - j.at > 3_600_000) sceneJobs.delete(k);
+  void (async () => {
+    try {
+      const base = await loadBaseProduct(db, baseId);
+      if (!base) throw new Error("Không tìm thấy product base");
+      const template = await loadTemplate(db, base.config.templateId);
+      const got = await plainPhoi(db, userId, base, template, () => undefined);
+      if ("skip" in got) throw new Error(got.skip);
+      const entry = await drawBaseScene({ userId, base, template, preset, prompt, source: got.source, plain: got.plain });
+      await saveScenes(db, baseId, [entry]);
+      job.scene = entry;
+      job.status = "done";
+    } catch (e) {
+      job.error = e instanceof Error ? e.message : String(e);
+      job.status = "failed";
+    }
+  })();
+  return id;
+}
+
+export const sceneJob = (id: string): CtSceneJob | null => sceneJobs.get(id) ?? null;

@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, CheckCircle2, Copy, Download, ExternalLink, Loader2, Plus, Save, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, Download, ExternalLink, Loader2, Plus, Save, Trash2, X } from "lucide-react";
 import { CT_CONFIG } from "../../config";
 import type { CtBaseProductConfig, CtBaseProductDetail, CtBaseScenesAuto, CtPriceTable, CtPrintArea } from "../../types";
 import type { CtPrintTemplate } from "../../types/print";
@@ -116,19 +116,6 @@ export function BaseProductView({ baseId }: { baseId: string }) {
     }
   };
 
-  const [cloning, setCloning] = useState(false);
-  const clone = async () => {
-    if (dirty && !(await ctConfirm({ title: "Base có thay đổi chưa lưu", message: "Bản sao lấy theo bản ĐÃ LƯU. Vẫn nhân bản?", confirmLabel: "Nhân bản" }))) return;
-    setCloning(true);
-    try {
-      const copy = await ctApi.cloneBaseProduct(baseId);
-      window.location.href = `/base-products/${copy.id}`;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Không nhân bản được");
-      setCloning(false);
-    }
-  };
-
   const template = useMemo(() => templates.find((t) => t.id === cfg?.templateId) ?? null, [templates, cfg?.templateId]);
 
   // The 3 ready backgrounds, once per base, as soon as it has a phôi (a run already going — an import's — is followed).
@@ -224,9 +211,6 @@ export function BaseProductView({ baseId }: { baseId: string }) {
             <h1 className="truncate text-lg font-semibold">{name}</h1>
             <div className="ml-auto flex items-center gap-2">
               {notice && <span className="text-xs text-muted-foreground">{notice}</span>}
-              <CtButton variant="outline" size="sm" onClick={() => void clone()} disabled={cloning} title="Tạo 1 product base giống hệt (biến thể, bảng giá, khuôn, phôi, nền) để sửa riêng — sản phẩm đang dùng base này không đổi">
-                {cloning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />} Nhân bản
-              </CtButton>
               <CtButton variant="ghost" size="sm" onClick={() => void remove()} title="Xoá product base">
                 <Trash2 className="h-4 w-4" />
               </CtButton>
@@ -530,6 +514,9 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                 auto={auto}
                 onChange={(preview) => patch({ preview })}
                 onScenes={(previewScenes) => patch({ previewScenes })}
+                savedAt={detail?.base.updated_at ?? ""}
+                // Scenes @flexiprint drew (already saved on the server): kept, so the next Lưu does not drop them.
+                onRemoteScenes={(list) => setCfg((c) => (c ? { ...c, previewScenes: [...c.previewScenes, ...list.filter((x) => !c.previewScenes.some((y) => y.id === x.id))] } : c))}
                 onScene={(sc) => {
                   setCfg((c) => (c ? { ...c, previewScenes: [...c.previewScenes, sc], preview: sc.scene } : c));
                   setDirty(true);

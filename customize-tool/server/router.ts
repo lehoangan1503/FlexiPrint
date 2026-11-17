@@ -14,6 +14,7 @@
  *   POST   print-templates/:id/blanks/ai → { template }  a phôi drawn by AI
  *   POST   base-products/:id/clone       CtCloneBaseBody → { base }   a copy of the base (server/base-products.ts)
  *   POST   products/:id/clone            CtCloneProductBody → { product }   a copy of a product (server/artwork-link.ts)
+ *   GET|POST base-products/:id/republish  CtBaseStoreState | CtBaseRepublishResult — products whose store preview is old, published again (server/base-republish.ts)
  *   POST   base-products/:id/scenes      → { scene }     an AI background of the base's preview (server/base-scenes.ts)
  *   POST   base-products/:id/assembly    { swap?, off? } → { base, note, reapplied }   sewn print sheet (server/base-assembly.ts)
  *   POST|GET base-products/:id/scenes/auto → CtBaseScenesAuto  the 3 ready backgrounds (+ phôi) in the background
@@ -158,6 +159,7 @@ import { dispatchChar } from "./char/router";
 import * as packImages from "./pack-images";
 import * as prices from "./price-tables";
 import * as bases from "./base-products";
+import { getBaseStoreState, republishBase } from "./base-republish";
 import { autoBaseScenes, autoBaseScenesState, cronBaseScenes, makeBaseScene } from "./base-scenes";
 import { makeBaseAssembly } from "./base-assembly";
 import { fitArtworkToBase } from "./artwork-fit";
@@ -321,6 +323,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     if (id && method === "DELETE") return bases.deleteBaseProduct(session, id);
   }
   if (head === "base-products" && id && sub === "clone" && !path[3] && method === "POST") return bases.cloneBaseProduct(session, id, await readJson<unknown>(req));
+  if (head === "base-products" && id && sub === "republish" && !path[3] && method === "GET") return getBaseStoreState(session, id);
+  if (head === "base-products" && id && sub === "republish" && !path[3] && method === "POST") return republishBase(session, id, publicOrigin(req));
   if (head === "base-products" && id && sub === "scenes" && !path[3] && method === "POST") return makeBaseScene(session, id, await readJson<unknown>(req));
   if (head === "base-products" && id && sub === "assembly" && !path[3] && method === "POST") return makeBaseAssembly(session, id, await readJson<unknown>(req));
   if (head === "base-products" && id && sub === "scenes" && path[3] === "auto" && method === "POST") return autoBaseScenes(session, id);

@@ -247,6 +247,17 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                 <span className="p-3 text-center text-[11px] text-muted-foreground">Chưa có phôi — mockup sẽ đặt artwork trên nền trắng</span>
               )}
             </div>
+            {product.base_product_id ? (
+              // The base owns the phôi + box (2026-11-08); a phôi made here was overwritten by the next base save — so the
+              // product only sets the mockups' style below (asked 2026-11-17).
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Phôi trơn + khung lấy từ product base — đổi ở{" "}
+                <a href={`/base-products/${product.base_product_id}`} target="_blank" rel="noreferrer" className="text-sky-600 hover:underline">
+                  trang product base
+                </a>{" "}
+                (mọi sản phẩm cùng đổi). Ở đây chỉ đổi phong cách mockup.
+              </p>
+            ) : (
             <div className="mt-2 flex flex-wrap gap-1.5">
               <CtButton size="sm" variant="outline" disabled={blankBusy} onClick={() => void makeBlank()} title="AI vẽ phôi trơn đúng hình khuôn in (lỗ treo, tỉ lệ), chụp thẳng — dùng cho Xem trước & Mockups">
                 {blankBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {blankBusy ? "Đang vẽ (~1 phút)…" : config.scene.url ? "Phôi AI mới" : "Tạo phôi bằng AI"}
@@ -255,6 +266,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                 <Wallpaper className="h-3.5 w-3.5" /> Upload / chỉnh
               </CtButton>
             </div>
+            )}
           </div>
           <div>
             <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Phôi + thiết kế</div>

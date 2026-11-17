@@ -3,7 +3,7 @@
  * (base product page) and on the server (server/base-products.ts).
  */
 
-import type { CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseSource, CtBaseVariant, CtMaterialId, CtPrintArea } from "../types";
+import type { CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseSource, CtBaseVariant, CtMaterialId, CtPrintArea, CtSideLoss } from "../types";
 import { newId } from "./geometry";
 import { normalizeScene } from "./scene";
 import { normalizeBaseAssembly } from "./assembly";
@@ -133,6 +133,13 @@ export function normalizeBaseConfig(raw: unknown): CtBaseProductConfig {
 
 const SCENE_PRESETS: CtBaseScenePreset[] = ["home", "holiday", "minimal", "custom"];
 
+function sideLoss(raw: unknown): CtSideLoss | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Partial<Record<keyof CtSideLoss, unknown>>;
+  const v = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0);
+  return { top: v(o.top), bottom: v(o.bottom), left: v(o.left), right: v(o.right) };
+}
+
 function normalizeBaseScenes(raw: unknown): CtBaseScene[] {
   if (!Array.isArray(raw)) return [];
   const out: CtBaseScene[] = [];
@@ -149,6 +156,7 @@ function normalizeBaseScenes(raw: unknown): CtBaseScene[] {
       plain: normalizeScene(o.plain && typeof o.plain === "object" ? o.plain : null),
       found: o.found === true,
       at: str(o.at, 40),
+      loss: sideLoss(o.loss),
     });
   }
   return out.slice(-24);

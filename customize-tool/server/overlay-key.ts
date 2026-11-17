@@ -330,3 +330,33 @@ export function coverBox(face: KeyBounds, aspect: number): KeyBounds {
   const h = w / aspect;
   return { x: face.x + face.w / 2 - w / 2, y: face.y + face.h / 2 - h / 2, w, h };
 }
+
+/**
+ * How much of the print sheet the overlay hides on each side (0–1), measured through the sheet's middle like the
+ * deploy page's red frame: overlay alpha > 128 = hidden, off the photo = hidden. `box` = the sheet on the photo.
+ */
+export async function sideLoss(overlay: Buffer, width: number, height: number, box: KeyBounds): Promise<{ top: number; bottom: number; left: number; right: number }> {
+  const { data, info } = await sharp(overlay).ensureAlpha().resize(Math.round(width), Math.round(height), { fit: "fill" }).raw().toBuffer({ resolveWithObject: true });
+  const W = info.width;
+  const H = info.height;
+  const hid = (x: number, y: number) => x < 0 || y < 0 || x >= W || y >= H || data[(y * W + x) * 4 + 3] > 128;
+  const cx = Math.round(box.x + box.w / 2);
+  const cy = Math.round(box.y + box.h / 2);
+  const n = (from: number, to: number, at: (i: number) => boolean) => {
+    let k = 0;
+    const step = from < to ? 1 : -1;
+    for (let i = from; i !== to && at(i); i += step) k++;
+    return k;
+  };
+  const y0 = Math.floor(box.y);
+  const y1 = Math.ceil(box.y + box.h) - 1;
+  const x0 = Math.floor(box.x);
+  const x1 = Math.ceil(box.x + box.w) - 1;
+  const r = (v: number) => Math.round(v * 1000) / 1000;
+  return {
+    top: r(n(y0, y1, (y) => hid(cx, y)) / box.h),
+    bottom: r(n(y1, y0, (y) => hid(cx, y)) / box.h),
+    left: r(n(x0, x1, (x) => hid(x, cy)) / box.w),
+    right: r(n(x1, x0, (x) => hid(x, cy)) / box.w),
+  };
+}

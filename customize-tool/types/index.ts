@@ -1975,6 +1975,28 @@ export interface CtBaseScene {
   /** The piece was found on the picture (else its box is where it was on the plain phôi — check it). */
   found: boolean;
   at: string;
+  /** Share of the print sheet the overlay hides on each side (overlay scenes; null = not measured). */
+  loss?: CtSideLoss | null;
+}
+
+/** Share (0–1) of the print sheet hidden on each side of a preview photo, measured through its middle. */
+export interface CtSideLoss {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/** GET base-products/:id/republish — the base's products already on the store and which still show an old preview. */
+export interface CtBaseStoreState {
+  deployed: number;
+  stale: Array<{ id: string; name: string }>;
+}
+
+/** POST base-products/:id/republish → the templates published again (the store reads them within a few minutes). */
+export interface CtBaseRepublishResult {
+  published: number;
+  failed: string[];
 }
 
 /** POST base-products/:id/scenes */
@@ -2201,8 +2223,10 @@ export interface CtCategoryHistoryEntry {
 /** char = a step of a v2 bộ nhân vật (input.char, result CtCharTaskResult — types/char.ts). */
 /** mockup = a mockup photo the image model refused (safety): @flexiprint rewrites its prompt and draws it again
  * (input.mockup, result CtMockupFixResult). */
+/** base_preview = a product base whose store preview hides part of the artwork / looks wrong: @flexiprint measures it,
+ * draws new preview photos (base-scenes) and recommends one (input.basePreview, result CtBasePreviewResult). */
 /** (Older rows may hold the removed kinds create / revise / pack_image; they are no longer listed or run.) */
-export type CtAgentTaskKind = "content" | "char" | "mockup";
+export type CtAgentTaskKind = "content" | "char" | "mockup" | "base_preview";
 
 /** waiting = the agent asked the editor something (ask_user) and ended its turn until they answer. */
 export type CtAgentTaskStatus = "pending" | "running" | "waiting" | "done" | "failed" | "cancelled";
@@ -2275,6 +2299,8 @@ export interface CtAgentTaskInput {
   char?: CtCharTaskInput;
   /** mockup: the refused mockup job whose prompt the agent rewrites. */
   mockup?: CtMockupTaskInput;
+  /** base_preview: the product base whose preview photo the agent redraws. */
+  basePreview?: CtBasePreviewTaskInput;
   /** Fingerprint of the agent's MCP tool list when the task was made: the agent_ide session fixes its tool list when it
    * starts, so a task after a deploy that changed the tools opens a fresh session instead of continuing the old one. */
   mcpTools?: string;
@@ -2338,6 +2364,23 @@ export interface CtMockupFixResult {
   proposal?: string;
 }
 
+/** A base_preview task: the base, and what the editor wants of its preview (place, mood, "đặt luôn"…; may be empty). */
+export interface CtBasePreviewTaskInput {
+  baseId: string;
+  baseName: string;
+  request: string;
+}
+
+export interface CtBasePreviewResult {
+  summary: string;
+  /** The scene it recommends (in the base's previewScenes); "" = none good enough. */
+  sceneId: string;
+  /** It also set that scene as the base's preview (the editor asked for it). */
+  applied: boolean;
+  reply?: string;
+  proposal?: string;
+}
+
 export interface CtAgentTask {
   id: string;
   user_id: string | null;
@@ -2348,7 +2391,7 @@ export interface CtAgentTask {
   progress: CtAgentTaskProgress[];
   runs: CtAgentTaskRun[];
   questions: CtAgentQuestion[];
-  result: CtContentResult | CtCharTaskResult | CtMockupFixResult | null;
+  result: CtContentResult | CtCharTaskResult | CtMockupFixResult | CtBasePreviewResult | null;
   error: string;
   agent_job_id: string;
   agent_session_id: string;

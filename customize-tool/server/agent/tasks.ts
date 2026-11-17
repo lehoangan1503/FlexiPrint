@@ -146,6 +146,22 @@ async function parseMockupInput(s: CtSession, raw: unknown): Promise<CtAgentTask
   };
 }
 
+/** A base whose preview the agent redraws: its name read here, the editor's words as they typed them. */
+async function parseBasePreviewInput(s: CtSession, raw: unknown): Promise<CtAgentTaskInput | string> {
+  const b = record(record(raw).basePreview);
+  const baseId = str(b.baseId);
+  if (!UUID.test(baseId)) return "Thiếu product base";
+  const { data: base } = await s.supabase.from(CT_TABLES.baseProducts).select("id, name").eq("id", baseId).maybeSingle<{ id: string; name: string }>();
+  if (!base) return "Không tìm thấy product base";
+  return {
+    category: { id: null, name: "", spec: "", rules: defaultCategoryRules() },
+    note: "",
+    images: [],
+    refUrls: [],
+    basePreview: { baseId, baseName: clip(base.name, 200), request: clip(str(b.request), 2000) },
+  };
+}
+
 const CHAR_STEPS: CtCharTaskStep[] = ["brainstorm", "master", "edits", "chat", "auto"];
 const CHAT_TABS: CtCharChatTab[] = ["brief", "master", "layers", "product"];
 
@@ -235,6 +251,17 @@ function turnPrompt(task: CtAgentTask): string {
       .filter(Boolean)
       .join("\n");
   }
+  if (task.kind === "base_preview") {
+    const c = task.input.basePreview;
+    return [
+      `[FlexiPrint task ${task.id}] Preview của product base "${clip(c?.baseName ?? "", 120)}" che mất artwork / chưa đẹp — phân tích và vẽ lại ảnh preview.`,
+      c?.request ? `Người dùng muốn: ${clip(c.request, 800)}` : "",
+      mcpLine(),
+      `Gọi ${m}get_task với task_id "${task.id}" (có "instructions"), đo bằng ${m}base_preview_check, xem ảnh thật bằng ${m}render_base_preview + view_image, phân tích nguyên nhân, vẽ bằng ${m}make_base_scene, chờ bằng ${m}base_scene_status, kiểm tra, rồi kết thúc bằng ${m}submit_result {summary, scene_id, applied} hoặc fail_task.`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
   if (task.kind === "char" && task.input.char?.step === "chat") {
     const c = task.input.char;
     const where = `${CHAT_TAB_TEXT[c.tab ?? "brief"]}${c.section ? ` → ${c.section}` : ""}`;
@@ -279,11 +306,32 @@ export async function createAgentTask(s: CtSession, body: unknown): Promise<Next
   const cfg = kernelConfig();
   if (!cfg) return jsonError("Chưa cấu hình agent (AGENT_IDE_URL, AGENT_IDE_TOKEN)", 501);
   const b = record(body);
-  const kind: CtAgentTaskKind | null = b.kind === "content" || b.kind === "char" || b.kind === "mockup" ? b.kind : null;
-  const parsed = kind === "content" ? parseContentInput(b.input) : kind === "char" ? parseCharInput(b.input) : kind === "mockup" ? await parseMockupInput(s, b.input) : null;
+  const kind: CtAgentTaskKind | null = b.kind === "content" || b.kind === "char" || b.kind === "mockup" || b.kind === "base_preview" ? b.kind : null;
+  const parsed =
+    kind === "content"
+      ? parseContentInput(b.input)
+      : kind === "char"
+        ? parseCharInput(b.input)
+        : kind === "mockup"
+          ? await parseMockupInput(s, b.input)
+          : kind === "base_preview"
+            ? await parseBasePreviewInput(s, b.input)
+            : null;
   if (typeof parsed === "string") return jsonError(parsed, 400);
   const input = parsed;
   if (!kind || !input) return jsonError("Task không hợp lệ", 400);
+  if (input.basePreview) {
+    // One agent at a time on a base: a second click shows the task already working on it.
+    const { data: open } = await s.supabase
+      .from(CT_TABLES.agentTasks)
+      .select("*")
+      .eq("kind", "base_preview")
+      .eq("input->basePreview->>baseId", input.basePreview.baseId)
+      .in("status", ["pending", "running", "waiting"])
+      .limit(1)
+      .maybeSingle<CtAgentTask>();
+    if (open) return NextResponse.json(open);
+  }
   if (input.mockup) {
     // One agent at a time on a job: a second click shows the task already working on it.
     const { data: open } = await s.supabase
@@ -310,6 +358,7 @@ export async function createAgentTask(s: CtSession, body: unknown): Promise<Next
   let sessionId = "";
   const contentOf = kind === "content" ? (input.content?.productId ?? null) : null;
   const mockupOf = kind === "mockup" ? (input.mockup?.productId ?? null) : null;
+  const baseOf = kind === "base_preview" ? (input.basePreview?.baseId ?? null) : null;
   const charOf = kind === "char" ? (input.char?.projectId ?? null) : null;
   if (charOf) {
     // A bộ nhân vật is one conversation: brainstorm → master → edits continue the same session.
@@ -346,6 +395,20 @@ export async function createAgentTask(s: CtSession, body: unknown): Promise<Next
       .select("agent_session_id, input")
       .eq("kind", "mockup")
       .eq("input->mockup->>productId", mockupOf)
+      .neq("agent_session_id", "")
+      .neq("id", task.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<Pick<CtAgentTask, "agent_session_id" | "input">>();
+    sessionId = last?.input?.mcpTools === tools ? last.agent_session_id : "";
+  }
+  if (baseOf) {
+    // A base's preview requests are one conversation: "nền khác đi", "đặt luôn cái thứ 2" continue the last one.
+    const { data: last } = await s.supabase
+      .from(CT_TABLES.agentTasks)
+      .select("agent_session_id, input")
+      .eq("kind", "base_preview")
+      .eq("input->basePreview->>baseId", baseOf)
       .neq("agent_session_id", "")
       .neq("id", task.id)
       .order("created_at", { ascending: false })
@@ -416,10 +479,11 @@ async function fillReplies(s: CtSession, tasks: CtAgentTask[]): Promise<void> {
 /** GET ai/agent-tasks?kind= — the editor's own latest tasks of a kind. */
 export async function listAgentTasks(s: CtSession, kind: string | null, collection: string | null = null): Promise<NextResponse> {
   let q = s.supabase.from(CT_TABLES.agentTasks).select("*").order("created_at", { ascending: false }).limit(collection ? 200 : 30);
-  q = kind === "content" || kind === "char" || kind === "mockup" ? q.eq("kind", kind) : q.in("kind", ["content", "char"]);
+  q = kind === "content" || kind === "char" || kind === "mockup" || kind === "base_preview" ? q.eq("kind", kind) : q.in("kind", ["content", "char"]);
   // A product's content history / a bộ nhân vật's tasks (anyone working on it); everything else: the editor's own.
   if (kind === "content" && collection && UUID.test(collection)) q = q.eq("input->content->>productId", collection);
   else if (kind === "mockup" && collection && UUID.test(collection)) q = q.eq("input->mockup->>productId", collection);
+  else if (kind === "base_preview" && collection && UUID.test(collection)) q = q.eq("input->basePreview->>baseId", collection);
   else if (kind === "char" && collection && UUID.test(collection)) q = q.eq("input->char->>projectId", collection);
   else q = q.eq("user_id", s.user.id);
   const { data, error } = await q.returns<CtAgentTask[]>();

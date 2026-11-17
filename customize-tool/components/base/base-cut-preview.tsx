@@ -133,7 +133,7 @@ export function BasePreviewSection(props: {
       <p className="text-muted-foreground">
         {cut.mode === "alpha"
           ? "Ảnh nền (cây thông, bàn…) — khi xem trước, thiết kế được đặt vào khung xanh và tự có tấm acrylic trong + viền sáng + bóng đổ theo đúng hình của từng version."
-          : "Ảnh phôi trơn (sản phẩm trống) — khung xanh = chỗ tờ in nằm trên ảnh, là khung MẶC ĐỊNH cho mọi sản phẩm dùng base này (từng sản phẩm chỉnh riêng được ở trang Deploy → Vị trí trên ảnh xem trước). Cỡ thiết kế chỉ phóng thiết kế, sản phẩm trong ảnh không to lên — muốn sản phẩm to hơn thì tạo nền AI bên dưới hoặc đổi ảnh. Không đặt ảnh riêng thì dùng phôi đầu tiên của khuôn in."}
+          : "Ảnh xem trước của mọi sản phẩm dùng base này: khách thấy thiết kế được dán vào khung nét đứt trên ảnh. Muốn sản phẩm trong ảnh to hơn / cảnh khác thì tạo nền AI bên dưới hoặc đổi ảnh. Không đặt ảnh riêng thì dùng phôi đầu tiên của khuôn in."}
       </p>
       <div className="flex gap-3">
         <div className="relative w-56 shrink-0 overflow-hidden rounded-lg border" style={CHECKER_STYLE}>
@@ -181,11 +181,19 @@ export function BasePreviewSection(props: {
             )}
           </div>
           {preview.url ? (
-            <div className="space-y-1">
-              {slider("Cỡ thiết kế", share, 0.2, 2.5, (v) => move({ share: v }))}
-              {slider("Ngang", cx, 0, 1, (v) => move({ cx: v }))}
-              {slider("Dọc", cy, 0, 1, (v) => move({ cy: v }))}
-            </div>
+            // Asked 2026-11-17 ("cái này để làm gì? thay đổi cái này phôi cũng đâu có to hay nhỏ theo được"): the sliders only
+            // move the frame over the photo — tucked away, with what they are for.
+            <details className="rounded-md border px-2 py-1.5">
+              <summary className="cursor-pointer select-none text-muted-foreground">Căn khung tay (ít khi cần)</summary>
+              <p className="mt-1.5 text-muted-foreground">
+                Chỉ dời / đổi cỡ <b>khung nét đứt</b> (chỗ dán thiết kế) trên ảnh — ảnh và sản phẩm trong ảnh giữ nguyên. Dùng khi bạn tự tải ảnh phôi lên và khung chưa nằm đúng mặt sản phẩm. Ảnh do AI vẽ đã tự khớp khung, không cần chỉnh. Khung to hơn sản phẩm thì thiết kế tràn ra ngoài / bị cắt.
+              </p>
+              <div className="mt-1.5 space-y-1">
+                {slider("Cỡ khung", share, 0.2, 2.5, (v) => move({ share: v }))}
+                {slider("Ngang", cx, 0, 1, (v) => move({ cx: v }))}
+                {slider("Dọc", cy, 0, 1, (v) => move({ cy: v }))}
+              </div>
+            </details>
           ) : blank ? (
             <p className="text-muted-foreground">Đang dùng phôi đầu tiên của khuôn “{props.template?.name}”.</p>
           ) : (

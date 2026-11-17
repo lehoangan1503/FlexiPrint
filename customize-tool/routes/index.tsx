@@ -9,7 +9,7 @@
  */
 
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { CT_CONFIG } from "../config";
 import { ctSession } from "../server/supabase";
@@ -22,6 +22,8 @@ import { ImportStatus } from "../components/char/import-status";
 import { isAdmin } from "../server/ai-styles";
 import { BaseProductView } from "../components/base/base-product-page";
 import { GuidePage } from "../components/guide/guide-page";
+import { NewsArticleView, NewsList } from "../components/news/news-pages";
+import { NEWS, newsArticle } from "../news";
 
 export async function CustomizeListPage() {
   const session = await ctSession();
@@ -109,4 +111,21 @@ export async function CustomizeGuidePage() {
   const session = await ctSession();
   if (!session) redirect(CT_CONFIG.loginPath);
   return <GuidePage />;
+}
+
+/** Bài viết / hướng dẫn (asked 2026-11-17): src/app/news/page.tsx → export { NewsListPage as default }. */
+export async function NewsListPage() {
+  const session = await ctSession();
+  if (!session) redirect(CT_CONFIG.loginPath);
+  return <NewsList articles={NEWS} />;
+}
+
+/** src/app/news/[slug]/page.tsx → export { NewsArticlePage as default }. */
+export async function NewsArticlePage({ params }: { params: Promise<{ slug: string }> }) {
+  const session = await ctSession();
+  if (!session) redirect(CT_CONFIG.loginPath);
+  const { slug } = await params;
+  const article = newsArticle(slug);
+  if (!article) notFound();
+  return <NewsArticleView article={article} />;
 }

@@ -496,7 +496,7 @@ export function PreviewBoxCard({
           </div>
         )}
         <div className="space-y-1.5">
-          {range("Cỡ thiết kế", sizeNow, 0.7, 1.4, 0.005, pct(sizeNow), (v) =>
+          {range("Cỡ khung", sizeNow, 0.7, 1.4, 0.005, pct(sizeNow), (v) =>
             setFrame({ size: v }),
           )}
           {range(

@@ -60,6 +60,9 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
           <h1 className="text-lg font-semibold">FlexiPrint</h1>
           <StoreSwitch onChange={(st) => setStore(st.id)} />
           <div className="ml-auto flex items-center gap-2">
+            <a href="/news" className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-foreground" title="Bài viết · hướng dẫn">
+              Hướng dẫn
+            </a>
             <ImportStatus />
             <ThemeToggle />
             <UserDropdown key={current.nickname ?? ""} profile={current} isSuperAdmin={isSuperAdmin} />

@@ -426,9 +426,11 @@ export function PreviewBoxCard({
             Vị trí trên ảnh xem trước
           </h2>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Chỉ đổi ảnh xem trước trên store và mockup mặt trước của sản phẩm
-            này. File in gửi xưởng không đổi. Lưu xong bấm Deploy cập nhật để
-            store nhận.
+            Chỉnh RIÊNG sản phẩm này (mặc định lấy khung của product base, ở
+            mục “Phôi / nền xem trước” của base — chỉnh ở base thì mọi sản
+            phẩm cùng đổi). Chỉ đổi ảnh xem trước trên store và mockup mặt
+            trước; file in gửi xưởng không đổi. Lưu xong bấm Deploy cập nhật
+            để store nhận.
             {own
               ? " Đang dùng vị trí riêng của sản phẩm."
               : " Đang dùng khung của product base."}
@@ -494,14 +496,8 @@ export function PreviewBoxCard({
           </div>
         )}
         <div className="space-y-1.5">
-          {range(
-            "Dọc",
-            cyNow,
-            cy0 - saved.h * 0.3,
-            cy0 + saved.h * 0.3,
-            1,
-            `y ${Math.round(box.y)}`,
-            (v) => setFrame({ cy: v }),
+          {range("Cỡ thiết kế", sizeNow, 0.7, 1.4, 0.005, pct(sizeNow), (v) =>
+            setFrame({ size: v }),
           )}
           {range(
             "Ngang",
@@ -512,8 +508,14 @@ export function PreviewBoxCard({
             `x ${Math.round(box.x)}`,
             (v) => setFrame({ cx: v }),
           )}
-          {range("Cỡ", sizeNow, 0.7, 1.4, 0.005, pct(sizeNow), (v) =>
-            setFrame({ size: v }),
+          {range(
+            "Dọc",
+            cyNow,
+            cy0 - saved.h * 0.3,
+            cy0 + saved.h * 0.3,
+            1,
+            `y ${Math.round(box.y)}`,
+            (v) => setFrame({ cy: v }),
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">

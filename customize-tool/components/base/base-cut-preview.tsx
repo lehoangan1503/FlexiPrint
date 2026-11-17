@@ -128,7 +128,7 @@ export function BasePreviewSection(props: {
       <p className="text-muted-foreground">
         {cut.mode === "alpha"
           ? "Ảnh nền (cây thông, bàn…) — khi xem trước, thiết kế được đặt vào khung xanh và tự có tấm acrylic trong + viền sáng + bóng đổ theo đúng hình của từng version."
-          : "Ảnh phôi trơn (sản phẩm trống) — khung xanh = chỗ tờ in nằm trên ảnh. Không đặt ảnh riêng thì dùng phôi đầu tiên của khuôn in."}
+          : "Ảnh phôi trơn (sản phẩm trống) — khung xanh = chỗ tờ in nằm trên ảnh, là khung MẶC ĐỊNH cho mọi sản phẩm dùng base này (từng sản phẩm chỉnh riêng được ở trang Deploy → Vị trí trên ảnh xem trước). Cỡ thiết kế chỉ phóng thiết kế, sản phẩm trong ảnh không to lên — muốn sản phẩm to hơn thì tạo nền AI bên dưới hoặc đổi ảnh. Không đặt ảnh riêng thì dùng phôi đầu tiên của khuôn in."}
       </p>
       <div className="flex gap-3">
         <div className="relative w-56 shrink-0 overflow-hidden rounded-lg border" style={CHECKER_STYLE}>

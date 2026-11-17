@@ -201,9 +201,9 @@ export function PreviewBoxCard({ product, tpl, onSaved }: { product: CtProduct; 
         const safe = tpl.config.print?.spec.safe ?? [];
         const sk = aw / main.width;
         ag.save();
-        ag.setLineDash([9, 6]);
-        ag.lineWidth = 2.5;
-        ag.strokeStyle = "#16a34a";
+        ag.setLineDash([aw / 40, aw / 60]);
+        ag.lineWidth = Math.max(3, aw / 110);
+        ag.strokeStyle = "#22c55e";
         for (const sh of safe) if ("w" in sh && "h" in sh) ag.strokeRect(sh.x * sk, sh.y * sk, sh.w * sk, sh.h * sk);
         ag.restore();
       }

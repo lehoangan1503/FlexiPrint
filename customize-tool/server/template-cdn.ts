@@ -3,7 +3,7 @@
  * product page (US → tool-01 Hà Nội → an-vm, ~0,75 s measured from Oregon; cdn.teein.top ~0,05 s once cached).
  *
  *   publish / deploy   the template JSON (file urls already on the CDN, AI styles' askName read now) is written to R2
- *                      at `<prefix>-templates/<product>/v<N>-<hash>.json` (immutable: a new content = a new key) and
+ *                      at `<prefix>-templates/<product>/v<N>-<hash>.js` (immutable: a new content = a new key) and
  *                      the Shopify product gets the metafield customize_tool.template_url = its CDN url
  *   flexi2-product.liquid  loads template_url when set, else (and when the CDN fails) the flexi2 endpoint as before
  *   cron/template-cdn  the same for every deployed product (the first run, and after an AI style changes)
@@ -35,7 +35,9 @@ export async function templateToCdn(db: Db, template: CtTemplate): Promise<strin
   try {
     const text = r2RewriteUrls(JSON.stringify(await withLiveAiStyles(db, template)), "storefront");
     const hash = createHash("sha256").update(text).digest("hex").slice(0, 10);
-    const key = `${CT_CONFIG.storagePrefix}-templates/${template.productId}/v${template.version}-${hash}.json`;
+    // ".js", not ".json": Cloudflare caches by extension and json is not on its list (measured 2026-11-17: .json =
+    // DYNAMIC, every hit went to R2 ~0,25 s; .js = HIT). The body is still JSON with a JSON content type.
+    const key = `${CT_CONFIG.storagePrefix}-templates/${template.productId}/v${template.version}-${hash}.js`;
     const url = r2StorefrontUrl(key);
     if (!url) return null;
     await r2Put(key, Buffer.from(text), "application/json; charset=utf-8");

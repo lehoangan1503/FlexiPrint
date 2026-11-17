@@ -281,6 +281,9 @@
 .ct-name .ct-input-wrap { flex: 1 1 auto; min-width: 0; }
 .ct-name__ok { flex: 0 0 auto; min-width: 72px; padding: 0 18px; }
 .ct-name__ok.is-done { background: #fff; color: var(--ct-accent); border: 2px solid var(--ct-accent); }
+.ct-name-size { display: flex; gap: 12px; align-items: center; }
+.ct-name-size__range { flex: 1 1 auto; min-width: 0; accent-color: var(--ct-accent); }
+.ct-name-size__value { flex: 0 0 auto; min-width: 44px; text-align: right; color: var(--ct-muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 .ct-input.ct-input--error { border-color: #d0342c; outline-color: #d0342c; }
 .ct-field__error { margin-top: 6px; color: #d0342c; font-size: 13px; }
 .ct-field__error[hidden] { display: none; }

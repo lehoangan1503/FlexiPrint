@@ -1155,7 +1155,9 @@ export class Customizer {
         }
         this.nameOfPhoto.set(url, name);
         this.nameBusy = null;
-        this.change(r.id, { kind: "photo", url, transform: { ...IDENTITY_TRANSFORM }, style: st, sourceUrl: null, optionId: null });
+        // A new name keeps the size the customer picked for the last one.
+        const scale = sel?.transform.scale ?? 1;
+        this.change(r.id, { kind: "photo", url, transform: { ...IDENTITY_TRANSFORM, scale }, style: st, sourceUrl: null, optionId: null });
         if (url.startsWith("blob:")) void this.uploadLocal(url).catch(() => undefined);
       } catch (e) {
         this.nameBusy = null;
@@ -1178,6 +1180,27 @@ export class Customizer {
     const parts: HTMLElement[] = [
       this.field(nameCfg.label || cfg.label || this.t("photoName", "Name"), el("div", {}, [el("div", { class: "ct-name" }, [el("div", { class: "ct-input-wrap" }, [input, counter]), ok]), status]), nameCfg.required || cfg.required),
     ];
+    // The drawn name's size (asked 2026-11-17): 40–100 % of what fits the zone (the zone is the largest it may be, so it
+    // never leaves the print area), around the zone's centre. Dragging redraws the preview; letting go keeps it.
+    if (sel?.url) {
+      const url = sel.url;
+      const pct = (v: number) => Math.round(Math.min(1, Math.max(0.4, v)) * 100);
+      const value = el("span", { class: "ct-name-size__value", text: `${pct(sel.transform.scale)}%` });
+      const range = el("input", { class: "ct-name-size__range", type: "range", min: "40", max: "100", step: "1", value: String(pct(sel.transform.scale)) });
+      const at = (): CtPhotoSelection => {
+        const cur = this.selection[r.id];
+        const base = cur?.kind === "photo" && cur.url === url ? cur : sel;
+        return { ...base, transform: { ...base.transform, scale: Number(range.value) / 100 } };
+      };
+      range.addEventListener("input", () => {
+        value.textContent = `${range.value}%`;
+        // No form rebuild while dragging (it would drop the slider); only the preview.
+        this.selection = { ...this.selection, [r.id]: at() };
+        this.showStage();
+      });
+      range.addEventListener("change", () => this.change(r.id, at()));
+      parts.push(this.field(this.t("nameSize", "Size"), el("div", { class: "ct-name-size" }, [range, value]), false));
+    }
     // More than one lettering style: the customer picks, then presses OK.
     if (styles.length > 1) {
       const pick = this.picker(

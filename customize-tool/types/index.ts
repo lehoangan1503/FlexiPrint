@@ -313,8 +313,17 @@ export interface CtPhotoNameConfig {
   required: boolean;
 }
 
+/**
+ * What the customer gives a photo zone (asked 2026-11-17): "photo" = they upload a photo (default); "name" = they only
+ * type a name and the zone's AI style draws it (its prompt + reference pictures, [NAME] / the name tick) — no upload,
+ * e.g. a name lettered in the artwork's own style.
+ */
+export type CtPhotoInput = "photo" | "name";
+
 export interface CtPhotoConfig {
   label: string;
+  /** Absent = "photo". */
+  input?: CtPhotoInput;
   /** The name field (only shown while one of the zone's styles asks a name); absent = defaults (lib/photo-name). */
   name?: CtPhotoNameConfig;
   fit: "cover" | "contain";

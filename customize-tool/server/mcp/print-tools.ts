@@ -68,6 +68,7 @@ interface LayerArg {
   shape?: unknown;
   styles?: unknown;
   default_style?: unknown;
+  input?: unknown;
   zone?: unknown;
   mode?: unknown;
   tile?: unknown;
@@ -80,7 +81,7 @@ const LAYERS_DOC =
   'Layers, bottom first. Each: {"type": "clipart" | "text" | "photo" | "fill", "name": "…", "label": customer-facing question ("Choose your dog")}. ' +
   'clipart: "asset_ids" (library clipart ids — several = the customer picks one, first is the default), "x","y","w","h" (the box the picture is fitted into, sheet px), optional "rotation" (deg). ' +
   'text: "text", box x/y/w/h, "editable" (true = the customer types it, e.g. a name; false = fixed), "max_chars", "font" (Google font family), "font_size" px, "color" "#rrggbb". ' +
-  'photo: a customer photo zone, box x/y/w/h, "shape" "rect"|"ellipse", optional "styles" (AI style refs "ai:<id>" from list_ai_styles — the customer\'s photo is redrawn in the one they pick, by its demo picture) + "default_style". ' +
+  'photo: a customer photo zone, box x/y/w/h, "shape" "rect"|"ellipse", optional "styles" (AI style refs "ai:<id>" from list_ai_styles — the customer\'s photo is redrawn in the one they pick, by its demo picture) + "default_style"; "input": "name" = the customer only types a name (no upload) and the zone\'s AI style draws it — a prompt with [NAME], its reference pictures are image 1, 2… (e.g. a name lettered like the artwork). ' +
   'fill: covers a zone with a picture — "zone" (a template zone id, or "sheet" = the whole cut piece), "asset_ids" (options), "mode" "cover" (one picture, e.g. a background) | "tile" (a repeated pattern, "tile" px wide), "print_only" (true: printed but not drawn on the product photo — a background whose options each have their own mockup photo).';
 
 async function ownerOf(ctx: CtMcpContext, args: Record<string, unknown>, fallback: string | null): Promise<string> {
@@ -237,6 +238,8 @@ async function buildLayers(db: PrintDb, productId: string, spec: CtPrintSpec, ra
       const refs = (Array.isArray(l.styles) ? l.styles : []).map((x) => (UUID.test(str(x)) ? aiStyleRef(str(x)) : str(x))).filter(isAiStyleRef);
       const def = str(l.default_style);
       if (refs.length) config.photo = withAiStyles(config.photo, refs, isAiStyleRef(def) ? def : UUID.test(def) ? aiStyleRef(def) : undefined);
+      // Name only (2026-11-17): the customer types a name, the AI style draws it — no upload.
+      if (str(l.input) === "name") config.photo = { ...config.photo, input: "name", mode: "ai", fit: "contain", fadeCrop: false, label: str(l.label) || "Name" };
       const shape: CtShape = str(l.shape) === "ellipse" ? { type: "ellipse", cx: box.x + box.w / 2, cy: box.y + box.h / 2, rx: box.w / 2, ry: box.h / 2 } : box;
       regions.push({ id, product_id: productId, name, kind: "photo", shape, config, sort_order: order });
     } else {

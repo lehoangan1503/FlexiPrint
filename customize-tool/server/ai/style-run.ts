@@ -37,18 +37,22 @@ export type StyleBackground = "clear" | "white" | "none";
 
 /** `name`: the customer's typed name — put in for [NAME] in the prompt, else added as "Name: …" at the very end when the
  * style's tick asks for it (params.askName). */
-export async function runStyleModel(style: CtAiStyle, image: ProviderImage, bg: StyleBackground, name?: string): Promise<ProviderImage> {
+export async function runStyleModel(style: CtAiStyle, image: ProviderImage | null, bg: StyleBackground, name?: string): Promise<ProviderImage> {
   const p = normalizeAiStyleParams(style.params);
-  const info = readImageInfo(image.data);
+  const info = image ? readImageInfo(image.data) : null;
   // A fixed ratio is said in the prompt (the image API picks its canvas from the prompt, not from `size`) and the
   // answer padded to it exactly (drawCpa fit "pad"), so the picture fits the artwork / print area it was made for.
   const aspect = p.aspect === "auto" ? (info ? `${info.width}:${info.height}` : "1:1") : p.aspect;
   // The browser already shrinks photos to ~1600 px: a data URI is fine as the reference (Node's fetch reads data: URLs).
-  const uri = `data:${image.mime};base64,${image.data.toString("base64")}`;
+  const uri = image ? `data:${image.mime};base64,${image.data.toString("base64")}` : null;
   // Style reference pictures go after the photo (image 2, 3…); a prompt that does not number them gets the order said.
+  // A name-only zone (CtPhotoConfig.input "name") sends no photo: the references are images 1, 2….
   const refs = p.refUrls;
   const numbered = /\bimage\s*1\b/i.test(style.prompt);
-  const head = refs.length && !numbered ? `Image 1 is the customer's photo; image${refs.length > 1 ? `s 2–${refs.length + 1} are` : " 2 is"} the style reference. ` : "";
+  const head =
+    !refs.length || numbered ? ""
+    : uri ? `Image 1 is the customer's photo; image${refs.length > 1 ? `s 2–${refs.length + 1} are` : " 2 is"} the style reference. `
+    : `Image${refs.length > 1 ? `s 1–${refs.length} are` : " 1 is"} the style reference. `;
   const body = style.prompt.trim();
   const tail =
     bg === "white" ? WHITE_BG
@@ -58,6 +62,6 @@ export async function runStyleModel(style: CtAiStyle, image: ProviderImage, bg: 
     : `\n\n${CT_AI_STYLE_CLEAR_BG_LINE}`;
   const shape = aiStyleAspectLine(p.aspect);
   const prompt = aiStylePromptWithName([head + body + tail, shape].filter(Boolean).join("\n\n"), p, name);
-  const out = await drawImage(CT_IMAGE_MODEL, prompt, [uri, ...refs], aspect, "pad", bg === "clear");
+  const out = await drawImage(CT_IMAGE_MODEL, prompt, uri ? [uri, ...refs] : refs, aspect, "pad", bg === "clear");
   return { data: out.data, mime: out.mime };
 }

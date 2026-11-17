@@ -273,7 +273,19 @@ function normalizePhotoConfig(p: CtPhotoConfig): CtPhotoConfig {
   frame.auto = family === "face" && (typeof f.auto === "boolean" ? f.auto : untouched);
   // Face filters are a "Filter" row of round swatches (default Real face); zones saved with the generic label get it.
   const styleLabel = family === "face" && (!p.styleLabel?.trim() || p.styleLabel === "Choose style") ? "Filter" : p.styleLabel;
-  return { ...p, mode, frame, cutout: true, fadeCrop: true, styles: list, styleLabel, defaultStyle: list.includes(p.defaultStyle) ? p.defaultStyle : list[0] };
+  // A typed name drawn by an AI style (input "name"): no fade at the frame's edge (it is lettering, not a cropped body).
+  const nameOnly = p.input === "name";
+  return {
+    ...p,
+    ...(nameOnly ? { input: "name" as const } : { input: undefined }),
+    mode: nameOnly ? "ai" : mode,
+    frame,
+    cutout: true,
+    fadeCrop: !nameOnly,
+    styles: list,
+    styleLabel,
+    defaultStyle: list.includes(p.defaultStyle) ? p.defaultStyle : list[0],
+  };
 }
 
 export function defaultProductConfig(): CtProductConfig {

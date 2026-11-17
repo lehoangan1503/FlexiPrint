@@ -93,7 +93,7 @@ import {
 import { IDENTITY_TRANSFORM, itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds } from "../lib/geometry";
 import { faceTargets } from "../lib/face-center";
 import { photoNameConfig } from "../lib/photo-name";
-import { filterBlob, processPhoto, shrinkImage } from "../lib/photo-process";
+import { filterBlob, processName, processPhoto, shrinkImage } from "../lib/photo-process";
 import { isAiStyleRef, styleEngine, styleFamily, styleFilter, styleLabel } from "../lib/photo-styles";
 import { phoiPicks, phoiTaskKey } from "../lib/photo-task-key";
 import { addTask, getTask, latestForPage, onTasks, TASK_PARAM, taskWorking, updateTask, type CtStoredTask } from "./tasks";
@@ -357,6 +357,8 @@ export class Customizer {
   private renderToken = 0;
   /** Local object URL -> its bytes, for photos (originals and renders) not uploaded yet. */
   private localBlobs = new Map<string, Blob>();
+  /** A name-only zone drawing its name (CtPhotoConfig.input "name"): the stage badge's text meanwhile. */
+  private nameBusy: string | null = null;
   /** The name typed in a photo dialog, by zone (a style with askName puts it in its prompt) — kept when it reopens. */
   private photoNames = new Map<string, string>();
   /** The name a styled photo was drawn with (its url → name): a different name typed later redraws it. */
@@ -654,8 +656,8 @@ export class Customizer {
     const waitedOn = this.waitingTask ? getTask(this.waitingTask)?.task : null;
     const waiting = !!waitedOn && taskWorking(waitedOn);
     this.showBadge(
-      waiting || (!!want && working && !done),
-      stale ? this.t("updating", "Updating your realistic preview…") : this.t("realistic", "Making your realistic preview…"),
+      !!this.nameBusy || waiting || (!!want && working && !done),
+      this.nameBusy ?? (stale ? this.t("updating", "Updating your realistic preview…") : this.t("realistic", "Making your realistic preview…")),
     );
     const mine = done ?? stale;
     if (mine) {
@@ -1086,8 +1088,117 @@ export class Customizer {
     return this.field(cfg.label, el("div", { class: "ct-input-wrap" }, [input, counter]), true);
   }
 
+  /**
+   * A name-only zone (CtPhotoConfig.input "name", asked 2026-11-17: "khách nhập tên xong bấm OK thì chạy gen bằng AI"):
+   * no upload — the customer types a name, OK draws it with the zone's AI style (its prompt + reference pictures), in a
+   * server task like a photo (it goes on if they leave). The picture goes in the zone like a photo; the name is on the
+   * order too.
+   */
+  private nameField(r: CtRegion, sel: CtPhotoSelection | null): HTMLElement {
+    const cfg = r.config.photo;
+    const nameCfg = photoNameConfig(cfg);
+    const styles: CtPhotoStyleRef[] = cfg.styles.filter(isAiStyleRef);
+    let style: CtPhotoStyleRef | undefined = sel?.style && styles.includes(sel.style) ? sel.style : styles.includes(cfg.defaultStyle) ? cfg.defaultStyle : styles[0];
+    const drawn = sel?.url ? (this.nameOfPhoto.get(sel.url) ?? "") : "";
+    const input = el("input", {
+      class: "ct-input",
+      type: "text",
+      maxlength: String(nameCfg.maxChars),
+      value: this.photoNames.get(r.id) ?? drawn,
+      placeholder: nameCfg.placeholder,
+    });
+    const counter = el("span", { class: "ct-counter", text: `${input.value.length}/${nameCfg.maxChars}` });
+    const ok = el("button", { type: "button", class: "ct-btn ct-btn--primary ct-name__ok", text: this.t("nameOk", "OK") });
+    const status = el("div", { class: "ct-field__error", hidden: true });
+    const clean = () => input.value.replace(/\s+/g, " ").trim().slice(0, nameCfg.maxChars);
+    const mark = () => {
+      const done = !!sel?.url && clean() === drawn && (!sel.style || sel.style === style);
+      ok.textContent = done ? this.t("nameDone", "✓ Done") : this.t("nameOk", "OK");
+      ok.classList.toggle("is-done", done);
+    };
+    input.addEventListener("input", () => {
+      this.photoNames.set(r.id, input.value);
+      counter.textContent = `${input.value.length}/${nameCfg.maxChars}`;
+      this.errorBox.hidden = true;
+      status.hidden = true;
+      input.classList.remove("ct-input--error");
+      mark();
+    });
+    const run = async () => {
+      const name = clean();
+      if (!name) {
+        status.textContent = this.t("photoNameFirst", "Please enter a name first.");
+        status.hidden = false;
+        input.classList.add("ct-input--error");
+        input.focus();
+        return;
+      }
+      if (!style) return;
+      const st = style;
+      this.photoNames.set(r.id, name);
+      ok.disabled = true;
+      input.disabled = true;
+      ok.textContent = this.t("nameMaking", "Creating…");
+      status.hidden = true;
+      this.nameBusy = `${this.t("nameDrawing", "Drawing your name")} “${name}”…`;
+      this.showBadge(true, this.nameBusy);
+      try {
+        let url: string;
+        if (this.usesTasks(r, st)) {
+          // On the server like a photo: it goes on (and comes back) if the customer leaves the page.
+          const stored = await this.startPhotoTask(r, null, st, null, name);
+          url = await this.taskResult(stored.id);
+        } else {
+          const blob = await processName({ style: st, cutout: cfg.cutout, endpoint: this.photoUrl, fields: { region: r.id, name } });
+          url = URL.createObjectURL(blob);
+          this.localBlobs.set(url, blob);
+        }
+        this.nameOfPhoto.set(url, name);
+        this.nameBusy = null;
+        this.change(r.id, { kind: "photo", url, transform: { ...IDENTITY_TRANSFORM }, style: st, sourceUrl: null, optionId: null });
+        if (url.startsWith("blob:")) void this.uploadLocal(url).catch(() => undefined);
+      } catch (e) {
+        this.nameBusy = null;
+        this.showBadge(false);
+        ok.disabled = false;
+        input.disabled = false;
+        mark();
+        status.textContent = e instanceof Error ? e.message : String(e);
+        status.hidden = false;
+      }
+    };
+    ok.addEventListener("click", () => void run());
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void run();
+      }
+    });
+    mark();
+    const parts: HTMLElement[] = [
+      this.field(nameCfg.label || cfg.label || this.t("photoName", "Name"), el("div", {}, [el("div", { class: "ct-name" }, [el("div", { class: "ct-input-wrap" }, [input, counter]), ok]), status]), nameCfg.required || cfg.required),
+    ];
+    // More than one lettering style: the customer picks, then presses OK.
+    if (styles.length > 1) {
+      const pick = this.picker(
+        "button",
+        styles.map((id) => ({ id, label: styleLabel(id, this.tpl.aiStyles) })),
+        style ?? null,
+        false,
+        (v) => {
+          if (!v || !isAiStyleRef(v)) return;
+          style = v;
+          mark();
+        },
+      );
+      parts.push(this.field(cfg.styleLabel, pick, false));
+    }
+    return el("div", { class: "ct-photo-group" }, parts);
+  }
+
   private photoField(r: CtRegion, sel: CtPhotoSelection | null): HTMLElement {
     const cfg = r.config.photo;
+    if (cfg.input === "name") return this.nameField(r, sel);
     const body = el("div", { class: "ct-photo" });
     /** The name field below (a style that writes the name), when there is one: a required name comes before the upload. */
     let nameGate: (() => boolean) | null = null;
@@ -1175,10 +1286,11 @@ export class Customizer {
     return this.tpl.aiStyles?.find((x) => x.ref === style);
   }
 
-  private async startPhotoTask(r: CtRegion, source: Blob, style: CtPhotoStyleRef, optionId: string | null, name: string): Promise<CtStoredTask> {
-    const blob = await shrinkImage(source, 1600);
+  /** `source` null = a name-only zone: the server draws `name` with the style, no photo. */
+  private async startPhotoTask(r: CtRegion, source: Blob | null, style: CtPhotoStyleRef, optionId: string | null, name: string): Promise<CtStoredTask> {
+    const blob = source ? await shrinkImage(source, 1600) : null;
     const body = new FormData();
-    body.append("file", blob, blob.type === "image/png" ? "photo.png" : "photo.jpg");
+    if (blob) body.append("file", blob, blob.type === "image/png" ? "photo.png" : "photo.jpg");
     body.append("region", r.id);
     body.append("style", style);
     body.append("cutout", "1");
@@ -2257,6 +2369,12 @@ export class Customizer {
   private validateDesign(selection: CtSelection): string | null {
     for (const r of this.shownRegions(selection)) {
       const sel = selection[r.id];
+      if (r.kind === "photo" && r.config.photo.input === "name") {
+        // A name-only zone: the name must be drawn (OK pressed) when it is required.
+        const nameCfg = photoNameConfig(r.config.photo);
+        if ((r.config.photo.required || nameCfg.required) && !(sel?.kind === "photo" && sel.url)) return `${this.t("nameRequired", "Please enter a name and press OK")}: ${nameCfg.label || r.config.photo.label}`;
+        continue;
+      }
       if (r.kind === "photo" && r.config.photo.required && !(sel?.kind === "photo" && sel.url)) {
         return `${this.t("required", "Please complete")}: ${r.config.photo.label}`;
       }
@@ -2367,7 +2485,10 @@ export class Customizer {
           named(cfg.label, sel.url);
           if (cfg.styles.length > 1 || cfg.defaultStyle !== "original") named(cfg.styleLabel, styleLabel(sel.style, this.tpl.aiStyles));
           // The name drawn in the picture (a style that asks it): on the order too, for the team to check.
-          const typed = sel.style && this.aiStyleInfo(sel.style)?.askName ? (this.photoNames.get(r.id) ?? "").trim() : "";
+          const typed =
+            cfg.input === "name" ? (this.nameOfPhoto.get(sel.url) ?? this.photoNames.get(r.id) ?? "").trim()
+            : sel.style && this.aiStyleInfo(sel.style)?.askName ? (this.photoNames.get(r.id) ?? "").trim()
+            : "";
           if (typed) named(photoNameConfig(cfg).label || "Name", typed);
           this.zoneOptionProperty(r, sel, named);
           // Fulfilment may want to re-render from the untouched upload.

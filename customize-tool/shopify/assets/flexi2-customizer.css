@@ -276,6 +276,11 @@
 .ct-dialog__style { display: grid; gap: 6px; flex: 1 1 100%; font-size: 14px; font-weight: 500; }
 .ct-dialog__style-label { font-size: 15px; }
 .ct-photo-group { display: contents; }
+/* A name-only zone (CtPhotoConfig.input "name"): the name and its OK button on one row. */
+.ct-name { display: flex; gap: 8px; align-items: stretch; }
+.ct-name .ct-input-wrap { flex: 1 1 auto; min-width: 0; }
+.ct-name__ok { flex: 0 0 auto; min-width: 72px; padding: 0 18px; }
+.ct-name__ok.is-done { background: #fff; color: var(--ct-accent); border: 2px solid var(--ct-accent); }
 .ct-input.ct-input--error { border-color: #d0342c; outline-color: #d0342c; }
 .ct-field__error { margin-top: 6px; color: #d0342c; font-size: 13px; }
 .ct-field__error[hidden] { display: none; }

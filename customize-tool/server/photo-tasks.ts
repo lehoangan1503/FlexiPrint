@@ -36,7 +36,7 @@ import { cachedAiResult, processPhoto, type PhotoJob, type PhotoResult } from ".
 import { aiStylesConfigured } from "./ai/style-run";
 import { loadAiStyle, originAllowed, takeAiQuota, type AiQuota } from "./ai-styles";
 import { loadBaseProduct } from "./base-products";
-import { CORS_HEADERS, photoRateLimited, publicError, publicJson, readPhotoRequest } from "./handlers";
+import { CORS_HEADERS, photoInputError, photoRateLimited, publicError, publicJson, readPhotoRequest, requestImage } from "./handlers";
 import { ctPublicUploadPath, ctUpload } from "./storage";
 import { drawPhoi, promptFor } from "./version-phoi";
 import { phoiReference } from "./version-phoi-ref";
@@ -160,10 +160,12 @@ export async function createPhotoTask(productId: string, form: FormData, ip: str
   const style = parsed.style;
   if (!isAiStyleRef(style) || !cfg.styles.includes(style)) return publicError("Style không được bật cho vùng này", 400);
   if (parsed.cutout && !cfg.cutout) return publicError("Vùng này không bật tách nền", 400);
+  const wrong = photoInputError(parsed, cfg);
+  if (wrong) return publicError(wrong, 400);
   if (!aiStylesConfigured()) return publicError("AI styles are not configured (CPA_API_KEY)", 501);
   const aiStyle = await loadAiStyle(db, style);
   if (!aiStyle) return publicError("This style is no longer available", 410);
-  const job: PhotoJob = { image: { data: parsed.data, mime: parsed.mime }, style: style as CtAiStyleRef, cutout: parsed.cutout, aiStyle, name: parsed.name };
+  const job: PhotoJob = { image: requestImage(parsed), style: style as CtAiStyleRef, cutout: parsed.cutout, aiStyle, name: parsed.name };
   // Same photo + same style = already paid for (not counted), like public/photo.
   const hit = await cachedAiResult(job);
   if (!hit) {
@@ -189,9 +191,10 @@ export async function createPhotoTask(productId: string, form: FormData, ip: str
     try {
       const out = hit ?? (await processPhoto(job));
       const png = await finishPhoto(out, parsed.cutout, cfg.fadeCrop, styleFamily(style) === "face", targets);
+      // A name-only zone has no upload to keep.
       const [photoUrl, sourceUrl] = await Promise.all([
         ctUpload(ctPublicUploadPath(productId, "photo", "image/png"), png, "image/png"),
-        ctUpload(ctPublicUploadPath(productId, "source", parsed.mime), parsed.data, parsed.mime),
+        parsed.data ? ctUpload(ctPublicUploadPath(productId, "source", parsed.mime), parsed.data, parsed.mime) : Promise.resolve(null),
       ]);
       // The phôi with the photo only when the deploy ticked "Phôi AI có ảnh khách" (off by default, 2026-11-10).
       const hasPhoi = tpl.config.customerPhoi === true && (tpl.config.versionPhoi ?? []).some((v) => v.mainId === mainId);

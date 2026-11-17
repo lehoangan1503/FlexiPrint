@@ -7,6 +7,7 @@ import { inChunks } from "./in-chunks";
 import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
 import type {
+  CtPhotoConfig,
   CtAiStyle,
   CtAiStyleRef,
   CtAsset,
@@ -663,7 +664,8 @@ export function photoRateLimited(ip: string): boolean {
 }
 
 export interface PhotoRequest {
-  data: Buffer;
+  /** The upload; null = none sent (a name-only zone, CtPhotoConfig.input "name" — the caller checks the zone). */
+  data: Buffer | null;
   mime: string;
   style: string;
   cutout: boolean;
@@ -674,7 +676,12 @@ export interface PhotoRequest {
 
 export async function readPhotoRequest(form: FormData): Promise<PhotoRequest | string> {
   const file = form.get("file");
-  if (!(file instanceof Blob)) return "Thiếu file";
+  const name = cleanCustomerName(form.get("name"));
+  // No file: only a typed name (a name-only zone draws it with its AI style).
+  if (!(file instanceof Blob)) {
+    if (!name) return "Thiếu file";
+    return { data: null, mime: "", style: String(form.get("style") ?? "original"), cutout: form.get("cutout") === "1", regionId: String(form.get("region") ?? ""), name };
+  }
   if (file.size > PHOTO_PROCESS_BYTES) return "Ảnh quá lớn (tối đa 8MB)";
   const data = Buffer.from(await file.arrayBuffer());
   const info = readImageInfo(data);
@@ -685,8 +692,26 @@ export async function readPhotoRequest(form: FormData): Promise<PhotoRequest | s
     style: String(form.get("style") ?? "original"),
     cutout: form.get("cutout") === "1",
     regionId: String(form.get("region") ?? ""),
-    name: cleanCustomerName(form.get("name")),
+    name,
   };
+}
+
+/** The upload as the AI job's picture; null = a name-only request. */
+export function requestImage(req: PhotoRequest): { data: Buffer; mime: string } | null {
+  return req.data ? { data: req.data, mime: req.mime } : null;
+}
+
+/**
+ * A request without a photo is only for a name-only zone (CtPhotoConfig.input "name") with an AI style; one with a
+ * photo only for an upload zone. Returns the error to answer, or null when the request fits the zone.
+ */
+export function photoInputError(req: PhotoRequest, cfg: Pick<CtPhotoConfig, "input">): string | null {
+  const nameOnly = cfg.input === "name";
+  if (nameOnly && req.data) return "Vùng này chỉ nhận tên, không nhận ảnh";
+  if (!nameOnly && !req.data) return "Thiếu file";
+  if (nameOnly && !req.name) return "Please enter a name";
+  if (nameOnly && !isAiStyleRef(req.style)) return "Vùng chỉ nhập tên cần một style AI";
+  return null;
 }
 
 /** The image goes back as raw bytes; X-Ct-Backdrop says what is left to key out. */
@@ -701,7 +726,7 @@ function imageResponse(out: PhotoResult, headers: Record<string, string>): NextR
 async function photoResponse(req: PhotoRequest, headers: Record<string, string>, aiStyle?: CtAiStyle): Promise<NextResponse> {
   if (!isPhotoStyleRef(req.style)) return NextResponse.json({ error: "Style không hợp lệ" }, { status: 400, headers });
   try {
-    return imageResponse(await processPhoto({ image: { data: req.data, mime: req.mime }, style: req.style, cutout: req.cutout, aiStyle, name: req.name }), headers);
+    return imageResponse(await processPhoto({ image: requestImage(req), style: req.style, cutout: req.cutout, aiStyle, name: req.name }), headers);
   } catch (e) {
     const status = e instanceof PhotoConfigError ? 501 : 502;
     return NextResponse.json({ error: e instanceof Error ? e.message : "Xử lý ảnh thất bại" }, { status, headers });
@@ -735,12 +760,14 @@ export async function publicPhoto(productId: string, form: FormData, ip: string,
   const style = parsed.style;
   if (!isPhotoStyleRef(style) || !cfg.styles.includes(style)) return publicError("Style không được bật cho vùng này", 400);
   if (parsed.cutout && !cfg.cutout) return publicError("Vùng này không bật tách nền", 400);
+  const wrong = photoInputError(parsed, cfg);
+  if (wrong) return publicError(wrong, 400);
   if (!isAiStyleRef(style)) return photoResponse(parsed, CORS_HEADERS);
 
   if (!aiStylesConfigured()) return publicError("AI styles are not configured (CPA_API_KEY)", 501);
   const aiStyle = await loadAiStyle(db, style);
   if (!aiStyle) return publicError("This style is no longer available", 410);
-  const job = { image: { data: parsed.data, mime: parsed.mime }, style: style as CtAiStyleRef, cutout: parsed.cutout, aiStyle, name: parsed.name };
+  const job = { image: requestImage(parsed), style: style as CtAiStyleRef, cutout: parsed.cutout, aiStyle, name: parsed.name };
   // Same photo + same style version = already paid for: served from the cache, not counted.
   const hit = await cachedAiResult(job);
   if (hit) return imageResponse(hit, CORS_HEADERS);
@@ -757,6 +784,8 @@ export async function editorPhoto(s: CtSession, productId: string, form: FormDat
   const parsed = await readPhotoRequest(form);
   if (typeof parsed === "string") return jsonError(parsed, 400);
   const style = parsed.style;
+  // The editor's test of a name-only zone sends a name and no photo: only an AI style can draw it.
+  if (!parsed.data && !isAiStyleRef(style)) return jsonError("Vùng chỉ nhập tên cần một style AI", 400);
   if (!isAiStyleRef(style)) return photoResponse(parsed, {});
   const aiStyle = await loadAiStyle(s.supabase, style);
   if (!aiStyle) return jsonError("Style AI không tồn tại (hoặc chưa chạy migration 003)", 404);

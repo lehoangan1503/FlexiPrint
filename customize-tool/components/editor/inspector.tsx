@@ -68,7 +68,7 @@ import { defaultRegionSelection, formOrder, hasTestPhoto, isLinkedLayer, isValid
 import { CT_FACE_STYLES, CT_FREE_STYLES, aiStyleRef, isAiStyleRef, needsServer, photoMode, styleEngine, styleFamily, styleLabel } from "../../lib/photo-styles";
 import { AiStyleDialog } from "./ai-style-dialog";
 import { useAiStyles } from "./ai-styles-store";
-import { processPhoto } from "../../lib/photo-process";
+import { processName, processPhoto } from "../../lib/photo-process";
 import { ctApi } from "../../lib/api-client";
 import { OptionThumb } from "./option-thumb";
 import { dominantColor } from "../../lib/dominant-color";
@@ -1240,7 +1240,9 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
     const st = isAiStyleRef(ref) ? ai.styles.find((x) => aiStyleRef(x.id) === ref) : undefined;
     return st ? aiStyleAsksName(st.params, st.prompt) : false;
   };
-  const zoneAsksName = styles.some(asksName);
+  /** The customer only types a name, drawn by the zone's AI style — no upload (CtPhotoConfig.input "name"). */
+  const nameOnly = cfg.photo.input === "name";
+  const zoneAsksName = nameOnly || styles.some(asksName);
   const nameCfg = photoNameConfig(cfg.photo);
   const setName = (patch: Partial<CtPhotoNameConfig>) => set({ name: { ...nameCfg, ...patch } });
   /** The name the test photo is drawn with (like a customer typing it on the product page). */
@@ -1273,6 +1275,35 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
     return url;
   };
 
+  /** A name-only zone's test: the typed name drawn with `style`, like a customer pressing OK. */
+  const renderName = async (style: CtPhotoStyleRef | undefined) => {
+    if (!style || !isAiStyleRef(style)) return setError("Chọn 1 style AI trước.");
+    if (!typedName) {
+      setNameMissing(true);
+      document.getElementById(`ct-test-name-${region.id}`)?.focus();
+      return;
+    }
+    setError(null);
+    const text = `Đang vẽ tên “${typedName}” bằng ${label(style)} (AI, ~30–60 giây)…`;
+    setWorking(text);
+    onPhotoBusy(region.id, text);
+    try {
+      const key = `name|${style}|${cfg.photo.cutout}|${version(style)}|${typedName}`;
+      let url = renders.current.get(key);
+      if (!url) {
+        url = URL.createObjectURL(await processName({ style, cutout: cfg.photo.cutout, endpoint: ctApi.photoEndpoint(region.product_id), fields: { name: typedName } }));
+        renders.current.set(key, url);
+      }
+      setTestNameUsed(typedName);
+      onPhotoSelection(region.id, { kind: "photo", url, transform: { ...IDENTITY_TRANSFORM }, style, sourceUrl: null });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Vẽ tên thất bại");
+    } finally {
+      setWorking(null);
+      onPhotoBusy(region.id, null);
+    }
+  };
+
   const renderTest = async (sourceUrl: string, style: CtPhotoStyleRef, base: CtPhotoSelection) => {
     setError(null);
     const text = needsServer(style, cfg.photo.cutout) ? `Đang xử lý ${label(style)}${isAiStyleRef(style) ? " (AI, ~30–60 giây)" : ""}…` : "Đang lọc…";
@@ -1298,6 +1329,28 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
 
   return (
     <div className="space-y-3 border-t pt-3">
+      <CtField label="Khách đưa vào">
+        <CtSelect<"photo" | "name">
+          value={nameOnly ? "name" : "photo"}
+          onChange={(v) => {
+            if (v === "name") {
+              // A name is drawn by an AI style: the AI tab, the zone's lettering fits whole.
+              setTab("ai");
+              const ref = selectedAi ?? defaultAi();
+              set({ input: "name", mode: "ai", fit: "contain", ...(ref ? { styles: pickedAi.length ? pickedAi : [ref], defaultStyle: ref } : {}) });
+            } else set({ input: undefined });
+          }}
+          options={[
+            { value: "photo", label: "Upload ảnh (ảnh khách → style)" },
+            { value: "name", label: "Chỉ nhập tên (AI vẽ tên theo style)" },
+          ]}
+        />
+      </CtField>
+      {nameOnly && (
+        <p className="rounded bg-sky-500/10 px-2 py-1 text-[11px] leading-snug text-sky-700 dark:text-sky-400">
+          Khách gõ tên rồi bấm OK, AI vẽ tên bằng style của vùng này (prompt + ảnh tham chiếu) và đặt vào vùng. Không có nút upload ảnh. Prompt dùng [NAME] cho tên khách; ảnh tham chiếu là image 1, 2…
+        </p>
+      )}
       <CtField label="Nhãn cho khách">
         <CtInput value={cfg.photo.label} onChange={(e) => set({ label: e.target.value })} />
       </CtField>
@@ -1308,11 +1361,13 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
           options={[{ value: "cover", label: "Cover — phủ kín vùng" }, { value: "contain", label: "Contain — thấy toàn ảnh" }]}
         />
       </CtField>
-      <CtCheckbox checked={cfg.photo.required} onChange={(v) => set({ required: v })} label="Bắt buộc upload trước khi thêm vào giỏ" />
+      <CtCheckbox checked={cfg.photo.required} onChange={(v) => set({ required: v })} label={nameOnly ? "Bắt buộc tạo tên (bấm OK) trước khi thêm vào giỏ" : "Bắt buộc upload trước khi thêm vào giỏ"} />
       {zoneAsksName && (
         <div className="space-y-2 rounded-md border p-2.5">
           <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Ô nhập tên cho khách</div>
-          <p className="text-[10px] leading-snug text-muted-foreground">Style của vùng này dùng tên khách ([NAME] trong prompt / tick). Ô hiện trên trang sản phẩm, ngay trên nút upload ảnh.</p>
+          <p className="text-[10px] leading-snug text-muted-foreground">
+            {nameOnly ? "Ô khách gõ tên trên trang sản phẩm, cạnh nút OK." : "Style của vùng này dùng tên khách ([NAME] trong prompt / tick). Ô hiện trên trang sản phẩm, ngay trên nút upload ảnh."}
+          </p>
           <CtField label="Nhãn ô tên">
             <CtInput value={nameCfg.label} placeholder="Name" onChange={(e) => setName({ label: e.target.value })} />
           </CtField>
@@ -1342,8 +1397,8 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
       {/* Subject cut-out + cropped-edge fade are always applied (lib/design.ts normalizePhotoConfig). */}
       <div className="space-y-2.5 rounded-md border p-2.5">
         <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Style cho khách chọn</span>
-        <div className="grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs">
-          {(["ai", "face"] as const).map((t) => {
+        <div className={cx("grid rounded-md bg-muted p-0.5 text-xs", nameOnly ? "grid-cols-1" : "grid-cols-2")}>
+          {(nameOnly ? (["ai"] as const) : (["ai", "face"] as const)).map((t) => {
             // The badge marks the family customers get, even while no tab is open.
             const n = configured === t ? styles.length : 0;
             return (
@@ -1487,6 +1542,51 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
       </div>
       <AiStyleDialog key={dialog === null ? "closed" : dialog === "new" ? "new" : dialog.id} target={dialog} onClose={() => setDialog(null)} onSaved={(st) => !styles.includes(aiStyleRef(st.id)) && dialog === "new" && toggleStyle(aiStyleRef(st.id), true)} />
 
+      {nameOnly ? (
+        <div className="space-y-2 rounded-md border p-2.5">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Thử tên khách</div>
+          <div className="flex gap-1.5">
+            <CtInput
+              id={`ct-test-name-${region.id}`}
+              value={testName}
+              maxLength={nameCfg.maxChars}
+              placeholder={nameCfg.placeholder || "vd Sophia"}
+              className={nameMissing ? "border-amber-500 ring-1 ring-amber-500" : undefined}
+              onChange={(e) => {
+                setTestName(e.target.value);
+                if (e.target.value.trim()) setNameMissing(false);
+              }}
+              onKeyDown={(e) => e.key === "Enter" && working === null && void renderName(sel.style && isAiStyleRef(sel.style) ? sel.style : selectedAi)}
+            />
+            <CtButton size="sm" variant="primary" disabled={working !== null} onClick={() => void renderName(sel.style && isAiStyleRef(sel.style) ? sel.style : selectedAi)}>
+              OK
+            </CtButton>
+            {sel.url && (
+              <CtButton size="sm" variant="ghost" disabled={working !== null} onClick={() => onPhotoSelection(region.id, { kind: "photo", url: null, transform: { ...IDENTITY_TRANSFORM } })}>
+                <X className="h-3.5 w-3.5" /> Bỏ
+              </CtButton>
+            )}
+          </div>
+          {nameMissing && <p className="rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">Nhập tên để thử.</p>}
+          {pickedAi.length > 1 && (
+            <CtField label="Style">
+              <CtSelect<CtPhotoStyleRef>
+                value={sel.style && pickedAi.includes(sel.style) ? sel.style : (selectedAi ?? pickedAi[0])}
+                disabled={working !== null}
+                onChange={(style) => void renderName(style)}
+                options={pickedAi.map((id) => ({ value: id, label: label(id) }))}
+              />
+            </CtField>
+          )}
+          {sel.url && testNameUsed && <p className="text-[11px] text-muted-foreground">Đang thử: “{testNameUsed}”</p>}
+          {working && (
+            <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" /> {working}
+            </p>
+          )}
+          {error && <p className="text-[11px] text-destructive">{error}</p>}
+        </div>
+      ) : (
       <div className="space-y-2 rounded-md border p-2.5">
         <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Thử ảnh khách</div>
         {zoneAsksName && (
@@ -1585,6 +1685,7 @@ function PhotoProps(props: InspectorProps & { region: CtRegion }) {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

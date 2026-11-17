@@ -35,7 +35,8 @@ import { readImageInfo } from "../image-size";
 import { getProvider, type ProviderImage } from "./providers";
 
 export interface PhotoJob {
-  image: ProviderImage;
+  /** The customer's photo; null = a name-only zone (CtPhotoConfig.input "name"): the AI style draws the typed name. */
+  image: ProviderImage | null;
   style: CtPhotoStyleRef;
   cutout: boolean;
   /** The ct_ai_styles row, resolved by the caller when `style` is "ai:<id>". */
@@ -333,10 +334,13 @@ export function photoCapabilities(): CtPhotoCapabilities {
   return { ai, cutout: matting() !== null || ai, aiStyles: aiStylesConfigured(), faceDetect: faceCrop() !== null };
 }
 
+/** The cache key's "photo" for a name-only job (no upload): the name and the style make the key. */
+const NAME_ONLY = Buffer.from("ct-name-only");
+
 /** AI results by (photo, style version, cut-out) — see server/photo-cache.ts. */
 function aiCacheKey(job: PhotoJob, style: CtAiStyle): string {
   const name = aiStyleAsksName(normalizeAiStyleParams(style.params), style.prompt) ? cleanCustomerName(job.name) : "";
-  return photoCacheKey(job.image.data, "ai", style.id, style.updated_at, job.cutout ? 1 : 0, ...(name ? [name] : []));
+  return photoCacheKey(job.image?.data ?? NAME_ONLY, "ai", style.id, style.updated_at, job.cutout ? 1 : 0, ...(name ? [name] : []));
 }
 
 /**
@@ -390,6 +394,7 @@ export async function processPhoto(job: PhotoJob): Promise<PhotoResult> {
     const image = await cachedPhoto(aiCacheKey(job, style), async () => (await runAiStyle(job, style)).image);
     return { image, backdrop: null };
   }
+  if (!job.image) throw new PhotoConfigError("Thiếu ảnh");
   const def = photoStyle(job.style);
   const matte = matting();
   if (def.family === "face") {

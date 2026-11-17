@@ -87,9 +87,9 @@ export async function shrinkImage(file: Blob, maxPx: number): Promise<Blob> {
   return canvasToBlob(c, file.type === "image/png" ? "image/png" : "image/jpeg", 0.92);
 }
 
-async function serverStep(req: PhotoProcessRequest, input: Blob): Promise<HTMLCanvasElement> {
+async function serverStep(req: Pick<PhotoProcessRequest, "style" | "cutout" | "endpoint" | "fields" | "signal">, input: Blob | null): Promise<HTMLCanvasElement> {
   const body = new FormData();
-  body.append("file", input, input.type === "image/png" ? "photo.png" : "photo.jpg");
+  if (input) body.append("file", input, input.type === "image/png" ? "photo.png" : "photo.jpg");
   body.append("style", req.style);
   body.append("cutout", req.cutout ? "1" : "0");
   for (const [k, v] of Object.entries(req.fields ?? {})) body.append(k, v);
@@ -116,6 +116,16 @@ export async function processPhoto(req: PhotoProcessRequest): Promise<Blob> {
   if (styleEngine(req.style) === "local") canvas = pixelArt(canvas, { cells: 170, colors: 64 });
   const filter = styleFilter(req.style);
   if (filter) canvas = colorFilter(canvas, filter);
+  return hasAlpha(canvas) ? canvasToBlob(canvas, "image/png") : canvasToBlob(canvas, "image/jpeg", 0.92);
+}
+
+/**
+ * A name-only zone (CtPhotoConfig.input "name", 2026-11-17): no upload — the server's AI style draws the typed name
+ * (`fields.name`, with `fields.region` on the storefront). Keyed / trimmed like a photo; never faded at the edge.
+ */
+export async function processName(req: Pick<PhotoProcessRequest, "style" | "cutout" | "endpoint" | "fields" | "signal">): Promise<Blob> {
+  let canvas = await serverStep(req, null);
+  if (req.cutout) canvas = trimTransparent(canvas, 2);
   return hasAlpha(canvas) ? canvasToBlob(canvas, "image/png") : canvasToBlob(canvas, "image/jpeg", 0.92);
 }
 

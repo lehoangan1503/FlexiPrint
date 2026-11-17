@@ -20,7 +20,7 @@
 
 import { NextResponse } from "next/server";
 import { CT_TABLES } from "../config";
-import type { CtArtworkLink, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtCreateFromArtworkBody, CtPreviewBoxBody, CtProduct, CtProductConfig, CtRegion, CtRegionItem } from "../types";
+import type { CtArtworkLink, CtArtworkProductRow, CtCloneProductBody, CtArtworkSource, CtBaseProduct, CtCreateFromArtworkBody, CtPreviewBoxBody, CtProduct, CtProductConfig, CtRegion, CtRegionItem } from "../types";
 import type { CtPrintTemplate } from "../types/print";
 import { normalizePlacement, normalizeProductConfig } from "../lib/design";
 import { sheetBoxForCanvas, withBase } from "../lib/base-fit";
@@ -219,6 +219,60 @@ export async function setPreviewBox(s: CtSession, id: string, body: unknown): Pr
     return NextResponse.json({ product: base ? await applyBase(s.supabase, data) : data });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không ghép được artwork lên base", 500);
+  }
+}
+
+/**
+ * POST products/:id/clone CtCloneProductBody — a copy of a product as it is now (asked 2026-11-17: "clone sản phẩm
+ * này"): its layers + items (new ids, every config key on them follows), its config (photos per option, mockup
+ * prompts, the artwork link at the same revision — so "Có bản artwork mới" stays right), its versions; on its own base
+ * or `baseProductId` (laid on it again). Not copied: the Shopify link (its deploy makes a NEW Shopify product), the
+ * mockup pictures (drawn on the old preview), the preview box of another base's photo.
+ */
+export async function cloneProduct(s: CtSession, id: string, raw: unknown): Promise<NextResponse> {
+  const src = await ownedProduct(s, id);
+  if (!src) return jsonError("Không tìm thấy sản phẩm", 404);
+  if (src.kind !== "product") return jsonError("Chỉ nhân bản sản phẩm — artwork thì bấm tạo sản phẩm từ artwork", 400);
+  const b = (raw && typeof raw === "object" ? raw : {}) as Partial<Record<keyof CtCloneProductBody, unknown>>;
+  const baseId = typeof b.baseProductId === "string" && b.baseProductId ? b.baseProductId : src.base_product_id;
+  const base = baseId ? await loadBaseProduct(s.supabase, baseId) : null;
+  if (baseId && !base) return jsonError("Không tìm thấy product base", 404);
+  const name = ((typeof b.name === "string" && b.name.trim()) || `${src.name} (bản sao)`).slice(0, 200);
+  const db = s.supabase;
+  const { regions, items } = await loadDesign(db, src.id);
+  // A picture uploaded on the product itself (not the artwork's, not the library's) belongs to it alone: deleting it
+  // from one copy would delete the file of the other.
+  const { data: own } = await db.from(CT_TABLES.assets).select("id").eq("product_id", src.id).neq("role", "mockup").returns<Array<{ id: string }>>();
+  const ownIds = new Set((own ?? []).map((a) => a.id));
+  if (items.some((i) => ownIds.has(i.asset_id))) return jsonError("Sản phẩm có ảnh tải lên riêng trên chính nó — chưa nhân bản được; tạo sản phẩm mới từ artwork của nó", 409);
+  const map: Record<string, string> = {};
+  for (const r of regions) map[r.id] = crypto.randomUUID();
+  for (const i of items) map[i.id] = crypto.randomUUID();
+  const cfg = normalizeProductConfig(src.config);
+  const start: CtProductConfig = { ...cfg, previewBox: base?.id === src.base_product_id ? cfg.previewBox : null };
+  const copied = JSON.parse(remap(JSON.stringify({ regions, items, config: start }), map)) as { regions: CtRegion[]; items: CtRegionItem[]; config: CtProductConfig };
+  const { data: made, error } = await db
+    .from(CT_TABLES.products)
+    .insert({ user_id: s.user.id, name, kind: "product", base_product_id: base?.id ?? null, store_id: src.store_id, main_asset_id: src.main_asset_id, notes: src.notes, config: copied.config })
+    .select("*")
+    .single<CtProduct>();
+  if (error || !made) return jsonError(error?.message ?? "Không nhân bản được", 500);
+  try {
+    const { error: e1 } = await db.rpc("ct_save_design", {
+      p_product_id: made.id,
+      p_regions: copied.regions.map((r, i) => ({ ...r, product_id: made.id, sort_order: i })),
+      p_items: copied.items,
+    });
+    if (e1) throw new Error(e1.message);
+    const { data: mains } = await db.from(CT_TABLES.productMains).select("asset_id,sort_order").eq("product_id", src.id).returns<Array<{ asset_id: string; sort_order: number }>>();
+    if (mains?.length) {
+      const { error: e2 } = await db.from(CT_TABLES.productMains).insert(mains.map((m) => ({ product_id: made.id, asset_id: m.asset_id, sort_order: m.sort_order })));
+      if (e2) throw new Error(e2.message);
+    }
+    return NextResponse.json({ product: await applyBase(db, made) }, { status: 201 });
+  } catch (e) {
+    await db.from(CT_TABLES.products).delete().eq("id", made.id);
+    return jsonError(e instanceof Error ? e.message : "Không nhân bản được", 500);
   }
 }
 

@@ -263,9 +263,12 @@ function SceneMaker(props: {
   return (
     <div className="space-y-2 border-t pt-3">
       <div className="font-medium text-foreground">Nền bối cảnh (AI)</div>
-      {overlay ? (
-        <p className="text-muted-foreground">Phôi này có lớp phủ nếp vải của nhà in — nền AI không giữ được lớp phủ đó. Ảnh sinh động cho sản phẩm này để mockup AI làm.</p>
-      ) : !ready ? (
+      {overlay && (
+        <p className="text-muted-foreground">
+          Phôi có lớp phủ của nhà in (người cầm, nếp vải): AI vẽ lại cả ảnh theo nền bạn chọn, sản phẩm to hơn và đúng tỉ lệ khuôn in, rồi tự tách lại phôi trơn + lớp phủ + khung như ảnh nhà in.
+        </p>
+      )}
+      {!ready ? (
         <p className="text-amber-600">Chưa có phôi trơn — tạo hoặc tải phôi trước, AI sẽ đặt nó vào bối cảnh.</p>
       ) : (
         <>
@@ -282,7 +285,7 @@ function SceneMaker(props: {
               {making === "custom" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} Tạo nền
             </CtButton>
           </div>
-          {mine && <p className="text-muted-foreground">AI đang đọc thông tin sản phẩm và vẽ nền (~30 giây – 2 phút)…</p>}
+          {mine && <p className="text-muted-foreground">{overlay ? "AI đang vẽ lại ảnh và tách lớp phủ (~1 – 3 phút)…" : "AI đang đọc thông tin sản phẩm và vẽ nền (~30 giây – 2 phút)…"}</p>}
         </>
       )}
       {props.auto && props.auto.status !== "idle" && (

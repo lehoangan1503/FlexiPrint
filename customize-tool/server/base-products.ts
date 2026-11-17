@@ -22,6 +22,7 @@ import type {
   CtBaseProductRow,
   CtBaseProductTemplate,
   CtBaseProductUse,
+  CtCloneBaseBody,
   CtPriceTable,
   CtProduct,
 } from "../types";
@@ -207,6 +208,27 @@ export async function updateBaseProduct(s: CtSession, id: string, raw: unknown):
   const failed: string[] = [];
   for (const p of products ?? []) await applyBase(s.supabase, p).catch((e: Error) => failed.push(`${p.name}: ${e.message}`));
   return NextResponse.json({ base: normalizeRow(data), reapplied: (products ?? []).length - failed.length, failed });
+}
+
+/**
+ * POST base-products/:id/clone CtCloneBaseBody — a copy of the base to change freely (variants, price table, khuôn,
+ * phôi, backgrounds: the same files, shared): its products stay on the old base. Asked 2026-11-17 ("clone sản phẩm này
+ * và product base này") to try a redrawn phôi without moving a product already on Shopify.
+ */
+export async function cloneBaseProduct(s: CtSession, id: string, raw: unknown): Promise<NextResponse> {
+  const { data: src } = await s.supabase.from(CT_TABLES.baseProducts).select("*").eq("id", id).maybeSingle<CtBaseProduct>();
+  if (!src) return jsonError("Không tìm thấy product base", 404);
+  const body = (raw && typeof raw === "object" ? raw : {}) as Partial<Record<keyof CtCloneBaseBody, unknown>>;
+  const name = str(body.name, 200) || `${src.name} (bản sao)`.slice(0, 200);
+  const was = (src.config ?? {}) as unknown as Record<string, unknown>;
+  const notes = [typeof was.notes === "string" ? was.notes : "", `${new Date().toISOString().slice(0, 10)} nhân bản từ “${src.name}” (${src.id})`].filter(Boolean).join("\n");
+  const { data, error } = await s.supabase
+    .from(CT_TABLES.baseProducts)
+    .insert({ user_id: s.user.id, name, config: { ...was, notes }, sort_order: src.sort_order })
+    .select("*")
+    .single<CtBaseProduct>();
+  if (error || !data) return jsonError(error?.message ?? "Không nhân bản được", 500);
+  return NextResponse.json({ base: normalizeRow(data) }, { status: 201 });
 }
 
 export async function deleteBaseProduct(s: CtSession, id: string): Promise<NextResponse> {

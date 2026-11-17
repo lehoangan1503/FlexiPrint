@@ -174,6 +174,67 @@ export function CreateProductDialog({
   );
 }
 
+/**
+ * A copy of a product (POST products/:id/clone): the same design as it is now, on its own base or another one. The
+ * copy has no Shopify product yet — its deploy makes a new one; mockups are made again on its preview.
+ */
+export function CloneProductDialog({
+  open,
+  onOpenChange,
+  product,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  product: { id: string; name: string; baseId: string | null };
+}) {
+  const { bases, error: basesError } = useBases(open);
+  const [baseId, setBaseId] = useState<string | null>(product.baseId);
+  const [name, setName] = useState(`${product.name} (bản sao)`);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const clone = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const p = await ctApi.cloneProduct(product.id, { name: name.trim() || undefined, baseProductId: baseId ?? undefined });
+      onOpenChange(false);
+      window.open(`${CT_CONFIG.basePath}/${p.id}`, "_blank");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không nhân bản được");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <CtModal open={open} onOpenChange={onOpenChange} title="Nhân bản sản phẩm">
+      <div className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          Bản sao giữ nguyên thiết kế + liên kết artwork. Chưa có trên Shopify (Deploy sẽ tạo sản phẩm Shopify mới); mockup tạo lại theo ảnh xem trước của base.
+        </p>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Product base</div>
+        {basesError && <p className="text-xs text-destructive">{basesError}</p>}
+        <div className="max-h-[44vh] space-y-2 overflow-auto pr-1">
+          {!bases ? <Loader2 className="mx-auto my-8 h-5 w-5 animate-spin" /> : bases.map((b) => <BaseCard key={b.id} b={b} on={baseId === b.id} onPick={() => setBaseId(b.id)} />)}
+        </div>
+        <CtField label="Tên bản sao">
+          <CtInput value={name} onChange={(e) => setName(e.target.value)} />
+        </CtField>
+      </div>
+      {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
+      <div className="mt-4 flex justify-end gap-2">
+        <CtButton variant="outline" onClick={() => onOpenChange(false)}>
+          Huỷ
+        </CtButton>
+        <CtButton variant="primary" disabled={busy} onClick={() => void clone()}>
+          {busy && <Loader2 className="h-4 w-4 animate-spin" />} Nhân bản
+        </CtButton>
+      </div>
+    </CtModal>
+  );
+}
+
 export function CreateArtworkDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const router = useRouter();
   const { bases, error: basesError } = useBases(open);

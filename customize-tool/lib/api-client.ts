@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtSheetOverflow, CtBasePlacement, CtPreviewBoxBody, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseScenesAuto, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
+import type { CtCloneBaseBody, CtCloneProductBody, CtSheetOverflow, CtBasePlacement, CtPreviewBoxBody, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseScenesAuto, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
   CtFulfillCatalogPage, CtFulfillProvider, CtTeeinblueStatus, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind, CtStoreList } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
   CtPackImage,
@@ -111,6 +111,7 @@ export const ctApi = {
   /** Saves the base; every product on it is laid on it again (reapplied / failed). */
   updateBaseProduct: (id: string, body: CtBaseProductBody) => call<{ base: CtBaseProduct; reapplied: number; failed: string[] }>(`base-products/${id}`, json("PATCH", body)),
   deleteBaseProduct: (id: string) => call<void>(`base-products/${id}`, { method: "DELETE" }),
+  cloneBaseProduct: (id: string, body: CtCloneBaseBody = {}) => call<{ base: CtBaseProduct }>(`base-products/${id}/clone`, json("POST", body)).then((r) => r.base),
   /** An AI background of the base's preview (~1–2 min; already added to its previewScenes). */
   makeBaseScene: (id: string, body: CtBaseSceneRequest) => call<{ scene: CtBaseScene }>(`base-products/${id}/scenes`, json("POST", body)).then((r) => r.scene),
   /** The 3 ready backgrounds (+ an AI phôi when the base has none), made in the background — and their state. */
@@ -156,6 +157,7 @@ export const ctApi = {
   setPlacement: (id: string, placement: CtBasePlacement) => call<{ product: CtProduct }>(`products/${id}/placement`, json("POST", placement)).then((r) => r.product),
   /** The artwork's place on the preview photo, this product only (photo px); null = the base's. Preview only. */
   setPreviewBox: (id: string, box: CtPreviewBoxBody["box"]) => call<{ product: CtProduct }>(`products/${id}/preview-box`, json("POST", { box })).then((r) => r.product),
+  cloneProduct: (id: string, body: CtCloneProductBody = {}) => call<{ product: CtProduct }>(`products/${id}/clone`, json("POST", body)).then((r) => r.product),
   syncFromArtwork: (id: string) => call<{ product: CtProduct }>(`products/${id}/artwork-sync`, { method: "POST" }).then((r) => r.product),
   syncManyFromArtwork: (artworkId: string, ids: string[]) =>
     call<{ updated: string[]; failed: Array<{ id: string; error: string }> }>(`products/${artworkId}/artwork-products/sync`, json("POST", { ids })),

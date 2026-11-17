@@ -20,6 +20,10 @@
  * A cut-along-the-art base (acrylic) gets a background with the middle left open (the plate is drawn by code).
  *
  * Every picture made is added to config.previewScenes at once (never lost); the editor picks which one is the preview.
+ *
+ * A phôi with the fulfiller's overlay (Merchize / Printbelle mockup: a blanket held up by a person) is drawn again as a
+ * whole — new place, new person, the piece bigger and shaped like our khuôn — and keyed back into phôi + overlay + box
+ * (drawOverlayScene, server/overlay-key.ts; 2026-11-17).
  */
 
 import sharp from "sharp";
@@ -38,6 +42,7 @@ import { templateRow } from "./print-templates";
 import { addTemplateBlank } from "./print-blanks";
 import { CLEAR_ACRYLIC_LOOK, makeBlank, pieceBounds, sheetBoxOn } from "./product-mockups";
 import { ctRemove, ctUpload } from "./storage";
+import { coverBox, overlayRef, splitKeyed, type KeyedScene } from "./overlay-key";
 import { jsonError, record, str } from "./ai/llm";
 import { ctServiceClient, type CtServiceClient, type CtSession, type CtSupabase } from "./supabase";
 
@@ -254,6 +259,7 @@ async function drawBaseScene(o: {
   const alpha = cfg.cut.mode === "alpha";
   if (!alpha && !source.url) throw new Error("Chưa có phôi trơn để đặt vào nền — tạo hoặc tải phôi trước");
   const where = preset === "custom" ? `${o.prompt} (the editor's own description of the place — follow it)` : PRESETS[preset];
+  if (!alpha && source.overlay) return drawOverlayScene({ ...o, sheet, where });
   const photos = (cfg.source?.photos ?? []).slice(0, 3);
   const dir = `${o.userId}/${CT_CONFIG.storagePrefix}/bases/${base.id}/scenes`;
   const temp: string[] = [];
@@ -314,6 +320,78 @@ async function drawBaseScene(o: {
   }
 }
 
+/**
+ * The fulfiller's mockup photo (phôi + overlay: the blanket held up, worn…) drawn again in our style, the product as
+ * big as the frame allows and shaped like OUR khuôn — then keyed back into the same 3 things the import gave
+ * (phôi trơn, overlay, box), so everything lays the design on it exactly as on the fulfiller's (server/overlay-key.ts).
+ * Asked 2026-11-17 (Premium Fleece Blanket: their 0.81 blanket on our 0.74 sheet hid ~10 % of the design).
+ */
+async function drawOverlayScene(o: {
+  userId: string;
+  base: CtBaseProduct;
+  template: CtPrintTemplate | null;
+  preset: CtBaseScenePreset;
+  prompt: string;
+  source: CtProductScene;
+  plain: CtProductScene;
+  sheet: Pick<CtPrintSpec, "width" | "height" | "outline">;
+  where: string;
+}): Promise<CtBaseScene> {
+  const { base, source, sheet } = o;
+  if (!source.url || !source.overlay) throw new Error("Phôi chưa có lớp phủ");
+  const ob = pieceBounds(sheet);
+  const aspect = ob.w / Math.max(1, ob.h);
+  const [phoi, overlay] = await Promise.all([fetchImage(source.url), fetchImage(source.overlay)]);
+  const ref = await overlayRef(phoi, overlay, aspect);
+  const dir = `${o.userId}/${CT_CONFIG.storagePrefix}/bases/${base.id}/scenes`;
+  const refPath = `${dir}/ref-${crypto.randomUUID()}.png`;
+  const refUrl = await ctUpload(refPath, ref.png, "image/png");
+  const prompt = overlayPrompt({ facts: productFacts(base, o.template), where: o.where });
+  try {
+    // The model now and then shapes the face its own way (or loses the magenta): a second picture, the closer one kept.
+    let best: { keyed: KeyedScene; off: number } | null = null;
+    let last = "";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const picture = (await drawImage(CT_IMAGE_MODEL, prompt, [refUrl], "1:1", "crop")).data;
+        const keyed = await splitKeyed(picture);
+        const k = keyed.width / 1024;
+        const want = { w: ref.face.w * k, h: ref.face.h * k };
+        // How far from the asked face: its aspect (what the box loses) and its size.
+        const off = Math.abs(Math.log(keyed.face.w / keyed.face.h / aspect)) * 2 + Math.abs(Math.log((keyed.face.w * keyed.face.h) / (want.w * want.h))) * 0.5 + (1 - keyed.fill);
+        if (!best || off < best.off) best = { keyed, off };
+        if (Math.abs(keyed.face.w / keyed.face.h / aspect - 1) < 0.06 && keyed.fill > 0.85) break;
+      } catch (e) {
+        last = e instanceof Error ? e.message : String(e);
+      }
+    }
+    if (!best) throw new Error(`AI không vẽ lại được ảnh: ${last}`);
+    const { keyed } = best;
+    const id = crypto.randomUUID();
+    const [url, overlayUrl] = await Promise.all([
+      ctUpload(`${dir}/${o.preset}-${id}.jpg`, keyed.phoi, "image/jpeg"),
+      ctUpload(`${dir}/${o.preset}-${id}-overlay.png`, keyed.overlay, "image/png"),
+    ]);
+    const box = sheetBoxOn(coverBox(keyed.face, aspect), sheet);
+    const scene: CtProductScene = { url, width: keyed.width, height: keyed.height, box, overlay: overlayUrl };
+    console.info(`[ct] base overlay scene ${base.name} ${o.preset}: face ${Math.round(keyed.face.w)}×${Math.round(keyed.face.h)} (${(keyed.face.w / keyed.face.h).toFixed(3)} vs ${aspect.toFixed(3)}), fill ${keyed.fill.toFixed(2)}`);
+    return { id: newId(), preset: o.preset, prompt: o.prompt, scene, plain: o.plain, found: true, at: new Date().toISOString() };
+  } finally {
+    await ctRemove([refPath]).catch(() => undefined);
+  }
+}
+
+function overlayPrompt(o: { facts: string; where: string }): string {
+  return [
+    "Picture 1 is a product photo for an online store. The flat MAGENTA area in it is the product's printable face (a customer's design is printed there later); everything else is the scene around it.",
+    `About this product (from its store listing): ${o.facts}.`,
+    `Make ONE NEW photograph of this same shot in another style: ${o.where}. The product is shown the same way as in picture 1 — held up, worn, hung or laid the same way, by a person if there is one (a new person, new clothes) — but the place, the decor and the light are new, photorealistic, warm and inviting, like a premium online-store lifestyle photo, square frame.`,
+    "Same framing as picture 1: the magenta face keeps EXACTLY the size, outline and place it has in picture 1 — same width, same height, same edges in the frame — do not zoom, move, widen or shorten it. It stays square to the camera: no perspective, no tilt, its edges nearly straight. Whatever overlaps its edge in picture 1 (fingers holding a corner…) may overlap it the same way; nothing else covers it.",
+    "Its face is plain solid MAGENTA (pure #FF00FF) all over, like a chroma-key screen, but real material: its soft natural folds, gentle wrinkles and light falloff show only as slightly darker and lighter shades of that same magenta. No print, no pattern, no picture, no text, no hem, seam or border of another colour on it. Nothing else in the photo is magenta, pink or purple.",
+    "No text, no watermark.",
+  ].join(" ");
+}
+
 /** Adds scenes to the base (read fresh: a picture that took a minute is never lost to an unsaved page) + other fields. */
 async function saveScenes(db: Db, baseId: string, add: CtBaseScene[], extra: Partial<CtBaseProductConfig> = {}): Promise<void> {
   const { data: row } = await db.from(CT_TABLES.baseProducts).select("config").eq("id", baseId).maybeSingle<{ config: Record<string, unknown> | null }>();
@@ -355,7 +433,6 @@ async function plainPhoi(db: Db, userId: string, base: CtBaseProduct, template: 
   const current = cfg.previewScenes.find((sc) => sc.scene.url && sc.scene.url === cfg.preview.url);
   const plain = current ? current.plain : cfg.preview;
   if (cfg.cut.mode === "alpha") return { source: plain, plain };
-  if (plain.overlay) return { skip: "Phôi có lớp phủ nếp vải của nhà in — nền AI không giữ được, ảnh sinh động để mockup AI làm" };
   if (plain.url) return { source: plain, plain };
   const blank = template?.spec.blanks[0];
   if (blank) return { source: { url: blank.url, width: blank.width, height: blank.height, box: blank.box }, plain };

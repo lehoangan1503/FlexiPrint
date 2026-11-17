@@ -1232,7 +1232,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                 </Link>
               )}
             </div>
-            <ArtworkLinkBar productId={product.id} productName={product.name} dirty={design.dirty} savedTick={savedTick} onFlash={flash} />
+            <ArtworkLinkBar productId={product.id} productName={product.name} baseId={product.base_product_id ?? null} dirty={design.dirty} savedTick={savedTick} onFlash={flash} />
             <div className="ml-auto flex shrink-0 items-center gap-2">
               <ImportStatus />
               {notice && <span className="max-w-60 truncate text-xs text-muted-foreground">{notice}</span>}
@@ -1368,7 +1368,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             </CtButton>
           )}
         </div>
-        <ArtworkLinkBar productId={product.id} productName={product.name} dirty={design.dirty} savedTick={savedTick} onFlash={flash} />
+        <ArtworkLinkBar productId={product.id} productName={product.name} baseId={product.base_product_id ?? null} dirty={design.dirty} savedTick={savedTick} onFlash={flash} />
         {charSets.map((cs) => (
           <CtTooltip key={cs.id} label={`${cs.own ? "Bộ nhân vật dựng sản phẩm này" : "Bộ nhân vật đã kéo vào"}: ${cs.name}`}>
             <Link

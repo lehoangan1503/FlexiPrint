@@ -12,6 +12,8 @@
  *   POST   print-templates/ai            CtPrintAiRequest → CtPrintAiResult  khuôn drawn by AI (server/print-khuon.ts)
  *   POST   print-templates/:id/blanks    multipart file → { template }  a phôi of the khuôn (server/print-blanks.ts)
  *   POST   print-templates/:id/blanks/ai → { template }  a phôi drawn by AI
+ *   POST   base-products/:id/clone       CtCloneBaseBody → { base }   a copy of the base (server/base-products.ts)
+ *   POST   products/:id/clone            CtCloneProductBody → { product }   a copy of a product (server/artwork-link.ts)
  *   POST   base-products/:id/scenes      → { scene }     an AI background of the base's preview (server/base-scenes.ts)
  *   POST   base-products/:id/assembly    { swap?, off? } → { base, note, reapplied }   sewn print sheet (server/base-assembly.ts)
  *   POST|GET base-products/:id/scenes/auto → CtBaseScenesAuto  the 3 ready backgrounds (+ phôi) in the background
@@ -318,6 +320,7 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     if (id && method === "PATCH") return bases.updateBaseProduct(session, id, await readJson<unknown>(req));
     if (id && method === "DELETE") return bases.deleteBaseProduct(session, id);
   }
+  if (head === "base-products" && id && sub === "clone" && !path[3] && method === "POST") return bases.cloneBaseProduct(session, id, await readJson<unknown>(req));
   if (head === "base-products" && id && sub === "scenes" && !path[3] && method === "POST") return makeBaseScene(session, id, await readJson<unknown>(req));
   if (head === "base-products" && id && sub === "assembly" && !path[3] && method === "POST") return makeBaseAssembly(session, id, await readJson<unknown>(req));
   if (head === "base-products" && id && sub === "scenes" && path[3] === "auto" && method === "POST") return autoBaseScenes(session, id);
@@ -393,6 +396,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return versionPhoi.deleteVersionPhoi(session, id, q.get("mainId") ?? "", q.get("baseId") ?? "");
     } else if (sub === "placement" && !path[3] && method === "POST") {
       return artworkLink.setPlacement(session, id, await readJson<unknown>(req));
+    } else if (sub === "clone" && !path[3] && method === "POST") {
+      return artworkLink.cloneProduct(session, id, await readJson<unknown>(req));
     } else if (sub === "preview-box" && !path[3] && method === "POST") {
       return artworkLink.setPreviewBox(session, id, await readJson<unknown>(req));
     } else if (sub === "fit-base" && !path[3] && method === "POST") {

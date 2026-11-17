@@ -1734,6 +1734,17 @@ export interface CtCreateFromArtworkBody {
   baseProductId: string;
 }
 
+/** POST products/:id/clone — a copy of a product (its design as it is), on the same base or `baseProductId`. */
+export interface CtCloneProductBody {
+  name?: string;
+  baseProductId?: string;
+}
+
+/** POST base-products/:id/clone */
+export interface CtCloneBaseBody {
+  name?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Product base (ct_base_products, migration 031) — server/base-products.ts
 // ---------------------------------------------------------------------------

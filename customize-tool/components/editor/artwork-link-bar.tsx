@@ -82,7 +82,11 @@ export function ArtworkLinkBar({ productId, productName, baseId = null, dirty, s
       <div className="ml-2 flex shrink-0 items-center gap-1.5 text-[11px]">
         <CloneProductDialog open={cloning} onOpenChange={setCloning} product={{ id: productId, name: productName, baseId }} />
         <button
-          onClick={() => (dirty ? onFlash("Lưu sản phẩm trước — bản sao lấy bản đã lưu") : setCloning(true))}
+          onClick={() => {
+            // The product page often counts as edited right after opening (layout fitted on load): ask, don't block.
+            if (dirty && !window.confirm("Bản sao lấy bản ĐÃ LƯU của sản phẩm — thay đổi chưa lưu không theo sang. Tiếp tục?")) return;
+            setCloning(true);
+          }}
           className="flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-accent"
           title="Tạo 1 sản phẩm giống hệt (cùng base hoặc base khác) — chưa lên Shopify cho tới khi Deploy"
         >

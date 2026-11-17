@@ -25,7 +25,7 @@ export const phoiPreviewMockup: CtNewsArticle = {
     },
 
     { kind: "h", text: "1. Product base — Phôi / nền xem trước" },
-    { kind: "img", src: `${IMG}/base-preview.png`, caption: "Trang product base: ảnh xem trước hiện tại và khung nét đứt (chỗ dán thiết kế)." },
+    { kind: "img", src: `${IMG}/base-preview.webp`, caption: "Trang product base: ảnh xem trước hiện tại và khung nét đứt (chỗ dán thiết kế)." },
     {
       kind: "list",
       items: [
@@ -42,7 +42,7 @@ export const phoiPreviewMockup: CtNewsArticle = {
     },
 
     { kind: "h", text: "2. Vẽ lại ảnh xem trước bằng AI" },
-    { kind: "img", src: `${IMG}/base-scenes.png`, caption: "Nền bối cảnh (AI): 3 nút mẫu, ô tự mô tả, các nền đã vẽ kèm % thiết kế bị che." },
+    { kind: "img", src: `${IMG}/base-scenes.webp`, caption: "Nền bối cảnh (AI): 3 nút mẫu, ô tự mô tả, các nền đã vẽ kèm % thiết kế bị che." },
     {
       kind: "list",
       ordered: true,
@@ -76,7 +76,7 @@ export const phoiPreviewMockup: CtNewsArticle = {
     { kind: "note", tone: "warn", text: "Model ảnh chỉ biết vẽ, không biết phân tích. Phần phân tích là của @flexiprint (đọc số đo, xem ảnh ghép) — nên khi preview chưa ổn, gửi @flexiprint thay vì bấm vẽ lại nhiều lần." },
 
     { kind: "h", text: "4. Trang sản phẩm — Phôi trơn, Phôi + thiết kế, Mockup bằng AI" },
-    { kind: "img", src: `${IMG}/product-mockup.png`, caption: "Trang sản phẩm → Mockup: Phôi trơn và Phôi + thiết kế lấy từ base; ô prompt tạo ảnh mockup." },
+    { kind: "img", src: `${IMG}/product-mockup.webp`, caption: "Trang sản phẩm → Mockup: Phôi trơn và Phôi + thiết kế lấy từ base; ô prompt tạo ảnh mockup." },
     {
       kind: "list",
       items: [
@@ -97,7 +97,7 @@ export const phoiPreviewMockup: CtNewsArticle = {
     },
 
     { kind: "h", text: "5. Trang Deploy — Vị trí trên ảnh xem trước" },
-    { kind: "img", src: `${IMG}/deploy-box.png`, caption: "Trang Deploy: chỉnh khung riêng cho 1 sản phẩm; đỏ = phần bị ảnh che." },
+    { kind: "img", src: `${IMG}/deploy-box.webp`, caption: "Trang Deploy: chỉnh khung riêng cho 1 sản phẩm; đỏ = phần bị ảnh che." },
     {
       kind: "p",
       text: "Cùng kiểu thanh trượt với base nhưng chỉ cho **riêng sản phẩm này** (ví dụ 1 mẫu có tên sát mép dưới, muốn đẩy khung lên một chút). Mặc định dùng khung của base; bấm **Về khung của base** để bỏ chỉnh riêng. Chỉnh xong bấm **Lưu vị trí** rồi Deploy cập nhật. Khung riêng chỉ áp cho đúng ảnh nó được chỉnh — base đổi sang ảnh khác thì sản phẩm tự quay về khung của base.",

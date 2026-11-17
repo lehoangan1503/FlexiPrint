@@ -43,8 +43,8 @@ export interface CtCustomizable {
   photos: number;
 }
 
-const FEMALE_NAMES = ["Emma", "Olivia", "Ava", "Sophia", "Mia", "Isabella", "Amelia", "Harper", "Ella", "Lily", "Grace", "Chloe", "Zoe", "Nora", "Hazel", "Ruby"];
-const MALE_NAMES = ["Liam", "Noah", "Oliver", "James", "Elijah", "Lucas", "Henry", "Jack", "Leo", "Owen", "Ethan", "Mason", "Logan", "Wyatt", "Caleb", "Theo"];
+export const FEMALE_NAMES = ["Emma", "Olivia", "Ava", "Sophia", "Mia", "Isabella", "Amelia", "Harper", "Ella", "Lily", "Grace", "Chloe", "Zoe", "Nora", "Hazel", "Ruby"];
+export const MALE_NAMES = ["Liam", "Noah", "Oliver", "James", "Elijah", "Lucas", "Henry", "Jack", "Leo", "Owen", "Ethan", "Mason", "Logan", "Wyatt", "Caleb", "Theo"];
 const FIRST_NAMES = [...FEMALE_NAMES, ...MALE_NAMES];
 
 /** Who the field names (its label / placeholder): "Mrs. Claus's name" → a woman's name, "Santa's name" → a man's. */

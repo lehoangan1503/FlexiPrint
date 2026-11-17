@@ -21,7 +21,7 @@ import { faceTargets } from "../lib/face-center";
 import { isAiStyleRef, isPhotoStyleRef, styleFamily } from "../lib/photo-styles";
 import { CT_IMAGE_MODEL } from "../lib/image-models";
 import { CT_MOCKUP_SCENES_MAX } from "../lib/mockup-scenes";
-import { PET_HINT, type CtMockupVariant } from "../lib/mockup-variants";
+import { FEMALE_NAMES, MALE_NAMES, PET_HINT, type CtMockupVariant } from "../lib/mockup-variants";
 import { processPhoto } from "./ai/photo";
 import { isAdmin, loadAiStyle } from "./ai-styles";
 import { fetchImage } from "./char/files";
@@ -101,7 +101,26 @@ function shuffled<T>(list: T[]): T[] {
 }
 
 /** `want` different source photos of `kind` (the pool grows by the ones it lacks, up to POOL_TARGET). */
-async function poolPhotos(s: CtSession, kind: Subject, want: number): Promise<Array<{ data: Buffer; mime: string }>> {
+interface SourcePhoto {
+  data: Buffer;
+  mime: string;
+  /** The look it was drawn from (PEOPLE / PETS). */
+  look: string;
+}
+
+/** A name that fits the sample person (a style that writes the name: "NORA" on a boy, 2026-11-17): a name of the other
+ * sex from our lists is swapped for one of theirs; any other name stays. */
+function nameFor(look: string, name: string): string {
+  const pick = (list: string[]) => list[Math.floor(Math.random() * list.length)];
+  const upper = name.length > 1 && name === name.toUpperCase();
+  const plain = name.trim().replace(/^./, (c) => c.toUpperCase()).replace(/(?<=.)./g, (c) => c.toLowerCase());
+  const her = /\b(woman|girl|grandmother|lady)\b/i.test(look);
+  const him = /\b(man|boy|grandfather)\b/i.test(look);
+  const next = her && MALE_NAMES.includes(plain) ? pick(FEMALE_NAMES) : him && FEMALE_NAMES.includes(plain) ? pick(MALE_NAMES) : null;
+  return next ? (upper ? next.toUpperCase() : next) : name;
+}
+
+async function poolPhotos(s: CtSession, kind: Subject, want: number): Promise<SourcePhoto[]> {
   const db = ctServiceClient() ?? s.supabase;
   const { data } = await db.from(CT_TABLES.packImages).select("*").eq("name", poolName(kind)).eq("status", "done").not("url", "is", null).limit(100).returns<CtPackImage[]>();
   const have = data ?? [];
@@ -115,7 +134,7 @@ async function poolPhotos(s: CtSession, kind: Subject, want: number): Promise<Ar
       const ext = out.mime === "image/png" ? "png" : "jpg";
       const url = await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/mockup-samples/${kind}-${crypto.randomUUID()}.${ext}`, out.data, out.mime);
       await db.from(CT_TABLES.packImages).insert({ user_id: s.user.id, name: poolName(kind), source: "ai", status: "done", listed: false, description: look, prompt, refs: [], aspect: "1:1", model: CT_IMAGE_MODEL, url, mime: out.mime });
-      return { data: out.data, mime: out.mime };
+      return { data: out.data, mime: out.mime, look };
     }),
   );
   const fresh = drawn.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
@@ -124,7 +143,7 @@ async function poolPhotos(s: CtSession, kind: Subject, want: number): Promise<Ar
     if (out.length >= want) break;
     try {
       const buf = await fetchImage(row.url!);
-      out.push({ data: buf, mime: row.mime || "image/jpeg" });
+      out.push({ data: buf, mime: row.mime || "image/jpeg", look: row.description });
     } catch {
       // A lost picture: the next one.
     }
@@ -148,7 +167,7 @@ export async function styledSamples(s: CtSession, product: CtProduct, region: Ct
   const nameOnly = cfg.input === "name";
   const styles = new Map<string, CtAiStyle | null>();
   for (const it of items) if (isAiStyleRef(it.style) && !styles.has(it.style)) styles.set(it.style, await loadAiStyle(s.supabase, it.style));
-  let sources: Array<{ data: Buffer; mime: string } | null> = items.map(() => null);
+  let sources: Array<SourcePhoto | null> = items.map(() => null);
   if (!nameOnly) {
     const words = [cfg.label, ...[...styles.values()].map((st) => (st ? `${st.name} ${st.prompt}` : ""))].join(" ");
     const kind: Subject = PET_HINT.test(words) ? "pet" : "person";
@@ -163,7 +182,9 @@ export async function styledSamples(s: CtSession, product: CtProduct, region: Ct
         const aiStyle = isAiStyleRef(it.style) ? styles.get(it.style) : undefined;
         if (isAiStyleRef(it.style) && !aiStyle) throw new Error("Style AI không còn");
         if (nameOnly && !aiStyle) throw new Error("Vùng chỉ nhập tên cần một style AI");
-        const out = await processPhoto({ image: sources[i], style: it.style, cutout: cfg.cutout, aiStyle: aiStyle ?? undefined, name: it.name });
+        const src = sources[i];
+        const image = src ? { data: src.data, mime: src.mime } : null;
+        const out = await processPhoto({ image, style: it.style, cutout: cfg.cutout, aiStyle: aiStyle ?? undefined, name: src ? nameFor(src.look, it.name) : it.name });
         const png = await finishPhoto(out, cfg.cutout, cfg.fadeCrop && !nameOnly, styleFamily(it.style) === "face", nameOnly ? null : targets);
         const url = await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/${product.id}/mockup-samples/${crypto.randomUUID()}.png`, png, "image/png");
         return { url, error: "" };

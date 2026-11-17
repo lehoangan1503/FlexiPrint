@@ -1,3 +1,5 @@
+> **Dùng Agent IDE?** Không cần cài gì: Store → nhận món `flexiprint-user`, rồi Cài đặt → Tool catalog → flexiprint-user → dán email + mật khẩu flexi2. File này chỉ dành cho máy dùng Claude Code không qua Agent IDE.
+
 # Cài MCP `flexiprint` — làm sản phẩm FlexiPrint (flexi2) từ đầu đến cuối bằng lệnh chat
 
 > **Gửi agent (Claude Code):** đọc hết file này rồi làm đúng các bước ở phần **"Việc agent cần làm"**.
@@ -26,7 +28,6 @@
 
    ```
    FLEXI_URL=https://flexi2.next.lc
-   FLEXI_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzkyMzQ2MzQyLCJleHAiOjE5NTAwMjYzNDJ9.MoaTdOqjxSe9wMQddh_bvgCpwCZNfX5X-GeH9WfOuw4
    FLEXI_EMAIL=
    FLEXI_PASSWORD=
    ```

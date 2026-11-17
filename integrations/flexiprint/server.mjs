@@ -6,20 +6,26 @@
 //   - server (every tool of flexiprint-mcp on flexi2, POST /api/customize-tool/mcp): sent on as this user — the
 //            server checks rights (own products / sets, admins all; server/mcp/server.ts).
 //
-// Env (see README.md): FLEXI_EMAIL, FLEXI_PASSWORD (a flexi2 account), FLEXI_URL, FLEXI_ANON_KEY.
+// Env (see README.md): FLEXI_EMAIL, FLEXI_PASSWORD (a flexi2 account); FLEXI_URL, FLEXI_ANON_KEY have defaults.
 // No dependencies: Node 20+.
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 
-const ENV_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), ".env");
+// The keys: the Agent IDE's Tool catalog keeps them in its own folder (FLEXIPRINT_ENV_DIR, "Cài đặt → Tool catalog →
+// flexiprint"); a hand install keeps a .env next to this file. An empty value counts as not set.
+const ENV_FILE = process.env.FLEXIPRINT_ENV_DIR
+  ? path.join(process.env.FLEXIPRINT_ENV_DIR, ".env")
+  : path.join(path.dirname(fileURLToPath(import.meta.url)), ".env");
 if (fs.existsSync(ENV_FILE)) {
-  for (const line of fs.readFileSync(ENV_FILE, "utf8").split("\n")) {
+  for (const line of fs.readFileSync(ENV_FILE, "utf8").split(/\r?\n/)) {
     const m = /^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/.exec(line);
-    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
   }
 }
+// flexi2's public anon key (the web page carries it too) — so a user only gives an email + a password.
+process.env.FLEXI_ANON_KEY ||= "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzkyMzQ2MzQyLCJleHAiOjE5NTAwMjYzNDJ9.MoaTdOqjxSe9wMQddh_bvgCpwCZNfX5X-GeH9WfOuw4";
 const BASE = (process.env.FLEXI_URL || "https://flexi2.next.lc").replace(/\/$/, "");
 const API = `${BASE}/api/customize-tool`;
 

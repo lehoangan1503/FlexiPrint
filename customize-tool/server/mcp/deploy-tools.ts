@@ -320,16 +320,18 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
     callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db } = await actorOf(ctx, args.task_id);
-      const base = await loadBaseProduct(db, str(args.base_product_id));
+      const base = (await listBaseRows(db)).find((b) => b.id === str(args.base_product_id));
       if (!base) throw new Error("No such product base — list_base_products");
       const m = base.config.mockup;
+      // As the server decides it for a product on this base (server/product-mockups.ts productMockups).
+      const fromPhoi = !!base.config.preview.url || (!!base.template?.blankUrl && base.config.cut.mode !== "alpha");
       return json({
         base: { id: base.id, name: base.name },
         scenes: m.scenes,
         sceneList: m.scenes.trim() ? splitScenes(m.scenes).scenes : [],
         defaultScenes: defaultScenes(base.name),
         wrap: m.wrap,
-        defaultWrap: defaultMockupWrap({ piece: base.name, materialId: base.config.material, dieCut: base.config.cut.mode === "alpha", fromPhoi: !!base.config.preview.url }),
+        defaultWrap: defaultMockupWrap({ piece: base.template?.name || base.name, materialId: base.config.material, dieCut: base.config.cut.mode === "alpha", fromPhoi }),
         refs: m.refs,
         canEdit: ctx.caller === "agent" || ctx.admin || (!!ctx.userId && base.user_id === ctx.userId),
       });

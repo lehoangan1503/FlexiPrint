@@ -529,7 +529,26 @@ export async function makeProductBlank(s: CtSession, productId: string): Promise
 export async function listMockupJobs(s: CtSession, productId: string): Promise<NextResponse> {
   const { data, error } = await s.supabase.from(CT_TABLES.packImages).select("*").eq("name", jobName(productId)).order("created_at", { ascending: false }).limit(40).returns<CtPackImage[]>();
   if (error) return jsonError(error.message, 500);
-  return NextResponse.json({ jobs: data ?? [] });
+  const jobs = await failOrphans(ctServiceClient() ?? s.supabase, data ?? []);
+  return NextResponse.json({ jobs });
+}
+
+/** When this process started: a "running" job last touched before it was drawn by an app that is gone. */
+const PROCESS_STARTED = Date.now();
+export const ORPHAN_ERROR = "Bị ngắt giữa chừng vì server khởi động lại (triển khai bản mới) — bấm Tạo mockup để vẽ lại.";
+
+/**
+ * Jobs are drawn in this process's memory (drawMockupJob): a restart loses them and their rows stayed "running" for
+ * good — the card spun forever with no error (2026-11-18, product fbf93189). A running row this process is not
+ * drawing and that was last touched before it started is marked failed.
+ */
+async function failOrphans(db: MockDb, jobs: CtPackImage[]): Promise<CtPackImage[]> {
+  const orphans = jobs.filter((j) => j.status === "running" && !activeJobs.has(j.id) && Date.parse(j.created_at) < PROCESS_STARTED);
+  if (!orphans.length) return jobs;
+  const ids = orphans.map((j) => j.id);
+  const { error } = await db.from(CT_TABLES.packImages).update({ status: "failed", error: ORPHAN_ERROR }).in("id", ids).eq("status", "running");
+  if (error) return jobs;
+  return jobs.map((j) => (ids.includes(j.id) ? { ...j, status: "failed" as const, error: ORPHAN_ERROR } : j));
 }
 
 function parseScenes(raw: FormDataEntryValue | null): string[] {
@@ -772,14 +791,17 @@ async function mockupSlot(): Promise<() => void> {
 }
 
 /** One mockup job drawn in the background from its row (prompt, the front picture in refs) → done (a product picture) / failed. */
+const activeJobs = new Set<string>();
 function drawMockupJob(s: CtSession, productId: string, row: CtPackImage): void {
   const db = ctServiceClient() ?? s.supabase;
+  activeJobs.add(row.id);
   void (async () => {
     const release = await mockupSlot();
     try {
       await drawMockupNow(db, s, productId, row);
     } finally {
       release();
+      activeJobs.delete(row.id);
     }
   })();
 }
@@ -821,8 +843,12 @@ export async function retryMockupJob(s: CtSession, productId: string, jobId: str
   if (!row) throw new Error("Không có job mockup này");
   if (row.status === "running") throw new Error("Job đang chạy — chờ nó xong");
   if (!row.refs.length) throw new Error("Job không có ảnh tham chiếu (front)");
+  activeJobs.add(jobId); // before the row turns running: a list in between must not take it for an orphan
   const { data: next, error } = await db.from(CT_TABLES.packImages).update({ prompt, status: "running", error: "", url: null }).eq("id", jobId).select("*").single<CtPackImage>();
-  if (error || !next) throw new Error(error?.message ?? "Không cập nhật được job");
+  if (error || !next) {
+    activeJobs.delete(jobId);
+    throw new Error(error?.message ?? "Không cập nhật được job");
+  }
   drawMockupJob(s, productId, next);
   return next;
 }

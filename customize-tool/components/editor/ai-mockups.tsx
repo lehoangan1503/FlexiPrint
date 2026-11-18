@@ -69,6 +69,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
   const followText = baseScenes || defaultScenes(config.print?.name || product.name).join("\n");
   const own = typed !== null ? typed.trim() !== "" && typed.trim() !== followText : !!config.mockupScenes.trim() && config.mockupScenes.trim() !== followText;
   const hasBase = !!product.base_product_id;
+  const refs = config.mockupRefs.length ? { list: config.mockupRefs, from: "riêng của sản phẩm" } : { list: props.baseMockup?.refs ?? [], from: "của product base" };
   const [backBusy, setBackBusy] = useState(false);
   const backToBase = async () => {
     setBackBusy(true);
@@ -404,6 +405,23 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
               )}
             </div>
             <CtTextarea rows={6} value={scenes} onChange={(e) => setScenes(e.target.value)} placeholder={"hanging on a Christmas tree with warm lights\n---\nheld in a hand by the fireplace,\nsoft bokeh lights behind"} />
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="font-medium text-foreground">Ảnh tham chiếu:</span>
+              {refs.list.length ? (
+                <>
+                  {refs.list.map((u, i) => (
+                    <a key={u} href={u} target="_blank" rel="noreferrer" title={`Ảnh ${i + 2} trong prompt`} className="relative block h-10 w-10 overflow-hidden rounded border">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={u} alt="" className="h-full w-full object-cover" />
+                      <span className="absolute bottom-0 right-0 bg-black/70 px-0.5 text-[10px] leading-none text-white">{i + 2}</span>
+                    </a>
+                  ))}
+                  <span className="text-muted-foreground">{refs.list.length} ảnh {refs.from} — gọi trong prompt là picture 2{refs.list.length > 1 ? `–${refs.list.length + 1}` : ""}</span>
+                </>
+              ) : (
+                <span className="text-muted-foreground">không có{hasBase ? " (thêm ở mục Prompt mockup của product base)" : ""}</span>
+              )}
+            </div>
             <p className={cx("text-xs", problems.length ? "text-destructive" : "text-muted-foreground")}>
               {problems.length
                 ? problems.join(" ")

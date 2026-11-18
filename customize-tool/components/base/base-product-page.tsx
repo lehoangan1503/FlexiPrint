@@ -211,7 +211,13 @@ export function BaseProductView({ baseId }: { baseId: string }) {
             <Link href={`${CT_CONFIG.homePath}?tab=bases`} className="rounded p-1.5 hover:bg-accent">
               <ArrowLeft className="h-4 w-4" />
             </Link>
-            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Product base</span>
+            <Link
+              href={`${CT_CONFIG.homePath}?tab=bases`}
+              className="rounded px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground hover:underline"
+              title="Về danh sách Product base"
+            >
+              Product base
+            </Link>
             <h1 className="truncate text-lg font-semibold">{name}</h1>
             <div className="ml-auto flex items-center gap-2">
               {notice && <span className="text-xs text-muted-foreground">{notice}</span>}

@@ -11,8 +11,8 @@ import { ImagePlus, Loader2, X } from "lucide-react";
 import type { CtBaseMockup, CtBaseProductConfig } from "../../types";
 import type { CtPrintTemplate } from "../../types/print";
 import { ctApi } from "../../lib/api-client";
-import { CT_MOCKUP_TEXT_MAX, defaultScenes, sceneProblems, splitScenes } from "../../lib/mockup-scenes";
-import { CT_MOCKUP_REFS_MAX, CT_MOCKUP_WRAP_MAX, defaultMockupWrap } from "../../lib/mockup-prompt";
+import { defaultScenes, splitScenes } from "../../lib/mockup-scenes";
+import { CT_MOCKUP_REFS_MAX, defaultMockupWrap } from "../../lib/mockup-prompt";
 import { CtButton, CtField, CtTextarea } from "../ui";
 import { ZoomThumbs } from "../zoom-thumbs";
 
@@ -37,7 +37,6 @@ export function BaseMockupSection({
   const scenesDefault = defaultScenes(piece).join("\n");
 
   const list = splitScenes(m.scenes);
-  const problems = m.scenes.trim() ? sceneProblems(list.scenes) : [];
   const wrapNoScene = !!m.wrap.trim() && !m.wrap.includes("{scene}");
   // Asked 2026-11-18: the greyed default inside an empty box read as filled — an empty box now says so in words.
   const state = (filled: boolean, what: string) => (
@@ -65,7 +64,7 @@ export function BaseMockupSection({
         hint="Mỗi dòng một cảnh; cảnh dài nhiều dòng thì ngăn bằng dòng trống hoặc dòng ---. Chỉ tả chỗ đặt sản phẩm và đồ xung quanh."
       >
         {state(!!m.scenes.trim(), "cảnh")}
-        <CtTextarea rows={5} value={m.scenes} maxLength={CT_MOCKUP_TEXT_MAX} placeholder="(trống)" onChange={(e) => onChange({ ...m, scenes: e.target.value })} />
+        <CtTextarea rows={5} value={m.scenes} placeholder="(trống)" onChange={(e) => onChange({ ...m, scenes: e.target.value })} />
         <div className="flex flex-wrap gap-2">
           {m.scenes.trim() ? (
             <CtButton size="sm" onClick={() => onChange({ ...m, scenes: "" })}>
@@ -78,11 +77,6 @@ export function BaseMockupSection({
           )}
         </div>
         {!m.scenes.trim() && shown(scenesDefault)}
-        {problems.map((p) => (
-          <p key={p} className="text-xs font-medium text-red-600 dark:text-red-400">
-            {p}
-          </p>
-        ))}
       </CtField>
 
       <CtField
@@ -90,7 +84,7 @@ export function BaseMockupSection({
         hint="{product} = tên sản phẩm, {scene} = một cảnh ở trên. Câu này dặn AI giữ nguyên hình in, chất liệu, khung hình."
       >
         {state(!!m.wrap.trim(), "câu bọc")}
-        <CtTextarea rows={m.wrap.trim() ? 6 : 2} value={m.wrap} maxLength={CT_MOCKUP_WRAP_MAX} placeholder="(trống)" onChange={(e) => onChange({ ...m, wrap: e.target.value })} />
+        <CtTextarea rows={m.wrap.trim() ? 6 : 2} value={m.wrap} placeholder="(trống)" onChange={(e) => onChange({ ...m, wrap: e.target.value })} />
         <div className="flex flex-wrap gap-2">
           {m.wrap.trim() ? (
             <CtButton size="sm" onClick={() => onChange({ ...m, wrap: "" })}>

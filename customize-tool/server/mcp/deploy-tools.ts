@@ -26,8 +26,8 @@ import { listBaseRows, loadBaseProduct } from "../base-products";
 import { makeProductFromArtwork } from "../artwork-link";
 import { saveOwnMockupPrompt } from "../product-mockups";
 import { normalizeBaseConfig, normalizeBaseMockup } from "../../lib/base-product";
-import { CT_MOCKUP_REFS_MAX, CT_MOCKUP_WRAP_MAX, defaultMockupWrap, mockupRefList } from "../../lib/mockup-prompt";
-import { CT_MOCKUP_TEXT_MAX, defaultScenes, sceneProblems, splitScenes } from "../../lib/mockup-scenes";
+import { CT_MOCKUP_REFS_MAX, defaultMockupWrap, mockupRefList } from "../../lib/mockup-prompt";
+import { defaultScenes, splitScenes } from "../../lib/mockup-scenes";
 import { ensureVersionPhoi, jobName } from "../version-phoi";
 import { normalizeProductConfig } from "../../lib/design";
 import { CT_CONFIG, CT_TABLES } from "../../config";
@@ -289,7 +289,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         artwork_id: { type: "string", description: "The artwork (a set's product id, an import's, render_artwork's)." },
         base_product_id: { type: "string", description: "From list_base_products — the one of the artwork's material / khuôn." },
         name: { type: "string", description: "Product title (theme), default = the artwork's name." },
-        mockup_scenes: { type: "string", description: "Optional: this product's own mockup scene prompts (English; one per line, or split by an empty line / ---; max 6), kept on it instead of the base's." },
+        mockup_scenes: { type: "string", description: "Optional: this product's own mockup scene prompts (English; one per line, or split by an empty line / ---; no limit on count or length), kept on it instead of the base's." },
         mockup_refs: { type: "array", items: { type: "string" }, description: "Optional: this product's own reference pictures for its mockups (https urls, max 4) instead of the base's." },
       },
       required: ["artwork_id", "base_product_id"],
@@ -341,7 +341,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "set_base_mockup_prompt",
     description:
-      'Change a PRODUCT BASE\'s AI mockup prompts (only its maker or an admin). Give only what changes: scenes (English, one per line or split by an empty line / ---, max 6; "" = the defaults), wrap (max 4000 chars, keep {scene}; "" = the default sentence), refs (https urls, max 4 — the whole new list; [] = none). Products with prompts of their own keep theirs. One product\'s own prompts go with make_product_mockups save_scenes / save_refs instead.',
+      'Change a PRODUCT BASE\'s AI mockup prompts (only its maker or an admin). Give only what changes: scenes (English, one per line or split by an empty line / ---, no limit on count or length; "" = the defaults), wrap (keep {scene}; "" = the default sentence), refs (https urls, max 4 — the whole new list; [] = none). Products with prompts of their own keep theirs. One product\'s own prompts go with make_product_mockups save_scenes / save_refs instead.',
     inputSchema: {
       type: "object",
       properties: {
@@ -364,15 +364,9 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       if (ctx.caller === "user" && !ctx.admin && row.user_id !== ctx.userId) throw new Error("Only the base's maker or an admin may change its mockup prompts");
       const m = normalizeBaseMockup(row.config?.mockup);
       if (typeof args.scenes === "string") {
-        if (args.scenes.length > CT_MOCKUP_TEXT_MAX) throw new Error(`scenes: at most ${CT_MOCKUP_TEXT_MAX} characters`);
-        const problems = sceneProblems(splitScenes(args.scenes).scenes);
-        if (problems.length) throw new Error(problems.join(" "));
         m.scenes = args.scenes;
       }
-      if (typeof args.wrap === "string") {
-        if (args.wrap.length > CT_MOCKUP_WRAP_MAX) throw new Error(`wrap: at most ${CT_MOCKUP_WRAP_MAX} characters`);
-        m.wrap = args.wrap;
-      }
+      if (typeof args.wrap === "string") m.wrap = args.wrap;
       if (Array.isArray(args.refs)) {
         const refs = mockupRefList(args.refs);
         if (args.refs.length > refs.length) throw new Error(`refs: https urls only, at most ${CT_MOCKUP_REFS_MAX}, no repeats`);
@@ -438,10 +432,6 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       }
       const mk = obj(args.mockup) ?? {};
       const mockup = normalizeBaseMockup({ scenes: mk.scenes, wrap: mk.wrap, refs: mk.refs, sizeCharts: mk.size_charts });
-      if (mockup.scenes.trim()) {
-        const problems = sceneProblems(splitScenes(mockup.scenes).scenes);
-        if (problems.length) throw new Error(`mockup.scenes: ${problems.join(" ")}`);
-      }
       const area = obj(args.print_area);
       const templateId = str(args.template_id) || null;
       const config = normalizeBaseConfig({

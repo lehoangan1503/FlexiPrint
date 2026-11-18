@@ -31,7 +31,7 @@ import { materialPreset } from "../lib/materials";
 import { uploadAsset } from "./handlers";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 type MockDb = CtSession["supabase"] | CtServiceClient;
-import { CT_MOCKUP_TEXT_MAX, defaultScenes, sceneProblems, splitScenes } from "../lib/mockup-scenes";
+import { defaultScenes, splitScenes } from "../lib/mockup-scenes";
 import { customizable, isCustomizable, mockupVariants } from "../lib/mockup-variants";
 import { fillVariantPhotos } from "./mockup-samples";
 
@@ -587,7 +587,7 @@ async function keepSceneText(s: CtSession, product: CtProduct, text: string, var
   const config = normalizeProductConfig(product.config);
   // The box started from the base's prompts (or the defaults) and was left as it was: nothing of its own — the product
   // keeps following its base, a later change on the base page reaches it (asked 2026-11-18: the two boxes were one).
-  const next = (await followsBase(ctServiceClient() ?? s.supabase, product, text)) ? "" : text.slice(0, CT_MOCKUP_TEXT_MAX);
+  const next = (await followsBase(ctServiceClient() ?? s.supabase, product, text)) ? "" : text;
   if (config.mockupScenes === next && (vary === null || config.mockupVary === vary)) return;
   await s.supabase.from(CT_TABLES.products).update({ config: { ...config, mockupScenes: next, ...(vary === null ? {} : { mockupVary: vary }) } }).eq("id", product.id);
 }
@@ -656,11 +656,7 @@ export async function saveOwnMockupPrompt(db: MockDb, product: CtProduct, own: {
   const config = normalizeProductConfig(product.config);
   const next = { ...config };
   if (own.scenes !== undefined && (await followsBase(db, product, own.scenes))) next.mockupScenes = "";
-  else if (own.scenes !== undefined) {
-    const problems = sceneProblems(splitScenes(own.scenes).scenes);
-    if (problems.length) throw new Error(problems.join(" "));
-    next.mockupScenes = own.scenes.slice(0, CT_MOCKUP_TEXT_MAX);
-  }
+  else if (own.scenes !== undefined) next.mockupScenes = own.scenes;
   if (own.refs !== undefined) {
     const raw = Array.isArray(own.refs) ? own.refs : [];
     const refs = mockupRefList(raw);
@@ -679,10 +675,8 @@ export async function makeProductMockups(s: CtSession, productId: string, form: 
   // One print for every scene, or one per scene (each mockup a different custom pick, lib/mockup-variants.ts).
   const files = form.getAll("print").flatMap((f) => (f instanceof Blob && f.size > 0 ? [f] : []));
   if (!files.length) return jsonError("Thiếu artwork", 400);
-  // Nothing is cut silently (2026-11-17): too many / too long prompts are refused with the reason.
+  // No limit on how many prompts or how long (asked 2026-11-18).
   const scenes = parseScenes(form.get("scenes"));
-  const problems = sceneProblems(scenes);
-  if (problems.length) return jsonError(problems.join(" "), 400);
   if (files.length > 1 && files.length !== Math.max(1, scenes.length)) return jsonError(`${files.length} artwork cho ${scenes.length} prompt — mỗi prompt 1 artwork`, 400);
   try {
     const prints = await Promise.all(files.map(async (f) => Buffer.from(await f.arrayBuffer())));
@@ -708,9 +702,7 @@ export async function autoProductMockups(s: CtSession, productId: string): Promi
   if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
   if ((product.kind ?? "artwork") !== "product") return jsonError("Đây là artwork — mockup làm trên sản phẩm", 400);
   const config = normalizeProductConfig(product.config);
-  const { scenes, from } = await productScenes(ctServiceClient() ?? s.supabase, product);
-  const problems = sceneProblems(scenes);
-  if (problems.length) return jsonError(`Prompt của ${from === "base" ? "product base" : "sản phẩm"}: ${problems.join(" ")}`, 400);
+  const { scenes } = await productScenes(ctServiceClient() ?? s.supabase, product);
   const { loadArtwork, renderArtwork } = await import("./print-render");
   const bundle = await loadArtwork(s.supabase, productId);
   if (!bundle) return jsonError("Không đọc được thiết kế của sản phẩm", 404);

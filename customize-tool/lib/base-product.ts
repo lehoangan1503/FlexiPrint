@@ -7,15 +7,14 @@ import type { CtBaseMockup, CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBas
 import { newId } from "./geometry";
 import { normalizeScene } from "./scene";
 import { normalizeBaseAssembly } from "./assembly";
-import { CT_MOCKUP_TEXT_MAX } from "./mockup-scenes";
-import { CT_MOCKUP_WRAP_MAX, mockupRefList } from "./mockup-prompt";
+import { mockupRefList } from "./mockup-prompt";
 
 /** CtBaseProductConfig.mockup (texts kept as typed — line breaks split the scenes). */
 export function normalizeBaseMockup(raw: unknown): CtBaseMockup {
   const m = raw && typeof raw === "object" ? (raw as Partial<Record<keyof CtBaseMockup, unknown>>) : {};
   return {
-    scenes: typeof m.scenes === "string" ? m.scenes.slice(0, CT_MOCKUP_TEXT_MAX) : "",
-    wrap: typeof m.wrap === "string" ? m.wrap.slice(0, CT_MOCKUP_WRAP_MAX) : "",
+    scenes: typeof m.scenes === "string" ? m.scenes : "",
+    wrap: typeof m.wrap === "string" ? m.wrap : "",
     refs: mockupRefList(m.refs),
     sizeCharts: mockupRefList(m.sizeCharts),
   };

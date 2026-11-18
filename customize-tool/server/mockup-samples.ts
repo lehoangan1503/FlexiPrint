@@ -20,7 +20,6 @@ import { shapeBounds } from "../lib/geometry";
 import { faceTargets } from "../lib/face-center";
 import { isAiStyleRef, isPhotoStyleRef, styleFamily } from "../lib/photo-styles";
 import { CT_IMAGE_MODEL } from "../lib/image-models";
-import { CT_MOCKUP_SCENES_MAX } from "../lib/mockup-scenes";
 import { FEMALE_NAMES, MALE_NAMES, PET_HINT, type CtMockupVariant } from "../lib/mockup-variants";
 import { processPhoto } from "./ai/photo";
 import { isAdmin, loadAiStyle } from "./ai-styles";
@@ -242,7 +241,6 @@ export async function mockupSamples(s: CtSession, productId: string, body: unkno
   const b = (body && typeof body === "object" ? body : {}) as { regionId?: unknown; items?: unknown };
   const regionId = typeof b.regionId === "string" ? b.regionId : "";
   const items: CtMockupSampleItem[] = (Array.isArray(b.items) ? b.items : [])
-    .slice(0, CT_MOCKUP_SCENES_MAX)
     .flatMap((x: unknown) => {
       const o = (x && typeof x === "object" ? x : {}) as { style?: unknown; name?: unknown };
       return typeof o.style === "string" && isPhotoStyleRef(o.style) ? [{ style: o.style, name: typeof o.name === "string" ? o.name.slice(0, 60) : "" }] : [];

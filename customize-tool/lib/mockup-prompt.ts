@@ -26,8 +26,6 @@ export function isGlass(material: string | undefined, label = ""): boolean {
   return material === "glass_clear" || /\b(glass|crystal)\b|kính|thuỷ tinh|thủy tinh|pha lê/i.test(label);
 }
 
-/** Longest own wrap sentence (characters). */
-export const CT_MOCKUP_WRAP_MAX = 4000;
 /** Most reference pictures (besides the product's own front picture) sent with each mockup. */
 export const CT_MOCKUP_REFS_MAX = 4;
 

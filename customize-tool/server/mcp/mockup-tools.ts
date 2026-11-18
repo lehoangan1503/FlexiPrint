@@ -21,7 +21,6 @@ import type { CtMcpTool } from "./tools";
 
 /** Drawings one task may ask for (each is a paid gpt-image call). */
 const MAX_RETRIES = 4;
-const PROMPT_MAX = 4000;
 
 const INSTRUCTIONS = [
   "A mockup photo (an AI lifestyle photo of the finished product, drawn from the reference picture = the print laid on the blank) was REFUSED by the image model's safety system. Make it pass while keeping the photo the same product photo.",
@@ -82,7 +81,7 @@ async function retry(db: CtServiceClient, task: CtAgentTask, prompt: string): Pr
 }
 
 function promptArg(v: unknown): string {
-  const p = clip(str(v).trim(), PROMPT_MAX);
+  const p = str(v).trim();
   if (!p) throw new Error("prompt is required (English, the whole prompt)");
   return p;
 }

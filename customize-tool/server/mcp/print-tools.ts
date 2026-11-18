@@ -717,7 +717,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
         },
         save_scenes: {
           type: "string",
-          description: 'Optional: keep these scene prompts on THIS product (its editor Mockups box; one per line, or split by an empty line / ---; max 6) — used instead of the base\'s from now on. "" = drop the product\'s own, back to the base\'s.',
+          description: 'Optional: keep these scene prompts on THIS product (its editor Mockups box; one per line, or split by an empty line / ---; no limit on count or length) — used instead of the base\'s from now on. "" = drop the product\'s own, back to the base\'s.',
         },
         save_refs: {
           type: "array",

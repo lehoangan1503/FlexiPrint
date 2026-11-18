@@ -3,17 +3,10 @@
  *   a line that is only "---"   splits there (a prompt may then run over many lines)
  *   else an empty line          splits there
  *   else                        one prompt per line (as before)
- * Nothing is cut silently: the editor shows how many photos it makes and refuses too many / too long.
+ * No limit on how many prompts or how long (asked 2026-11-18: "không giới hạn số lời dặn, số kí tự") — the editor shows how many photos it makes.
  * The material / print-keeping sentences are added on the server (server/product-mockups.ts) — a prompt only says
  * where the product is and what is around it.
  */
-
-/** Longest prompt (characters). */
-export const CT_MOCKUP_SCENE_MAX = 2000;
-/** Most photos one "Tạo mockup" makes. */
-export const CT_MOCKUP_SCENES_MAX = 6;
-/** Longest stored box text (CtProductConfig.mockupScenes). */
-export const CT_MOCKUP_TEXT_MAX = CT_MOCKUP_SCENE_MAX * CT_MOCKUP_SCENES_MAX + 200;
 
 export type CtSceneSplit = "dash" | "blank" | "line";
 
@@ -42,16 +35,6 @@ export function splitScenes(text: string): { scenes: string[]; split: CtSceneSpl
     return { scenes: join(groups), split: "blank" };
   }
   return { scenes: nonEmpty.filter(Boolean), split: "line" };
-}
-
-/** What is wrong with the box (Vietnamese, shown under it); [] = fine. */
-export function sceneProblems(scenes: string[]): string[] {
-  const out: string[] = [];
-  if (scenes.length > CT_MOCKUP_SCENES_MAX) out.push(`Có ${scenes.length} prompt — tối đa ${CT_MOCKUP_SCENES_MAX} ảnh một lần, bớt đi ${scenes.length - CT_MOCKUP_SCENES_MAX}.`);
-  scenes.forEach((s, i) => {
-    if (s.length > CT_MOCKUP_SCENE_MAX) out.push(`Prompt ${i + 1} dài ${s.length} ký tự — tối đa ${CT_MOCKUP_SCENE_MAX}.`);
-  });
-  return out;
 }
 
 /** Scenes that suit the product, as a start (the editor rewrites them; a bulk "Tạo mockup" uses them when the box was never used). */

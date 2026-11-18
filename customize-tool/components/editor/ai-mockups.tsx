@@ -23,7 +23,7 @@ import { ctApi } from "../../lib/api-client";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
 import { defaultCategoryRules, displayAssets } from "../../lib/library";
 import { ctConfirm } from "../dialogs";
-import { CT_MOCKUP_SCENE_MAX, CT_MOCKUP_SCENES_MAX, defaultScenes, sceneProblems, splitScenes } from "../../lib/mockup-scenes";
+import { defaultScenes, splitScenes } from "../../lib/mockup-scenes";
 import { CT_MOCKUP_REFS_MAX } from "../../lib/mockup-prompt";
 import { MockupPics } from "../base/base-mockup-section";
 import { ZoomThumbs } from "../zoom-thumbs";
@@ -103,7 +103,6 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
       setBackBusy(false);
     }
   };
-  const problems = useMemo(() => sceneProblems(parsed.scenes), [parsed]);
   const [jobs, setJobs] = useState<CtPackImage[]>([]);
   const [making, setMaking] = useState<"" | "samples" | "print">("");
   // Each mockup a different custom pick (on by default when there is something to customise).
@@ -406,7 +405,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
             <div>
               <h3 className="text-sm font-semibold">Mockup bằng AI</h3>
               <p className="text-xs text-muted-foreground">
-                Artwork hoàn chỉnh (nội dung đang chọn ở Thiết kế) được đặt đúng lên phôi → 1 ảnh chụp thẳng chính xác. Từ ảnh đó AI tạo ảnh sản phẩm trong từng bối cảnh dưới đây, giữ nguyên hình in và chất liệu (hệ thống tự thêm). Mỗi dòng 1 ảnh; prompt dài nhiều dòng thì ngăn các prompt bằng một dòng trống hoặc một dòng chỉ có ---. Tối đa {CT_MOCKUP_SCENES_MAX} ảnh, mỗi prompt {CT_MOCKUP_SCENE_MAX} ký tự.
+                Artwork hoàn chỉnh (nội dung đang chọn ở Thiết kế) được đặt đúng lên phôi → 1 ảnh chụp thẳng chính xác. Từ ảnh đó AI tạo ảnh sản phẩm trong từng bối cảnh dưới đây, giữ nguyên hình in và chất liệu (hệ thống tự thêm). Mỗi dòng 1 ảnh; prompt dài nhiều dòng thì ngăn các prompt bằng một dòng trống hoặc một dòng chỉ có ---. Không giới hạn số prompt hay độ dài — mỗi ảnh là một lượt AI tính tiền.
               </p>
             </div>
             <div className={cx("flex flex-wrap items-center gap-2 rounded-md border px-2 py-1.5 text-xs", own ? "border-amber-500/50 bg-amber-500/10" : "border-sky-500/40 bg-sky-500/10")}>
@@ -465,10 +464,8 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
               </div>
               <CtLightbox images={art ? [{ url: art, name: "Ảnh 1 · sản phẩm" }] : []} index={frontZoom} onIndex={setFrontZoom} />
             </div>
-            <p className={cx("text-xs", problems.length ? "text-destructive" : "text-muted-foreground")}>
-              {problems.length
-                ? problems.join(" ")
-                : `Sẽ tạo ${parsed.scenes.length || 1} ảnh${parsed.scenes.length ? ` — ${parsed.split === "dash" ? "tách theo dòng ---" : parsed.split === "blank" ? "tách theo dòng trống" : "mỗi dòng 1 ảnh"}` : " bối cảnh mặc định"}.`}
+            <p className="text-xs text-muted-foreground">
+              {`Sẽ tạo ${parsed.scenes.length || 1} ảnh${parsed.scenes.length ? ` — ${parsed.split === "dash" ? "tách theo dòng ---" : parsed.split === "blank" ? "tách theo dòng trống" : "mỗi dòng 1 ảnh"}` : " bối cảnh mặc định"}.`}
             </p>
             {canVary && (
               <label className="flex cursor-pointer items-start gap-2 rounded-lg border bg-muted/30 p-2 text-xs">
@@ -482,7 +479,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
               </label>
             )}
             <div className="flex items-center gap-2">
-              <CtButton variant="primary" disabled={making !== "" || problems.length > 0} onClick={() => void make()}>
+              <CtButton variant="primary" disabled={making !== ""} onClick={() => void make()}>
                 {making ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} {making === "samples" ? "Đang tạo ảnh khách mẫu…" : making ? "Đang đặt lên phôi…" : "Tạo mockup"}
               </CtButton>
               {running.length > 0 && (

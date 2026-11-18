@@ -46,7 +46,6 @@ import { defaultMaterialConfig, normalizeMaterialConfig } from "./materials";
 import { defaultScene, normalizeScene } from "./scene";
 import { isPrintKind, normalizePrintSpec } from "./print-template";
 import { normalizePrintAssembly } from "./assembly";
-import { CT_MOCKUP_TEXT_MAX } from "./mockup-scenes";
 import { mockupRefList } from "./mockup-prompt";
 
 export function defaultRegionConfig(kind: CtRegionKind): CtRegionConfig {
@@ -402,7 +401,7 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     viewBaseId: typeof raw?.viewBaseId === "string" && raw.viewBaseId ? raw.viewBaseId : null,
     assembly: normalizePrintAssembly(raw?.assembly),
     customerPhoi: raw?.customerPhoi === true,
-    mockupScenes: typeof raw?.mockupScenes === "string" ? raw.mockupScenes.slice(0, CT_MOCKUP_TEXT_MAX) : "",
+    mockupScenes: typeof raw?.mockupScenes === "string" ? raw.mockupScenes : "",
     mockupRefs: mockupRefList(raw?.mockupRefs),
     mockupVary: raw?.mockupVary !== false,
   };

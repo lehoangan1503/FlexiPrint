@@ -19,6 +19,7 @@ import { charVersions } from "../../lib/char-lineup";
 import { charApi } from "../../lib/api-client";
 import { CHECKER_STYLE, CtButton, CtModal, cx } from "../ui";
 import type { CharCtx } from "./char-project";
+import { useDoneAlert } from "../use-done-alert";
 
 function stage(v: CtCharVersionCard): { text: string; busy: boolean; ok: boolean } {
   const p = v.project;
@@ -46,6 +47,7 @@ export function VersionsPanel({ show = "masters", ...ctx }: CharCtx & { show?: "
     void load();
   }, [load, project.updated_at]);
   const busy = (list ?? []).some((v) => stage(v).busy);
+  useDoneAlert(busy);
   useEffect(() => {
     if (!busy) return;
     const t = setInterval(() => void load(), 5000);

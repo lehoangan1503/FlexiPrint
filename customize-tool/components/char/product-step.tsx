@@ -23,6 +23,7 @@ import { BlankSection } from "./blank-section";
 import { ElementGallery } from "./elements-panel";
 import { ImportShopify } from "./import-panel";
 import { AutoStepGuide } from "./step-guide";
+import { useDoneAlert } from "../use-done-alert";
 
 /** A product made from the chat (char_add_product) shows up without a reload. */
 const POLL_MS = 20_000;
@@ -127,6 +128,7 @@ function ProductCard({ product }: { product: CtCharSetProduct }) {
   }, [load, productId]);
   // While AI photos are drawn, look again now and then.
   const drawing = mockups.some((m) => m.status === "running");
+  useDoneAlert(drawing);
   useEffect(() => {
     if (!drawing) return;
     const t = setInterval(() => void load(), 5000);

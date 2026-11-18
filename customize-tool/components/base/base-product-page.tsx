@@ -34,6 +34,7 @@ import { BaseAssemblySection } from "./base-assembly-section";
 import { BaseExtraPics, BaseMockupSection } from "./base-mockup-section";
 import { ZoomThumbs } from "../zoom-thumbs";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, CtSelect, CtTextarea, CtTooltipProvider, cx } from "../ui";
+import { useDoneAlert } from "../use-done-alert";
 
 /**
  * One block of the page. `fold` (asked 2026-11-18: "phôi set 1 lần là được"): it can be folded to its title + `summary`;
@@ -175,6 +176,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
     };
   }, [baseId, autoDue]);
   const autoRunning = auto?.status === "running";
+  useDoneAlert(autoRunning);
   useEffect(() => {
     if (!autoRunning) return;
     const t = window.setInterval(() => {

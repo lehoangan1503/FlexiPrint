@@ -20,6 +20,7 @@ import { ElementsPanel } from "./elements-panel";
 import { ProductStep } from "./product-step";
 import { ImportPanel } from "./import-panel";
 import { ImportStatus } from "./import-status";
+import { useDoneAlert } from "../use-done-alert";
 
 const CHAR_STATUS_LABEL: Record<CtCharStatus, string> = { brief: "Brief", master: "Master đã duyệt", layers: "Đã cắt layer", product: "Có sản phẩm" };
 
@@ -111,6 +112,7 @@ export function CharProjectView({ projectId, currentUserId, admin = false }: { p
     project?.cut?.plan?.status === "running" ||
     ["unpacking", "analyzing", "building", "agent"].includes(project?.brief.imported?.status ?? "") ||
     project?.brief.imported?.shopify?.status === "deploying";
+  useDoneAlert(running);
   useEffect(() => {
     if (!running) return;
     const t = setInterval(() => void reload(), 3000);

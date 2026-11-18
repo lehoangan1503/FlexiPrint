@@ -21,6 +21,7 @@ import { canvasToBlob, loadImage, renderComposite } from "../../lib/compositor";
 import { drawPlate, grownShape } from "../../lib/scene";
 import { ctApi } from "../../lib/api-client";
 import { CHECKER_STYLE, CtButton, CtModal } from "../ui";
+import { useDoneAlert } from "../use-done-alert";
 
 /** The AI's square. */
 const SIDE = 1024;
@@ -128,6 +129,7 @@ export function VersionPhoiDialog(props: VersionPhoiDialogProps) {
   // The newest job of each version (status.jobs is newest first).
   const jobOf = (id: string) => status.jobs.find((j) => j.description === id) ?? null;
   const running = mains.some((m) => jobOf(m.id)?.status === "running");
+  useDoneAlert(running);
 
   // While a job runs, ask again every 6 s.
   const onStatus = useRef(props.onStatus);

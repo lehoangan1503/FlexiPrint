@@ -29,6 +29,7 @@ import { MockupPics } from "../base/base-mockup-section";
 import { ZoomThumbs } from "../zoom-thumbs";
 import { customizable, customizableText, isCustomizable, mockupVariants } from "../../lib/mockup-variants";
 import { CHECKER_STYLE, CtButton, CtLightbox, CtTextarea, cx } from "../ui";
+import { useDoneAlert } from "../use-done-alert";
 
 export interface AiMockupsPanelProps {
   product: CtProduct;
@@ -212,6 +213,8 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
     }
   };
 
+  useDoneAlert(running.length > 0);
+  useDoneAlert(fixing.length > 0);
   // While AI photos are being made: poll, and add each finished one to the product's pictures.
   useEffect(() => {
     if (!running.length) return;

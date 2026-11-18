@@ -6,6 +6,7 @@
  */
 
 import type { CtJobPending } from "../types";
+import { aiDone } from "./done-alert";
 
 const POLL_MS = 3_000;
 
@@ -34,10 +35,13 @@ export async function jobFetch(url: string, init: RequestInit = {}): Promise<Res
   target.searchParams.set("async", "1");
   let res = await fetch(target, init);
   let job = await pendingOf(res);
+  const long = !!job;
   while (job) {
     await wait(POLL_MS, init.signal);
     res = await fetch(new URL(job.poll, target), { mode: init.mode, credentials: init.credentials, signal: init.signal });
     job = await pendingOf(res);
   }
+  // A job that ran in the background (AI pictures…): chime + blinking tab when the editor is on another tab.
+  if (long) aiDone(res.ok);
   return res;
 }

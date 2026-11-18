@@ -21,6 +21,7 @@ import { printApi } from "../../lib/print-api";
 import { ctApi } from "../../lib/api-client";
 import { defaultScene } from "../../lib/scene";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtSelect, CtTextarea } from "../ui";
+import { useDoneAlert } from "../use-done-alert";
 
 const MODES: Array<{ value: CtBaseCutMode; label: string }> = [
   { value: "khuon", label: "Theo khuôn in (nét liền = cắt, nét đứt = vùng an toàn)" },
@@ -358,6 +359,7 @@ function AgentPreviewBox(props: { baseId: string; scenes: CtBaseScene[]; onRemot
     remote.current = props.onRemoteScenes;
   });
   const live = !!task && ["pending", "running", "waiting"].includes(task.status);
+  useDoneAlert(live);
 
   const pull = useCallback(async () => {
     const list = await ctApi.listAgentTasks("base_preview", baseId);

@@ -506,7 +506,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                       as the phôi trơn (2026-11-18: "đưa phôi import từ merchize qua làm phôi trơn"). */}
                   <PhoiRow
                     template={template}
-                    basePhoi={cfg.preview.url ? { url: cfg.preview.url, name: fulfiller === "merchize" ? "Phôi Merchize" : fulfiller === "printbelle" ? "Phôi Printbelle" : "Phôi của base" } : null}
+                    basePhoi={cfg.preview.url ? { url: cfg.preview.url, name: cfg.previewScenes.some((sc) => sc.scene.url === cfg.preview.url) ? "Phôi nền AI" : fulfiller === "merchize" ? "Phôi Merchize" : fulfiller === "printbelle" ? "Phôi Printbelle" : "Phôi của base" } : null}
                     busy={phoiBusy}
                     onUpload={(f) => void phoiWork("Đang upload…", () => printApi.uploadBlank(template.id, f))}
                     onAi={() => void phoiWork("AI đang vẽ phôi (~1 phút)…", () => printApi.aiBlank(template.id, baseId))}

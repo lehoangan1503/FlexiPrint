@@ -1214,7 +1214,14 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                 <ArrowLeft className="h-4 w-4" />
               </Link>
             </CtTooltip>
-            <span className="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-sky-600">Sản phẩm</span>
+            <Link
+              href={CT_CONFIG.homePath}
+              title="Về danh sách sản phẩm"
+              className="shrink-0 rounded px-1 py-0.5 text-[11px] font-medium uppercase tracking-wider text-sky-500 hover:bg-sky-500/10 hover:underline"
+            >
+              Sản phẩm
+            </Link>
+            <span className="shrink-0 text-xs text-muted-foreground">/</span>
             <StoreTag storeId={product.store_id} />
             <CtAutoWidthInput className="text-sm font-semibold" value={nameDraft} maxWidth={380} onChange={setNameDraft} onCommit={(v) => void renameProduct(v)} />
             <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -1308,7 +1315,14 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </CtTooltip>
-        <span className="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-violet-600">Artwork</span>
+        <Link
+          href={`${CT_CONFIG.homePath}?tab=artwork`}
+          title="Về danh sách artwork"
+          className="shrink-0 rounded px-1 py-0.5 text-[11px] font-medium uppercase tracking-wider text-violet-500 hover:bg-violet-500/10 hover:underline"
+        >
+          Artwork
+        </Link>
+        <span className="shrink-0 text-xs text-muted-foreground">/</span>
         <StoreTag storeId={product.store_id} />
         <CtAutoWidthInput
           className="text-sm font-semibold"

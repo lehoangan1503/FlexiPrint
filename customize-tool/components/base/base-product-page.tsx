@@ -218,6 +218,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
             >
               Product base
             </Link>
+            <span className="text-xs text-muted-foreground">/</span>
             <h1 className="truncate text-lg font-semibold">{name}</h1>
             <div className="ml-auto flex items-center gap-2">
               {notice && <span className="text-xs text-muted-foreground">{notice}</span>}

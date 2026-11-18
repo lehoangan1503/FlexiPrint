@@ -425,6 +425,10 @@ def read_mockup(path: str, sheet: tuple[int, int] | None) -> dict:
     black = _render(psd, anc, sos, 0)
     span = np.clip(white - black, 0, 1)
     a = 1.0 - span.mean(axis=2)
+    # The white and black renders came out the same (the design swap did not reach the composite — Quilt Blanket
+    # QUBKVN 2026-11-18): the overlay would be the whole photo, hiding every design. Not a phôi.
+    if float((a < 0.98).mean()) < 0.01:
+        return {"error": "Không tách được vùng thiết kế (render với thiết kế trắng / đen ra giống nhau)", "scenes": info}
     colour = np.where(a[..., None] > 1e-3, np.clip(black / np.maximum(a[..., None], 1e-3), 0, 1), 0)
     overlay = Image.fromarray(np.dstack([colour * 255, a[..., None] * 255]).astype(np.uint8), "RGBA")
     phoi = Image.fromarray((white * 255).astype(np.uint8), "RGB")

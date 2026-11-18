@@ -464,8 +464,9 @@ export function CtModal({
 
 /**
  * Full-screen picture viewer (asked 2026-11-18: click a mockup to zoom it). Shows `images[index]` fitted to the window;
- * ← → (buttons or keys) step through the list, Esc / the X / a click on the dark backdrop closes it. Clicking the
- * picture toggles fitted ↔ full size (scroll to pan).
+ * ← → (buttons or keys) step through the list, Esc / the X / a click on the dark backdrop closes it.
+ * Zoom (asked 2026-11-18): mouse wheel zooms in/out around the pointer (1×–8×), drag pans a zoomed picture,
+ * double-click toggles fitted ↔ 2.5× at the pointer; + / - / 0 keys too.
  */
 export function CtLightbox({
   images,
@@ -477,33 +478,62 @@ export function CtLightbox({
   index: number | null;
   onIndex: (i: number | null) => void;
 }) {
-  const [zoom, setZoom] = React.useState(false);
+  /** Scale + offset (px) of the picture from its fitted, centred place. */
+  const [view, setView] = React.useState({ s: 1, x: 0, y: 0 });
+  const reset = React.useCallback(() => setView({ s: 1, x: 0, y: 0 }), []);
+  const [box, setBox] = React.useState<HTMLDivElement | null>(null);
+  const drag = React.useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null);
+  /** A drag just ended — the click that follows it must not close the viewer. */
+  const dragged = React.useRef(false);
+  const [panning, setPanning] = React.useState(false);
   const open = index !== null && index >= 0 && index < images.length;
   const n = images.length;
   const step = React.useCallback(
     (d: number) => {
       if (index === null || n < 2) return;
-      setZoom(false);
+      reset();
       onIndex((index + d + n) % n);
     },
-    [index, n, onIndex],
+    [index, n, onIndex, reset],
   );
+  /** Zoom by factor `f`, keeping the point (cx, cy) — relative to the box centre — still under the pointer. */
+  const zoomBy = React.useCallback((f: number, cx: number, cy: number) => {
+    setView((v) => {
+      const s = Math.min(8, Math.max(1, v.s * f));
+      if (s === 1) return { s: 1, x: 0, y: 0 };
+      const k = s / v.s;
+      return { s, x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k };
+    });
+  }, []);
+  React.useEffect(() => {
+    if (!box) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = box.getBoundingClientRect();
+      zoomBy(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)), e.clientX - r.left - r.width / 2, e.clientY - r.top - r.height / 2);
+    };
+    box.addEventListener("wheel", onWheel, { passive: false });
+    return () => box.removeEventListener("wheel", onWheel);
+  }, [box, zoomBy]);
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowLeft") step(-1);
       else if (e.key === "ArrowRight") step(1);
+      else if (e.key === "+" || e.key === "=") zoomBy(1.25, 0, 0);
+      else if (e.key === "-") zoomBy(0.8, 0, 0);
+      else if (e.key === "0") reset();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, step]);
+  }, [open, step, zoomBy, reset]);
   const img = open ? images[index!] : null;
   return (
     <DialogPrimitive.Root
       open={open}
       onOpenChange={(o) => {
         if (!o) {
-          setZoom(false);
+          reset();
           onIndex(null);
         }
       }}
@@ -531,9 +561,42 @@ export function CtLightbox({
             </DialogPrimitive.Close>
           </div>
           <div
-            className={cx("relative min-h-0 flex-1", zoom ? "overflow-auto" : "flex items-center justify-center overflow-hidden p-4")}
+            ref={setBox}
+            className="relative flex min-h-0 flex-1 touch-none items-center justify-center overflow-hidden p-4"
             onClick={(e) => {
+              if (dragged.current) {
+                dragged.current = false;
+                return;
+              }
               if (e.target === e.currentTarget) onIndex(null);
+            }}
+            onPointerDown={(e) => {
+              if (view.s === 1 || e.button !== 0) return;
+              drag.current = { px: e.clientX, py: e.clientY, x: view.x, y: view.y, moved: false };
+            }}
+            onPointerMove={(e) => {
+              const d = drag.current;
+              if (!d) return;
+              const dx = e.clientX - d.px;
+              const dy = e.clientY - d.py;
+              if (!d.moved && Math.abs(dx) + Math.abs(dy) > 3) {
+                d.moved = true;
+                setPanning(true);
+                // Capture only once it is a real drag: captured from the start, a plain click would land on the
+                // backdrop and close the viewer.
+                e.currentTarget.setPointerCapture(e.pointerId);
+              }
+              setView((v) => ({ ...v, x: d.x + dx, y: d.y + dy }));
+            }}
+            onPointerUp={() => {
+              if (drag.current?.moved) dragged.current = true;
+              drag.current = null;
+              setPanning(false);
+            }}
+            onDoubleClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              if (view.s > 1) reset();
+              else zoomBy(2.5, e.clientX - r.left - r.width / 2, e.clientY - r.top - r.height / 2);
             }}
           >
             {img && (
@@ -542,9 +605,15 @@ export function CtLightbox({
                 key={img.url}
                 src={img.url}
                 alt={img.name || ""}
-                onClick={() => setZoom((z) => !z)}
-                className={cx("select-none bg-white shadow-2xl", zoom ? "m-auto max-w-none cursor-zoom-out" : "max-h-full max-w-full cursor-zoom-in object-contain")}
+                draggable={false}
+                style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})`, transition: panning ? "none" : "transform 80ms ease-out" }}
+                className={cx("max-h-full max-w-full select-none bg-white object-contain shadow-2xl", view.s > 1 ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in")}
               />
+            )}
+            {view.s > 1 && (
+              <span className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded bg-black/70 px-2 py-0.5 text-xs text-white">
+                {Math.round(view.s * 100)}% · nhấp đúp để thu về
+              </span>
             )}
           </div>
           {n > 1 && (

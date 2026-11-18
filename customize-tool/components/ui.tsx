@@ -11,7 +11,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
-import { Check, ChevronDown, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, X } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
 /** Class joiner; later classes win over conflicting earlier ones (`w-full` + `w-64` → `w-64`). */
@@ -456,6 +456,107 @@ export function CtModal({
           </div>
           <DialogPrimitive.Description className="sr-only">{title}</DialogPrimitive.Description>
           {children}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+}
+
+/**
+ * Full-screen picture viewer (asked 2026-11-18: click a mockup to zoom it). Shows `images[index]` fitted to the window;
+ * ← → (buttons or keys) step through the list, Esc / the X / a click on the dark backdrop closes it. Clicking the
+ * picture toggles fitted ↔ full size (scroll to pan).
+ */
+export function CtLightbox({
+  images,
+  index,
+  onIndex,
+}: {
+  images: Array<{ url: string; name?: string }>;
+  /** null = closed. */
+  index: number | null;
+  onIndex: (i: number | null) => void;
+}) {
+  const [zoom, setZoom] = React.useState(false);
+  const open = index !== null && index >= 0 && index < images.length;
+  const n = images.length;
+  const step = React.useCallback(
+    (d: number) => {
+      if (index === null || n < 2) return;
+      setZoom(false);
+      onIndex((index + d + n) % n);
+    },
+    [index, n, onIndex],
+  );
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") step(-1);
+      else if (e.key === "ArrowRight") step(1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, step]);
+  const img = open ? images[index!] : null;
+  return (
+    <DialogPrimitive.Root
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) {
+          setZoom(false);
+          onIndex(null);
+        }
+      }}
+    >
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-[60] bg-black/85" />
+        <DialogPrimitive.Content
+          className="fixed inset-0 z-[60] flex flex-col outline-none"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) onIndex(null);
+          }}
+        >
+          <DialogPrimitive.Title className="sr-only">{img?.name || "Ảnh"}</DialogPrimitive.Title>
+          <DialogPrimitive.Description className="sr-only">Xem ảnh phóng to</DialogPrimitive.Description>
+          <div className="flex shrink-0 items-center gap-3 px-4 py-2 text-sm text-white">
+            <span className="truncate">{img?.name}</span>
+            {n > 1 && <span className="shrink-0 text-white/70">{(index ?? 0) + 1} / {n}</span>}
+            {img && (
+              <a href={img.url} target="_blank" rel="noreferrer" className="ml-auto flex shrink-0 items-center gap-1 rounded px-2 py-1 hover:bg-white/15" title="Mở ảnh gốc ở tab mới">
+                <ExternalLink className="h-4 w-4" /> Ảnh gốc
+              </a>
+            )}
+            <DialogPrimitive.Close className={cx("shrink-0 rounded p-1.5 hover:bg-white/15", !img && "ml-auto")} aria-label="Đóng">
+              <X className="h-5 w-5" />
+            </DialogPrimitive.Close>
+          </div>
+          <div
+            className={cx("relative min-h-0 flex-1", zoom ? "overflow-auto" : "flex items-center justify-center overflow-hidden p-4")}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) onIndex(null);
+            }}
+          >
+            {img && (
+              // eslint-disable-next-line @next/next/no-img-element -- any picture URL
+              <img
+                key={img.url}
+                src={img.url}
+                alt={img.name || ""}
+                onClick={() => setZoom((z) => !z)}
+                className={cx("select-none bg-white shadow-2xl", zoom ? "m-auto max-w-none cursor-zoom-out" : "max-h-full max-w-full cursor-zoom-in object-contain")}
+              />
+            )}
+          </div>
+          {n > 1 && (
+            <>
+              <button className={cx("absolute left-3 top-1/2 -translate-y-1/2 p-2", FLOAT_BTN)} onClick={() => step(-1)} aria-label="Ảnh trước">
+                <ChevronLeft className="h-6 w-6" />
+              </button>
+              <button className={cx("absolute right-3 top-1/2 -translate-y-1/2 p-2", FLOAT_BTN)} onClick={() => step(1)} aria-label="Ảnh sau">
+                <ChevronRight className="h-6 w-6" />
+              </button>
+            </>
+          )}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

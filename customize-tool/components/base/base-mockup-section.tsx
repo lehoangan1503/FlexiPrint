@@ -3,7 +3,8 @@
 /**
  * The base page's "Prompt mockup" section (asked 2026-11-17: the mockup prompts out of the code, one set per product
  * base): the scene prompts, the sentence wrapped around each one, and the reference pictures for the setting. Saved
- * with the page's Lưu (CtBaseProductConfig.mockup). Empty = the code's default, shown greyed as the placeholder.
+ * with the page's Lưu (CtBaseProductConfig.mockup). Empty = empty (asked 2026-11-18): a mockup with no wrap / no scene
+ * is refused; the sample texts are only pasted into a box when its button is pressed.
  */
 
 import { useRef, useState } from "react";
@@ -38,32 +39,26 @@ export function BaseMockupSection({
 
   const list = splitScenes(m.scenes);
   const wrapNoScene = !!m.wrap.trim() && !m.wrap.includes("{scene}");
-  // Asked 2026-11-18: the greyed default inside an empty box read as filled — an empty box now says so in words.
-  const state = (filled: boolean, what: string) => (
-    <p className={filled ? "text-xs font-medium text-emerald-700 dark:text-emerald-400" : "rounded-md border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs font-medium text-foreground"}>
-      {filled ? `Base đã có ${what} riêng (đang dùng chữ trong ô).` : `Ô đang TRỐNG — base chưa có ${what}; sản phẩm không có prompt riêng sẽ dùng ${what} mặc định của hệ thống (xem bên dưới).`}
+  // Asked 2026-11-18: no hidden prompt — an empty box is empty, and a mockup with nothing to draw from is refused.
+  const state = (filled: boolean, empty: string) => (
+    <p className={filled ? "text-xs font-medium text-emerald-700 dark:text-emerald-400" : "rounded-md border border-red-500/60 bg-red-500/10 px-2 py-1 text-xs font-medium text-foreground"}>
+      {filled ? "Đang dùng đúng chữ trong ô, không thêm gì khác." : empty}
     </p>
-  );
-  const shown = (text: string) => (
-    <details className="rounded-md border bg-muted/30 px-2 py-1 text-xs">
-      <summary className="cursor-pointer font-medium text-foreground">Xem câu mặc định của hệ thống</summary>
-      <p className="mt-1 whitespace-pre-wrap text-foreground/80">{text}</p>
-    </details>
   );
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        Prompt chung cho mọi sản phẩm làm trên product base này. Sản phẩm có prompt riêng (ô Mockup bằng AI trong trang sản phẩm, hoặc gửi qua MCP) thì
-        dùng prompt riêng, không dùng cảnh ở đây — nhưng vẫn dùng câu bọc và ảnh tham chiếu của base nếu sản phẩm không có ảnh riêng. Muốn mọi sản
-        phẩm tự viết cảnh thì để trống ô Cảnh. Nhớ bấm Lưu.
+        Prompt chung cho mọi sản phẩm làm trên product base này. Prompt gửi cho AI = đúng câu bọc dưới đây, thay {"{product}"} bằng tên sản phẩm và
+        {"{scene}"} bằng từng cảnh — hệ thống không thêm câu nào khác. Sản phẩm có cảnh riêng (ô Mockup bằng AI trong trang sản phẩm, hoặc gửi qua MCP) thì
+        dùng cảnh riêng, vẫn dùng câu bọc của base. Ô trống là trống: không có câu bọc, hoặc không có cảnh nào, thì Tạo mockup báo lỗi. Nhớ bấm Lưu.
       </p>
 
       <CtField
-        label={`Cảnh — mỗi cảnh một ảnh${m.scenes.trim() ? ` · ${list.scenes.length} ảnh` : " · đang dùng mặc định"}`}
+        label={`Cảnh — mỗi cảnh một ảnh${m.scenes.trim() ? ` · ${list.scenes.length} ảnh` : " · trống"}`}
         hint="Mỗi dòng một cảnh; cảnh dài nhiều dòng thì ngăn bằng dòng trống hoặc dòng ---. Chỉ tả chỗ đặt sản phẩm và đồ xung quanh."
       >
-        {state(!!m.scenes.trim(), "cảnh")}
+        {state(!!m.scenes.trim(), "Ô TRỐNG — sản phẩm không có cảnh riêng sẽ báo lỗi khi Tạo mockup.")}
         <CtTextarea rows={5} value={m.scenes} placeholder="(trống)" onChange={(e) => onChange({ ...m, scenes: e.target.value })} />
         <div className="flex flex-wrap gap-2">
           {m.scenes.trim() ? (
@@ -72,37 +67,35 @@ export function BaseMockupSection({
             </CtButton>
           ) : (
             <CtButton size="sm" onClick={() => onChange({ ...m, scenes: scenesDefault })}>
-              Điền cảnh mặc định để sửa
+              Điền cảnh mẫu để sửa
             </CtButton>
           )}
         </div>
-        {!m.scenes.trim() && shown(scenesDefault)}
       </CtField>
 
       <CtField
-        label={`Câu bọc quanh mỗi cảnh${m.wrap.trim() ? "" : " · đang dùng mặc định"}`}
+        label={`Câu bọc quanh mỗi cảnh${m.wrap.trim() ? "" : " · trống"}`}
         hint="{product} = tên sản phẩm, {scene} = một cảnh ở trên. Câu này dặn AI giữ nguyên hình in, chất liệu, khung hình."
       >
-        {state(!!m.wrap.trim(), "câu bọc")}
+        {state(!!m.wrap.trim(), "Ô TRỐNG — mọi sản phẩm của base này sẽ báo lỗi khi Tạo mockup.")}
         <CtTextarea rows={m.wrap.trim() ? 6 : 2} value={m.wrap} placeholder="(trống)" onChange={(e) => onChange({ ...m, wrap: e.target.value })} />
         <div className="flex flex-wrap gap-2">
           {m.wrap.trim() ? (
             <CtButton size="sm" onClick={() => onChange({ ...m, wrap: "" })}>
-              Bỏ, dùng câu mặc định
+              Xoá hết, để trống
             </CtButton>
           ) : (
             <CtButton size="sm" onClick={() => onChange({ ...m, wrap: wrapDefault })}>
-              Điền câu mặc định để sửa
+              Điền câu mẫu để sửa
             </CtButton>
           )}
         </div>
-        {!m.wrap.trim() && shown(wrapDefault)}
-        {wrapNoScene && <p className="text-xs font-medium text-amber-700 dark:text-amber-400">Câu không có {"{scene}"} — cảnh sẽ được nối vào cuối câu.</p>}
+        {wrapNoScene && <p className="text-xs font-medium text-red-700 dark:text-red-400">Câu không có {"{scene}"} — Tạo mockup sẽ báo lỗi. Thêm {"{scene}"} vào chỗ đặt cảnh.</p>}
       </CtField>
 
       <CtField
         label={`Ảnh tham chiếu (${m.refs.length}/${CT_MOCKUP_REFS_MAX})`}
-        hint="Gửi kèm sau ảnh sản phẩm: ảnh 1 = sản phẩm, ảnh tham chiếu là ảnh 2, 3, 4, 5 theo thứ tự ở đây — prompt cảnh của sản phẩm gọi được tên đó (vd. “same room and light as picture 2”). AI được dặn không chép sản phẩm hay chữ trong ảnh này. Dùng cho mọi sản phẩm của base không có ảnh tham chiếu riêng. Bấm ảnh để phóng to."
+        hint="Gửi kèm sau ảnh sản phẩm: ảnh 1 = sản phẩm, ảnh tham chiếu là ảnh 2, 3, 4, 5 theo thứ tự ở đây — prompt cảnh của sản phẩm gọi được tên đó (vd. “same room and light as picture 2”). Hệ thống không tự dặn gì về ảnh này: muốn AI không chép sản phẩm hay chữ trong ảnh thì viết vào câu bọc. Dùng cho mọi sản phẩm của base không có ảnh tham chiếu riêng. Bấm ảnh để phóng to."
       >
         <MockupPics urls={m.refs} max={CT_MOCKUP_REFS_MAX} first={2} onChange={(refs) => onChange({ ...m, refs })} />
       </CtField>

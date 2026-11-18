@@ -1906,12 +1906,12 @@ export interface CtBaseProductConfig {
 /**
  * The mockup prompts kept on a product base (asked 2026-11-17: "prompt tạo mockup đưa ra khỏi code", one set per base,
  * editable on the base page and over MCP by the base's maker or an admin). A product's own (CtProductConfig.mockupScenes,
- * mockupRefs) wins over these; "" / [] = the next one down (product → base → lib/mockup-scenes.ts defaultScenes).
+ * mockupRefs) wins over these; "" / [] = the next one down (product → base); nothing at all → making mockups is refused (asked 2026-11-18: no hidden prompt).
  */
 export interface CtBaseMockup {
   /** The scene prompts, one AI photo each — written like the editor's Mockups box (split by ---, empty line, or line). */
   scenes: string;
-  /** The sentence wrapped around each scene ({product}, {scene}); "" = lib/mockup-prompt.ts defaultMockupWrap. */
+  /** The whole prompt per scene ({product}, {scene} required), sent as it is; "" = none → mockups refused. */
   wrap: string;
   /** Reference pictures for the setting / style / light (https urls), sent after the product's own front picture. */
   refs: string[];

@@ -31,7 +31,7 @@ import { materialPreset } from "../lib/materials";
 import { uploadAsset } from "./handlers";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 type MockDb = CtSession["supabase"] | CtServiceClient;
-import { defaultScenes, splitScenes } from "../lib/mockup-scenes";
+import { splitScenes } from "../lib/mockup-scenes";
 import { customizable, isCustomizable, mockupVariants } from "../lib/mockup-variants";
 import { fillVariantPhotos } from "./mockup-samples";
 
@@ -41,7 +41,7 @@ function jsonError(message: string, status: number): NextResponse {
 
 export const jobName = (productId: string) => `mockup:${productId}`;
 
-import { CLEAR_ACRYLIC_LOOK, CT_MOCKUP_REFS_MAX, GLASS_LOOK, KEEP_PRINT, defaultMockupWrap, fillMockupWrap, isGlass, mockupRefList, type CtMockupLook } from "../lib/mockup-prompt";
+import { CLEAR_ACRYLIC_LOOK, CT_MOCKUP_REFS_MAX, GLASS_LOOK, KEEP_PRINT, fillMockupWrap, isGlass, mockupRefList } from "../lib/mockup-prompt";
 import { normalizeBaseMockup } from "../lib/base-product";
 import type { CtBaseMockup } from "../types";
 // Moved to lib/mockup-prompt.ts (2026-11-17: the base page shows them); kept here for the old imports.
@@ -571,6 +571,8 @@ export async function failOrphans(db: MockDb, jobs: CtPackImage[]): Promise<CtPa
   return jobs.map((j) => (ids.includes(j.id) ? { ...j, status: "failed" as const, error: ORPHAN_ERROR } : j));
 }
 
+const NO_SCENES = "Không có prompt cảnh nào để tạo mockup — điền ô Mockups của sản phẩm hoặc ô «Cảnh» ở trang product base.";
+
 function parseScenes(raw: FormDataEntryValue | null): string[] {
   if (typeof raw !== "string" || !raw) return [];
   try {
@@ -599,20 +601,25 @@ async function baseMockup(db: MockDb, product: CtProduct): Promise<CtBaseMockup>
   return normalizeBaseMockup(data?.config?.mockup);
 }
 
-/** The wrap sentence and reference pictures a product's mockups use: the product's own refs, else its base's; the base's wrap, else the default. */
-async function mockupSetup(db: MockDb, product: CtProduct, look: CtMockupLook): Promise<{ wrap: string; refs: string[] }> {
+/**
+ * The wrap sentence and reference pictures a product's mockups use: the base's wrap (a product has none of its own),
+ * the product's own refs, else its base's. No hidden prompt (asked 2026-11-18: "trống là trống, không có prompt thì báo
+ * lỗi, không dùng sẵn có"): an empty wrap is refused.
+ */
+async function mockupSetup(db: MockDb, product: CtProduct): Promise<{ wrap: string; refs: string[] }> {
+  if (!product.base_product_id) throw new Error("Sản phẩm chưa gắn product base — không có prompt mockup.");
   const base = await baseMockup(db, product);
+  if (!base.wrap.trim()) throw new Error("Product base chưa có câu bọc prompt mockup — điền ô «Câu bọc quanh mỗi cảnh» ở trang product base rồi tạo lại.");
+  if (!base.wrap.includes("{scene}")) throw new Error("Câu bọc prompt mockup của product base thiếu {scene} — thêm {scene} vào chỗ đặt cảnh ở trang product base.");
   const own = normalizeProductConfig(product.config).mockupRefs;
-  return { wrap: base.wrap.trim() || defaultMockupWrap(look), refs: (own.length ? own : base.refs).slice(0, CT_MOCKUP_REFS_MAX) };
+  return { wrap: base.wrap, refs: (own.length ? own : base.refs).slice(0, CT_MOCKUP_REFS_MAX) };
 }
 
-/** True when `text` is only what the product would get without its own prompts (its base's, else the defaults). */
+/** True when `text` is only what the product would get without its own prompts (its base's). */
 async function followsBase(db: MockDb, product: CtProduct, text: string): Promise<boolean> {
   const t = text.trim();
   if (!t) return true;
-  const base = (await baseMockup(db, product)).scenes.trim();
-  const config = normalizeProductConfig(product.config);
-  return t === (base || defaultScenes(config.print?.name || product.name).join("\n"));
+  return t === (await baseMockup(db, product)).scenes.trim();
 }
 
 /** POST products/:id/mockups/prompt {scenes: ""} — the editor's "Dùng prompt của product base": drops the product's own scenes. */
@@ -637,13 +644,13 @@ export async function setOwnMockupRefs(s: CtSession, productId: string, raw: unk
   }
 }
 
-/** The scene prompts a product's mockups use when none are given: its own Mockups box, else its base's, else the defaults for its name. */
-export async function productScenes(db: MockDb, product: CtProduct): Promise<{ scenes: string[]; from: "product" | "base" | "default" }> {
+/** The scene prompts a product's mockups use when none are given: its own Mockups box, else its base's, else none (refused when drawn). */
+export async function productScenes(db: MockDb, product: CtProduct): Promise<{ scenes: string[]; from: "product" | "base" | "none" }> {
   const config = normalizeProductConfig(product.config);
   if (config.mockupScenes.trim()) return { scenes: splitScenes(config.mockupScenes).scenes, from: "product" };
   const base = await baseMockup(db, product);
   if (base.scenes.trim()) return { scenes: splitScenes(base.scenes).scenes, from: "base" };
-  return { scenes: defaultScenes(config.print?.name || product.name), from: "default" };
+  return { scenes: [], from: "none" };
 }
 
 /**
@@ -676,7 +683,9 @@ export async function makeProductMockups(s: CtSession, productId: string, form: 
   const files = form.getAll("print").flatMap((f) => (f instanceof Blob && f.size > 0 ? [f] : []));
   if (!files.length) return jsonError("Thiếu artwork", 400);
   // No limit on how many prompts or how long (asked 2026-11-18).
-  const scenes = parseScenes(form.get("scenes"));
+  const given = parseScenes(form.get("scenes"));
+  const scenes = given.length ? given : (await productScenes(ctServiceClient() ?? s.supabase, product)).scenes;
+  if (!scenes.length) return jsonError(NO_SCENES, 400);
   if (files.length > 1 && files.length !== Math.max(1, scenes.length)) return jsonError(`${files.length} artwork cho ${scenes.length} prompt — mỗi prompt 1 artwork`, 400);
   try {
     const prints = await Promise.all(files.map(async (f) => Buffer.from(await f.arrayBuffer())));
@@ -703,6 +712,7 @@ export async function autoProductMockups(s: CtSession, productId: string): Promi
   if ((product.kind ?? "artwork") !== "product") return jsonError("Đây là artwork — mockup làm trên sản phẩm", 400);
   const config = normalizeProductConfig(product.config);
   const { scenes } = await productScenes(ctServiceClient() ?? s.supabase, product);
+  if (!scenes.length) return jsonError(NO_SCENES, 400);
   const { loadArtwork, renderArtwork } = await import("./print-render");
   const bundle = await loadArtwork(s.supabase, productId);
   if (!bundle) return jsonError("Không đọc được thiết kế của sản phẩm", 404);
@@ -739,6 +749,11 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
   // lib/mockup-variants.ts): scene i is drawn from print i.
   const prints = Array.isArray(print) ? print : [print];
   if (!prints.length) throw new Error("Thiếu artwork");
+  // The prompts first, before anything is uploaded: nothing to draw from = refused, never a built-in one.
+  const want = scenes.map((x) => x.trim()).filter(Boolean);
+  if (!want.length) throw new Error(NO_SCENES);
+  const db = ctServiceClient() ?? s.supabase;
+  const { wrap, refs } = await mockupSetup(db, product);
 
   // The front one: the artwork laid exactly on the phôi (its own light and shade), no AI. A die-cut acrylic: its plate
   // made from the artwork's outline (+ the border, the hanging tab). Without a phôi: on white.
@@ -762,19 +777,15 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
   };
   const fronts = await Promise.all(prints.map(frontOf));
   const frontAsset = fronts[0];
-  const db = ctServiceClient() ?? s.supabase;
 
   // One square for every scene (a 4:5 one was drawn 2:3 and cropped — the ornament's ends were cut off, 2026-10-22).
   const sceneAspect = MOCKUP_ASPECT;
-  const want = scenes.length ? scenes : [`on a bright minimal surface with soft daylight and a few props that suit a ${piece}`];
   const model = CT_IMAGE_MODEL;
   const rows: CtPackImage[] = [];
-  // The prompt around each scene and the reference pictures: the product base's (its page, CtBaseMockup — asked
-  // 2026-11-17: "prompt tạo mockup đưa ra khỏi code"), the product's own refs first; nothing set = the code's default.
-  const fromPhoi = !!(config.scene.url && config.scene.box.w > 0);
-  const { wrap, refs } = await mockupSetup(db, product, { piece, materialId: config.material.id, dieCut, fromPhoi });
+  // The prompt = the base's wrap with {product} / {scene} filled (its page, CtBaseMockup — asked 2026-11-17: "prompt
+  // tạo mockup đưa ra khỏi code"); nothing added by the code.
   for (const [i, sc] of want.entries()) {
-    const prompt = fillMockupWrap(wrap, piece, sc, refs.length);
+    const prompt = fillMockupWrap(wrap, piece, sc);
     const { data: row } = await db
       .from(CT_TABLES.packImages)
       .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: sc, prompt, refs: [(fronts[i] ?? frontAsset).url, ...refs], aspect: sceneAspect, model })

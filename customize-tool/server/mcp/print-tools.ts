@@ -713,7 +713,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
         mockups: {
           type: "array",
           items: { type: "object" },
-          description: `[{"label": "Christmas", "options": {"<layer>": "<option>"}, "scenes": ["<English: where the product is and what is around it — e.g. hanging on a decorated Christmas tree with warm bokeh lights>"]}] — any number of entries and scenes (one photo per scene, no limit). An entry without scenes uses the product's own prompts, else its PRODUCT BASE's (get_base_mockup_prompt), else defaults for the piece.`,
+          description: `[{"label": "Christmas", "options": {"<layer>": "<option>"}, "scenes": ["<English: where the product is and what is around it — e.g. hanging on a decorated Christmas tree with warm bokeh lights>"]}] — any number of entries and scenes (one photo per scene, no limit). An entry without scenes uses the product's own prompts, else its PRODUCT BASE's (get_base_mockup_prompt); none anywhere → refused (no built-in prompt). The prompt sent = the base's wrap with {product} / {scene} filled, nothing added.`,
         },
         save_scenes: {
           type: "string",
@@ -755,7 +755,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
         const r = await productMockups(s, product, print, scenes, label);
         out.push({ label, front: r.front.url, jobs: r.jobs.filter((j) => j.status === "running").map((j) => ({ id: j.id, scene: j.description, status: j.status })) });
       }
-      return json({ mockups: out, defaultScenesFrom: kept.from, next: "wait_product_mockups with the job ids, then view_image each photo (the print must be unchanged on it)." });
+      return json({ mockups: out, scenesFrom: kept.from, next: "wait_product_mockups with the job ids, then view_image each photo (the print must be unchanged on it)." });
     },
   },
   {

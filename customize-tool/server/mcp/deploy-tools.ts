@@ -273,7 +273,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
           variants: b.priceTable ? priceCells(b.priceTable.config).map((c) => ({ size: c.size?.label ?? "", pack: c.pack?.label ?? "", price: c.price, compareAt: c.compareAt })) : [],
           priceTable: b.priceTable?.name ?? null,
           products: b.products,
-          mockupPrompt: { scenes: b.config.mockup.scenes.trim() ? splitScenes(b.config.mockup.scenes).scenes.length : "default", ownWrap: !!b.config.mockup.wrap.trim(), refs: b.config.mockup.refs.length, sizeCharts: b.config.mockup.sizeCharts.length },
+          mockupPrompt: { scenes: b.config.mockup.scenes.trim() ? splitScenes(b.config.mockup.scenes).scenes.length : 0, wrap: !!b.config.mockup.wrap.trim(), refs: b.config.mockup.refs.length, sizeCharts: b.config.mockup.sizeCharts.length },
         })),
       });
     },
@@ -315,7 +315,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "get_base_mockup_prompt",
     description:
-      'The AI mockup prompts of a PRODUCT BASE, used by every product made on it that has none of its own: scenes (one photo each; "" = defaultScenes), wrap = the sentence around each scene ({product} = piece name, {scene} = one scene; "" = defaultWrap), refs = reference pictures for the setting / light / style, sent after the product\'s front picture. canEdit = you may change them with set_base_mockup_prompt (the base\'s maker or an admin).',
+      'The AI mockup prompts of a PRODUCT BASE, used by every product made on it that has none of its own: scenes (one photo each), wrap = THE WHOLE PROMPT sent to the image model for each scene ({product} = piece name, {scene} = one scene — nothing else is added by the server), refs = reference pictures sent after the product\'s front picture (picture 1; refs are pictures 2..). Empty is empty: no wrap, a wrap without {scene}, or no scene (here and on the product) → making mockups is refused. sampleWrap / sampleScenes are only samples to start a new text from, never used by themselves. canEdit = you may change them with set_base_mockup_prompt (the base\'s maker or an admin).',
     inputSchema: { type: "object", properties: { ...OPT_TASK_ARG, base_product_id: { type: "string", description: "From list_base_products." } }, required: ["base_product_id"] },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
@@ -329,9 +329,9 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         base: { id: base.id, name: base.name },
         scenes: m.scenes,
         sceneList: m.scenes.trim() ? splitScenes(m.scenes).scenes : [],
-        defaultScenes: defaultScenes(base.name),
+        sampleScenes: defaultScenes(base.name),
         wrap: m.wrap,
-        defaultWrap: defaultMockupWrap({ piece: base.template?.name || base.name, materialId: base.config.material, dieCut: base.config.cut.mode === "alpha", fromPhoi }),
+        sampleWrap: defaultMockupWrap({ piece: base.template?.name || base.name, materialId: base.config.material, dieCut: base.config.cut.mode === "alpha", fromPhoi }),
         refs: m.refs,
         sizeCharts: m.sizeCharts,
         canEdit: ctx.caller === "agent" || ctx.admin || (!!ctx.userId && base.user_id === ctx.userId),
@@ -341,7 +341,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "set_base_mockup_prompt",
     description:
-      'Change a PRODUCT BASE\'s AI mockup prompts (only its maker or an admin). Give only what changes: scenes (English, one per line or split by an empty line / ---, no limit on count or length; "" = the defaults), wrap (keep {scene}; "" = the default sentence), refs (https urls, max 4 — the whole new list; [] = none). Products with prompts of their own keep theirs. One product\'s own prompts go with make_product_mockups save_scenes / save_refs instead.',
+      'Change a PRODUCT BASE\'s AI mockup prompts (only its maker or an admin). Give only what changes: scenes (English, one per line or split by an empty line / ---, no limit on count or length; "" = none — products without scenes of their own then fail), wrap (the whole prompt per scene, must hold {scene}; "" = none — every mockup of the base then fails), refs (https urls, max 4 — the whole new list; [] = none). Products with prompts of their own keep theirs. One product\'s own prompts go with make_product_mockups save_scenes / save_refs instead.',
     inputSchema: {
       type: "object",
       properties: {

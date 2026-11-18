@@ -1,7 +1,8 @@
 /**
  * The sentence wrapped around every mockup scene (asked 2026-11-17: the mockup prompts out of the code, kept on the
- * product base). The base page shows the default one (defaultMockupWrap) and may keep its own (CtBaseMockup.wrap);
- * "" = the default. Placeholders: {product} = the piece's name, {scene} = one scene prompt.
+ * product base, CtBaseMockup.wrap). Asked 2026-11-18: no hidden prompt — an empty wrap is refused, never replaced;
+ * defaultMockupWrap is only the sample the base page pastes into its box when asked ("Điền câu mẫu").
+ * Placeholders: {product} = the piece's name, {scene} = one scene prompt (required).
  * Shared by the server (server/product-mockups.ts) and the base page (components/base/base-mockup-section.tsx).
  */
 
@@ -46,7 +47,7 @@ export interface CtMockupLook {
   fromPhoi: boolean;
 }
 
-/** The default wrap for a piece like that, with {product} and {scene} left in. */
+/** A sample wrap for a piece like that, with {product} and {scene} left in — only pasted into the base's box on request. */
 export function defaultMockupWrap(o: CtMockupLook): string {
   // A die-cut acrylic is named by what it is (the khuôn's name is the team's Vietnamese one).
   const what = o.dieCut
@@ -63,13 +64,9 @@ export function defaultMockupWrap(o: CtMockupLook): string {
 }
 
 /**
- * The prompt sent for one scene: the wrap with its placeholders filled (a wrap without {scene} gets the scene after
- * it), and — with reference pictures — the sentence that says which picture is which.
+ * The prompt sent for one scene: exactly the wrap with {product} and {scene} filled — nothing added (asked 2026-11-18:
+ * the sentence about reference pictures went into the bases' wraps; a wrap without {scene} is refused before this).
  */
-export function fillMockupWrap(wrap: string, piece: string, scene: string, refs: number): string {
-  let out = wrap.split("{product}").join(piece);
-  out = out.includes("{scene}") ? out.split("{scene}").join(scene) : `${out.trim()} Setting: ${scene}.`;
-  if (refs > 0)
-    out += ` Picture 1 is the product itself (keep it and its print exactly). Picture${refs > 1 ? "s" : ""} ${refs > 1 ? `2–${refs + 1}` : "2"} ${refs > 1 ? "are" : "is"} only a reference for the setting, styling, light and mood of the photo: follow ${refs > 1 ? "them" : "it"}, but never copy any product, print, text or logo from ${refs > 1 ? "them" : "it"}.`;
-  return out;
+export function fillMockupWrap(wrap: string, piece: string, scene: string): string {
+  return wrap.split("{product}").join(piece).split("{scene}").join(scene);
 }

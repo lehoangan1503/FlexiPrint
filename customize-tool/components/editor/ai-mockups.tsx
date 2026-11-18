@@ -23,7 +23,7 @@ import { ctApi } from "../../lib/api-client";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
 import { defaultCategoryRules, displayAssets } from "../../lib/library";
 import { ctConfirm } from "../dialogs";
-import { defaultScenes, splitScenes } from "../../lib/mockup-scenes";
+import { splitScenes } from "../../lib/mockup-scenes";
 import { CT_MOCKUP_REFS_MAX } from "../../lib/mockup-prompt";
 import { MockupPics } from "../base/base-mockup-section";
 import { ZoomThumbs } from "../zoom-thumbs";
@@ -63,16 +63,16 @@ const isOpenTask = (t: CtAgentTask) => t.status === "pending" || t.status === "r
 
 export function AiMockupsPanel(props: AiMockupsPanelProps) {
   const { product, main, assets, regions, items, selection, config } = props;
-  // The product's own prompts as last used (kept on the product), else its base's, else the defaults for its name.
+  // The product's own prompts as last used (kept on the product), else its base's, else nothing (asked 2026-11-18: no hidden prompt).
   const baseScenes = props.baseMockup?.scenes.trim() ?? "";
   // null = not typed in yet: the box follows what it starts from (the bases load after the panel).
   const [typed, setScenes] = useState<string | null>(null);
   // What the server keeps (the design's config is not reloaded after a mockup call).
   const [savedScenes, setSavedScenes] = useState(config.mockupScenes);
-  const scenes = typed ?? (savedScenes || baseScenes || defaultScenes(config.print?.name || product.name).join("\n"));
+  const scenes = typed ?? (savedScenes || baseScenes);
   const parsed = useMemo(() => splitScenes(scenes), [scenes]);
   // Where the box's prompts come from (asked 2026-11-18: the base's box and this one looked like one).
-  const followText = baseScenes || defaultScenes(config.print?.name || product.name).join("\n");
+  const followText = baseScenes;
   const own = typed !== null ? typed.trim() !== "" && typed.trim() !== followText : !!savedScenes.trim() && savedScenes.trim() !== followText;
   const hasBase = !!product.base_product_id;
   // Reference pictures (asked 2026-11-18): the product's own, else its base's; picture 1 is the product itself.
@@ -96,7 +96,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
       setScenes(null);
       setSavedScenes("");
       props.onProduct(r.product);
-      props.flash(hasBase ? "Sản phẩm dùng lại prompt của product base" : "Sản phẩm dùng lại bối cảnh mặc định");
+      props.flash(baseScenes ? "Sản phẩm dùng lại prompt của product base" : "Đã bỏ cảnh riêng — product base chưa có cảnh nào, Tạo mockup sẽ báo lỗi");
     } catch (e) {
       props.flash(e instanceof Error ? e.message : "Không lưu được");
     } finally {
@@ -232,6 +232,10 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
   }, [running.length, loadJobs, product.id]);
 
   const make = async () => {
+    if (!parsed.scenes.length) {
+      props.flash("Không có prompt cảnh nào — viết cảnh vào ô trên hoặc ô «Cảnh» ở trang product base.");
+      return;
+    }
     setMaking("print");
     try {
       // The finished artwork: the print file (whole edit frame cut to the khuôn) — the phôi is blank, everything
@@ -244,7 +248,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
         const r = await ctApi.makeMockups(product.id, await printOf(selection), lines, scenes, canVary ? false : undefined);
         setSavedScenes(keep);
         setJobs((cur) => [...r.jobs, ...cur.filter((j) => !r.jobs.some((x) => x.id === j.id))]);
-        props.flash(`AI đang tạo ${lines.length || 1} ảnh bối cảnh từ artwork trên phôi (1–2 phút / ảnh)`);
+        props.flash(`AI đang tạo ${lines.length} ảnh bối cảnh từ artwork trên phôi (1–2 phút / ảnh)`);
         return;
       }
       // One random custom pick per prompt; its photo zones filled with a different sample person / pet by the server.
@@ -414,7 +418,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                   ? "Prompt riêng của sản phẩm này — sửa prompt ở trang product base sẽ không đổi sản phẩm này."
                   : hasBase && baseScenes
                     ? "Đang dùng prompt của product base — sửa ở đây và bấm Tạo mockup thì thành prompt riêng của sản phẩm này."
-                    : "Đang dùng bối cảnh mặc định — sửa ở đây và bấm Tạo mockup thì thành prompt riêng của sản phẩm này."}
+                    : "Product base chưa có cảnh nào — viết cảnh vào ô dưới (thành prompt riêng của sản phẩm này), ô trống thì Tạo mockup báo lỗi."}
               </span>
               {hasBase && (
                 <a href={`/base-products/${product.base_product_id}`} target="_blank" rel="noreferrer" className="text-sky-700 underline dark:text-sky-300">
@@ -423,7 +427,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
               )}
               {own && (
                 <button className="ml-auto rounded border bg-background px-2 py-0.5 font-medium text-foreground hover:bg-accent disabled:opacity-50" disabled={backBusy} onClick={() => void backToBase()}>
-                  {backBusy ? "Đang lưu…" : hasBase ? "Dùng prompt của base" : "Dùng bối cảnh mặc định"}
+                  {backBusy ? "Đang lưu…" : baseScenes ? "Dùng prompt của base" : "Bỏ cảnh riêng"}
                 </button>
               )}
             </div>
@@ -465,7 +469,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
               <CtLightbox images={art ? [{ url: art, name: "Ảnh 1 · sản phẩm" }] : []} index={frontZoom} onIndex={setFrontZoom} />
             </div>
             <p className="text-xs text-muted-foreground">
-              {`Sẽ tạo ${parsed.scenes.length || 1} ảnh${parsed.scenes.length ? ` — ${parsed.split === "dash" ? "tách theo dòng ---" : parsed.split === "blank" ? "tách theo dòng trống" : "mỗi dòng 1 ảnh"}` : " bối cảnh mặc định"}.`}
+              {parsed.scenes.length ? `Sẽ tạo ${parsed.scenes.length} ảnh — ${parsed.split === "dash" ? "tách theo dòng ---" : parsed.split === "blank" ? "tách theo dòng trống" : "mỗi dòng 1 ảnh"}.` : "Chưa có cảnh nào — Tạo mockup sẽ báo lỗi."}
             </p>
             {canVary && (
               <label className="flex cursor-pointer items-start gap-2 rounded-lg border bg-muted/30 p-2 text-xs">
@@ -506,7 +510,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                   </div>
                   <figcaption className="border-t p-1.5 text-[11px] leading-snug">
                     <div className="truncate font-medium" title={p.label}>{p.label || `Bản ${i + 1}`}</div>
-                    <div className="truncate text-muted-foreground" title={p.scene}>{p.scene || "bối cảnh mặc định"}</div>
+                    <div className="truncate text-muted-foreground" title={p.scene}>{p.scene}</div>
                   </figcaption>
                 </figure>
               ))}

@@ -117,6 +117,18 @@ export interface CtPrintBlank {
   box: CtBounds;
   /** Made by AI from the khuôn. */
   ai: boolean;
+  /** Made from a fulfiller's phôi (2026-11-18): copied as it is, or drawn again by AI with it as reference; absent = upload / plain AI. */
+  from?: CtPrintBlankFrom | null;
+}
+
+/** Where a khuôn's phôi came from when a fulfiller's phôi was the source (shown as a badge + its references). */
+export interface CtPrintBlankFrom {
+  /** "Merchize", "Printbelle". */
+  provider: string;
+  /** copy = the fulfiller's own plain phôi, used as it is · ai = drawn again from it (texture, construction, khuôn shape). */
+  kind: "copy" | "ai";
+  /** The pictures it was made from (the fulfiller's phôi first). */
+  refs: string[];
 }
 
 export interface CtPrintHistoryEntry {

@@ -40,9 +40,10 @@ import { fetchImage } from "./char/files";
 import { loadBaseProduct } from "./base-products";
 import { templateRow } from "./print-templates";
 import { addTemplateBlank } from "./print-blanks";
+import { fulfillerPhoi, makeKhuonPhoi } from "./fulfiller-phoi";
 import { CLEAR_ACRYLIC_LOOK, baseBlankHints, makeBlank, pieceBounds, sheetBoxOn } from "./product-mockups";
 import { ctRemove, ctUpload } from "./storage";
-import { coverBox, overlayRef, sideLoss, splitKeyed, type KeyedScene } from "./overlay-key";
+import { coverBox, imprintTexture, overlayRef, sideLoss, splitKeyed, type KeyedScene } from "./overlay-key";
 import { jsonError, record, str } from "./ai/llm";
 import { ctServiceClient, type CtServiceClient, type CtSession, type CtSupabase } from "./supabase";
 
@@ -109,7 +110,7 @@ function scenePrompt(o: { facts: string; where: string; photos: number; piece: b
       ? "The piece keeps EXACTLY the outline, size and position it has in picture 1 — same place in the frame, same share of the frame — and the camera stays square to its face: a piece lying on a floor, bed or table is photographed from straight above, a hanging or standing piece straight from the front. No perspective, no tilt, no angle, do not zoom, move or crop it."
       : "",
     o.piece
-      ? "Its printable face stays completely BLANK: one even surface of its own material, no print, pattern, picture, text, logo, stitching or dashed line — the design is added on it later. Nothing covers, overlaps or touches its face: furniture, props and decor stay around it toward the edges of the picture, some partly cropped by the frame, at real-world scale next to the piece."
+      ? "Its printable face stays BLANK — no print, printed pattern, picture, text, logo or dashed line (the design is added on it later) — but keeps the piece's own surface exactly as picture 1 shows it: the same material, texture, quilting or stitch pattern, seams and hem. Nothing covers, overlaps or touches its face: furniture, props and decor stay around it toward the edges of the picture, some partly cropped by the frame, at real-world scale next to the piece."
       : "",
     o.piece && o.clear ? `The piece is ${CLEAR_ACRYLIC_LOOK}.` : "",
     "Natural light with soft realistic shadows, photorealistic, warm and inviting, like a premium online-store lifestyle photo. No people, no hands, no text, no watermark.",
@@ -368,11 +369,24 @@ async function drawOverlayScene(o: {
     if (!best) throw new Error(`AI không vẽ lại được ảnh: ${last}`);
     const { keyed } = best;
     const id = crypto.randomUUID();
+    const box = sheetBoxOn(coverBox(keyed.face, aspect), sheet);
+    // The magenta face came back smooth: the surface of the khuôn's phôi trơn made from the fulfiller's (quilting…) printed in.
+    const tex = o.template?.spec.blanks.find((b) => b.from) ?? null;
+    if (tex) {
+      const done = await (async () => {
+        const photo = await fetchImage(tex.url);
+        const m = await sharp(photo).metadata();
+        // The phôi's box is in its own px (width / height); the file may be another size.
+        const sx = (m.width ?? tex.width) / Math.max(1, tex.width);
+        const sy = (m.height ?? tex.height) / Math.max(1, tex.height);
+        return imprintTexture(keyed.overlay, box, photo, { x: tex.box.x * sx, y: tex.box.y * sy, w: tex.box.w * sx, h: tex.box.h * sy });
+      })().catch((e: Error) => (console.warn(`[ct] texture ${base.name}: ${e.message}`), null));
+      if (done) Object.assign(keyed, done);
+    }
     const [url, overlayUrl] = await Promise.all([
       ctUpload(`${dir}/${o.preset}-${id}.jpg`, keyed.phoi, "image/jpeg"),
       ctUpload(`${dir}/${o.preset}-${id}-overlay.png`, keyed.overlay, "image/png"),
     ]);
-    const box = sheetBoxOn(coverBox(keyed.face, aspect), sheet);
     const scene: CtProductScene = { url, width: keyed.width, height: keyed.height, box, overlay: overlayUrl };
     const loss = await sideLoss(keyed.overlay, keyed.width, keyed.height, box).catch(() => null);
     console.info(`[ct] base overlay scene ${base.name} ${o.preset}: face ${Math.round(keyed.face.w)}×${Math.round(keyed.face.h)} (${(keyed.face.w / keyed.face.h).toFixed(3)} vs ${aspect.toFixed(3)}), fill ${keyed.fill.toFixed(2)}`);
@@ -474,7 +488,12 @@ async function runAuto(db: Db, userId: string, baseId: string, state: CtBaseScen
     if (!base) throw new Error("Không tìm thấy product base");
     const { data: row } = await db.from(CT_TABLES.baseProducts).select("config").eq("id", baseId).maybeSingle<{ config: Record<string, unknown> | null }>();
     await db.from(CT_TABLES.baseProducts).update({ config: { ...(row?.config ?? {}), scenesAuto: new Date().toISOString() } }).eq("id", baseId);
-    const template = await loadTemplate(db, base.config.templateId);
+    let template = await loadTemplate(db, base.config.templateId);
+    // An imported base: the khuôn's phôi trơn made from the fulfiller's phôi first (its texture goes into the backgrounds).
+    if (template && fulfillerPhoi(base.config) && !template.spec.blanks.some((b) => b.from)) {
+      say("AI đang làm phôi trơn của khuôn theo phôi xưởng…");
+      template = await makeKhuonPhoi(db, userId, base, template).catch((e: Error) => (console.warn(`[ct] khuôn phôi ${base.name}: ${e.message}`), template));
+    }
     const got = await plainPhoi(db, userId, base, template, say);
     if ("skip" in got) {
       state.status = "skipped";

@@ -141,6 +141,29 @@ async function makeKhuon(s: CtSession, name: string, t: KitTemplate, face: KitFa
 }
 
 /**
+ * The khuôn already made from this Merchize file (same name, same Drive folder, same px) — the one a base uses first,
+ * else the oldest. Several when the file has several shapes (each its own khuôn, first one first).
+ */
+async function sameKhuon(s: CtSession, file: PsdFile, folderId: string): Promise<CtPrintTemplate[]> {
+  const head = `Khuôn Merchize: ${file.name}`;
+  const tail = `drive.google.com/drive/folders/${folderId}`;
+  const { data } = await s.supabase
+    .from(CT_TABLES.printTemplates)
+    .select("*")
+    .like("spec->>notes", `Khuôn Merchize: %`)
+    .order("sort_order", { ascending: true })
+    .returns<CtPrintTemplate[]>();
+  const hits = (data ?? []).filter((t) => {
+    const notes = t.spec?.notes ?? "";
+    return (notes === `${head} · https://${tail}` || (notes.startsWith(`${head} · hình `) && notes.endsWith(tail))) && t.spec.width === file.width && t.spec.height === file.height;
+  });
+  if (!hits.length) return [];
+  const { data: bases } = await s.supabase.from(CT_TABLES.baseProducts).select("config").in("config->>templateId", hits.map((t) => t.id)).returns<Array<{ config: { templateId?: string } | null }>>();
+  const used = new Set((bases ?? []).map((b) => b.config?.templateId ?? ""));
+  return [...hits.filter((t) => used.has(t.id)), ...hits.filter((t) => !used.has(t.id))];
+}
+
+/**
  * The template that fits the print area: the same px, else the same shape (largest), else the first. Among equals the
  * shortest name: "MLPC … Shirt.psd" before "MLPC … Shirt (custom pocket).psd".
  */
@@ -197,7 +220,14 @@ export async function importMerchizeKhuon(s: CtSession, sku: string, baseName: s
     const fileSheet = { width: file.width, height: file.height };
 
     let family: KitTemplate["family"] | null = null;
-    if (wantKhuon) {
+    const reused = wantKhuon ? await sameKhuon(s, file, folderId) : [];
+    if (reused.length) {
+      // Read from this very file before (another base, an earlier import): used again, the PSD is not downloaded —
+      // Drive locks a much-downloaded file for a day ("Quota exceeded", Quilt 2026-11-18) and each read made a copy.
+      out.templateId = reused[0].id;
+      out.cut = "khuon";
+      out.notes.push(`Dùng lại khuôn “${reused[0].name}” (đã đọc từ ${file.name} trước đó, ${file.width}×${file.height}px)`);
+    } else if (wantKhuon) {
       const t = await kitPost<KitTemplate>("/psd/template", { url: download(file.id), sheet: [file.width, file.height] }, KIT_MS);
       family = t.family;
       if (t.family === "cut") {

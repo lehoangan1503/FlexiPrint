@@ -363,6 +363,8 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
       notes: `${note} · ${new Date().toISOString().slice(0, 10)}`,
       cut: { mode: cutMode, borderMm: cutMode === "alpha" ? 2 : 0, silhouette: true, hole: false, holeSize: 9 },
     });
+    // The fulfiller's phôi kept apart: the preview may move to an AI background, the khuôn's phôi trơn copies this one.
+    if (config.source && config.preview.url) config.source = { ...config.source, phoi: config.preview };
     const { data: last } = await s.supabase.from(CT_TABLES.baseProducts).select("sort_order").order("sort_order", { ascending: false }).limit(1).maybeSingle<{ sort_order: number }>();
     const { data, error } = await s.supabase
       .from(CT_TABLES.baseProducts)
@@ -415,7 +417,7 @@ export async function refreshFulfillerBase(s: CtSession, raw: unknown): Promise<
         templateId,
         cut: templateId && cfg.cut.mode === "none" ? { ...cfg.cut, mode: "khuon" } : cfg.cut,
         preview: preview.url ? preview : cfg.preview,
-        source: { ...source, links: khuon.folderUrl ? [{ label: "Printbelle: khuôn + mẫu (Google Drive)", url: khuon.folderUrl }] : source.links, khuonIssue: templateId ? undefined : khuon.note },
+        source: { ...source, ...(preview.url ? { phoi: preview } : {}), links: khuon.folderUrl ? [{ label: "Printbelle: khuôn + mẫu (Google Drive)", url: khuon.folderUrl }] : source.links, khuonIssue: templateId ? undefined : khuon.note },
         notes: `${cfg.notes}\n${day} lấy lại từ Printbelle: ${khuon.note}${phoi ? " · phôi + lớp phủ của Printbelle" : " · Printbelle không có ảnh phôi"}`.trim(),
       });
     } else {
@@ -429,7 +431,7 @@ export async function refreshFulfillerBase(s: CtSession, raw: unknown): Promise<
         templateId,
         cut: mz.cut && (cfg.cut.mode === "none" || !cfg.templateId) ? { ...cfg.cut, mode: mz.cut, borderMm: mz.cut === "alpha" && !cfg.cut.borderMm ? 2 : cfg.cut.borderMm } : cfg.cut,
         preview: mz.preview ?? cfg.preview,
-        source: { ...source, links: mz.links.length ? mz.links : source.links, khuonIssue: templateId || mz.cut === "alpha" ? undefined : (mz.khuonIssue ?? source.khuonIssue) },
+        source: { ...source, ...(mz.preview ? { phoi: mz.preview } : {}), links: mz.links.length ? mz.links : source.links, khuonIssue: templateId || mz.cut === "alpha" ? undefined : (mz.khuonIssue ?? source.khuonIssue) },
         notes: `${cfg.notes}\n${day} lấy lại từ Merchize: ${note}`.trim(),
       });
     }

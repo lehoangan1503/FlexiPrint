@@ -360,3 +360,60 @@ export async function sideLoss(overlay: Buffer, width: number, height: number, b
     right: r(n(x1, x0, (x) => hid(x, cy)) / box.w),
   };
 }
+
+/**
+ * The khuôn's phôi trơn's surface (quilting, weave, seams — 2026-11-18: the AI backgrounds drew the Quilt Blanket as a
+ * smooth sheet) printed into a keyed scene's face: its fine light/dark detail (brightness against a blurred copy) laid
+ * over the face as one more black / white shade, mapped from the phôi's sheet box (`texBox`, px of `texture`) onto the
+ * scene's sheet box (`box`). Only where the design shows (fingers, the room stay as they are). → overlay + phôi trơn.
+ */
+export async function imprintTexture(overlay: Buffer, box: KeyBounds, texture: Buffer, texBox: KeyBounds): Promise<{ overlay: Buffer; phoi: Buffer }> {
+  const { data: over, info } = await sharp(overlay).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const W = info.width;
+  const H = info.height;
+  const tm = await sharp(texture).metadata();
+  const TW = tm.width ?? 1;
+  const TH = tm.height ?? 1;
+  // The phôi's own hem / binding left out (4 % in from each side): only its surface is repeated over the face.
+  const inset = 0.04;
+  const left = clamp(Math.round(texBox.x + texBox.w * inset), 0, TW - 1);
+  const top = clamp(Math.round(texBox.y + texBox.h * inset), 0, TH - 1);
+  const crop = { left, top, width: clamp(Math.round(texBox.w * (1 - 2 * inset)), 1, TW - left), height: clamp(Math.round(texBox.h * (1 - 2 * inset)), 1, TH - top) };
+  const bw = Math.max(1, Math.round(box.w));
+  const bh = Math.max(1, Math.round(box.h));
+  // Softened a little first: the fabric's fine weave would come out as stripes once brought up; the quilting stays.
+  const grey = await sharp(texture).removeAlpha().extract(crop).resize(bw, bh, { fit: "fill" }).greyscale().blur(Math.max(0.6, bw / 600)).png().toBuffer();
+  const sigma = Math.max(2, bw / 120);
+  const [{ data: t }, { data: tb }] = await Promise.all([sharp(grey).raw().toBuffer({ resolveWithObject: true }), sharp(grey).blur(sigma).raw().toBuffer({ resolveWithObject: true })]);
+  // White-on-white quilting is faint on the phôi: its detail brought up to a clearly visible strength (mean ±6 %).
+  let dev = 0;
+  for (let q = 0; q < bw * bh; q++) dev += Math.abs(Math.log(Math.max(1, t[q]) / Math.max(1, tb[q])));
+  const gain = clamp(0.06 / Math.max(1e-4, dev / (bw * bh)), 1, 5);
+  const ox = Math.round(box.x);
+  const oy = Math.round(box.y);
+  for (let y = Math.max(0, oy); y < Math.min(H, oy + bh); y++)
+    for (let x = Math.max(0, ox); x < Math.min(W, ox + bw); x++) {
+      const q = (y - oy) * bw + (x - ox);
+      const i = (y * W + x) * 4;
+      const a1 = over[i + 3] / 255;
+      // The face: see-through; an opaque pixel (room, hands) takes none.
+      const w = clamp((0.95 - a1) / 0.35, 0, 1);
+      if (!w) continue;
+      const d = clamp(Math.exp(gain * Math.log(Math.max(1, t[q]) / Math.max(1, tb[q]))), 0.72, 1.25);
+      const v = d < 1 ? 0 : 255;
+      const a2 = (d < 1 ? 1 - d : Math.min(0.45, (d - 1) * 0.8)) * w;
+      if (a2 < 0.002) continue;
+      const a = a2 + a1 * (1 - a2);
+      for (let c = 0; c < 3; c++) over[i + c] = clamp(Math.round((v * a2 + over[i + c] * a1 * (1 - a2)) / a), 0, 255);
+      over[i + 3] = clamp(Math.round(a * 255), 0, 255);
+    }
+  const phoi = Buffer.alloc(W * H * 3);
+  for (let p = 0; p < W * H; p++) {
+    const a = over[p * 4 + 3] / 255;
+    for (let c = 0; c < 3; c++) phoi[p * 3 + c] = clamp(Math.round(a * over[p * 4 + c] + (1 - a) * 255), 0, 255);
+  }
+  return {
+    overlay: await sharp(over, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer(),
+    phoi: await sharp(phoi, { raw: { width: W, height: H, channels: 3 } }).jpeg({ quality: 92 }).toBuffer(),
+  };
+}

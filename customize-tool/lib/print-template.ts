@@ -4,7 +4,7 @@
  */
 
 import type { CtBounds, CtPoint, CtShape } from "../types";
-import type { CtPrintBlank, CtPrintFace, CtPrintHistoryEntry, CtPrintKind, CtPrintSize, CtPrintSpec, CtPrintZone } from "../types/print";
+import type { CtPrintBlank, CtPrintBlankFrom, CtPrintFace, CtPrintHistoryEntry, CtPrintKind, CtPrintSize, CtPrintSpec, CtPrintZone } from "../types/print";
 import { pointInShape, shapeBounds } from "./geometry";
 
 const num = (v: unknown, fallback: number, lo = 0, hi = 100000): number => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback);
@@ -19,6 +19,14 @@ function isShape(v: unknown): v is CtShape {
 }
 
 const shapes = (v: unknown): CtShape[] => (Array.isArray(v) ? v.filter(isShape) : []);
+
+function blankFrom(raw: unknown): CtPrintBlankFrom | null {
+  if (!raw || typeof raw !== "object") return null;
+  const f = raw as Partial<Record<keyof CtPrintBlankFrom, unknown>>;
+  if (typeof f.provider !== "string" || !f.provider || (f.kind !== "copy" && f.kind !== "ai")) return null;
+  const refs = Array.isArray(f.refs) ? f.refs.filter((u): u is string => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 6) : [];
+  return { provider: f.provider.slice(0, 40), kind: f.kind, refs };
+}
 
 export function normalizePrintSpec(raw: unknown): CtPrintSpec {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<Record<keyof CtPrintSpec, unknown>>;
@@ -52,6 +60,7 @@ export function normalizePrintSpec(raw: unknown): CtPrintSpec {
       height: Math.round(num(b.height, 1000, 1, 20000)),
       box: { x: num(b.box?.x, 0, -1e5, 1e5), y: num(b.box?.y, 0, -1e5, 1e5), w: num(b.box?.w, 1, 1), h: num(b.box?.h, 1, 1) },
       ai: b.ai === true,
+      ...(blankFrom(b.from) ? { from: blankFrom(b.from) } : {}),
     }));
   const faces: CtPrintFace[] = (Array.isArray(r.faces) ? r.faces : [])
     .map((f) => f as Partial<CtPrintFace>)

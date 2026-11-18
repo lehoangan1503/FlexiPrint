@@ -1817,6 +1817,11 @@ export interface CtBaseSource {
    * editor tells the dev (or makes the khuôn by hand).
    */
   khuonIssue?: string;
+  /**
+   * The fulfiller's own phôi as imported (blank + overlay + box, 2026-11-18) — kept when the preview moves to an AI
+   * background, so the khuôn's phôi trơn and later backgrounds still copy its material and texture.
+   */
+  phoi?: CtProductScene | null;
 }
 
 export interface CtBaseSourceLink {

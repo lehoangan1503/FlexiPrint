@@ -13,6 +13,7 @@ import { printApi } from "../../lib/print-api";
 import { ctConfirm } from "../dialogs";
 import { CHECKER_STYLE, CtButton, CtModal } from "../ui";
 import { KhuonPreview } from "./khuon-tab";
+import { ZoomThumbs } from "../zoom-thumbs";
 
 export function PhoiTab() {
   const [templates, setTemplates] = useState<CtPrintTemplate[] | null>(null);
@@ -106,14 +107,14 @@ export function PhoiTab() {
   );
 }
 
-/** The base's own phôi photo (a fulfiller's import, an upload) — shown as the phôi trơn in place of the khuôn's. */
-export interface CtBasePhoiTile {
-  url: string;
+/** On a base page: the fulfiller whose phôi the khuôn's phôi trơn can be made from (server/fulfiller-phoi.ts). */
+export interface CtPhoiFulfiller {
   name: string;
+  run: () => void;
 }
 
-export function PhoiRow(props: { template: CtPrintTemplate; busy: string | null; onUpload: (f: File) => void; onAi: () => void; onRemove: (id: string) => void; onFirst: (id: string) => void; basePhoi?: CtBasePhoiTile | null }) {
-  const { template: t, basePhoi } = props;
+export function PhoiRow(props: { template: CtPrintTemplate; busy: string | null; onUpload: (f: File) => void; onAi: () => void; onRemove: (id: string) => void; onFirst: (id: string) => void; fulfiller?: CtPhoiFulfiller | null }) {
+  const { template: t, fulfiller } = props;
   const input = useRef<HTMLInputElement | null>(null);
   return (
     <section>
@@ -123,23 +124,24 @@ export function PhoiRow(props: { template: CtPrintTemplate; busy: string | null;
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold">{t.name}</div>
-          <div className="text-[11px] text-muted-foreground">{basePhoi ? "1 phôi" : `${t.spec.blanks.length} phôi`}</div>
+          <div className="text-[11px] text-muted-foreground">{t.spec.blanks.length} phôi</div>
         </div>
         {props.busy && (
           <span className="flex items-center gap-1 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> {props.busy}
           </span>
         )}
-        {!basePhoi && (
-          <>
-            <CtButton size="sm" onClick={() => input.current?.click()} disabled={!!props.busy}>
-              <Upload className="h-3.5 w-3.5" /> Upload phôi
-            </CtButton>
-            <CtButton size="sm" variant="primary" onClick={props.onAi} disabled={!!props.busy}>
-              <Sparkles className="h-3.5 w-3.5" /> Tạo phôi bằng AI
-            </CtButton>
-          </>
+        <CtButton size="sm" onClick={() => input.current?.click()} disabled={!!props.busy}>
+          <Upload className="h-3.5 w-3.5" /> Upload phôi
+        </CtButton>
+        {fulfiller && (
+          <CtButton size="sm" variant="primary" onClick={fulfiller.run} disabled={!!props.busy} title={`Phôi trơn đúng chất liệu, texture của phôi ${fulfiller.name}, khớp khuôn`}>
+            <Sparkles className="h-3.5 w-3.5" /> Từ phôi {fulfiller.name}
+          </CtButton>
         )}
+        <CtButton size="sm" variant={fulfiller ? "outline" : "primary"} onClick={props.onAi} disabled={!!props.busy}>
+          <Sparkles className="h-3.5 w-3.5" /> Tạo phôi bằng AI
+        </CtButton>
         <input
           ref={input}
           type="file"
@@ -152,27 +154,27 @@ export function PhoiRow(props: { template: CtPrintTemplate; busy: string | null;
           }}
         />
       </div>
-      {basePhoi ? (
-        <figure className="w-40">
-          <div className="aspect-square overflow-hidden rounded-lg border" style={CHECKER_STYLE}>
-            {/* eslint-disable-next-line @next/next/no-img-element -- our R2 picture */}
-            <img src={basePhoi.url} alt={basePhoi.name} className="h-full w-full object-contain" loading="lazy" />
-          </div>
-          <figcaption className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
-            <span className="truncate">{basePhoi.name}</span>
-            <span className="rounded bg-emerald-600/90 px-1 text-[9px] text-white">mặc định</span>
-          </figcaption>
-        </figure>
-      ) : t.spec.blanks.length === 0 ? (
+      {t.spec.blanks.length === 0 ? (
         <p className="text-[11px] text-muted-foreground">Chưa có phôi.</p>
       ) : (
         <div className="flex flex-wrap gap-3">
           {t.spec.blanks.map((b, i) => (
             <figure key={b.id} className="group relative w-40">
-              <div className="aspect-square overflow-hidden rounded-lg border" style={CHECKER_STYLE}>
+              <div className="relative aspect-square overflow-hidden rounded-lg border" style={CHECKER_STYLE}>
                 {/* eslint-disable-next-line @next/next/no-img-element -- our R2 picture */}
                 <img src={b.url} alt={b.name} className="h-full w-full object-contain" loading="lazy" />
+                {b.from && (
+                  <span className={`absolute left-1 top-1 rounded px-1 text-[9px] font-medium text-white ${b.from.kind === "copy" ? "bg-sky-600/90" : "bg-violet-600/90"}`}>
+                    {b.from.kind === "copy" ? `Phôi ${b.from.provider}` : `AI · theo ${b.from.provider}`}
+                  </span>
+                )}
               </div>
+              {b.from?.kind === "ai" && b.from.refs.length > 0 && (
+                <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <span>Tham chiếu</span>
+                  <ZoomThumbs images={b.from.refs.map((url, k) => ({ url, name: k === 0 ? `Phôi ${b.from?.provider}` : `Ảnh ${b.from?.provider}` }))} className="flex gap-1" thumbClassName="h-7 w-7 rounded border" />
+                </div>
+              )}
               <figcaption className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
                 <span className="truncate">{b.name}</span>
                 {i === 0 ? <span className="rounded bg-emerald-600/90 px-1 text-[9px] text-white">mặc định</span> : (

@@ -149,6 +149,7 @@ import * as lib from "./library";
 import * as printTpl from "./print-templates";
 import { khuonAi } from "./print-khuon";
 import { aiTemplateBlank, uploadTemplateBlank } from "./print-blanks";
+import { makeBaseKhuonPhoi } from "./fulfiller-phoi";
 import { createArtwork, createProductFromTemplate } from "./print-products";
 import * as artworks from "./artworks";
 import * as artworkLink from "./artwork-link";
@@ -331,6 +332,7 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
   if (head === "base-products" && id && sub === "republish" && !path[3] && method === "GET") return getBaseStoreState(session, id);
   if (head === "base-products" && id && sub === "republish" && !path[3] && method === "POST") return republishBase(session, id, publicOrigin(req));
   if (head === "base-products" && id && sub === "scenes" && !path[3] && method === "POST") return makeBaseScene(session, id, await readJson<unknown>(req));
+  if (head === "base-products" && id && sub === "khuon-phoi" && !path[3] && method === "POST") return makeBaseKhuonPhoi(session, id);
   if (head === "base-products" && id && sub === "assembly" && !path[3] && method === "POST") return makeBaseAssembly(session, id, await readJson<unknown>(req));
   if (head === "base-products" && id && sub === "scenes" && path[3] === "auto" && method === "POST") return autoBaseScenes(session, id);
   if (head === "base-products" && id && sub === "scenes" && path[3] === "auto" && method === "GET") return autoBaseScenesState(id);

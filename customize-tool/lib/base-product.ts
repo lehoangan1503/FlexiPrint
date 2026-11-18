@@ -3,7 +3,7 @@
  * (base product page) and on the server (server/base-products.ts).
  */
 
-import type { CtBaseMockup, CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseSource, CtBaseVariant, CtMaterialId, CtPrintArea, CtSideLoss } from "../types";
+import type { CtBaseMockup, CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseSource, CtBaseVariant, CtMaterialId, CtPrintArea, CtProductScene, CtSideLoss } from "../types";
 import { newId } from "./geometry";
 import { normalizeScene } from "./scene";
 import { normalizeBaseAssembly } from "./assembly";
@@ -104,6 +104,7 @@ function normalizeSource(raw: unknown): CtBaseSource | null {
       .slice(0, 12)
       .map((l) => ({ label: l.label.slice(0, 160), url: l.url.slice(0, 500) })),
     ...(str(s.khuonIssue, 500) ? { khuonIssue: str(s.khuonIssue, 500) } : {}),
+    ...(s.phoi && typeof s.phoi === "object" && normalizeScene(s.phoi as Partial<CtProductScene>).url ? { phoi: normalizeScene(s.phoi as Partial<CtProductScene>) } : {}),
   };
 }
 

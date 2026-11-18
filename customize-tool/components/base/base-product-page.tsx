@@ -502,11 +502,9 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                       {dirty && cfg.templateId !== detail.base.config.templateId && <div className="mt-1 text-amber-600">Lưu để đổi khuôn — mọi artwork xem trên base này và mọi sản phẩm của nó dùng khuôn mới.</div>}
                     </div>
                   </div>
-                  {/* The base's own phôi photo (a fulfiller's import) wins over the khuôn's (lib/base-fit withBase): shown here
-                      as the phôi trơn (2026-11-18: "đưa phôi import từ merchize qua làm phôi trơn"). */}
                   <PhoiRow
                     template={template}
-                    basePhoi={cfg.preview.url ? { url: cfg.preview.url, name: cfg.previewScenes.some((sc) => sc.scene.url === cfg.preview.url) ? "Phôi nền AI" : fulfiller === "merchize" ? "Phôi Merchize" : fulfiller === "printbelle" ? "Phôi Printbelle" : "Phôi của base" } : null}
+                    fulfiller={cfg.source ? { name: cfg.source.provider === "merchize" ? "Merchize" : "Printbelle", run: () => void phoiWork("AI đang làm phôi trơn theo phôi xưởng (~1 phút)…", () => printApi.fulfillerBlank(baseId)) } : null}
                     busy={phoiBusy}
                     onUpload={(f) => void phoiWork("Đang upload…", () => printApi.uploadBlank(template.id, f))}
                     onAi={() => void phoiWork("AI đang vẽ phôi (~1 phút)…", () => printApi.aiBlank(template.id, baseId))}

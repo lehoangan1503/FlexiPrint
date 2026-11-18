@@ -15,7 +15,7 @@ import { CT_TABLES } from "../config";
 import type { CtAsset, CtProduct, CtRegion, CtRegionItem, CtSelection, CtShape } from "../types";
 import type { CtPrintSpec } from "../types/print";
 import { activeRegions, defaultRegionSelection, normalizeProductConfig, normalizeRegion, resolveLinked, selectedMainId, selectedMainImageId, textColorFromOption, textMode } from "../lib/design";
-import { mainFrameFor, onVersion } from "../lib/layout";
+import { mainFrameFor, resolveLayout } from "../lib/layout";
 import { renditionFrameBox } from "../lib/material-frame";
 import { loadFont, textSvg } from "./print-text";
 import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, shapeToSvgPath, textBand, translateShape } from "../lib/geometry";
@@ -171,7 +171,10 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
   const guides = mode === "guides";
   // The version shown (selection[CT_MAIN_KEY], else the product's main): only its own layers are drawn.
   const mainId = b.product.main_asset_id ? selectedMainId(selection, b.assets, b.product.main_asset_id) : null;
-  b = { ...b, regions: b.regions.filter((r) => onVersion(r, mainId)) };
+  // Its layout too (zones moved / hidden for that version), like lib/compositor and the storefront: a mockup / print of
+  // version 2 keeps every zone where the editor shows it.
+  const own = resolveLayout(b.regions, b.items, normalizeProductConfig(b.product.config).layouts, mainId);
+  b = { ...b, regions: own.regions, items: own.items };
   // Every layer's choice (the defaults where none is given), linked layers (a back half of hair) following theirs.
   const picked: CtSelection = {};
   for (const r of b.regions) picked[r.id] = selection[r.id] ?? defaultRegionSelection(r, b.items, b.assets);

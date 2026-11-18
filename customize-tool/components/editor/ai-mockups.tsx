@@ -106,7 +106,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
   const [jobs, setJobs] = useState<CtPackImage[]>([]);
   const [making, setMaking] = useState<"" | "samples" | "print">("");
   // Each mockup a different custom pick (on by default when there is something to customise).
-  const custom = useMemo(() => customizable(regions, items, assets), [regions, items, assets]);
+  const custom = useMemo(() => customizable(regions, items, assets, config.main, main.id), [regions, items, assets, config.main, main.id]);
   const canVary = isCustomizable(custom);
   const [vary, setVary] = useState(config.mockupVary);
   const varying = vary && canVary;
@@ -246,7 +246,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
         return;
       }
       // One random custom pick per prompt; its photo zones filled with a different sample person / pet by the server.
-      const variants = mockupVariants({ regions, items, assets, base: selection, defaultMainId: main.id, count: Math.max(1, lines.length) });
+      const variants = mockupVariants({ regions, items, assets, base: selection, main: config.main, defaultMainId: main.id, count: Math.max(1, lines.length) });
       const byZone = new Map<string, Array<{ variant: number; style: CtPhotoStyleRef; name: string }>>();
       variants.forEach((v, i) => v.photos.forEach((p) => byZone.set(p.regionId, [...(byZone.get(p.regionId) ?? []), { variant: i, style: p.style, name: p.name }])));
       const problems: string[] = [];

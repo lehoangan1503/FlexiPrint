@@ -16,8 +16,8 @@
  */
 
 import { CT_MAIN_KEY } from "../types";
-import type { CtPhotoStyleRef, CtRegion, CtRegionItem, CtRenderAsset, CtSelection } from "../types";
-import { activeRegions, isLinkedLayer, mainVersions, normalizeRegion, regionChoices, resolveLinked, textMode } from "./design";
+import type { CtMainOptionConfig, CtPhotoStyleRef, CtRegion, CtRegionItem, CtRenderAsset, CtSelection } from "../types";
+import { activeRegions, isLinkedLayer, mainSubOptions, mainVersions, normalizeRegion, regionChoices, resolveLinked, textMode } from "./design";
 import { onVersion } from "./layout";
 
 /** A photo zone of one variant that needs a sample picture from the server. */
@@ -181,13 +181,21 @@ export function sampleText(sample: string, maxChars: number, hint: string, decks
   return cased(firstDeck.next((n) => n.length <= limit) ?? src.slice(0, limit));
 }
 
-/** Everything the customer can change on the product (versions with 2+, layers with 2+ options, typed / picked
- * texts, photo zones). */
-export function customizable(regions: CtRegion[], items: CtRegionItem[], assets: CtRenderAsset[]): CtCustomizable {
-  const rs = regions.map(normalizeRegion);
-  const mains = assets.filter((a) => a.role === "main").length;
+/** The versions the customer picks from, like the storefront: none when the version option is off (an artwork that
+ * keeps an old picture as a second main — 2026-11-18 Nutcracker blanket — shows its default version only). */
+function customerVersions<A extends CtRenderAsset>(assets: A[], main: Pick<CtMainOptionConfig, "enabled">, defaultMainId: string | null): A[] {
+  return main.enabled ? mainVersions(assets, defaultMainId) : [];
+}
+
+/** Everything the customer can change on the product (versions with 2+ — only when the version option is on —,
+ * layers with 2+ options, typed / picked texts, photo zones). Layers / zones of a version the customer never sees
+ * are not counted. */
+export function customizable(regions: CtRegion[], items: CtRegionItem[], assets: CtRenderAsset[], main: Pick<CtMainOptionConfig, "enabled">, defaultMainId: string | null): CtCustomizable {
+  const mains = customerVersions(assets, main, defaultMainId);
+  const seen = new Set(mains.length > 1 ? mains.map((m) => m.id) : [defaultMainId]);
+  const rs = regions.map(normalizeRegion).filter((r) => !r.config.mainId || defaultMainId === null || seen.has(r.config.mainId));
   return {
-    versions: mains > 1 ? mains : 0,
+    versions: mains.length > 1 ? mains.length : 0,
     layers: rs.filter((r) => r.kind === "image" && !isLinkedLayer(r, rs) && regionChoices(r, items, assets).length > 1).length,
     texts: rs.filter((r) => r.kind === "text" && textMode(r) !== "fixed").length,
     photos: rs.filter((r) => r.kind === "photo").length,
@@ -218,12 +226,14 @@ export function mockupVariants(input: {
   items: CtRegionItem[];
   assets: CtRenderAsset[];
   base: CtSelection;
+  /** The product's version option (config.main): versions + their sub-options are picked only when it is on. */
+  main: Pick<CtMainOptionConfig, "enabled" | "subOptions">;
   defaultMainId: string | null;
   count: number;
 }): CtMockupVariant[] {
   const regions = input.regions.map(normalizeRegion);
   const { items, assets } = input;
-  const mains = mainVersions(assets, input.defaultMainId);
+  const mains = customerVersions(assets, input.main, input.defaultMainId);
   const mainDeck = new Deck(mains);
   const decks = newTextDecks();
   // One deck per layer / zone, so options spread over the mockups instead of repeating.
@@ -238,14 +248,16 @@ export function mockupVariants(input: {
     const sel: CtSelection = { ...input.base };
     const label: string[] = [];
     let mainId = input.defaultMainId;
-    if (mains.length > 1) {
-      const m = mainDeck.next();
-      if (m) {
-        sel[CT_MAIN_KEY] = { kind: "main", assetId: m.id };
-        mainId = m.id;
-        label.push(m.name);
-      }
-    }
+    // The version, then one of its own pictures (its sub-options, "Thêm option": the version itself first).
+    const m = mains.length > 1 ? mainDeck.next() : (mains[0] ?? null);
+    if (m) {
+      const subs = mainSubOptions(assets, input.main, m.id);
+      const optionId = subs.length ? deckOf(`${CT_MAIN_KEY}:${m.id}`, [null, ...subs.map((o) => o.id)]).next() : null;
+      sel[CT_MAIN_KEY] = { kind: "main", assetId: m.id, optionId };
+      mainId = m.id;
+      const sub = subs.find((o) => o.id === optionId);
+      if (mains.length > 1 || sub) label.push(sub ? `${m.name} (${sub.name})` : m.name);
+    } else delete sel[CT_MAIN_KEY]; // version option off: the default version, whatever the editor is showing
     const mine = regions.filter((r) => mainId === null || onVersion(r, mainId));
     const photos: CtMockupPhotoNeed[] = [];
     for (const r of mine) {

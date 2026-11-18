@@ -175,22 +175,27 @@ export async function styledSamples(s: CtSession, product: CtProduct, region: Ct
   }
   const config = normalizeProductConfig(product.config);
   const targets = faceTargets(config.print, shapeBounds(r.shape));
+  // Once more on a failure (the image model times out now and then): a zone left empty is a mockup with no name / face.
+  const drawOne = async (it: CtMockupSampleItem, i: number): Promise<CtMockupSample> => {
+    try {
+      if (!isPhotoStyleRef(it.style)) throw new Error("Style không hợp lệ");
+      const aiStyle = isAiStyleRef(it.style) ? styles.get(it.style) : undefined;
+      if (isAiStyleRef(it.style) && !aiStyle) throw new Error("Style AI không còn");
+      if (nameOnly && !aiStyle) throw new Error("Vùng chỉ nhập tên cần một style AI");
+      const src = sources[i];
+      const image = src ? { data: src.data, mime: src.mime } : null;
+      const out = await processPhoto({ image, style: it.style, cutout: cfg.cutout, aiStyle: aiStyle ?? undefined, name: src ? nameFor(src.look, it.name) : it.name });
+      const png = await finishPhoto(out, cfg.cutout, cfg.fadeCrop && !nameOnly, styleFamily(it.style) === "face", nameOnly ? null : targets);
+      const url = await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/${product.id}/mockup-samples/${crypto.randomUUID()}.png`, png, "image/png");
+      return { url, error: "" };
+    } catch (e) {
+      return { url: null, error: e instanceof Error ? e.message : String(e) };
+    }
+  };
   return Promise.all(
-    items.map(async (it, i): Promise<CtMockupSample> => {
-      try {
-        if (!isPhotoStyleRef(it.style)) throw new Error("Style không hợp lệ");
-        const aiStyle = isAiStyleRef(it.style) ? styles.get(it.style) : undefined;
-        if (isAiStyleRef(it.style) && !aiStyle) throw new Error("Style AI không còn");
-        if (nameOnly && !aiStyle) throw new Error("Vùng chỉ nhập tên cần một style AI");
-        const src = sources[i];
-        const image = src ? { data: src.data, mime: src.mime } : null;
-        const out = await processPhoto({ image, style: it.style, cutout: cfg.cutout, aiStyle: aiStyle ?? undefined, name: src ? nameFor(src.look, it.name) : it.name });
-        const png = await finishPhoto(out, cfg.cutout, cfg.fadeCrop && !nameOnly, styleFamily(it.style) === "face", nameOnly ? null : targets);
-        const url = await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/${product.id}/mockup-samples/${crypto.randomUUID()}.png`, png, "image/png");
-        return { url, error: "" };
-      } catch (e) {
-        return { url: null, error: e instanceof Error ? e.message : String(e) };
-      }
+    items.map(async (it, i) => {
+      const first = await drawOne(it, i);
+      return first.url ? first : drawOne(it, i);
     }),
   );
 }

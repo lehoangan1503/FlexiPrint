@@ -699,8 +699,8 @@ export async function autoProductMockups(s: CtSession, productId: string): Promi
     // picture (Girl Soccer blanket, 2026-11-17) gave an empty print and a blank front mockup.
     const side = Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000);
     const render = (selection: CtSelection) => renderArtwork(bundle, selection, side, "print", { withMain: true });
-    if (config.mockupVary && isCustomizable(customizable(bundle.regions, bundle.items, bundle.assets))) {
-      const variants = mockupVariants({ regions: bundle.regions, items: bundle.items, assets: bundle.assets, base: config.samples, defaultMainId: product.main_asset_id, count: Math.max(1, scenes.length) });
+    if (config.mockupVary && isCustomizable(customizable(bundle.regions, bundle.items, bundle.assets, config.main, product.main_asset_id))) {
+      const variants = mockupVariants({ regions: bundle.regions, items: bundle.items, assets: bundle.assets, base: config.samples, main: config.main, defaultMainId: product.main_asset_id, count: Math.max(1, scenes.length) });
       await fillVariantPhotos(s, product, bundle.regions, variants);
       const prints = await Promise.all(variants.map((v) => render(v.selection)));
       return NextResponse.json(await productMockups(s, product, prints, scenes), { status: 202 });

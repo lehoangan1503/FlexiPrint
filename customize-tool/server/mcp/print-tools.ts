@@ -34,7 +34,7 @@ import { frameRegion, makeBaseArtwork, makeTemplateProduct, productPrintOf, type
 import { loadBaseProduct } from "../base-products";
 import { loadArtwork, renderArtwork, safeReport, type ArtworkBundle } from "../print-render";
 import { productOptions, selectionFromNames } from "../product-options";
-import { makeProductBlank, productMockups, productScenes, saveOwnMockupPrompt } from "../product-mockups";
+import { failOrphans, makeProductBlank, productMockups, productScenes, saveOwnMockupPrompt } from "../product-mockups";
 import { serviceSession } from "../char/product";
 import type { CtPackImage } from "../../types";
 import type { CtSession } from "../supabase";
@@ -776,7 +776,8 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
     run: async (ctx, args) => {
       const ids = (Array.isArray(args.job_ids) ? args.job_ids : []).map(str).filter((x) => UUID.test(x)).slice(0, 20);
       if (!ids.length) throw new Error("job_ids is required");
-      const read = async () => (await ctx.db.from(CT_TABLES.packImages).select("*").in("id", ids).eq("name", `mockup:${str(args.product_id)}`).returns<CtPackImage[]>()).data ?? [];
+      // A job lost to a restart is failed here too, else this waits on it for good.
+      const read = async () => failOrphans(ctx.service ?? ctx.db, (await ctx.db.from(CT_TABLES.packImages).select("*").in("id", ids).eq("name", `mockup:${str(args.product_id)}`).returns<CtPackImage[]>()).data ?? []);
       const deadline = Date.now() + 60_000; // under the proxies' cut (Cloudflare Tunnel 100 s), as char-tools WAIT_MS
       let rows = await read();
       while (rows.some((r) => r.status === "running") && Date.now() + 4000 < deadline) {

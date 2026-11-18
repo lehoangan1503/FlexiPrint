@@ -542,7 +542,7 @@ export const ORPHAN_ERROR = "Bị ngắt giữa chừng vì server khởi độn
  * good — the card spun forever with no error (2026-11-18, product fbf93189). A running row this process is not
  * drawing and that was last touched before it started is marked failed.
  */
-async function failOrphans(db: MockDb, jobs: CtPackImage[]): Promise<CtPackImage[]> {
+export async function failOrphans(db: MockDb, jobs: CtPackImage[]): Promise<CtPackImage[]> {
   const orphans = jobs.filter((j) => j.status === "running" && !activeJobs.has(j.id) && Date.parse(j.created_at) < PROCESS_STARTED);
   if (!orphans.length) return jobs;
   const ids = orphans.map((j) => j.id);

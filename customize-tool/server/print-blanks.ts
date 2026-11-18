@@ -3,7 +3,7 @@
  * MCP). A phôi is a straight photo of the blank piece + where the sheet sits on it (spec.blanks).
  *
  *   POST print-templates/:id/blanks      multipart file, name? → { template }  an uploaded photo (box found on it)
- *   POST print-templates/:id/blanks/ai   → { template }  drawn by AI from the khuôn
+ *   POST print-templates/:id/blanks/ai   { baseId? } → { template }  drawn by AI from the khuôn (+ the base's photos / description)
  *   (removing one = PATCH the template's spec.blanks)
  *
  * saveTemplateBlanks (MCP: set_template_blank / add_template_blank, 2026-11-04) also moves the products on the khuôn
@@ -17,11 +17,17 @@ import type { CtPrintBlank, CtPrintTemplate } from "../types/print";
 import { newId } from "../lib/geometry";
 import { readImageInfo } from "./image-size";
 import { getTemplate, templateRow } from "./print-templates";
-import { makeBlank, sceneForBlank } from "./product-mockups";
+import { loadBaseProduct } from "./base-products";
+import { baseBlankHints, makeBlank, sceneForBlank } from "./product-mockups";
 import { ctUpload } from "./storage";
 import type { CtServiceClient, CtSession, CtSupabase } from "./supabase";
 
 type Db = CtSupabase | CtServiceClient;
+
+export interface CtAiBlankBody {
+  /** The base whose page asked: its fulfiller photos + description tell the AI how the piece is built. */
+  baseId?: string;
+}
 
 function jsonError(message: string, status: number): NextResponse {
   return NextResponse.json({ error: message }, { status });
@@ -88,12 +94,15 @@ export async function uploadTemplateBlank(s: CtSession, id: string, form: FormDa
   }
 }
 
-/** POST print-templates/:id/blanks/ai */
-export async function aiTemplateBlank(s: CtSession, id: string): Promise<NextResponse> {
+/** POST print-templates/:id/blanks/ai { baseId? } — from a base's page: its photos + description go to the AI too. */
+export async function aiTemplateBlank(s: CtSession, id: string, body: unknown): Promise<NextResponse> {
   const t = await getTemplate(s, id);
   if (!t) return jsonError("Không tìm thấy khuôn in", 404);
+  const baseId = body && typeof body === "object" ? (body as CtAiBlankBody).baseId : undefined;
+  const base = typeof baseId === "string" && baseId ? await loadBaseProduct(s.supabase, baseId) : null;
+  const hints = base ? baseBlankHints(base) : { looks: [], extra: "" };
   try {
-    const photo = await makeBlank(s.user.id, t.name, t.spec);
+    const photo = await makeBlank(s.user.id, base?.name || t.name, t.spec, base?.config.material, hints.looks, hints.extra);
     return NextResponse.json({ template: await addTemplateBlank(s.supabase, s.user.id, t, photo, "Phôi AI", true) });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không tạo được phôi", 500);

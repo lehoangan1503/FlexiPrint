@@ -301,7 +301,7 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
   if (head === "print-templates" && id === "images" && !sub && method === "POST") return printTpl.uploadTemplateImage(session, await req.formData());
   if (head === "print-templates" && id === "ai" && !sub && method === "POST") return khuonAi(session, await readJson<unknown>(req));
   if (head === "print-templates" && id && UUID.test(id) && sub === "blanks" && method === "POST") {
-    return path[3] === "ai" ? aiTemplateBlank(session, id) : uploadTemplateBlank(session, id, await req.formData());
+    return path[3] === "ai" ? aiTemplateBlank(session, id, await readJson<unknown>(req)) : uploadTemplateBlank(session, id, await req.formData());
   }
   if (head === "products" && id === "from-template" && !sub && method === "POST") return createProductFromTemplate(session, (await readJson<Record<string, unknown>>(req)) ?? {});
   if (head === "products" && id === "artwork" && !sub && method === "POST") return createArtwork(session, await readJson<unknown>(req));

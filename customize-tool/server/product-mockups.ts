@@ -16,7 +16,7 @@
 import sharp from "sharp";
 import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
-import type { CtAsset, CtBounds, CtPackImage, CtProduct, CtProductScene, CtSelection } from "../types";
+import type { CtAsset, CtBaseProduct, CtBounds, CtPackImage, CtProduct, CtProductScene, CtSelection } from "../types";
 import type { CtPrintSpec } from "../types/print";
 import { normalizeProductConfig } from "../lib/design";
 import { shapePolygon } from "../lib/material-frame";
@@ -291,12 +291,20 @@ export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: 
   const nums = Array.from({ length: looks }, (_, i) => first + i).join(", ");
   const size = spec?.widthMm && spec.heightMm ? ` (${Math.round(spec.widthMm)} × ${Math.round(spec.heightMm)} mm)` : "";
   const hole = spec?.cuts.length ? " including the punched hole exactly where the drawing shows it (the small shape inside the outline)" : "";
+  // Real photos / a product description tell how the piece is BUILT (Quilt Blanket 2026-11-18: diamond quilting came
+  // back as a plain sheet — "no pattern, no stitching line" wiped it): that construction is part of the blank.
+  const known = looks > 0 || !!extra.trim();
   return [
-    `Studio product photo of ONE blank, unprinted ${label || "product"}${size}, completely plain: no print, no picture, no text, no pattern, no logo.`,
+    `Studio product photo of ONE blank, unprinted ${label || "product"}${size}, completely plain: no print, no printed picture, no text, no printed pattern, no logo.`,
+    known
+      ? "Blank means unprinted, NOT unbuilt: the piece keeps its own physical construction exactly as the real product has it (quilted stitch pattern, seams, hem, binding, piping, fabric weave, texture) — that is part of the product, not a print."
+      : "",
     spec ? `The piece has EXACTLY the outline of the reference drawing${hole} (its filled area is the piece) — the same shape and proportions.` : "",
     // A khuôn's guide lines (dashed safe zone, bleed) are for the designer, never on the real piece (2026-11-12).
     spec
-      ? "The drawing is only a shape guide: copy NONE of its lines onto the piece — no dashed or dotted line, no inner border or stitching line inside the face, no safe-zone or bleed line; the blank's face is one even, uninterrupted surface up to its edge."
+      ? known
+        ? "The drawing is only a shape guide: copy NONE of its lines onto the piece — no dashed or dotted line, no safe-zone or bleed line, no inner border taken from it; any stitching on the face is the real product's own, as described above."
+        : "The drawing is only a shape guide: copy NONE of its lines onto the piece — no dashed or dotted line, no inner border or stitching line inside the face, no safe-zone or bleed line; the blank's face is one even, uninterrupted surface up to its edge."
       : "",
     "Shot exactly front-on, camera square to the piece's face (orthographic: no perspective, no tilt, no angle from above or below), centred, the piece filling about 70% of the picture's width.",
     // The print is laid flat on the box found around the piece (2026-11-04: a tilted ceramic disc showed its bottom
@@ -307,13 +315,25 @@ export function blankPrompt(label: string, spec: CtPrintSpec | null, material?: 
     glass ? `The piece is ${GLASS_LOOK}; the grey backdrop shows through it.` : "",
     !glass && material === "acrylic_clear" ? `The piece is ${CLEAR_ACRYLIC_LOOK}; the grey backdrop shows through it.` : "",
     looks
-      ? `Reference picture${looks > 1 ? "s" : ""} ${nums} show${looks > 1 ? "" : "s"} the REAL piece the editor sells (a photo of the blank, or of the finished product with a print on it): copy its material, colour, finish and the hole's look exactly — but leave out every print, picture, text, ribbon and prop on it, keep the outline${spec ? " of the drawing" : " they show"}, and never copy its camera angle: a tilted or perspective reference is still shot front-on here. A reference that shows no physical piece is ignored.`
+      ? `Reference picture${looks > 1 ? "s" : ""} ${nums} show${looks > 1 ? "" : "s"} the REAL piece the editor sells (a photo of the blank, or of the finished product with a print on it): copy its material, colour, finish, construction (quilting / stitch pattern, seams, hem, binding, texture — same pattern, same scale) and the hole's look exactly — but leave out every print, picture, text, ribbon and prop on it, keep the outline${spec ? " of the drawing" : " they show"}, and never copy its camera angle: a tilted or perspective reference is still shot front-on here. A reference that shows no physical piece is ignored.`
       : "",
     "Photorealistic surface of the real material.",
     extra.trim(),
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+/**
+ * What a base tells the phôi AI about the real piece (2026-11-18: "đọc cấu trúc sản phẩm + xem ảnh phôi của đơn vị
+ * fulfill"): the fulfiller's phôi + product photos as references, its name + description as text.
+ */
+export function baseBlankHints(base: CtBaseProduct): { looks: string[]; extra: string } {
+  const cfg = base.config;
+  const looks = [...(cfg.preview.url ? [cfg.preview.url] : []), ...(cfg.source?.photos ?? [])].filter((u, i, all) => !!u && all.indexOf(u) === i).slice(0, 3);
+  const about = cfg.description.replace(/\s+/g, " ").trim().slice(0, 900);
+  const extra = about ? `What the product is (its product page): "${base.name}" — ${about} Draw the blank exactly as this product is built.` : "";
+  return { looks, extra };
 }
 
 /**

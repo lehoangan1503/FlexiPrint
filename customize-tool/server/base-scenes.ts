@@ -40,7 +40,7 @@ import { fetchImage } from "./char/files";
 import { loadBaseProduct } from "./base-products";
 import { templateRow } from "./print-templates";
 import { addTemplateBlank } from "./print-blanks";
-import { CLEAR_ACRYLIC_LOOK, makeBlank, pieceBounds, sheetBoxOn } from "./product-mockups";
+import { CLEAR_ACRYLIC_LOOK, baseBlankHints, makeBlank, pieceBounds, sheetBoxOn } from "./product-mockups";
 import { ctRemove, ctUpload } from "./storage";
 import { coverBox, overlayRef, sideLoss, splitKeyed, type KeyedScene } from "./overlay-key";
 import { jsonError, record, str } from "./ai/llm";
@@ -456,7 +456,8 @@ async function plainPhoi(db: Db, userId: string, base: CtBaseProduct, template: 
   if (blank) return { source: { url: blank.url, width: blank.width, height: blank.height, box: blank.box }, plain };
   if (template) {
     say("AI đang vẽ phôi trơn từ khuôn…");
-    const photo = await makeBlank(userId, template.name, template.spec, cfg.material);
+    const hints = baseBlankHints(base);
+    const photo = await makeBlank(userId, base.name || template.name, template.spec, cfg.material, hints.looks, hints.extra);
     const t = await addTemplateBlank(db, userId, template, photo, "Phôi AI", true);
     const b = t.spec.blanks[0];
     return { source: { url: b.url, width: b.width, height: b.height, box: b.box }, plain };

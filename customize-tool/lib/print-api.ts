@@ -43,7 +43,7 @@ export const printApi = {
     return call<{ template: CtPrintTemplate }>(`print-templates/${id}/blanks`, { method: "POST", body: form }).then((r) => r.template);
   },
   /** A phôi drawn by AI from the khuôn. */
-  aiBlank: (id: string) => call<{ template: CtPrintTemplate }>(`print-templates/${id}/blanks/ai`, json("POST", {})).then((r) => r.template),
+  aiBlank: (id: string, baseId?: string) => call<{ template: CtPrintTemplate }>(`print-templates/${id}/blanks/ai`, json("POST", baseId ? { baseId } : {})).then((r) => r.template),
   /** A product on the template: its canvas = the sheet, the cut line = its khuôn vật liệu. */
   createProduct: (templateId: string, name: string) => call<{ product: CtProduct }>("products/from-template", json("POST", { templateId, name })).then((r) => r.product),
 };

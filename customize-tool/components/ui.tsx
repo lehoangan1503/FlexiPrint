@@ -464,9 +464,8 @@ export function CtModal({
 
 /**
  * Full-screen picture viewer (asked 2026-11-18: click a mockup to zoom it). Shows `images[index]` fitted to the window;
- * ← → (buttons or keys) step through the list, Esc / the X / a click on the dark backdrop closes it.
- * Zoom (asked 2026-11-18): mouse wheel zooms in/out around the pointer (1×–8×), drag pans a zoomed picture,
- * double-click toggles fitted ↔ 2.5× at the pointer; + / - / 0 keys too.
+ * ← → (buttons or keys) step through the list, Esc / the X / a click on the dark backdrop closes it. Clicking the
+ * picture toggles fitted ↔ full size (scroll to pan).
  */
 export function CtLightbox({
   images,
@@ -478,58 +477,22 @@ export function CtLightbox({
   index: number | null;
   onIndex: (i: number | null) => void;
 }) {
-  /** Scale + offset (px) of the picture from its fitted, centred place. */
-  const [view, setView] = React.useState({ s: 1, x: 0, y: 0 });
-  const reset = React.useCallback(() => setView({ s: 1, x: 0, y: 0 }), []);
-  const [box, setBox] = React.useState<HTMLDivElement | null>(null);
-  const drag = React.useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null);
-  /** A drag just ended — the click that follows it must not close the viewer. */
-  const dragged = React.useRef(false);
+  const [zoom, setZoom] = React.useState(false);
   const open = index !== null && index >= 0 && index < images.length;
   const n = images.length;
   const step = React.useCallback(
     (d: number) => {
       if (index === null || n < 2) return;
-      reset();
+      setZoom(false);
       onIndex((index + d + n) % n);
     },
-    [index, n, onIndex, reset],
+    [index, n, onIndex],
   );
-  /** Zoom to scale `ns`, keeping the point (cx, cy) — relative to the box centre — still under the pointer. */
-  const zoomAt = React.useCallback((ns: number, cx: number, cy: number) => {
-    setView((v) => {
-      const s = Math.min(8, Math.max(1, ns));
-      if (s === 1) return { s: 1, x: 0, y: 0 };
-      const k = s / v.s;
-      return { s, x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k };
-    });
-  }, []);
-  React.useEffect(() => {
-    if (!box) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const r = box.getBoundingClientRect();
-      const f = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015));
-      setView((v) => {
-        const s = Math.min(8, Math.max(1, v.s * f));
-        if (s === 1) return { s: 1, x: 0, y: 0 };
-        const cx = e.clientX - r.left - r.width / 2;
-        const cy = e.clientY - r.top - r.height / 2;
-        const k = s / v.s;
-        return { s, x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k };
-      });
-    };
-    box.addEventListener("wheel", onWheel, { passive: false });
-    return () => box.removeEventListener("wheel", onWheel);
-  }, [box]);
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowLeft") step(-1);
       else if (e.key === "ArrowRight") step(1);
-      else if (e.key === "+" || e.key === "=") setView((v) => ({ ...v, s: Math.min(8, v.s * 1.25), x: v.x * Math.min(8 / v.s, 1.25), y: v.y * Math.min(8 / v.s, 1.25) }));
-      else if (e.key === "-") zoomAt(0, 0, 0) /* placeholder replaced below */;
-      else if (e.key === "0") reset();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

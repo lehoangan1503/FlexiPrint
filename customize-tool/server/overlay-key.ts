@@ -381,14 +381,18 @@ export async function imprintTexture(overlay: Buffer, box: KeyBounds, texture: B
   const crop = { left, top, width: clamp(Math.round(texBox.w * (1 - 2 * inset)), 1, TW - left), height: clamp(Math.round(texBox.h * (1 - 2 * inset)), 1, TH - top) };
   const bw = Math.max(1, Math.round(box.w));
   const bh = Math.max(1, Math.round(box.h));
-  // Softened a little first: the fabric's fine weave would come out as stripes once brought up; the quilting stays.
-  const grey = await sharp(texture).removeAlpha().extract(crop).resize(bw, bh, { fit: "fill" }).greyscale().blur(Math.max(0.6, bw / 600)).png().toBuffer();
-  const sigma = Math.max(2, bw / 120);
-  const [{ data: t }, { data: tb }] = await Promise.all([sharp(grey).raw().toBuffer({ resolveWithObject: true }), sharp(grey).blur(sigma).raw().toBuffer({ resolveWithObject: true })]);
+  // A band of detail the size of stitching (a quilted diamond's line, a seam): the fabric's finest grain and its broad
+  // sheen (blotches) both left out.
+  const grey = await sharp(texture).removeAlpha().extract(crop).resize(bw, bh, { fit: "fill", kernel: "cubic" }).greyscale().png().toBuffer();
+  const [{ data: t }, { data: tb }] = await Promise.all([
+    // One channel (a grey PNG decodes as RGB again).
+    sharp(grey).blur(Math.max(1, bw / 450)).extractChannel(0).raw().toBuffer({ resolveWithObject: true }),
+    sharp(grey).blur(Math.max(3, bw / 70)).extractChannel(0).raw().toBuffer({ resolveWithObject: true }),
+  ]);
   // White-on-white quilting is faint on the phôi: its detail brought up to a clearly visible strength (mean ±6 %).
   let dev = 0;
   for (let q = 0; q < bw * bh; q++) dev += Math.abs(Math.log(Math.max(1, t[q]) / Math.max(1, tb[q])));
-  const gain = clamp(0.06 / Math.max(1e-4, dev / (bw * bh)), 1, 5);
+  const gain = clamp(0.045 / Math.max(1e-4, dev / (bw * bh)), 1, 5);
   const ox = Math.round(box.x);
   const oy = Math.round(box.y);
   for (let y = Math.max(0, oy); y < Math.min(H, oy + bh); y++)
@@ -399,7 +403,7 @@ export async function imprintTexture(overlay: Buffer, box: KeyBounds, texture: B
       // The face: see-through; an opaque pixel (room, hands) takes none.
       const w = clamp((0.95 - a1) / 0.35, 0, 1);
       if (!w) continue;
-      const d = clamp(Math.exp(gain * Math.log(Math.max(1, t[q]) / Math.max(1, tb[q]))), 0.72, 1.25);
+      const d = clamp(Math.exp(gain * Math.log(Math.max(1, t[q]) / Math.max(1, tb[q]))), 0.8, 1.15);
       const v = d < 1 ? 0 : 255;
       const a2 = (d < 1 ? 1 - d : Math.min(0.45, (d - 1) * 0.8)) * w;
       if (a2 < 0.002) continue;

@@ -98,7 +98,7 @@ export function CustomizeProductList({
     }
     const ok = await ctConfirm(
       kind === "mockup"
-        ? { title: `Tạo mockup cho ${rows.length} sản phẩm?`, message: "Mỗi sản phẩm dùng prompt mockup của chính nó (ô Mockup lần cuối dùng, chưa dùng thì bối cảnh mặc định theo loại) và nội dung đang chọn ở Thiết kế. Mỗi ảnh AI 1–2 phút, chạy nền.", confirmLabel: "Tạo mockup" }
+        ? { title: `Tạo mockup cho ${rows.length} sản phẩm?`, message: "Mỗi sản phẩm dùng prompt mockup riêng của nó (ô Mockups lần cuối dùng); chưa có thì dùng prompt của product base, base trống thì bối cảnh mặc định theo loại. Mỗi ảnh AI 1–2 phút, chạy nền.", confirmLabel: "Tạo mockup" }
         : { title: `Deploy ${rows.length} sản phẩm lên Shopify?`, message: "Sản phẩm đủ title, mô tả, bảng giá và mockup thì được deploy (đang bán). Sản phẩm thiếu thì bỏ qua và ghi rõ thiếu gì.", confirmLabel: "Deploy" },
     );
     if (!ok) return;
@@ -199,7 +199,7 @@ export function CustomizeProductList({
           </button>
           <span className="text-xs text-muted-foreground">Đã chọn {pickedRows.length}</span>
           <div className="ml-auto flex gap-2">
-            <CtButton size="sm" variant="outline" disabled={!pickedRows.length || !!bulk?.running} onClick={() => void runBulk("mockup")} title={`Mỗi sản phẩm dùng prompt mockup của chính nó — tối đa ${BULK_MOCKUP_MAX} sản phẩm mỗi lần`}>
+            <CtButton size="sm" variant="outline" disabled={!pickedRows.length || !!bulk?.running} onClick={() => void runBulk("mockup")} title={`Prompt riêng của sản phẩm, không có thì prompt của product base — tối đa ${BULK_MOCKUP_MAX} sản phẩm mỗi lần`}>
               <Sparkles className="h-3.5 w-3.5" /> Tạo mockup
             </CtButton>
             <CtButton size="sm" variant="primary" disabled={!pickedRows.length || !!bulk?.running} onClick={() => void runBulk("deploy")} title="Sản phẩm đủ thì deploy, thiếu thì bỏ qua và báo thiếu gì">

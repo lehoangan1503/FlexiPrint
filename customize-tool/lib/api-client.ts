@@ -250,6 +250,8 @@ export const ctApi = {
   mockupSamples: (productId: string, regionId: string, items: Array<{ style: CtPhotoStyleRef; name: string }>) =>
     call<{ samples: Array<{ url: string | null; error: string }> }>(`products/${productId}/mockups/samples`, json("POST", { regionId, items })).then((r) => r.samples),
   /** The product list's bulk "Tạo mockup": made on the server with the product's own prompts. */
+  /** Drops the product's own mockup scenes: its mockups follow the product base's prompts again. */
+  clearMockupScenes: (productId: string) => call<{ product: CtProduct }>(`products/${productId}/mockups/prompt`, json("POST", {})),
   autoMockups: (productId: string) => call<{ jobs: CtPackImage[]; front: CtAsset }>(`products/${productId}/mockups/auto`, json("POST", {})),
   /** An AI phôi trơn from the product's khuôn in → config.scene. */
   makeBlank: (productId: string) => call<{ product: CtProduct; asset: CtAsset }>(`products/${productId}/blank`, json("POST", {})),

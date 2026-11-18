@@ -65,6 +65,24 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
   const [typed, setScenes] = useState<string | null>(null);
   const scenes = typed ?? (config.mockupScenes || baseScenes || defaultScenes(config.print?.name || product.name).join("\n"));
   const parsed = useMemo(() => splitScenes(scenes), [scenes]);
+  // Where the box's prompts come from (asked 2026-11-18: the base's box and this one looked like one).
+  const followText = baseScenes || defaultScenes(config.print?.name || product.name).join("\n");
+  const own = typed !== null ? typed.trim() !== "" && typed.trim() !== followText : !!config.mockupScenes.trim() && config.mockupScenes.trim() !== followText;
+  const hasBase = !!product.base_product_id;
+  const [backBusy, setBackBusy] = useState(false);
+  const backToBase = async () => {
+    setBackBusy(true);
+    try {
+      const r = await ctApi.clearMockupScenes(product.id);
+      setScenes(null);
+      props.onProduct(r.product);
+      props.flash(hasBase ? "Sản phẩm dùng lại prompt của product base" : "Sản phẩm dùng lại bối cảnh mặc định");
+    } catch (e) {
+      props.flash(e instanceof Error ? e.message : "Không lưu được");
+    } finally {
+      setBackBusy(false);
+    }
+  };
   const problems = useMemo(() => sceneProblems(parsed.scenes), [parsed]);
   const [jobs, setJobs] = useState<CtPackImage[]>([]);
   const [making, setMaking] = useState<"" | "samples" | "print">("");
@@ -365,6 +383,25 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
               <p className="text-xs text-muted-foreground">
                 Artwork hoàn chỉnh (nội dung đang chọn ở Thiết kế) được đặt đúng lên phôi → 1 ảnh chụp thẳng chính xác. Từ ảnh đó AI tạo ảnh sản phẩm trong từng bối cảnh dưới đây, giữ nguyên hình in và chất liệu (hệ thống tự thêm). Mỗi dòng 1 ảnh; prompt dài nhiều dòng thì ngăn các prompt bằng một dòng trống hoặc một dòng chỉ có ---. Tối đa {CT_MOCKUP_SCENES_MAX} ảnh, mỗi prompt {CT_MOCKUP_SCENE_MAX} ký tự.
               </p>
+            </div>
+            <div className={cx("flex flex-wrap items-center gap-2 rounded-md border px-2 py-1.5 text-xs", own ? "border-amber-500/50 bg-amber-500/10" : "border-sky-500/40 bg-sky-500/10")}>
+              <span className="font-medium text-foreground">
+                {own
+                  ? "Prompt riêng của sản phẩm này — sửa prompt ở trang product base sẽ không đổi sản phẩm này."
+                  : hasBase && baseScenes
+                    ? "Đang dùng prompt của product base — sửa ở đây và bấm Tạo mockup thì thành prompt riêng của sản phẩm này."
+                    : "Đang dùng bối cảnh mặc định — sửa ở đây và bấm Tạo mockup thì thành prompt riêng của sản phẩm này."}
+              </span>
+              {hasBase && (
+                <a href={`/base-products/${product.base_product_id}`} target="_blank" rel="noreferrer" className="text-sky-700 underline dark:text-sky-300">
+                  Mở prompt của base
+                </a>
+              )}
+              {own && (
+                <button className="ml-auto rounded border bg-background px-2 py-0.5 font-medium text-foreground hover:bg-accent disabled:opacity-50" disabled={backBusy} onClick={() => void backToBase()}>
+                  {backBusy ? "Đang lưu…" : hasBase ? "Dùng prompt của base" : "Dùng bối cảnh mặc định"}
+                </button>
+              )}
             </div>
             <CtTextarea rows={6} value={scenes} onChange={(e) => setScenes(e.target.value)} placeholder={"hanging on a Christmas tree with warm lights\n---\nheld in a hand by the fireplace,\nsoft bokeh lights behind"} />
             <p className={cx("text-xs", problems.length ? "text-destructive" : "text-muted-foreground")}>

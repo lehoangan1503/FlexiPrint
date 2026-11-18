@@ -63,8 +63,9 @@ export function BaseMockupSection({
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        Dùng cho mọi sản phẩm làm trên product base này khi bấm Tạo mockup. Sản phẩm có prompt riêng (ô Mockups trong editor, hoặc gửi qua MCP) thì dùng
-        prompt riêng. Ô để trống = dùng câu mặc định (chữ mờ trong ô). Nhớ bấm Lưu.
+        Prompt chung cho mọi sản phẩm làm trên product base này. Ô Mockup bằng AI trong trang sản phẩm hiện sẵn prompt này; sản phẩm nào sửa ô đó rồi
+        bấm Tạo mockup (hoặc gửi prompt qua MCP) thì có prompt riêng và không theo base nữa — bấm “Dùng prompt của base” ở đó để theo lại. Ô để trống =
+        dùng câu mặc định (chữ mờ trong ô). Nhớ bấm Lưu.
       </p>
 
       <CtField

@@ -546,7 +546,9 @@ function parseScenes(raw: FormDataEntryValue | null): string[] {
  * whether its mockups were each a different custom pick (CtProductConfig.mockupVary). */
 async function keepSceneText(s: CtSession, product: CtProduct, text: string, vary: boolean | null): Promise<void> {
   const config = normalizeProductConfig(product.config);
-  const next = text.slice(0, CT_MOCKUP_TEXT_MAX);
+  // The box started from the base's prompts (or the defaults) and was left as it was: nothing of its own — the product
+  // keeps following its base, a later change on the base page reaches it (asked 2026-11-18: the two boxes were one).
+  const next = (await followsBase(ctServiceClient() ?? s.supabase, product, text)) ? "" : text.slice(0, CT_MOCKUP_TEXT_MAX);
   if (config.mockupScenes === next && (vary === null || config.mockupVary === vary)) return;
   await s.supabase.from(CT_TABLES.products).update({ config: { ...config, mockupScenes: next, ...(vary === null ? {} : { mockupVary: vary }) } }).eq("id", product.id);
 }
@@ -563,6 +565,25 @@ async function mockupSetup(db: MockDb, product: CtProduct, look: CtMockupLook): 
   const base = await baseMockup(db, product);
   const own = normalizeProductConfig(product.config).mockupRefs;
   return { wrap: base.wrap.trim() || defaultMockupWrap(look), refs: (own.length ? own : base.refs).slice(0, CT_MOCKUP_REFS_MAX) };
+}
+
+/** True when `text` is only what the product would get without its own prompts (its base's, else the defaults). */
+async function followsBase(db: MockDb, product: CtProduct, text: string): Promise<boolean> {
+  const t = text.trim();
+  if (!t) return true;
+  const base = (await baseMockup(db, product)).scenes.trim();
+  const config = normalizeProductConfig(product.config);
+  return t === (base || defaultScenes(config.print?.name || product.name).join("\n"));
+}
+
+/** POST products/:id/mockups/prompt {scenes: ""} — the editor's "Dùng prompt của product base": drops the product's own scenes. */
+export async function clearOwnMockupScenes(s: CtSession, productId: string): Promise<NextResponse> {
+  const product = await ownedProduct(s, productId);
+  if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
+  const config = normalizeProductConfig(product.config);
+  const { data, error } = await s.supabase.from(CT_TABLES.products).update({ config: { ...config, mockupScenes: "" } }).eq("id", product.id).select("*").single<CtProduct>();
+  if (error || !data) return jsonError(error?.message ?? "Không lưu được", 500);
+  return NextResponse.json({ product: data });
 }
 
 /** The scene prompts a product's mockups use when none are given: its own Mockups box, else its base's, else the defaults for its name. */
@@ -583,7 +604,8 @@ export async function saveOwnMockupPrompt(db: MockDb, product: CtProduct, own: {
   if (own.scenes === undefined && own.refs === undefined) return product;
   const config = normalizeProductConfig(product.config);
   const next = { ...config };
-  if (own.scenes !== undefined) {
+  if (own.scenes !== undefined && (await followsBase(db, product, own.scenes))) next.mockupScenes = "";
+  else if (own.scenes !== undefined) {
     const problems = sceneProblems(splitScenes(own.scenes).scenes);
     if (problems.length) throw new Error(problems.join(" "));
     next.mockupScenes = own.scenes.slice(0, CT_MOCKUP_TEXT_MAX);

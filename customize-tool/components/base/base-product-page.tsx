@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, CheckCircle2, Download, ExternalLink, Loader2, Plus, Save, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Download, ExternalLink, Loader2, Plus, Save, Trash2, X } from "lucide-react";
 import { CT_CONFIG } from "../../config";
 import type { CtBaseProductConfig, CtBaseProductDetail, CtBaseScenesAuto, CtPriceTable, CtPrintArea } from "../../types";
 import type { CtPrintTemplate } from "../../types/print";
@@ -33,16 +33,50 @@ import { BaseCutSection, BasePreviewSection } from "./base-cut-preview";
 import { BaseAssemblySection } from "./base-assembly-section";
 import { BaseExtraPics, BaseMockupSection } from "./base-mockup-section";
 import { ZoomThumbs } from "../zoom-thumbs";
-import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, CtSelect, CtTextarea, CtTooltipProvider } from "../ui";
+import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, CtSelect, CtTextarea, CtTooltipProvider, cx } from "../ui";
 
-function Section({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
+/**
+ * One block of the page. `fold` (asked 2026-11-18: "phôi set 1 lần là được"): it can be folded to its title + `summary`;
+ * starts folded when `folded` (= already set up), the user's open / close is kept per browser (localStorage).
+ */
+function Section({ title, children, right, fold, folded = false, summary }: { title: string; children: React.ReactNode; right?: React.ReactNode; fold?: string; folded?: boolean; summary?: React.ReactNode }) {
+  const key = fold ? `ct-base-fold:${fold}` : "";
+  const [choice, setChoice] = useState<boolean | null>(() => {
+    if (!key || typeof window === "undefined") return null;
+    const v = window.localStorage.getItem(key);
+    return v === null ? null : v === "1";
+  });
+  const closed = fold ? (choice ?? folded) : false;
+  const toggle = () => {
+    const next = !closed;
+    setChoice(next);
+    try {
+      window.localStorage.setItem(key, next ? "1" : "0");
+    } catch {
+      // Private mode: only this visit.
+    }
+  };
   return (
     <section className="rounded-xl border bg-card p-4">
-      <div className="mb-3 flex items-center gap-2">
-        <h2 className="text-sm font-semibold">{title}</h2>
-        <div className="ml-auto flex items-center gap-2">{right}</div>
+      <div className={cx("flex items-center gap-2", !closed && "mb-3")}>
+        {fold ? (
+          <button type="button" onClick={toggle} className="flex min-w-0 items-center gap-1.5 text-left" title={closed ? "Mở rộng" : "Thu gọn"} aria-expanded={!closed}>
+            {closed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
+            <h2 className="text-sm font-semibold">{title}</h2>
+          </button>
+        ) : (
+          <h2 className="text-sm font-semibold">{title}</h2>
+        )}
+        {closed && summary && <span className="min-w-0 truncate text-xs text-foreground/75">{summary}</span>}
+        {fold && closed ? (
+          <button type="button" onClick={toggle} className="ml-auto shrink-0 rounded border px-2 py-0.5 text-xs font-medium hover:bg-accent">
+            Mở rộng
+          </button>
+        ) : (
+          <div className="ml-auto flex items-center gap-2">{right}</div>
+        )}
       </div>
-      {children}
+      {!closed && children}
     </section>
   );
 }
@@ -416,6 +450,9 @@ export function BaseProductView({ baseId }: { baseId: string }) {
 
           <div className="space-y-4">
             <Section
+              fold="khuon"
+              folded={!!cfg.templateId || cfg.noKhuon}
+              summary={template ? `${template.name} · ${template.spec.width}×${template.spec.height}` : cfg.noKhuon ? "Không cần khuôn" : "Chưa có khuôn"}
               title="Khuôn in + phôi"
               right={
                 <>
@@ -495,12 +532,12 @@ export function BaseProductView({ baseId }: { baseId: string }) {
               )}
             </Section>
 
-            <Section title="Cắt + file in">
+            <Section title="Cắt + file in" fold="cut" folded={!!cfg.templateId || cfg.noKhuon || cfg.cut.mode === "alpha"} summary={cfg.cut.mode === "alpha" ? "Cắt theo hình thiết kế" : cfg.cut.mode === "khuon" ? "Cắt theo khuôn" : "Không cắt"}>
               <BaseCutSection cfg={cfg} template={template} onChange={(cut) => patch({ cut })} />
             </Section>
 
             {(cfg.assembly || (template && cfg.cut.mode !== "alpha")) && (
-              <Section title="Ráp mảnh (nón + thân)">
+              <Section title="Ráp mảnh (nón + thân)" fold="assembly" folded={!!cfg.assembly} summary={cfg.assembly ? "Đã ráp" : "Chưa ráp"}>
                 <BaseAssemblySection
                   baseId={baseId}
                   cfg={cfg}
@@ -515,7 +552,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
               </Section>
             )}
 
-            <Section title="Phôi / nền xem trước">
+            <Section title="Phôi / nền xem trước" fold="preview" folded={!!cfg.preview.url} summary={cfg.preview.url ? `Đã có nền${cfg.previewScenes.length ? ` · ${cfg.previewScenes.length} nền đã tạo` : ""}` : "Chưa có nền"}>
               <BasePreviewSection
                 baseId={baseId}
                 cfg={cfg}

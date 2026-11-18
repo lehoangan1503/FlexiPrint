@@ -713,7 +713,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
         mockups: {
           type: "array",
           items: { type: "object" },
-          description: `[{"label": "Christmas", "options": {"<layer>": "<option>"}, "scenes": ["<English: where the product is and what is around it — e.g. hanging on a decorated Christmas tree with warm bokeh lights>"]}] — 1–4 entries, 1–3 scenes each. An entry without scenes uses the product's own prompts, else its PRODUCT BASE's (get_base_mockup_prompt), else defaults for the piece.`,
+          description: `[{"label": "Christmas", "options": {"<layer>": "<option>"}, "scenes": ["<English: where the product is and what is around it — e.g. hanging on a decorated Christmas tree with warm bokeh lights>"]}] — any number of entries and scenes (one photo per scene, no limit). An entry without scenes uses the product's own prompts, else its PRODUCT BASE's (get_base_mockup_prompt), else defaults for the piece.`,
         },
         save_scenes: {
           type: "string",
@@ -733,7 +733,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       const bundle = await loadArtwork(ctx.db, str(args.product_id));
       if (!bundle) throw new Error("No such product");
       if (bundle.product.kind !== "product") throw new Error("That is an ARTWORK: mockups are of a product (artwork + base) — make_product_from_artwork {artwork_id, base_product_id}, then make_product_mockups on the product id");
-      const list = (Array.isArray(args.mockups) ? args.mockups : []).slice(0, 4).map((x) => (x && typeof x === "object" ? (x as Record<string, unknown>) : {}));
+      const list = (Array.isArray(args.mockups) ? args.mockups : []).map((x) => (x && typeof x === "object" ? (x as Record<string, unknown>) : {}));
       if (!list.length) throw new Error('"mockups" must list at least one {label, options, scenes}');
       const s = await sessionFor(ctx, bundle.product.user_id);
       // The product's own prompts sent with the call are kept first (asked 2026-11-17), so these mockups use them.
@@ -746,7 +746,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       for (const m of list) {
         const options = m.options && typeof m.options === "object" ? (m.options as Record<string, unknown>) : {};
         const selection = selectionFromNames(bundle, Object.fromEntries(Object.entries(options).map(([k, v]) => [k, str(v)])));
-        const given = (Array.isArray(m.scenes) ? m.scenes : []).map(str).filter(Boolean).slice(0, 3);
+        const given = (Array.isArray(m.scenes) ? m.scenes : []).map(str).filter(Boolean);
         const scenes = given.length ? given : kept.scenes;
         // With the version's own picture, like the editor's Tạo mockup (lib/compositor draws it): an artwork that IS one
         // picture (Girl Soccer blanket, 2026-11-17) gave an empty print and a blank front mockup.
@@ -797,7 +797,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
     },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
-      const ids = (Array.isArray(args.job_ids) ? args.job_ids : []).map(str).filter((x) => UUID.test(x)).slice(0, 20);
+      const ids = (Array.isArray(args.job_ids) ? args.job_ids : []).map(str).filter((x) => UUID.test(x));
       if (!ids.length) throw new Error("job_ids is required");
       // A job lost to a restart is failed here too, else this waits on it for good.
       const read = async () => failOrphans(ctx.service ?? ctx.db, (await ctx.db.from(CT_TABLES.packImages).select("*").in("id", ids).eq("name", `mockup:${str(args.product_id)}`).returns<CtPackImage[]>()).data ?? []);

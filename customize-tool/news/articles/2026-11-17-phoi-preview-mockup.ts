@@ -82,7 +82,7 @@ export const phoiPreviewMockup: CtNewsArticle = {
       items: [
         "**Phôi trơn**: lấy từ product base (chỉ xem). Muốn đổi → bấm link **trang product base**.",
         "**Phôi + thiết kế**: thiết kế đang chọn ở tab Thiết kế dán lên phôi đó — đúng như khách thấy trên store. Đây cũng là ảnh gốc để AI làm mockup.",
-        "**Mockup bằng AI**: mỗi dòng prompt = 1 ảnh lifestyle (tối đa 6) cho **gallery Shopify** của riêng sản phẩm này. AI giữ nguyên hình in và chất liệu (hệ thống tự thêm), bạn chỉ tả bối cảnh hợp chủ đề sản phẩm (ví dụ chăn săn bắn → cabin gỗ, lò sưởi).",
+        "**Mockup bằng AI**: mỗi dòng prompt = 1 ảnh lifestyle (không giới hạn số ảnh, từ 18/11) cho **gallery Shopify** của riêng sản phẩm này. AI giữ nguyên hình in và chất liệu (hệ thống tự thêm), bạn chỉ tả bối cảnh hợp chủ đề sản phẩm (ví dụ chăn săn bắn → cabin gỗ, lò sưởi).",
       ],
     },
     {

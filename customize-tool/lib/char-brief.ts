@@ -455,7 +455,7 @@ export function parseCharBrief(raw: unknown): CtCharBrief {
       })
       .filter((x): x is CtCharBackdrop => x !== null)
       .slice(0, 8),
-    mockups: arr(o.mockups).map((m) => s(m, 300)).filter(Boolean).slice(0, 6),
+    mockups: arr(o.mockups).map((m) => (typeof m === "string" ? m.trim() : "")).filter(Boolean),
     pictures: parsePictures(o.pictures),
   };
 }

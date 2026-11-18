@@ -547,7 +547,7 @@ export async function makeProductBlank(s: CtSession, productId: string): Promise
 
 /** GET products/:id/mockups */
 export async function listMockupJobs(s: CtSession, productId: string): Promise<NextResponse> {
-  const { data, error } = await s.supabase.from(CT_TABLES.packImages).select("*").eq("name", jobName(productId)).order("created_at", { ascending: false }).limit(40).returns<CtPackImage[]>();
+  const { data, error } = await s.supabase.from(CT_TABLES.packImages).select("*").eq("name", jobName(productId)).order("created_at", { ascending: false }).limit(1000).returns<CtPackImage[]>();
   if (error) return jsonError(error.message, 500);
   const jobs = await failOrphans(ctServiceClient() ?? s.supabase, data ?? []);
   return NextResponse.json({ jobs });

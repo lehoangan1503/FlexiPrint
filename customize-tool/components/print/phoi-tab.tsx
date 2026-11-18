@@ -106,8 +106,14 @@ export function PhoiTab() {
   );
 }
 
-export function PhoiRow(props: { template: CtPrintTemplate; busy: string | null; onUpload: (f: File) => void; onAi: () => void; onRemove: (id: string) => void; onFirst: (id: string) => void }) {
-  const { template: t } = props;
+/** The base's own phôi photo (a fulfiller's import, an upload) — shown as the phôi trơn in place of the khuôn's. */
+export interface CtBasePhoiTile {
+  url: string;
+  name: string;
+}
+
+export function PhoiRow(props: { template: CtPrintTemplate; busy: string | null; onUpload: (f: File) => void; onAi: () => void; onRemove: (id: string) => void; onFirst: (id: string) => void; basePhoi?: CtBasePhoiTile | null }) {
+  const { template: t, basePhoi } = props;
   const input = useRef<HTMLInputElement | null>(null);
   return (
     <section>
@@ -117,19 +123,23 @@ export function PhoiRow(props: { template: CtPrintTemplate; busy: string | null;
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold">{t.name}</div>
-          <div className="text-[11px] text-muted-foreground">{t.spec.blanks.length} phôi</div>
+          <div className="text-[11px] text-muted-foreground">{basePhoi ? "1 phôi" : `${t.spec.blanks.length} phôi`}</div>
         </div>
         {props.busy && (
           <span className="flex items-center gap-1 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> {props.busy}
           </span>
         )}
-        <CtButton size="sm" onClick={() => input.current?.click()} disabled={!!props.busy}>
-          <Upload className="h-3.5 w-3.5" /> Upload phôi
-        </CtButton>
-        <CtButton size="sm" variant="primary" onClick={props.onAi} disabled={!!props.busy}>
-          <Sparkles className="h-3.5 w-3.5" /> Tạo phôi bằng AI
-        </CtButton>
+        {!basePhoi && (
+          <>
+            <CtButton size="sm" onClick={() => input.current?.click()} disabled={!!props.busy}>
+              <Upload className="h-3.5 w-3.5" /> Upload phôi
+            </CtButton>
+            <CtButton size="sm" variant="primary" onClick={props.onAi} disabled={!!props.busy}>
+              <Sparkles className="h-3.5 w-3.5" /> Tạo phôi bằng AI
+            </CtButton>
+          </>
+        )}
         <input
           ref={input}
           type="file"
@@ -142,7 +152,18 @@ export function PhoiRow(props: { template: CtPrintTemplate; busy: string | null;
           }}
         />
       </div>
-      {t.spec.blanks.length === 0 ? (
+      {basePhoi ? (
+        <figure className="w-40">
+          <div className="aspect-square overflow-hidden rounded-lg border" style={CHECKER_STYLE}>
+            {/* eslint-disable-next-line @next/next/no-img-element -- our R2 picture */}
+            <img src={basePhoi.url} alt={basePhoi.name} className="h-full w-full object-contain" loading="lazy" />
+          </div>
+          <figcaption className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+            <span className="truncate">{basePhoi.name}</span>
+            <span className="rounded bg-emerald-600/90 px-1 text-[9px] text-white">mặc định</span>
+          </figcaption>
+        </figure>
+      ) : t.spec.blanks.length === 0 ? (
         <p className="text-[11px] text-muted-foreground">Chưa có phôi.</p>
       ) : (
         <div className="flex flex-wrap gap-3">

@@ -502,21 +502,20 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                       {dirty && cfg.templateId !== detail.base.config.templateId && <div className="mt-1 text-amber-600">Lưu để đổi khuôn — mọi artwork xem trên base này và mọi sản phẩm của nó dùng khuôn mới.</div>}
                     </div>
                   </div>
-                  {/* The khuôn's phôi only stand in when the base has no phôi photo of its own (a fulfiller's, an upload):
-                      with one, nothing reads them (lib/base-fit withBase) — hidden (2026-11-18: "đơn vị xưởng đã có phôi rồi"). */}
-                  {!cfg.preview.url && (
-                    <PhoiRow
-                      template={template}
-                      busy={phoiBusy}
-                      onUpload={(f) => void phoiWork("Đang upload…", () => printApi.uploadBlank(template.id, f))}
-                      onAi={() => void phoiWork("AI đang vẽ phôi (~1 phút)…", () => printApi.aiBlank(template.id, baseId))}
-                      onRemove={(id) => void phoiWork("Đang xoá…", () => printApi.update(template.id, { spec: { ...template.spec, blanks: template.spec.blanks.filter((b) => b.id !== id) } }))}
-                      onFirst={(id) => {
-                        const pick = template.spec.blanks.find((b) => b.id === id);
-                        if (pick) void phoiWork("Đang lưu…", () => printApi.update(template.id, { spec: { ...template.spec, blanks: [pick, ...template.spec.blanks.filter((b) => b.id !== id)] } }));
-                      }}
-                    />
-                  )}
+                  {/* The base's own phôi photo (a fulfiller's import) wins over the khuôn's (lib/base-fit withBase): shown here
+                      as the phôi trơn (2026-11-18: "đưa phôi import từ merchize qua làm phôi trơn"). */}
+                  <PhoiRow
+                    template={template}
+                    basePhoi={cfg.preview.url ? { url: cfg.preview.url, name: fulfiller === "merchize" ? "Phôi Merchize" : fulfiller === "printbelle" ? "Phôi Printbelle" : "Phôi của base" } : null}
+                    busy={phoiBusy}
+                    onUpload={(f) => void phoiWork("Đang upload…", () => printApi.uploadBlank(template.id, f))}
+                    onAi={() => void phoiWork("AI đang vẽ phôi (~1 phút)…", () => printApi.aiBlank(template.id, baseId))}
+                    onRemove={(id) => void phoiWork("Đang xoá…", () => printApi.update(template.id, { spec: { ...template.spec, blanks: template.spec.blanks.filter((b) => b.id !== id) } }))}
+                    onFirst={(id) => {
+                      const pick = template.spec.blanks.find((b) => b.id === id);
+                      if (pick) void phoiWork("Đang lưu…", () => printApi.update(template.id, { spec: { ...template.spec, blanks: [pick, ...template.spec.blanks.filter((b) => b.id !== id)] } }));
+                    }}
+                  />
                 </div>
               ) : cfg.noKhuon || cfg.cut.mode === "alpha" ? (
                 <div className="mt-3 flex items-center gap-3 rounded-lg border border-emerald-500/50 bg-emerald-500/10 p-3 text-xs">

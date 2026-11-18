@@ -13,7 +13,8 @@ import type { CtPrintTemplate } from "../../types/print";
 import { ctApi } from "../../lib/api-client";
 import { CT_MOCKUP_TEXT_MAX, defaultScenes, sceneProblems, splitScenes } from "../../lib/mockup-scenes";
 import { CT_MOCKUP_REFS_MAX, CT_MOCKUP_WRAP_MAX, defaultMockupWrap } from "../../lib/mockup-prompt";
-import { CtButton, CtField, CtLightbox, CtTextarea } from "../ui";
+import { CtButton, CtField, CtTextarea } from "../ui";
+import { ZoomThumbs } from "../zoom-thumbs";
 
 export function BaseMockupSection({
   name,
@@ -111,13 +112,6 @@ export function BaseMockupSection({
       >
         <MockupPics urls={m.refs} max={CT_MOCKUP_REFS_MAX} first={2} onChange={(refs) => onChange({ ...m, refs })} />
       </CtField>
-
-      <CtField
-        label={`Ảnh size chart (${m.sizeCharts.length}/${CT_MOCKUP_REFS_MAX})`}
-        hint="Không gửi cho AI. Mỗi lần deploy sản phẩm của base này, các ảnh này được đưa lên Shopify ngay sau các mockup (ảnh size chart, bảng kích thước…)."
-      >
-        <MockupPics urls={m.sizeCharts} max={CT_MOCKUP_REFS_MAX} first={0} onChange={(sizeCharts) => onChange({ ...m, sizeCharts })} />
-      </CtField>
     </div>
   );
 }
@@ -129,7 +123,6 @@ export function BaseMockupSection({
 export function MockupPics({ urls, onChange, max, first, readOnly }: { urls: string[]; onChange: (urls: string[]) => void; max: number; first: number; readOnly?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [zoom, setZoom] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const label = (i: number) => (first > 0 ? `Ảnh ${first + i}` : `Ảnh ${i + 1}`);
   const add = async (files: FileList | null) => {
@@ -152,25 +145,24 @@ export function MockupPics({ urls, onChange, max, first, readOnly }: { urls: str
   return (
     <div>
       <div className="flex flex-wrap gap-2">
-        {urls.map((url, i) => (
-          <div key={url} className="relative h-20 w-20 overflow-hidden rounded-md border bg-white">
-            <button type="button" className="block h-full w-full cursor-zoom-in" title="Bấm để phóng to" onClick={() => setZoom(i)}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt={label(i)} className="h-full w-full object-cover" />
-            </button>
-            {first > 0 && <span className="pointer-events-none absolute bottom-0 left-0 bg-black/75 px-1 text-[10px] font-medium text-white">{label(i)}</span>}
-            {!readOnly && (
-              <button
-                type="button"
-                title="Bỏ ảnh này"
-                className="absolute right-0.5 top-0.5 rounded-full bg-black/70 p-0.5 text-white hover:bg-black"
-                onClick={() => onChange(urls.filter((u) => u !== url))}
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
-          </div>
-        ))}
+        <ZoomThumbs
+          images={urls.map((url, i) => ({ url, name: label(i) }))}
+          overlay={(img, i) => (
+            <>
+              {first > 0 && <span className="pointer-events-none absolute bottom-0 left-0 bg-black/75 px-1 text-[10px] font-medium text-white">{label(i)}</span>}
+              {!readOnly && (
+                <button
+                  type="button"
+                  title="Bỏ ảnh này"
+                  className="absolute right-0.5 top-0.5 rounded-full bg-black/70 p-0.5 text-white hover:bg-black"
+                  onClick={() => onChange(urls.filter((u) => u !== img.url))}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </>
+          )}
+        />
         {!readOnly && urls.length < max && (
           <button
             type="button"
@@ -185,7 +177,20 @@ export function MockupPics({ urls, onChange, max, first, readOnly }: { urls: str
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => void add(e.target.files)} />
       </div>
       {error && <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">{error}</p>}
-      <CtLightbox images={urls.map((url, i) => ({ url, name: label(i) }))} index={zoom} onIndex={setZoom} />
+    </div>
+  );
+}
+
+/** The base's "Ảnh kèm sản phẩm" (CtBaseMockup.sizeCharts): size chart, material sample… — up with every deploy, after the mockups. */
+export function BaseExtraPics({ cfg, onChange }: { cfg: CtBaseProductConfig; onChange: (mockup: CtBaseMockup) => void }) {
+  const m = cfg.mockup;
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-foreground/80">
+        Ảnh size chart, ảnh mẫu chất liệu… Mỗi lần deploy sản phẩm của base này, các ảnh này được đưa lên Shopify ngay sau các mockup. Không gửi cho AI. Tối
+        đa {CT_MOCKUP_REFS_MAX} ảnh, bấm ảnh để phóng to. Nhớ bấm Lưu.
+      </p>
+      <MockupPics urls={m.sizeCharts} max={CT_MOCKUP_REFS_MAX} first={0} onChange={(sizeCharts) => onChange({ ...m, sizeCharts })} />
     </div>
   );
 }

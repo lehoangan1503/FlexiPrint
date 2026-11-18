@@ -26,6 +26,7 @@ import { ctConfirm } from "../dialogs";
 import { CT_MOCKUP_SCENE_MAX, CT_MOCKUP_SCENES_MAX, defaultScenes, sceneProblems, splitScenes } from "../../lib/mockup-scenes";
 import { CT_MOCKUP_REFS_MAX } from "../../lib/mockup-prompt";
 import { MockupPics } from "../base/base-mockup-section";
+import { ZoomThumbs } from "../zoom-thumbs";
 import { customizable, customizableText, isCustomizable, mockupVariants } from "../../lib/mockup-variants";
 import { CHECKER_STYLE, CtButton, CtLightbox, CtTextarea, cx } from "../ui";
 
@@ -301,8 +302,6 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
   // Mockups made elsewhere (a photographer, Photoshop): uploaded as they are (asked 2026-11-07, "nút import mockup thủ công").
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(0);
-  /** Which product picture is open full screen (null = none). */
-  const [zoomAt, setZoomAt] = useState<number | null>(null);
   const importFiles = async (files: File[]) => {
     setUploading(files.length);
     const added: CtAsset[] = [];
@@ -559,22 +558,18 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
           {mockups.length === 0 ? (
             <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Chưa có — bấm “Tạo mockup” hoặc “Import mockup”.</p>
           ) : (
-            <div className={cx("grid gap-3", props.compact ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5")}>
-              {mockups.map((m, i) => (
-                <figure key={m.id} className="group relative overflow-hidden rounded-lg border bg-white">
-                  <button type="button" className="block w-full cursor-zoom-in" onClick={() => setZoomAt(i)} title="Bấm để phóng to">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- our R2 picture */}
-                    <img src={m.url} alt={m.name} className="aspect-square w-full object-contain" loading="lazy" />
-                  </button>
-                  <button className="absolute right-1 top-1 hidden rounded bg-black/60 p-1 text-white group-hover:block" onClick={() => void remove(m)} aria-label="Xoá mockup">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                  <figcaption className="truncate p-1.5 text-[11px] text-muted-foreground">{m.name}</figcaption>
-                </figure>
-              ))}
-            </div>
+            <ZoomThumbs
+              fit="contain"
+              images={mockups.map((m) => ({ url: m.url, name: m.name }))}
+              className={cx("grid gap-3", props.compact ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5")}
+              caption={(img) => img.name}
+              overlay={(_, i) => (
+                <button className="absolute right-1 top-1 rounded bg-black/60 p-1 text-white hover:bg-black" onClick={() => void remove(mockups[i])} aria-label="Xoá mockup" title="Xoá mockup">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            />
           )}
-          <CtLightbox images={mockups} index={zoomAt} onIndex={setZoomAt} />
         </section>
       </div>
     </div>

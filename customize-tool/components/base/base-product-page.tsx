@@ -31,7 +31,8 @@ import { PrintSheet } from "../print/print-sheet";
 import { ctConfirm } from "../dialogs";
 import { BaseCutSection, BasePreviewSection } from "./base-cut-preview";
 import { BaseAssemblySection } from "./base-assembly-section";
-import { BaseMockupSection } from "./base-mockup-section";
+import { BaseExtraPics, BaseMockupSection } from "./base-mockup-section";
+import { ZoomThumbs } from "../zoom-thumbs";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, CtSelect, CtTextarea, CtTooltipProvider } from "../ui";
 
 function Section({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
@@ -263,14 +264,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                     {cfg.source.importedAt && ` · ${cfg.source.importedAt.slice(0, 10)}`}
                   </div>
                   {cfg.source.photos.length > 0 && (
-                    <div className="mt-2 flex gap-1.5 overflow-x-auto">
-                      {cfg.source.photos.map((u) => (
-                        <a key={u} href={u} target="_blank" rel="noreferrer" className="h-16 w-16 shrink-0 overflow-hidden rounded border bg-white">
-                          {/* eslint-disable-next-line @next/next/no-img-element -- our R2 copy of the fulfiller's photo */}
-                          <img src={u} alt="" className="h-full w-full object-contain" loading="lazy" />
-                        </a>
-                      ))}
-                    </div>
+                    <ZoomThumbs images={cfg.source.photos.map((u, i) => ({ url: u, name: `Ảnh nhà in ${i + 1}` }))} fit="contain" className="mt-2 flex gap-1.5 overflow-x-auto" thumbClassName="h-16 w-16 shrink-0" />
                   )}
                   {(cfg.source.links ?? []).length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
@@ -293,53 +287,8 @@ export function BaseProductView({ baseId }: { baseId: string }) {
               </div>
             </Section>
 
-            <Section
-              title="Print areas"
-              right={
-                <CtButton size="sm" variant="outline" onClick={() => patch({ printAreas: [...cfg.printAreas, { id: newId(), name: cfg.printAreas.length ? "Back" : "Front", width: template?.spec.width ?? 1000, height: template?.spec.height ?? 1000, dpi: template?.spec.dpi ?? 300 }] })}>
-                  <Plus className="h-3.5 w-3.5" /> Print area
-                </CtButton>
-              }
-            >
-              {cfg.printAreas.length === 0 ? (
-                <p className="text-xs text-muted-foreground">Chưa có print area — file in lấy đúng khổ khuôn in.</p>
-              ) : (
-                <table className="w-full text-xs">
-                  <thead className="text-left text-[11px] text-muted-foreground">
-                    <tr>
-                      <th className="pb-1 font-medium">Tên</th>
-                      <th className="pb-1 font-medium">Rộng px</th>
-                      <th className="pb-1 font-medium">Cao px</th>
-                      <th className="pb-1 font-medium">DPI</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cfg.printAreas.map((a) => (
-                      <tr key={a.id}>
-                        <td className="py-0.5 pr-2">
-                          <CtInput className="h-7 text-xs" value={a.name} onChange={(e) => setArea(a.id, { name: e.target.value })} />
-                        </td>
-                        <td className="py-0.5 pr-2">
-                          <CtInput className="h-7 text-xs" inputMode="numeric" value={String(a.width)} onChange={(e) => setArea(a.id, { width: Number(e.target.value) || 0 })} />
-                        </td>
-                        <td className="py-0.5 pr-2">
-                          <CtInput className="h-7 text-xs" inputMode="numeric" value={String(a.height)} onChange={(e) => setArea(a.id, { height: Number(e.target.value) || 0 })} />
-                        </td>
-                        <td className="py-0.5 pr-2">
-                          <CtInput className="h-7 text-xs" inputMode="numeric" value={String(a.dpi)} onChange={(e) => setArea(a.id, { dpi: Number(e.target.value) || 0 })} />
-                        </td>
-                        <td>
-                          <button className="rounded p-1 text-muted-foreground hover:bg-accent" onClick={() => patch({ printAreas: cfg.printAreas.filter((x) => x.id !== a.id) })} aria-label="Xoá">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-              {cfg.printAreas.length > 1 && <p className="mt-2 text-[11px] text-muted-foreground">Mặt thứ 2 trở đi in cùng artwork với mặt đầu.</p>}
+            <Section title={`Ảnh kèm sản phẩm (${cfg.mockup.sizeCharts.length}/4)`}>
+              <BaseExtraPics cfg={cfg} onChange={(mockup) => patch({ mockup })} />
             </Section>
 
             <Section
@@ -413,6 +362,55 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                   </table>
                 </div>
               )}
+            </Section>
+
+            <Section
+              title="Print areas"
+              right={
+                <CtButton size="sm" variant="outline" onClick={() => patch({ printAreas: [...cfg.printAreas, { id: newId(), name: cfg.printAreas.length ? "Back" : "Front", width: template?.spec.width ?? 1000, height: template?.spec.height ?? 1000, dpi: template?.spec.dpi ?? 300 }] })}>
+                  <Plus className="h-3.5 w-3.5" /> Print area
+                </CtButton>
+              }
+            >
+              {cfg.printAreas.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Chưa có print area — file in lấy đúng khổ khuôn in.</p>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="text-left text-[11px] text-muted-foreground">
+                    <tr>
+                      <th className="pb-1 font-medium">Tên</th>
+                      <th className="pb-1 font-medium">Rộng px</th>
+                      <th className="pb-1 font-medium">Cao px</th>
+                      <th className="pb-1 font-medium">DPI</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cfg.printAreas.map((a) => (
+                      <tr key={a.id}>
+                        <td className="py-0.5 pr-2">
+                          <CtInput className="h-7 text-xs" value={a.name} onChange={(e) => setArea(a.id, { name: e.target.value })} />
+                        </td>
+                        <td className="py-0.5 pr-2">
+                          <CtInput className="h-7 text-xs" inputMode="numeric" value={String(a.width)} onChange={(e) => setArea(a.id, { width: Number(e.target.value) || 0 })} />
+                        </td>
+                        <td className="py-0.5 pr-2">
+                          <CtInput className="h-7 text-xs" inputMode="numeric" value={String(a.height)} onChange={(e) => setArea(a.id, { height: Number(e.target.value) || 0 })} />
+                        </td>
+                        <td className="py-0.5 pr-2">
+                          <CtInput className="h-7 text-xs" inputMode="numeric" value={String(a.dpi)} onChange={(e) => setArea(a.id, { dpi: Number(e.target.value) || 0 })} />
+                        </td>
+                        <td>
+                          <button className="rounded p-1 text-muted-foreground hover:bg-accent" onClick={() => patch({ printAreas: cfg.printAreas.filter((x) => x.id !== a.id) })} aria-label="Xoá">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {cfg.printAreas.length > 1 && <p className="mt-2 text-[11px] text-muted-foreground">Mặt thứ 2 trở đi in cùng artwork với mặt đầu.</p>}
             </Section>
           </div>
 
@@ -539,41 +537,36 @@ export function BaseProductView({ baseId }: { baseId: string }) {
             <Section title="Prompt mockup">
               <BaseMockupSection name={detail.base.name} cfg={cfg} template={template} onChange={(mockup) => patch({ mockup })} />
             </Section>
+          </div>
 
-            <Section title={`Mockups (${mockupCount}) · ${detail.uses.length} sản phẩm`}>
-              {detail.uses.length === 0 ? (
-                <p className="text-xs text-muted-foreground">Chưa có sản phẩm nào làm trên product base này — mockup của chúng sẽ hiện ở đây.</p>
-              ) : (
-                <div className="space-y-4">
-                  {detail.uses.map((u) => (
-                    <div key={u.id}>
-                      <div className="mb-1.5 flex items-center gap-2 text-xs">
-                        <Link href={`${CT_CONFIG.basePath}/${u.id}`} target="_blank" rel="noreferrer" className="truncate font-medium hover:underline">
-                          {u.name}
-                        </Link>
-                        {u.artwork && <span className="truncate text-muted-foreground">· artwork “{u.artwork.name}”</span>}
-                        {u.shopify && <span className="rounded bg-sky-500/15 px-1 text-[10px] text-sky-600">Shopify</span>}
-                        <Link href={`${CT_CONFIG.basePath}/${u.id}`} target="_blank" rel="noreferrer" title="Mở sản phẩm (tab mới)" className="ml-auto text-muted-foreground hover:text-foreground" aria-label="Mở sản phẩm">
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </Link>
-                      </div>
-                      {u.mockups.length ? (
-                        <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
-                          {u.mockups.map((m) => (
-                            <a key={m.id} href={m.url} target="_blank" rel="noreferrer" className="aspect-square overflow-hidden rounded border" style={CHECKER_STYLE}>
-                              {/* eslint-disable-next-line @next/next/no-img-element -- our R2 picture */}
-                              <img src={m.url} alt={m.name} className="h-full w-full object-cover" loading="lazy" />
-                            </a>
-                          ))}
+          <div className="lg:col-span-2">
+              <Section title={`Mockups (${mockupCount}) · ${detail.uses.length} sản phẩm`}>
+                {detail.uses.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Chưa có sản phẩm nào làm trên product base này — mockup của chúng sẽ hiện ở đây.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {detail.uses.map((u) => (
+                      <div key={u.id}>
+                        <div className="mb-1.5 flex items-center gap-2 text-xs">
+                          <Link href={`${CT_CONFIG.basePath}/${u.id}`} target="_blank" rel="noreferrer" className="truncate font-medium hover:underline">
+                            {u.name}
+                          </Link>
+                          {u.artwork && <span className="truncate text-muted-foreground">· artwork “{u.artwork.name}”</span>}
+                          {u.shopify && <span className="rounded bg-sky-500/15 px-1 text-[10px] text-sky-600">Shopify</span>}
+                          <Link href={`${CT_CONFIG.basePath}/${u.id}`} target="_blank" rel="noreferrer" title="Mở sản phẩm (tab mới)" className="ml-auto text-muted-foreground hover:text-foreground" aria-label="Mở sản phẩm">
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </Link>
                         </div>
-                      ) : (
-                        <p className="text-[11px] text-muted-foreground">Chưa có mockup.</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Section>
+                        {u.mockups.length ? (
+                          <ZoomThumbs checker images={u.mockups.map((m) => ({ url: m.url, name: `${u.name} · ${m.name}` }))} className="grid grid-cols-4 gap-1.5 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12" />
+                        ) : (
+                          <p className="text-[11px] text-muted-foreground">Chưa có mockup.</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Section>
           </div>
         </main>
         <CtModal

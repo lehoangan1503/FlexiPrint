@@ -25,7 +25,7 @@ import { siteUrl } from "../site-url";
 import { listBaseRows, loadBaseProduct } from "../base-products";
 import { makeProductFromArtwork } from "../artwork-link";
 import { saveOwnMockupPrompt } from "../product-mockups";
-import { normalizeBaseMockup } from "../../lib/base-product";
+import { normalizeBaseConfig, normalizeBaseMockup } from "../../lib/base-product";
 import { CT_MOCKUP_REFS_MAX, CT_MOCKUP_WRAP_MAX, defaultMockupWrap, mockupRefList } from "../../lib/mockup-prompt";
 import { CT_MOCKUP_TEXT_MAX, defaultScenes, sceneProblems, splitScenes } from "../../lib/mockup-scenes";
 import { ensureVersionPhoi, jobName } from "../version-phoi";
@@ -273,7 +273,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
           variants: b.priceTable ? priceCells(b.priceTable.config).map((c) => ({ size: c.size?.label ?? "", pack: c.pack?.label ?? "", price: c.price, compareAt: c.compareAt })) : [],
           priceTable: b.priceTable?.name ?? null,
           products: b.products,
-          mockupPrompt: { scenes: b.config.mockup.scenes.trim() ? splitScenes(b.config.mockup.scenes).scenes.length : "default", ownWrap: !!b.config.mockup.wrap.trim(), refs: b.config.mockup.refs.length },
+          mockupPrompt: { scenes: b.config.mockup.scenes.trim() ? splitScenes(b.config.mockup.scenes).scenes.length : "default", ownWrap: !!b.config.mockup.wrap.trim(), refs: b.config.mockup.refs.length, sizeCharts: b.config.mockup.sizeCharts.length },
         })),
       });
     },
@@ -333,6 +333,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         wrap: m.wrap,
         defaultWrap: defaultMockupWrap({ piece: base.template?.name || base.name, materialId: base.config.material, dieCut: base.config.cut.mode === "alpha", fromPhoi }),
         refs: m.refs,
+        sizeCharts: m.sizeCharts,
         canEdit: ctx.caller === "agent" || ctx.admin || (!!ctx.userId && base.user_id === ctx.userId),
       });
     },
@@ -349,6 +350,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         scenes: { type: "string", description: "The scene prompts." },
         wrap: { type: "string", description: "The sentence around each scene." },
         refs: { type: "array", items: { type: "string" }, description: "Reference picture urls." },
+        size_charts: { type: "array", items: { type: "string" }, description: "Size chart pictures (https, max 4, the whole new list): not sent to the AI, added after the mockups on every deploy of a product on this base." },
       },
       required: ["base_product_id"],
     },
@@ -376,10 +378,85 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         if (args.refs.length > refs.length) throw new Error(`refs: https urls only, at most ${CT_MOCKUP_REFS_MAX}, no repeats`);
         m.refs = refs;
       }
+      if (Array.isArray(args.size_charts)) {
+        const charts = mockupRefList(args.size_charts);
+        if (args.size_charts.length > charts.length) throw new Error(`size_charts: https urls only, at most ${CT_MOCKUP_REFS_MAX}, no repeats`);
+        m.sizeCharts = charts;
+      }
       // Read fresh: only the mockup key changes (the base page's other fields stay).
       const { error } = await db.from(CT_TABLES.baseProducts).update({ config: { ...(row.config ?? {}), mockup: m } }).eq("id", id);
       if (error) throw new Error(error.message);
       return json({ ok: true, base: { id, name: row.name }, mockup: m, note: "Used by the next mockups of every product on this base that has no prompts of its own." });
+    },
+  },
+  {
+    name: "create_base_product",
+    description:
+      "A new PRODUCT BASE (you become its maker): what is sold and how — name, Shopify product type, description, material, the print area (= the canvas of artworks made for it, px), the price table (variants: sizes × packs with prices — e.g. two kinds of blanket as two \"sizes\" with size_label \"Blanket type\"), and the mockup prompts (scenes, wrap, refs = reference pictures for the AI, size_charts = pictures added after the mockups on every deploy). No khuôn in (a fixed shape) is needed for a product that is not cut to a shape: no_khuon defaults to true without template_id. Pictures on this machine → flexiprint_upload_image first. → base_product_id, price_table_id, its page. Then create_artwork_product {base_product_id} per idea → make_product_from_artwork → make_product_mockups → deploy_product.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...OPT_TASK_ARG,
+        name: { type: "string", description: "The base's name (the kind of product)." },
+        product_type: { type: "string", description: "Shopify product type (the store's collections key on it)." },
+        description: { type: "string", description: "Product page description until a product's own replaces it (HTML ok)." },
+        material: { type: "string", description: "none | acrylic_white | acrylic_clear | glass_clear | ceramic_gloss | ceramic_matte | aluminum | wood (default none)." },
+        print_area: { type: "object", description: "{width, height, dpi?, name?} px — the artwork canvas (default 1000×1000)." },
+        template_id: { type: "string", description: "Optional khuôn in (list_print_templates) — only for a piece cut to a fixed shape." },
+        no_khuon: { type: "boolean", description: "Needs no khuôn (default true when no template_id)." },
+        price_table_id: { type: "string", description: "An existing price table, instead of price_table." },
+        price_table: { type: "object", description: '{size_label?: "Size", sizes: [{label, price, compare_at?}], pack_label?, packs?: [{qty, label?, discount_pct}]} — no packs = one piece only.' },
+        mockup: { type: "object", description: "{scenes?: string, wrap?: string, refs?: [urls ≤ 4], size_charts?: [urls ≤ 4]}" },
+      },
+      required: ["name"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const { db, userId } = await actorOf(ctx, args.task_id);
+      const name = str(args.name).slice(0, 160);
+      if (!name) throw new Error("name is needed");
+      const obj = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+      const list = (v: unknown) => (Array.isArray(v) ? v.map(obj).filter((x): x is Record<string, unknown> => !!x) : []);
+      let priceTableId = str(args.price_table_id) || null;
+      if (priceTableId && !UUID.test(priceTableId)) throw new Error("price_table_id is not a valid id");
+      const pt = obj(args.price_table);
+      if (pt) {
+        const packs = list(pt.packs);
+        const cfg = normalizePriceTableConfig({
+          sizeLabel: pt.size_label,
+          packLabel: pt.pack_label,
+          itemLabel: pt.item_label,
+          sizes: list(pt.sizes).map((x) => ({ label: x.label, price: x.price, compareAt: x.compare_at ?? null })),
+          packs: packs.length ? packs.map((x) => ({ qty: x.qty, label: x.label, discountPct: x.discount_pct })) : [{ qty: 1, label: "1 PC", discountPct: 0 }],
+          overrides: {},
+        });
+        const problems = priceTableProblems(cfg);
+        if (problems.length) throw new Error(`price_table: ${problems.join(" ")}`);
+        const { data, error } = await db.from(CT_TABLES.priceTables).insert({ user_id: userId, name: name.slice(0, 120), config: cfg }).select("id").single<{ id: string }>();
+        if (error || !data) throw new Error(error?.message ?? "Price table not saved");
+        priceTableId = data.id;
+      }
+      const mk = obj(args.mockup) ?? {};
+      const mockup = normalizeBaseMockup({ scenes: mk.scenes, wrap: mk.wrap, refs: mk.refs, sizeCharts: mk.size_charts });
+      if (mockup.scenes.trim()) {
+        const problems = sceneProblems(splitScenes(mockup.scenes).scenes);
+        if (problems.length) throw new Error(`mockup.scenes: ${problems.join(" ")}`);
+      }
+      const area = obj(args.print_area);
+      const templateId = str(args.template_id) || null;
+      const config = normalizeBaseConfig({
+        description: args.description,
+        productType: args.product_type,
+        material: args.material,
+        priceTableId,
+        templateId,
+        noKhuon: typeof args.no_khuon === "boolean" ? args.no_khuon : !templateId,
+        printAreas: area ? [{ name: area.name, width: area.width, height: area.height, dpi: area.dpi }] : [],
+        mockup,
+      });
+      const { data: base, error } = await db.from(CT_TABLES.baseProducts).insert({ user_id: userId, name, config }).select("id").single<{ id: string }>();
+      if (error || !base) throw new Error(error?.message ?? "Base not saved");
+      return json({ base_product_id: base.id, price_table_id: priceTableId, page: `${siteUrl()}/base-products/${base.id}`, next: "create_artwork_product {base_product_id, layers} per idea (a finished picture: a clipart layer with image_url), then make_product_from_artwork → make_product_mockups → deploy_product." });
     },
   },
   {

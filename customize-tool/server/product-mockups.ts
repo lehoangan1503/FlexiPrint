@@ -605,6 +605,18 @@ export async function clearOwnMockupScenes(s: CtSession, productId: string): Pro
   return NextResponse.json({ product: data });
 }
 
+/** POST products/:id/mockups/refs {refs} — the product's own reference pictures ([] = back to its base's). */
+export async function setOwnMockupRefs(s: CtSession, productId: string, raw: unknown): Promise<NextResponse> {
+  const product = await ownedProduct(s, productId);
+  if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
+  const refs = raw && typeof raw === "object" ? (raw as { refs?: unknown }).refs : undefined;
+  try {
+    return NextResponse.json({ product: await saveOwnMockupPrompt(s.supabase, product, { refs: Array.isArray(refs) ? refs : [] }) });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Không lưu được", 400);
+  }
+}
+
 /** The scene prompts a product's mockups use when none are given: its own Mockups box, else its base's, else the defaults for its name. */
 export async function productScenes(db: MockDb, product: CtProduct): Promise<{ scenes: string[]; from: "product" | "base" | "default" }> {
   const config = normalizeProductConfig(product.config);

@@ -43,6 +43,7 @@ import * as h from "../handlers";
 import { makeVersionThumbs } from "../version-thumbs";
 import { addTemplateBlank, saveTemplateBlanks, setDefaultBlank } from "../print-blanks";
 import { fetchImage } from "../char/files";
+import { insertClipart } from "../library";
 import { json } from "./task-common";
 import type { CtMcpContext, CtMcpTool } from "./tools";
 
@@ -79,7 +80,7 @@ const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.i
 
 const LAYERS_DOC =
   'Layers, bottom first. Each: {"type": "clipart" | "text" | "photo" | "fill", "name": "…", "label": customer-facing question ("Choose your dog")}. ' +
-  'clipart: "asset_ids" (library clipart ids — several = the customer picks one, first is the default), "x","y","w","h" (the box the picture is fitted into, sheet px), optional "rotation" (deg). ' +
+  'clipart: "asset_ids" (library clipart ids — several = the customer picks one, first is the default) or "image_url" / "image_urls" (https pictures — a finished design: put in the library for you; a file on this machine → flexiprint_upload_image first), "x","y","w","h" (the box the picture is fitted into, sheet px), optional "rotation" (deg). ' +
   'text: "text", box x/y/w/h, "editable" (true = the customer types it, e.g. a name; false = fixed), "max_chars", "font" (Google font family), "font_size" px, "color" "#rrggbb". ' +
   'photo: a customer photo zone, box x/y/w/h, "shape" "rect"|"ellipse", optional "styles" (AI style refs "ai:<id>" from list_ai_styles — the customer\'s photo is redrawn in the one they pick, by its demo picture) + "default_style"; "input": "name" = the customer only types a name (no upload) and the zone\'s AI style draws it — a prompt with [NAME], its reference pictures are image 1, 2… (e.g. a name lettered like the artwork). ' +
   'fill: covers a zone with a picture — "zone" (a template zone id, or "sheet" = the whole cut piece), "asset_ids" (options), "mode" "cover" (one picture, e.g. a background) | "tile" (a repeated pattern, "tile" px wide), "print_only" (true: printed but not drawn on the product photo — a background whose options each have their own mockup photo).';
@@ -173,6 +174,28 @@ async function blankAnswer(t: CtPrintTemplate, products: string[], note: string)
     ...(preview ? { preview } : {}),
     next: `${note} view_image preview: the default phôi with the khuôn's cut line (red) where its box (blue dashed) puts the sheet — the red line must sit exactly on the piece's edge, else set_template_blank with a corrected box. Then make_product_mockups again (productsUpdated already show this phôi; a product kept on its own phôi needs char_remake_product).`,
   });
+}
+
+/** Layers whose pictures are given as urls (image_url / image_urls): each saved as a library clipart, then asset_ids. */
+async function layerPictures(db: PrintDb, owner: string, raw: unknown): Promise<unknown> {
+  if (!Array.isArray(raw)) return raw;
+  const out: unknown[] = [];
+  for (const l of raw) {
+    const o = l && typeof l === "object" ? (l as Record<string, unknown>) : null;
+    const urls = o ? (Array.isArray(o.image_urls) ? o.image_urls : typeof o.image_url === "string" ? [o.image_url] : []).map(str).filter(Boolean) : [];
+    if (!o || !urls.length) {
+      out.push(l);
+      continue;
+    }
+    const ids: string[] = [];
+    for (const u of urls.slice(0, 30)) {
+      if (!/^https:\/\//.test(u)) throw new Error(`image_url: an https picture url (${u})`);
+      const c = await insertClipart(db, owner, { categoryId: null, parentId: null, rendition: false, name: str(o.name).slice(0, 120) || "Artwork", spec: "", tags: [], source: "upload", meta: {}, generationId: null, data: await fetchImage(u) });
+      ids.push(c.id);
+    }
+    out.push({ ...o, asset_ids: [...(Array.isArray(o.asset_ids) ? o.asset_ids : []), ...ids] });
+  }
+  return out;
 }
 
 /** The agent's layers → regions + items (throws a message the agent can act on). */
@@ -534,7 +557,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       }
       try {
         const loaded = await loadArtwork(ctx.db, product.id);
-        const built = await buildLayers(ctx.db, product.id, specOf(loaded), args.layers, 1);
+        const built = await buildLayers(ctx.db, product.id, specOf(loaded), await layerPictures(ctx.db, product.user_id, args.layers), 1);
         await saveLayers(ctx.db, product.id, frame, built);
       } catch (e) {
         await ctx.db.from(CT_TABLES.products).delete().eq("id", product.id);
@@ -561,7 +584,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       if (!bundle) throw new Error("No such artwork");
       if (bundle.product.kind === "product") throw new Error("That is a product (a snapshot of its artwork): change the artwork, then update the product from it");
       const frame = bundle.regions.find((r) => r.config.materialFrame) ?? null;
-      const built = await buildLayers(ctx.db, bundle.product.id, specOf(bundle), args.layers, 1);
+      const built = await buildLayers(ctx.db, bundle.product.id, specOf(bundle), await layerPictures(ctx.db, bundle.product.user_id, args.layers), 1);
       await saveLayers(ctx.db, bundle.product.id, frame, built);
       const next = await loadArtwork(ctx.db, bundle.product.id);
       return json({ product_id: bundle.product.id, safeZone: next ? await safeReport(next) : [] });

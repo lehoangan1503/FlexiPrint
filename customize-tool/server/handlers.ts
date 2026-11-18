@@ -477,6 +477,10 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
     const { data } = await s.supabase.from(CT_TABLES.assets).select("*").eq("product_id", productId).in("id", body.mediaAssetIds).returns<CtAsset[]>();
     const byId = new Map((data ?? []).map((a) => [a.id, a]));
     media = body.mediaAssetIds.map((id) => byId.get(id)).filter((a): a is CtAsset => Boolean(a)).map((asset) => ({ asset, url: absoluteUrl(asset.url, origin) }));
+    // The base's size charts go up with the mockups, always after them (asked 2026-11-18). Kept in the Shopify link
+    // under "sizechart:<url>" so a deploy again reuses them. Not when no mockup is picked (= keep Shopify's images).
+    const charts = base?.config.mockup.sizeCharts ?? [];
+    if (media.length) media = [...media, ...charts.map((url, i) => ({ asset: { id: `sizechart:${url}`, name: `Size chart${charts.length > 1 ? ` ${i + 1}` : ""}` } as CtAsset, url }))];
   }
 
   // 0. The deploy page's "Phôi AI có ảnh khách" tick goes in the product before its template is made.

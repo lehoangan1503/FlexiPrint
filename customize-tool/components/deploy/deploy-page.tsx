@@ -341,7 +341,7 @@ export function DeployPage({ productId }: { productId: string }) {
           {/* Images */}
           {template.tpl && <PreviewBoxCard product={product} tpl={template.tpl} onSaved={(p) => setBundle({ ...bundle, product: p })} />}
 
-          <Card title={`Ảnh sản phẩm (${media.length})`} hint="Mockup đã lưu của sản phẩm (tab Mockups), theo thứ tự chọn — ảnh 1 là ảnh chính. Bỏ chọn hết = giữ nguyên ảnh đang có trên Shopify.">
+          <Card title={`Ảnh sản phẩm (${media.length})`} hint={`Mockup đã lưu của sản phẩm (tab Mockups), theo thứ tự chọn — ảnh 1 là ảnh chính. Bỏ chọn hết = giữ nguyên ảnh đang có trên Shopify.${base?.config.mockup.sizeCharts.length ? ` Sau các ảnh này: ${base.config.mockup.sizeCharts.length} ảnh size chart của product base.` : ""}`}>
             {pictures.length === 0 ? (
               <p className="text-xs text-muted-foreground">Chưa có mockup — tạo ở tab Mockups trong editor. Không có ảnh, trang sản phẩm mở thẳng thiết kế live.</p>
             ) : (

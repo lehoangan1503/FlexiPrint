@@ -13,7 +13,7 @@ import type { CtPrintTemplate } from "../../types/print";
 import { ctApi } from "../../lib/api-client";
 import { CT_MOCKUP_TEXT_MAX, defaultScenes, sceneProblems, splitScenes } from "../../lib/mockup-scenes";
 import { CT_MOCKUP_REFS_MAX, CT_MOCKUP_WRAP_MAX, defaultMockupWrap } from "../../lib/mockup-prompt";
-import { CtButton, CtField, CtTextarea } from "../ui";
+import { CtButton, CtField, CtLightbox, CtTextarea } from "../ui";
 
 export function BaseMockupSection({
   name,
@@ -28,9 +28,6 @@ export function BaseMockupSection({
 }) {
   const m = cfg.mockup;
   const piece = template?.name || name;
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   // The look the default wrap is written for — as the server decides it (server/product-mockups.ts productMockups).
   const dieCut = template?.kind === "cut" || cfg.cut.mode === "alpha";
@@ -53,24 +50,6 @@ export function BaseMockupSection({
       <p className="mt-1 whitespace-pre-wrap text-foreground/80">{text}</p>
     </details>
   );
-
-  const addRefs = async (files: FileList | null) => {
-    if (!files?.length) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const room = CT_MOCKUP_REFS_MAX - m.refs.length;
-      const urls: string[] = [];
-      for (const f of Array.from(files).slice(0, Math.max(0, room))) urls.push((await ctApi.uploadPackImage(f)).url);
-      onChange({ ...m, refs: [...m.refs, ...urls].slice(0, CT_MOCKUP_REFS_MAX) });
-      if (files.length > room) setError(`Tối đa ${CT_MOCKUP_REFS_MAX} ảnh tham chiếu — bỏ qua ${files.length - room} ảnh.`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Không tải ảnh lên được");
-    } finally {
-      setBusy(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
 
   return (
     <div className="space-y-4">
@@ -128,38 +107,85 @@ export function BaseMockupSection({
 
       <CtField
         label={`Ảnh tham chiếu (${m.refs.length}/${CT_MOCKUP_REFS_MAX})`}
-        hint="Gửi kèm sau ảnh sản phẩm: ảnh 1 = sản phẩm, ảnh tham chiếu là ảnh 2, 3, 4, 5 theo thứ tự ở đây — prompt cảnh của sản phẩm gọi được tên đó (vd. “same room and light as picture 2”). AI được dặn không chép sản phẩm hay chữ trong ảnh này. Dùng cho mọi sản phẩm của base không có ảnh tham chiếu riêng."
+        hint="Gửi kèm sau ảnh sản phẩm: ảnh 1 = sản phẩm, ảnh tham chiếu là ảnh 2, 3, 4, 5 theo thứ tự ở đây — prompt cảnh của sản phẩm gọi được tên đó (vd. “same room and light as picture 2”). AI được dặn không chép sản phẩm hay chữ trong ảnh này. Dùng cho mọi sản phẩm của base không có ảnh tham chiếu riêng. Bấm ảnh để phóng to."
       >
-        <div className="flex flex-wrap gap-2">
-          {m.refs.map((url) => (
-            <div key={url} className="relative h-20 w-20 overflow-hidden rounded-md border">
+        <MockupPics urls={m.refs} max={CT_MOCKUP_REFS_MAX} first={2} onChange={(refs) => onChange({ ...m, refs })} />
+      </CtField>
+
+      <CtField
+        label={`Ảnh size chart (${m.sizeCharts.length}/${CT_MOCKUP_REFS_MAX})`}
+        hint="Không gửi cho AI. Mỗi lần deploy sản phẩm của base này, các ảnh này được đưa lên Shopify ngay sau các mockup (ảnh size chart, bảng kích thước…)."
+      >
+        <MockupPics urls={m.sizeCharts} max={CT_MOCKUP_REFS_MAX} first={0} onChange={(sizeCharts) => onChange({ ...m, sizeCharts })} />
+      </CtField>
+    </div>
+  );
+}
+
+/**
+ * A short list of pictures (mockup reference pictures, size charts): upload (≤ max), remove, click to zoom. `first` = the
+ * number the first one has in the mockup prompt ("Ảnh 2"); 0 = not numbered. readOnly: shown, not changed here.
+ */
+export function MockupPics({ urls, onChange, max, first, readOnly }: { urls: string[]; onChange: (urls: string[]) => void; max: number; first: number; readOnly?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [zoom, setZoom] = useState<number | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const label = (i: number) => (first > 0 ? `Ảnh ${first + i}` : `Ảnh ${i + 1}`);
+  const add = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const room = Math.max(0, max - urls.length);
+      const up: string[] = [];
+      for (const f of Array.from(files).slice(0, room)) up.push((await ctApi.uploadPackImage(f)).url);
+      onChange([...urls, ...up].slice(0, max));
+      if (files.length > room) setError(`Tối đa ${max} ảnh — bỏ qua ${files.length - room} ảnh.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không tải ảnh lên được");
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+  return (
+    <div>
+      <div className="flex flex-wrap gap-2">
+        {urls.map((url, i) => (
+          <div key={url} className="relative h-20 w-20 overflow-hidden rounded-md border bg-white">
+            <button type="button" className="block h-full w-full cursor-zoom-in" title="Bấm để phóng to" onClick={() => setZoom(i)}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt="" className="h-full w-full object-cover" />
+              <img src={url} alt={label(i)} className="h-full w-full object-cover" />
+            </button>
+            {first > 0 && <span className="pointer-events-none absolute bottom-0 left-0 bg-black/75 px-1 text-[10px] font-medium text-white">{label(i)}</span>}
+            {!readOnly && (
               <button
                 type="button"
                 title="Bỏ ảnh này"
                 className="absolute right-0.5 top-0.5 rounded-full bg-black/70 p-0.5 text-white hover:bg-black"
-                onClick={() => onChange({ ...m, refs: m.refs.filter((u) => u !== url) })}
+                onClick={() => onChange(urls.filter((u) => u !== url))}
               >
                 <X className="h-3 w-3" />
               </button>
-            </div>
-          ))}
-          {m.refs.length < CT_MOCKUP_REFS_MAX && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => fileRef.current?.click()}
-              className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-md border border-dashed text-xs text-muted-foreground hover:bg-accent disabled:opacity-60"
-            >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
-              Thêm ảnh
-            </button>
-          )}
-          <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => void addRefs(e.target.files)} />
-        </div>
-        {error && <p className="text-xs font-medium text-red-600 dark:text-red-400">{error}</p>}
-      </CtField>
+            )}
+          </div>
+        ))}
+        {!readOnly && urls.length < max && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => fileRef.current?.click()}
+            className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-md border border-dashed text-xs text-foreground/80 hover:bg-accent disabled:opacity-60"
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+            Thêm ảnh
+          </button>
+        )}
+        <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => void add(e.target.files)} />
+      </div>
+      {error && <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">{error}</p>}
+      <CtLightbox images={urls.map((url, i) => ({ url, name: label(i) }))} index={zoom} onIndex={setZoom} />
     </div>
   );
 }

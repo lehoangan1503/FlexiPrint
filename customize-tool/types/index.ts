@@ -1910,6 +1910,8 @@ export interface CtBaseMockup {
   wrap: string;
   /** Reference pictures for the setting / style / light (https urls), sent after the product's own front picture. */
   refs: string[];
+  /** Pictures (a size chart…) added after the mockups on every deploy of a product on this base (asked 2026-11-18). */
+  sizeCharts: string[];
 }
 
 /**

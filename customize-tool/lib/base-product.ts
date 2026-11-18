@@ -17,6 +17,7 @@ export function normalizeBaseMockup(raw: unknown): CtBaseMockup {
     scenes: typeof m.scenes === "string" ? m.scenes.slice(0, CT_MOCKUP_TEXT_MAX) : "",
     wrap: typeof m.wrap === "string" ? m.wrap.slice(0, CT_MOCKUP_WRAP_MAX) : "",
     refs: mockupRefList(m.refs),
+    sizeCharts: mockupRefList(m.sizeCharts),
   };
 }
 

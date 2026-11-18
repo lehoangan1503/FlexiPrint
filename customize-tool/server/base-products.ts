@@ -141,7 +141,10 @@ export async function listBaseRows(db: Db): Promise<CtBaseProductRow[]> {
 
 export async function listBaseProducts(s: CtSession): Promise<NextResponse> {
   try {
-    return NextResponse.json({ bases: await rows(s.supabase, null) });
+    // The Product base tab lists newest / last edited first (asked 2026-11-18). Only here: listBaseRows keeps
+    // sort_order because import picks the first base matching a material from it.
+    const bases = (await rows(s.supabase, null)).sort((a, b) => (b.updated_at || b.created_at).localeCompare(a.updated_at || a.created_at));
+    return NextResponse.json({ bases });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Lỗi", 500);
   }

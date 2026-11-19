@@ -51,7 +51,7 @@ export function BaseMockupSection({
       <p className="text-xs text-muted-foreground">
         Prompt chung cho mọi sản phẩm làm trên product base này. Prompt gửi cho AI = đúng câu bọc dưới đây, thay {"{product}"} bằng tên sản phẩm và
         {"{scene}"} bằng từng cảnh — hệ thống không thêm câu nào khác. Sản phẩm có cảnh riêng (ô Mockup bằng AI trong trang sản phẩm, hoặc gửi qua MCP) thì
-        dùng cảnh riêng, vẫn dùng câu bọc của base. Ô trống là trống: không có câu bọc, hoặc không có cảnh nào, thì Tạo mockup báo lỗi. Nhớ bấm Lưu.
+        dùng cảnh riêng, vẫn dùng câu bọc của base. Câu bọc để trống: mỗi cảnh được gửi nguyên văn làm cả prompt (hợp khi mỗi sản phẩm tự viết prompt riêng). Không có cảnh nào (ở base lẫn sản phẩm) thì Tạo mockup báo lỗi. Nhớ bấm Lưu.
       </p>
 
       <CtField
@@ -77,7 +77,11 @@ export function BaseMockupSection({
         label={`Câu bọc quanh mỗi cảnh${m.wrap.trim() ? "" : " · trống"}`}
         hint="{product} = tên sản phẩm, {scene} = một cảnh ở trên. Câu này dặn AI giữ nguyên hình in, chất liệu, khung hình."
       >
-        {state(!!m.wrap.trim(), "Ô TRỐNG — mọi sản phẩm của base này sẽ báo lỗi khi Tạo mockup.")}
+        {m.wrap.trim() ? (
+          state(true, "")
+        ) : (
+          <p className="text-xs font-medium text-amber-700 dark:text-amber-400">Để trống — mỗi cảnh (của base hoặc của sản phẩm) được gửi nguyên văn làm cả prompt, không bọc gì thêm.</p>
+        )}
         <CtTextarea rows={m.wrap.trim() ? 6 : 2} value={m.wrap} placeholder="(trống)" onChange={(e) => onChange({ ...m, wrap: e.target.value })} />
         <div className="flex flex-wrap gap-2">
           {m.wrap.trim() ? (

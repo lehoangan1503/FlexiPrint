@@ -603,16 +603,16 @@ async function baseMockup(db: MockDb, product: CtProduct): Promise<CtBaseMockup>
 
 /**
  * The wrap sentence and reference pictures a product's mockups use: the base's wrap (a product has none of its own),
- * the product's own refs, else its base's. No hidden prompt (asked 2026-11-18: "trống là trống, không có prompt thì báo
- * lỗi, không dùng sẵn có"): an empty wrap is refused.
+ * the product's own refs, else its base's. No hidden prompt (asked 2026-11-18: "trống là trống"). An empty wrap is
+ * allowed (asked 2026-11-19: products of one base each with their own mockup prompts, the base holds none): then each
+ * scene IS the whole prompt. A wrap given without {scene} is refused.
  */
 async function mockupSetup(db: MockDb, product: CtProduct): Promise<{ wrap: string; refs: string[] }> {
   if (!product.base_product_id) throw new Error("Sản phẩm chưa gắn product base — không có prompt mockup.");
   const base = await baseMockup(db, product);
-  if (!base.wrap.trim()) throw new Error("Product base chưa có câu bọc prompt mockup — điền ô «Câu bọc quanh mỗi cảnh» ở trang product base rồi tạo lại.");
-  if (!base.wrap.includes("{scene}")) throw new Error("Câu bọc prompt mockup của product base thiếu {scene} — thêm {scene} vào chỗ đặt cảnh ở trang product base.");
+  if (base.wrap.trim() && !base.wrap.includes("{scene}")) throw new Error("Câu bọc prompt mockup của product base thiếu {scene} — thêm {scene} vào chỗ đặt cảnh ở trang product base.");
   const own = normalizeProductConfig(product.config).mockupRefs;
-  return { wrap: base.wrap, refs: (own.length ? own : base.refs).slice(0, CT_MOCKUP_REFS_MAX) };
+  return { wrap: base.wrap.trim() ? base.wrap : "{scene}", refs: (own.length ? own : base.refs).slice(0, CT_MOCKUP_REFS_MAX) };
 }
 
 /** True when `text` is only what the product would get without its own prompts (its base's). */
@@ -783,7 +783,7 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
   const model = CT_IMAGE_MODEL;
   const rows: CtPackImage[] = [];
   // The prompt = the base's wrap with {product} / {scene} filled (its page, CtBaseMockup — asked 2026-11-17: "prompt
-  // tạo mockup đưa ra khỏi code"); nothing added by the code.
+  // tạo mockup đưa ra khỏi code"); no wrap = the scene alone ({product} filled); nothing added by the code.
   for (const [i, sc] of want.entries()) {
     const prompt = fillMockupWrap(wrap, piece, sc);
     const { data: row } = await db

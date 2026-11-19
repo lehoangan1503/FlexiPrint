@@ -713,7 +713,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
         mockups: {
           type: "array",
           items: { type: "object" },
-          description: `[{"label": "Christmas", "options": {"<layer>": "<option>"}, "scenes": ["<English: where the product is and what is around it — e.g. hanging on a decorated Christmas tree with warm bokeh lights>"]}] — any number of entries and scenes (one photo per scene, no limit). An entry without scenes uses the product's own prompts, else its PRODUCT BASE's (get_base_mockup_prompt); none anywhere → refused (no built-in prompt). The prompt sent = the base's wrap with {product} / {scene} filled, nothing added.`,
+          description: `[{"label": "Christmas", "options": {"<layer>": "<option>"}, "scenes": ["<English: where the product is and what is around it — e.g. hanging on a decorated Christmas tree with warm bokeh lights>"]}] — any number of entries and scenes (one photo per scene, no limit). An entry without scenes uses the product's own prompts, else its PRODUCT BASE's (get_base_mockup_prompt); none anywhere → refused (no built-in prompt). The prompt sent = the base's wrap with {product} / {scene} filled, nothing added; a base without a wrap sends each scene alone as the whole prompt.`,
         },
         save_scenes: {
           type: "string",

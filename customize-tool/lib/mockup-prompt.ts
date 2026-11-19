@@ -1,6 +1,6 @@
 /**
  * The sentence wrapped around every mockup scene (asked 2026-11-17: the mockup prompts out of the code, kept on the
- * product base, CtBaseMockup.wrap). Asked 2026-11-18: no hidden prompt — an empty wrap is refused, never replaced;
+ * product base, CtBaseMockup.wrap). Asked 2026-11-18: no hidden prompt — never replaced by a built-in one; asked 2026-11-19: an empty wrap = each scene sent alone;
  * defaultMockupWrap is only the sample the base page pastes into its box when asked ("Điền câu mẫu").
  * Placeholders: {product} = the piece's name, {scene} = one scene prompt (required).
  * Shared by the server (server/product-mockups.ts) and the base page (components/base/base-mockup-section.tsx).

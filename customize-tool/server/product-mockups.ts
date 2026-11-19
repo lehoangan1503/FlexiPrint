@@ -818,15 +818,54 @@ async function mockupToProduct(s: CtSession, productId: string, data: Buffer, na
  * Mockup photos drawn at once, all products together (2026-11-17: a bulk "Tạo mockup" of 20 products would send ~60
  * at the same time to the image model). The rest wait their turn (still "running" on their card).
  */
-const MOCKUP_PARALLEL = 4;
+// How many at once = 2 × the CPA accounts that can draw right now (asked 2026-11-19), read from the gate's account
+// list (CPA_STATUS_URL + CPA_STATUS_KEY — a key that sees only codex accounts) every minute; unreadable = 4 as before.
+const MOCKUP_PARALLEL_FALLBACK = 4;
+const MOCKUP_PARALLEL_MAX = 30;
+let parallel = { n: MOCKUP_PARALLEL_FALLBACK, at: 0 };
+async function mockupParallel(): Promise<number> {
+  if (Date.now() - parallel.at < 60_000) return parallel.n;
+  parallel.at = Date.now();
+  const key = process.env.CPA_STATUS_KEY;
+  const base = (process.env.CPA_STATUS_URL || process.env.CPA_FALLBACK_BASE_URL || "").replace(/\/v1\/?$/, "").replace(/\/+$/, "");
+  if (!key || !base) return parallel.n;
+  try {
+    const r = await fetch(`${base}/v0/management/auth-files`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) });
+    const j = (await r.json()) as { files?: Array<{ provider?: string; status?: string; disabled?: boolean; unavailable?: boolean; cooldowns?: Array<{ model_key?: string; retry_at?: string }> }> };
+    if (!r.ok || !Array.isArray(j.files)) throw new Error(`auth-files ${r.status}`);
+    const now = Date.now();
+    const ready = j.files.filter(
+      (a) => a.provider === "codex" && a.status === "active" && !a.disabled && !a.unavailable && !(a.cooldowns ?? []).some((c) => /image/i.test(c.model_key ?? "") && Date.parse(c.retry_at ?? "") > now),
+    ).length;
+    const n = Math.min(MOCKUP_PARALLEL_MAX, Math.max(2, ready * 2));
+    if (n !== parallel.n) console.log(`[ct] mockup parallel ${parallel.n} → ${n} (${ready} CPA accounts ready)`);
+    parallel = { n, at: now };
+  } catch (e) {
+    console.warn(`[ct] CPA account count: ${e instanceof Error ? e.message : String(e)} — keeping ${parallel.n}`);
+  }
+  return parallel.n;
+}
 let drawing = 0;
 const waiting: Array<() => void> = [];
+/** Let in as many waiting jobs as the current limit allows. */
+function admit(limit: number): void {
+  while (drawing < limit && waiting.length) {
+    drawing++;
+    waiting.shift()!();
+  }
+}
 async function mockupSlot(): Promise<() => void> {
-  if (drawing >= MOCKUP_PARALLEL) await new Promise<void>((resolve) => waiting.push(resolve));
-  drawing++;
+  const limit = await mockupParallel();
+  if (drawing < limit && !waiting.length) drawing++;
+  else {
+    await new Promise<void>((resolve) => {
+      waiting.push(resolve);
+      admit(limit);
+    });
+  }
   return () => {
     drawing--;
-    waiting.shift()?.();
+    void mockupParallel().then(admit);
   };
 }
 

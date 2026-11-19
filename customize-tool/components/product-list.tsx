@@ -89,6 +89,7 @@ export function CustomizeProductList({
       return next;
     });
 
+  const listKind = kind;
   const runBulk = async (kind: "mockup" | "deploy") => {
     const rows = pickedRows;
     if (!rows.length) return;
@@ -141,6 +142,9 @@ export function CustomizeProductList({
           const done = jobs.filter((j) => j.status === "done").length;
           const failed = jobs.filter((j) => j.status === "failed");
           const lost = ids.length - jobs.length;
+          // The card shows the first photo as soon as there is one (2026-11-19: it stayed blank until a reload).
+          const shot = jobs.filter((j) => j.status === "done" && j.url).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))[0]?.url;
+          if (shot) setProducts((list) => list.map((x) => (x.id === rows[i].id && !x.mockup_url ? { ...x, mockup_url: shot } : x)));
           if (jobs.some((j) => j.status === "running")) {
             set(i, { state: "run", text: `AI đang vẽ ${done}/${ids.length} ảnh${failed.length ? ` · ${failed.length} hỏng` : ""}…` });
             continue;
@@ -156,6 +160,8 @@ export function CustomizeProductList({
     }
     setBulk({ title, lines: [...lines], running: false });
     setPicked(new Set());
+    // The list again, quietly: each card's picture as the server picks it (picture 1 of the Shopify order).
+    if (kind === "mockup") ctApi.listProducts(search.trim(), listKind).then(setProducts).catch(() => undefined);
   };
 
   const load = useCallback(async (q: string) => {

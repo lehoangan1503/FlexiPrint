@@ -47,6 +47,7 @@ import { defaultScene, normalizeScene } from "./scene";
 import { isPrintKind, normalizePrintSpec } from "./print-template";
 import { normalizePrintAssembly } from "./assembly";
 import { mockupRefList } from "./mockup-prompt";
+import { idList } from "./deploy-media";
 
 export function defaultRegionConfig(kind: CtRegionKind): CtRegionConfig {
   return {
@@ -314,6 +315,8 @@ export function defaultProductConfig(): CtProductConfig {
     mockupScenes: "",
     mockupRefs: [],
     mockupVary: true,
+    mockupOrder: [],
+    mockupOff: [],
   };
 }
 
@@ -404,6 +407,8 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     mockupScenes: typeof raw?.mockupScenes === "string" ? raw.mockupScenes : "",
     mockupRefs: mockupRefList(raw?.mockupRefs),
     mockupVary: raw?.mockupVary !== false,
+    mockupOrder: idList(raw?.mockupOrder),
+    mockupOff: idList(raw?.mockupOff),
   };
 }
 

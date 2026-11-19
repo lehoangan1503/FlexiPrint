@@ -14,7 +14,7 @@
 import type { CtAgentTask, CtAsset, CtBaseProduct, CtContentResult, CtPriceTable, CtProduct, CtShopifyCollection, CtShopifyInfo } from "../../types";
 import { auditOptions } from "../../lib/option-audit";
 import { suggestCollections } from "../../lib/collections";
-import { defaultDeployMedia } from "../../lib/deploy-media";
+import { defaultDeployMedia, effectivePicks } from "../../lib/deploy-media";
 import { normalizePriceTableConfig, priceCells, priceTableFor, priceTableProblems } from "../../lib/pricing";
 import { str } from "../ai/llm";
 import { serviceSession } from "../char/product";
@@ -155,10 +155,12 @@ export function defaultTable(st: DeployState, product: CtProduct): string | null
   return priceTableFor(st.tables, product.config?.material?.id ?? "")?.id ?? null;
 }
 
-/** The mockups a deploy takes when none are named: the ones already on the Shopify product, else the scene mockups. */
+/**
+ * The mockups a deploy takes when none are named: the product's ticked ones in its order ("Ảnh sản phẩm", asked
+ * 2026-11-19 — all of them, no cap), else the ones already on Shopify, else every scene mockup.
+ */
 export function defaultMedia(st: DeployState, product: CtProduct): string[] {
-  const known = product.shopify ? Object.keys(product.shopify.media).filter((id) => st.mockups.some((a) => a.id === id)) : [];
-  return known.length ? known : defaultDeployMedia(st.mockups);
+  return defaultDeployMedia(st.mockups, effectivePicks(st.mockups, normalizeProductConfig(product.config), product.shopify?.media));
 }
 
 const strings = (v: unknown) => (Array.isArray(v) ? v.map(str).filter(Boolean) : []);
@@ -678,7 +680,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         tags: { type: "array", items: { type: "string" }, description: "Shopify tags." },
         product_type: { type: "string", description: "Shopify product type (e.g. Christmas Ornament)." },
         vendor: { type: "string", description: "Shopify vendor (empty = the shop's default)." },
-        media_asset_ids: { type: "array", items: { type: "string" }, description: "Mockup ids, in order (default: those already on Shopify, else the first 8)." },
+        media_asset_ids: { type: "array", items: { type: "string" }, description: "Mockup ids, in order (default: the product's ticked mockups in its order — set in the editor's Ảnh sản phẩm — else those on Shopify, else all scene mockups). Ids not in the list are taken off Shopify." },
         collection_ids: { type: "array", items: { type: "string" }, description: "gid://shopify/Collection/… from check_deploy, smart ones too (default: the ones that fit the title)." },
         primary_collection_id: { type: "string", description: "The breadcrumb collection (one of collection_ids)." },
       },

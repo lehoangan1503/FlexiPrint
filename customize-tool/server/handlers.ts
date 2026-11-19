@@ -28,12 +28,14 @@ import type {
   CtRegionItem,
   CtSaveDesignBody,
   CtShopifyInfo,
+  CtShopifyLink,
   CtShopifyStatus,
   CtTemplate,
   CtUpdateAssetBody,
   CtUpdateProductBody,
 } from "../types";
 import { normalizeProductConfig, normalizeRegion, normalizeSamples } from "../lib/design";
+import { CT_DEPLOY_MEDIA_MAX, defaultDeployMedia, effectivePicks, idList, picksAfterDeploy } from "../lib/deploy-media";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctLibraryPath, ctPublicUploadPath, ctRemove, ctStoragePath, ctUpload } from "./storage";
 import { buildTemplate } from "../lib/template";
@@ -100,10 +102,19 @@ export async function listProducts(s: CtSession, search: string, kind: CtProduct
   // The card shows the product as it is sold: its first mockup (oldest = the straight-on one).
   const ids = (data ?? []).map((p) => p.id);
   const { data: mockups } = ids.length
-    ? await s.supabase.from(CT_TABLES.assets).select("product_id, url").in("product_id", ids).eq("role", "mockup").order("created_at").returns<Array<{ product_id: string; url: string }>>()
+    ? await s.supabase.from(CT_TABLES.assets).select("id, name, product_id, url").in("product_id", ids).eq("role", "mockup").order("created_at").returns<Array<{ id: string; name: string; product_id: string; url: string }>>()
     : { data: [] };
+  // Picture 1 of the product's Shopify order ("Ảnh sản phẩm", asked 2026-11-19), else its oldest mockup.
   const first = new Map<string, string>();
-  for (const m of mockups ?? []) if (!first.has(m.product_id)) first.set(m.product_id, m.url);
+  const byProduct = new Map<string, Array<{ id: string; name: string; product_id: string; url: string }>>();
+  for (const m of mockups ?? []) byProduct.set(m.product_id, [...(byProduct.get(m.product_id) ?? []), m]);
+  for (const p of data ?? []) {
+    const mine = byProduct.get(p.id);
+    if (!mine?.length) continue;
+    const cfg = normalizeProductConfig(p.config);
+    const on = defaultDeployMedia(mine, effectivePicks(mine, cfg, p.shopify?.media));
+    first.set(p.id, mine.find((m) => m.id === on[0])?.url ?? mine[0].url);
+  }
   // An artwork's card (its main asset is often a transparent sheet): its saved print file ("Lưu artwork" —
   // server/artworks.ts), else a version's picture (meta.thumb), else a mockup of a product made from it.
   const art = new Map<string, string>();
@@ -212,6 +223,11 @@ export async function updateProduct(s: CtSession, productId: string, body: CtUpd
   const patch: Omit<CtUpdateProductBody, "samples"> & { config?: CtProductConfig } = {};
   // Design samples: only that part of the stored config changes.
   if (body.samples !== undefined) patch.config = { ...normalizeProductConfig(product.config), samples: normalizeSamples(body.samples) };
+  // Mockup order / unticked ones (asked 2026-11-19): only those two lists change.
+  if (body.mockupOrder !== undefined || body.mockupOff !== undefined) {
+    const cfg = patch.config ?? normalizeProductConfig(product.config);
+    patch.config = { ...cfg, ...(body.mockupOrder !== undefined ? { mockupOrder: idList(body.mockupOrder) } : {}), ...(body.mockupOff !== undefined ? { mockupOff: idList(body.mockupOff) } : {}) };
+  }
   if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
   if (body.status === "draft" || body.status === "ready" || body.status === "archived") patch.status = body.status;
   if (body.main_asset_id !== undefined) patch.main_asset_id = body.main_asset_id;
@@ -278,6 +294,9 @@ export async function saveDesign(s: CtSession, productId: string, body: CtSaveDe
             mockupScenes: normalizeProductConfig(owned.config).mockupScenes,
             mockupRefs: normalizeProductConfig(owned.config).mockupRefs,
             mockupVary: normalizeProductConfig(owned.config).mockupVary,
+            // Set by "Ảnh sản phẩm" / a deploy (PATCH products/:id mockupOrder / mockupOff).
+            mockupOrder: normalizeProductConfig(owned.config).mockupOrder,
+            mockupOff: normalizeProductConfig(owned.config).mockupOff,
             // Set on the deploy page only (POST products/:id/preview-box).
             previewBox: normalizeProductConfig(owned.config).previewBox,
           },
@@ -424,11 +443,12 @@ export function readDeployBody(raw: unknown): CtDeployBody | null {
     vendor: typeof b.vendor === "string" ? b.vendor.trim().slice(0, 255) : "",
     productType: typeof b.productType === "string" ? b.productType.trim().slice(0, 255) : "",
     tags: strings(b.tags, 60),
-    mediaAssetIds: strings(b.mediaAssetIds, 30),
+    mediaAssetIds: strings(b.mediaAssetIds, CT_DEPLOY_MEDIA_MAX),
     collectionIds: strings(b.collectionIds, 50).filter((id) => /^gid:\/\/shopify\/Collection\/\d+$/.test(id)),
     primaryCollectionId: typeof b.primaryCollectionId === "string" && /^gid:\/\/shopify\/Collection\/\d+$/.test(b.primaryCollectionId) ? b.primaryCollectionId : null,
     shopifyProductId: typeof b.shopifyProductId === "string" && /^gid:\/\/shopify\/Product\/\d+$/.test(b.shopifyProductId) ? b.shopifyProductId : null,
     ...(typeof b.customerPhoi === "boolean" ? { customerPhoi: b.customerPhoi } : {}),
+    ...(Array.isArray(b.removeShopifyMediaIds) ? { removeShopifyMediaIds: strings(b.removeShopifyMediaIds, 100).filter((id) => /^gid:\/\/shopify\/\w+\/\d+$/.test(id)) } : {}),
   };
 }
 
@@ -524,6 +544,7 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
       priceTableId: table.id,
       pricing: table.config,
       media,
+      dropMedia: body.removeShopifyMediaIds ?? [],
       templateVersion: pub.publish.version,
       templateUrl: pub.cdnUrl,
       staticPrintUrl,
@@ -533,7 +554,17 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
     return { error: `Đã publish template v${pub.publish.version}, nhưng Shopify lỗi: ${msg}`, status: SHOPIFY_FAILED };
   }
 
-  const { data: updated, error } = await s.supabase.from(CT_TABLES.products).update({ shopify: result.link }).eq("id", productId).select("*").single<CtProduct>();
+  // What went up is the product's order from now on, the mockups left out are unticked (asked 2026-11-19: the editor's
+  // "Ảnh sản phẩm" and the Deploy page show the same order + ticks). Nothing sent = Shopify's images were left alone.
+  const patch: { shopify: CtShopifyLink; config?: CtProductConfig } = { shopify: result.link };
+  if (body.mediaAssetIds.length) {
+    const { data: mocks } = await s.supabase.from(CT_TABLES.assets).select("id, name").eq("product_id", productId).eq("role", "mockup").order("created_at").returns<Array<Pick<CtAsset, "id" | "name">>>();
+    // The config as it is now (publishing may have written to it).
+    const { data: now } = await s.supabase.from(CT_TABLES.products).select("config").eq("id", productId).single<Pick<CtProduct, "config">>();
+    const cfg = normalizeProductConfig(now?.config ?? product.config);
+    patch.config = { ...cfg, ...picksAfterDeploy(mocks ?? [], cfg, media.filter((m) => !m.asset.id.startsWith("sizechart:")).map((m) => m.asset.id)) };
+  }
+  const { data: updated, error } = await s.supabase.from(CT_TABLES.products).update(patch).eq("id", productId).select("*").single<CtProduct>();
   if (error) return { error: missingShopifyColumn(error.message), status: 500 };
   return { product: updated, publish: pub.publish, shopify: result.link, previewUrl: result.previewUrl, warnings: [...(staticPrintUrl ? ["Sản phẩm không có gì cho khách chọn: trang bán là sản phẩm Shopify thường (không gọi flexi2), mỗi đơn kèm sẵn file in."] : []), ...result.warnings] };
 }

@@ -26,7 +26,9 @@ import { ctConfirm } from "../dialogs";
 import { splitScenes } from "../../lib/mockup-scenes";
 import { CT_MOCKUP_REFS_MAX } from "../../lib/mockup-prompt";
 import { MockupPics } from "../base/base-mockup-section";
-import { ZoomThumbs } from "../zoom-thumbs";
+import { SortableMockups } from "../sortable-mockups";
+import { effectivePicks, orderMockups, pickedMockups, type CtMockupPicks } from "../../lib/deploy-media";
+import { normalizeProductConfig } from "../../lib/design";
 import { customizable, customizableText, isCustomizable, mockupVariants } from "../../lib/mockup-variants";
 import { CHECKER_STYLE, CtButton, CtLightbox, CtTextarea, cx } from "../ui";
 import { useDoneAlert } from "../use-done-alert";
@@ -44,6 +46,8 @@ export interface AiMockupsPanelProps {
   onDelete: (asset: CtAsset) => Promise<void>;
   /** The product came back with a new phôi (config.scene). */
   onProduct: (p: CtProduct) => void;
+  /** The product row saved without a design change (mockup order / ticks). */
+  onProductRow?: (p: CtProduct) => void;
   onOpenScene: () => void;
   flash: (msg: string) => void;
   /** The product page's left column (2026-11-07): sections stacked, not side by side. */
@@ -114,7 +118,27 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
   const [picks, setPicks] = useState<Array<{ url: string; label: string; scene: string }>>([]);
   useEffect(() => () => picks.forEach((p) => URL.revokeObjectURL(p.url)), [picks]);
   const [blankBusy, setBlankBusy] = useState(false);
-  const mockups = useMemo(() => assets.filter((a) => a.role === "mockup" && a.product_id === product.id).sort((a, b) => b.created_at.localeCompare(a.created_at)), [assets, product.id]);
+  const allMockups = useMemo(() => assets.filter((a) => a.role === "mockup" && a.product_id === product.id).sort((a, b) => a.created_at.localeCompare(b.created_at)), [assets, product.id]);
+  // The order + ticks they go to Shopify with (asked 2026-11-19) — the Deploy page and every deploy read the same.
+  const [mockPicks, setMockPicks] = useState<CtMockupPicks | null>(null);
+  const shownPicks = useMemo(() => mockPicks ?? effectivePicks(allMockups, normalizeProductConfig(product.config), product.shopify?.media), [mockPicks, allMockups, product.config, product.shopify]);
+  const mockups = useMemo(() => orderMockups(allMockups, shownPicks.mockupOrder), [allMockups, shownPicks.mockupOrder]);
+  const mockOff = useMemo(() => {
+    const on = new Set(pickedMockups(mockups, shownPicks));
+    return mockups.filter((m) => !on.has(m.id)).map((m) => m.id);
+  }, [mockups, shownPicks]);
+  const savePicks = async (mockupOrder: string[], mockupOff: string[]) => {
+    const prev = shownPicks;
+    setMockPicks({ mockupOrder, mockupOff });
+    try {
+      const p = await ctApi.updateProduct(product.id, { mockupOrder, mockupOff });
+      // Only the product row: the design (and its unsaved changes) is not touched.
+      props.onProductRow?.(p);
+    } catch (e) {
+      setMockPicks(prev);
+      props.flash(e instanceof Error ? e.message : "Không lưu được thứ tự ảnh");
+    }
+  };
   const running = jobs.filter((j) => j.status === "running");
   const [art, setArt] = useState<string | null>(null);
 
@@ -542,7 +566,9 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
 
         <section>
           <div className="mb-2 flex items-center gap-2">
-            <span className="text-sm font-semibold">Ảnh sản phẩm ({mockups.length})</span>
+            <span className="text-sm font-semibold" title="Kéo ô tay cầm để đổi thứ tự, bấm số / ô vuông để chọn hoặc bỏ. Đây là thứ tự và các ảnh trang Deploy đưa lên Shopify — ảnh 1 là ảnh chính.">
+              Ảnh sản phẩm ({mockups.length - mockOff.length}/{mockups.length} đưa lên Shopify)
+            </span>
             <CtButton size="sm" variant="outline" className="ml-auto" disabled={uploading > 0} onClick={() => fileRef.current?.click()} title="Thêm mockup có sẵn (ảnh chụp, Photoshop…)">
               {uploading > 0 ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} {uploading > 0 ? `Đang upload ${uploading}…` : "Import mockup"}
             </CtButton>
@@ -562,13 +588,15 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
           {mockups.length === 0 ? (
             <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Chưa có — bấm “Tạo mockup” hoặc “Import mockup”.</p>
           ) : (
-            <ZoomThumbs
+            <SortableMockups
               fit="contain"
-              images={mockups.map((m) => ({ url: m.url, name: m.name }))}
+              images={mockups.map((m) => ({ id: m.id, url: m.url, name: m.name }))}
+              off={mockOff}
+              onChange={(order, off) => void savePicks(order, off)}
               className={cx("grid gap-3", props.compact ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5")}
               caption={(img) => img.name}
-              overlay={(_, i) => (
-                <button className="absolute right-1 top-1 rounded bg-black/60 p-1 text-white hover:bg-black" onClick={() => void remove(mockups[i])} aria-label="Xoá mockup" title="Xoá mockup">
+              overlay={(img) => (
+                <button className="absolute right-1 top-1 rounded bg-black/60 p-1 text-white hover:bg-black" onClick={() => void remove(mockups.find((m) => m.id === img.id)!)} aria-label="Xoá mockup" title="Xoá mockup">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               )}

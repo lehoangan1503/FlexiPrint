@@ -9,7 +9,8 @@
 import { CT_TABLES } from "../../config";
 import type { CtAsset, CtCharImportManifest, CtCharImportShopify, CtCharProject, CtProduct } from "../../types";
 import { suggestCollections } from "../../lib/collections";
-import { defaultDeployMedia } from "../../lib/deploy-media";
+import { defaultDeployMedia, effectivePicks } from "../../lib/deploy-media";
+import { normalizeProductConfig } from "../../lib/design";
 import { baseProductFor, materialWord } from "../../lib/pricing";
 import { listBaseRows } from "../base-products";
 import { ensureProductFor } from "../artwork-link";
@@ -151,7 +152,7 @@ export async function deployImported(s: CtSession, setId: string, artworkId: str
         vendor: "",
         productType: base.config.productType || productType,
         tags,
-        mediaAssetIds: defaultDeployMedia(mockups ?? []).slice(0, MAX_MEDIA),
+        mediaAssetIds: defaultDeployMedia(mockups ?? [], effectivePicks(mockups ?? [], normalizeProductConfig(product.config), product.shopify?.media)).slice(0, MAX_MEDIA),
         collectionIds: fit.map((c) => c.id),
         primaryCollectionId: fit[0]?.id ?? null,
         shopifyProductId: null,

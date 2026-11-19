@@ -34,7 +34,10 @@ import { buildTemplate } from "../../lib/template";
 import { normalizeRegion } from "../../lib/design";
 import { isAiStyleRef } from "../../lib/photo-styles";
 import { suggestCollections } from "../../lib/collections";
-import { defaultDeployMedia, productMockups } from "../../lib/deploy-media";
+import { effectivePicks, pickedMockups, productMockups, type CtMockupPicks } from "../../lib/deploy-media";
+import { normalizeProductConfig } from "../../lib/design";
+import { SortableMockups } from "../sortable-mockups";
+import { ZoomThumbs } from "../zoom-thumbs";
 import { auditOptions, type CtAuditLevel } from "../../lib/option-audit";
 import { formatUsd, priceCell, priceCells, priceTableFor, priceTableProblems, usesPacks, usesSizes } from "../../lib/pricing";
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtSelect, CtTextarea, cx } from "../ui";
@@ -70,7 +73,10 @@ export function DeployPage({ productId }: { productId: string }) {
   const [base, setBase] = useState<CtBaseProductRow | null>(null);
   const [editing, setEditing] = useState<CtPriceTable | "new" | null>(null);
   const [form, setForm] = useState<Form>({ title: "", descriptionHtml: "", status: "ACTIVE", vendor: "", productType: "", tags: "" });
-  const [media, setMedia] = useState<string[]>([]);
+  /** The product's mockup order + unticked ones (shared with the editor's "Ảnh sản phẩm", saved at once). */
+  const [picks, setPicks] = useState<CtMockupPicks>({ mockupOrder: [], mockupOff: [] });
+  /** Images added by hand on Shopify (not our mockups) the user unticked: taken off at deploy. */
+  const [dropForeign, setDropForeign] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CtDeployResponse | null>(null);
@@ -135,9 +141,9 @@ export function DeployPage({ productId }: { productId: string }) {
             setPrimary(fit[0].id);
           }
         }
-        const pictures = productMockups(b.assets, b.product.id);
-        const known = link ? Object.keys(link.media).filter((id) => pictures.some((a) => a.id === id)) : [];
-        setMedia(known.length ? known : defaultDeployMedia(pictures));
+        // What is on Shopify now is ticked, in its order; the rest unticked (asked 2026-11-19). Saved picks win.
+        const mine = productMockups(b.assets, b.product.id);
+        setPicks(effectivePicks(mine, normalizeProductConfig(b.product.config), link?.media));
       })
       .catch((e: Error) => !cancelled && setLoadError(e.message));
     return () => {
@@ -165,7 +171,25 @@ export function DeployPage({ productId }: { productId: string }) {
 
   const table = tables.find((t) => t.id === tableId) ?? null;
   const problems = table ? priceTableProblems(table.config) : [];
-  const pictures = useMemo(() => (bundle ? productMockups(bundle.assets, bundle.product.id) : []), [bundle]);
+  const pictures = useMemo(() => (bundle ? productMockups(bundle.assets, bundle.product.id, picks) : []), [bundle, picks]);
+  const media = useMemo(() => pickedMockups(pictures, picks), [pictures, picks]);
+  // Images on the Shopify product that no deploy put there (added by hand on Shopify).
+  const foreign = useMemo(() => {
+    const ours = new Set(Object.values(bundle?.product.shopify?.media ?? {}));
+    return (info?.product?.media ?? []).filter((m) => !ours.has(m.id) && m.url);
+  }, [bundle, info]);
+  const savePicks = (mockupOrder: string[], mockupOff: string[]) => {
+    if (!bundle) return;
+    const prev = picks;
+    setPicks({ mockupOrder, mockupOff });
+    ctApi
+      .updateProduct(bundle.product.id, { mockupOrder, mockupOff })
+      .then((p) => setBundle((b) => (b ? { ...b, product: p } : b)))
+      .catch((e: Error) => {
+        setPicks(prev);
+        setError(`Không lưu được thứ tự ảnh: ${e.message}`);
+      });
+  };
 
   if (loadError) {
     return (
@@ -205,6 +229,7 @@ export function DeployPage({ productId }: { productId: string }) {
         productType: form.productType,
         tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
         mediaAssetIds: media,
+        removeShopifyMediaIds: dropForeign,
         // Always the linked product, or a new one: deploying onto another existing product was dropped (2026-11-03).
         shopifyProductId: null,
         collectionIds: picked,
@@ -213,6 +238,7 @@ export function DeployPage({ productId }: { productId: string }) {
       });
       setResult(r);
       setBundle({ ...bundle, product: r.product });
+      setDropForeign([]);
       setInfo(await ctApi.shopifyInfo(product.id).catch(() => info));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Deploy thất bại");
@@ -341,14 +367,40 @@ export function DeployPage({ productId }: { productId: string }) {
           {/* Images */}
           {template.tpl && <PreviewBoxCard product={product} tpl={template.tpl} onSaved={(p) => setBundle({ ...bundle, product: p })} />}
 
-          <Card title={`Ảnh sản phẩm (${media.length})`} hint={`Mockup đã lưu của sản phẩm (tab Mockups), theo thứ tự chọn — ảnh 1 là ảnh chính. Bỏ chọn hết = giữ nguyên ảnh đang có trên Shopify.${base?.config.mockup.sizeCharts.length ? ` Sau các ảnh này: ${base.config.mockup.sizeCharts.length} ảnh size chart của product base.` : ""}`}>
+          <Card
+            title={`Ảnh sản phẩm (${media.length}/${pictures.length} đưa lên)`}
+            hint={`Số trên ảnh = vị trí trên Shopify (1 là ảnh chính). Kéo ô tay cầm để đổi thứ tự, bấm số / ô vuông để chọn hoặc bỏ — lưu ngay vào sản phẩm, editor (Ảnh sản phẩm) và deploy hàng loạt dùng đúng thứ tự này. ${link ? "Ảnh đang có trên Shopify được tick sẵn; bỏ tick = deploy sẽ gỡ ảnh đó khỏi Shopify." : ""}${base?.config.mockup.sizeCharts.length ? ` Sau các ảnh này: ${base.config.mockup.sizeCharts.length} ảnh size chart của product base.` : ""}`}
+          >
             {pictures.length === 0 ? (
               <p className="text-xs text-muted-foreground">Chưa có mockup — tạo ở tab Mockups trong editor. Không có ảnh, trang sản phẩm mở thẳng thiết kế live.</p>
             ) : (
-              <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
-                {pictures.map((a) => (
-                  <MediaTile key={a.id} asset={a} index={media.indexOf(a.id)} onToggle={() => setMedia((m) => (m.includes(a.id) ? m.filter((x) => x !== a.id) : [...m, a.id]))} />
-                ))}
+              <>
+              {media.length === 0 && link && <p className="mb-2 text-xs text-amber-600">Không chọn ảnh nào: deploy giữ nguyên ảnh đang có trên Shopify.</p>}
+              <SortableMockups images={pictures.map((a) => ({ id: a.id, url: a.url, name: a.name }))} off={pictures.filter((a) => !media.includes(a.id)).map((a) => a.id)} onChange={savePicks} disabled={running} />
+              </>
+            )}
+            {foreign.length > 0 && (
+              <div className="mt-3 border-t pt-3">
+                <div className="mb-1.5 text-xs font-medium">Ảnh thêm tay trên Shopify ({foreign.length - dropForeign.filter((id) => foreign.some((f) => f.id === id)).length} giữ lại)</div>
+                <p className="mb-2 text-[11px] text-muted-foreground">Không phải mockup của FlexiPrint — giữ thì nằm sau các ảnh trên. Bấm ô góc trái để bỏ (gỡ khỏi Shopify khi deploy).</p>
+                <ZoomThumbs
+                  images={foreign.map((f) => ({ url: f.url ?? "", name: f.id }))}
+                  className="grid grid-cols-4 gap-2 sm:grid-cols-6"
+                  overlay={(_, i) => {
+                    const id = foreign[i].id;
+                    const keep = !dropForeign.includes(id);
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => setDropForeign((d) => (keep ? [...d, id] : d.filter((x) => x !== id)))}
+                        className={cx("absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded shadow ring-1", keep ? "bg-sky-600 text-white ring-sky-700" : "bg-white text-slate-700 ring-black/30")}
+                        title={keep ? "Đang giữ — bấm để gỡ khỏi Shopify" : "Sẽ gỡ khi deploy — bấm để giữ"}
+                      >
+                        {keep ? <Check className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
+                      </button>
+                    );
+                  }}
+                />
               </div>
             )}
           </Card>
@@ -722,15 +774,4 @@ function PriceSummary({ table }: { table: CtPriceTable }) {
     </div>
   );
 }
-
-function MediaTile({ asset, index, onToggle }: { asset: CtAsset; index: number; onToggle: () => void }) {
-  const on = index >= 0;
-  return (
-    <button className={cx("relative aspect-square overflow-hidden rounded-md border", on ? "ring-2 ring-sky-500" : "opacity-60 hover:opacity-100")} style={CHECKER_STYLE} onClick={onToggle} title={asset.name}>
-      <img src={asset.url} alt="" className="h-full w-full object-cover" loading="lazy" />
-      {on && <span className="absolute left-1 top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-sky-500 px-1 text-[11px] font-bold text-white">{index + 1}</span>}
-    </button>
-  );
-}
-
 

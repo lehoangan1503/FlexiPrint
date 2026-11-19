@@ -1273,6 +1273,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                     const scene = normalizeProductConfig(p.config).scene;
                     design.commit((st) => ({ ...st, config: { ...st.config, scene } }));
                   }}
+                  onProductRow={setProduct}
                   onOpenScene={() => setSceneOpen(true)}
                   flash={flash}
                 />

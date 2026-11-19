@@ -902,6 +902,13 @@ export interface CtProductConfig {
    * default. Written by the server when mockups are made, never by a design save.
    */
   mockupVary: boolean;
+  /**
+   * The product's mockups in the order they go to Shopify (asked 2026-11-19: drag to sort in "Ảnh sản phẩm", the
+   * Deploy page shows and keeps the same order). Ids not here (new mockups) come after (lib/deploy-media.ts).
+   */
+  mockupOrder: string[];
+  /** Mockups NOT sent to Shopify (unticked in "Ảnh sản phẩm" / the Deploy page); a deploy writes what it left out. */
+  mockupOff: string[];
 }
 
 /** CtProductConfig.previewBox — the sheet's box (photo px, like CtBaseProductConfig.preview.box) on the photo `url`. */
@@ -1123,7 +1130,7 @@ export interface CtMockupEdit {
 }
 
 /** What a published template carries (no design samples). */
-export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupScenes" | "mockupRefs" | "mockupVary">;
+export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupScenes" | "mockupRefs" | "mockupVary" | "mockupOrder" | "mockupOff">;
 
 /**
  * What a ct_products row is (migration 031, asked 2026-11-07 — Teeinblue's Artwork / Campaign):
@@ -2158,6 +2165,9 @@ export interface CtUpdateProductBody {
   samples?: CtSelection;
   /** A "product" row: move it to another base product. */
   base_product_id?: string;
+  /** Mockup order + the unticked ones (CtProductConfig.mockupOrder / mockupOff) — merged into the stored config. */
+  mockupOrder?: string[];
+  mockupOff?: string[];
 }
 
 export interface CtSaveDesignBody {
@@ -2600,6 +2610,8 @@ export interface CtDeployBody {
   primaryCollectionId: string | null;
   /** CtProductConfig.customerPhoi to store before publishing; absent = keep the product's. */
   customerPhoi?: boolean;
+  /** Images added by hand on Shopify (not FlexiPrint mockups) to take off; the rest of those stay after the mockups. */
+  removeShopifyMediaIds?: string[];
 }
 
 export interface CtShopifyCollection {
@@ -2658,6 +2670,8 @@ export interface CtShopifyProductSummary {
   options: Array<{ name: string; values: string[] }>;
   variantsCount: number;
   imageUrl: string | null;
+  /** Every image on the Shopify product, in its order (id = gid://shopify/MediaImage/…). */
+  media: Array<{ id: string; url: string | null }>;
   /** customize_tool.product_id on it (another FlexiPrint product may own it). */
   ctProductId: string | null;
   collectionIds: string[];

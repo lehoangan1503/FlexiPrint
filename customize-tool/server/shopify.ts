@@ -157,6 +157,7 @@ interface ProductNode {
   options: Array<{ name: string; values: string[] }>;
   variantsCount: { count: number } | null;
   featuredMedia: { preview: { image: { url: string } | null } | null } | null;
+  media: { nodes: Array<{ id: string; preview: { image: { url: string } | null } | null }> } | null;
   ctId: { value: string } | null;
   crumb: { value: string } | null;
   collections: { nodes: CtShopifyCollection[] };
@@ -176,6 +177,7 @@ function summary(p: ProductNode): CtShopifyProductSummary {
     options: p.options,
     variantsCount: p.variantsCount?.count ?? 0,
     imageUrl: p.featuredMedia?.preview?.image?.url ?? null,
+    media: (p.media?.nodes ?? []).map((m) => ({ id: m.id, url: m.preview?.image?.url ?? null })),
     ctProductId: p.ctId?.value ?? null,
     collectionIds: p.collections.nodes.map((c) => c.id),
     primaryCollectionId: p.crumb?.value ?? null,
@@ -191,7 +193,7 @@ export async function shopifyInfo(st: ShopifyStore, productGid: string | null): 
     st,
     `query($id: ID!, $has: Boolean!) {
       shop { name myshopifyDomain currencyCode currencyFormats { moneyFormat } }
-      product(id: $id) @include(if: $has) { ${PRODUCT_FIELDS} }
+      product(id: $id) @include(if: $has) { ${PRODUCT_FIELDS} media(first: 100) { nodes { id preview { image { url } } } } }
     }`,
     { id: productGid ?? "gid://shopify/Product/0", has: Boolean(productGid) },
   );
@@ -234,6 +236,8 @@ export interface ShopifyDeployInput {
   primaryCollectionId: string | null;
   /** Product images, in order (absolute URLs Shopify can fetch). */
   media: Array<{ asset: CtAsset; url: string }>;
+  /** Shopify media ids not made by FlexiPrint (added by hand on Shopify) to take off; the others stay after ours. */
+  dropMedia?: string[];
   templateVersion: number;
   /** The template's CDN copy (server/template-cdn.ts) → metafield customize_tool.template_url; null = removed. */
   templateUrl: string | null;
@@ -315,8 +319,9 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
     const id = known[asset.id];
     return id && liveMedia.has(id) ? { id } : { originalSource: url, alt: asset.name || input.title, contentType: "IMAGE" };
   });
-  const foreign = (existing?.media.nodes ?? []).filter((m) => !ours.has(m.id)).map((m) => ({ id: m.id }));
-  const manageMedia = input.media.length > 0 || Object.keys(known).length > 0;
+  const drop = new Set(input.dropMedia ?? []);
+  const foreign = (existing?.media.nodes ?? []).filter((m) => !ours.has(m.id) && !drop.has(m.id)).map((m) => ({ id: m.id }));
+  const manageMedia = input.media.length > 0 || Object.keys(known).length > 0 || drop.size > 0;
 
   // Collections: a manual one takes the product; a smart one gets it through the tags / type its rules ask.
   const all = input.collectionIds.length ? await listCollections(st) : [];

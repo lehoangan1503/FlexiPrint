@@ -711,6 +711,11 @@ export async function autoProductMockups(s: CtSession, productId: string): Promi
   if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
   if ((product.kind ?? "artwork") !== "product") return jsonError("Đây là artwork — mockup làm trên sản phẩm", 400);
   const config = normalizeProductConfig(product.config);
+  // Still drawing from an earlier click (2026-11-19: a product clicked 4 times queued 40 photos ahead of the others,
+  // the bulk report said "Xong" each time): refused with how many are left.
+  const { data: open } = await (ctServiceClient() ?? s.supabase).from(CT_TABLES.packImages).select("*").eq("name", jobName(productId)).eq("status", "running").returns<CtPackImage[]>();
+  const running = (await failOrphans(ctServiceClient() ?? s.supabase, open ?? [])).filter((j) => j.status === "running");
+  if (running.length) return jsonError(`Sản phẩm còn ${running.length} ảnh mockup đang vẽ/chờ từ lần bấm trước — chờ xong rồi tạo tiếp`, 409);
   const { scenes } = await productScenes(ctServiceClient() ?? s.supabase, product);
   if (!scenes.length) return jsonError(NO_SCENES, 400);
   const { loadArtwork, renderArtwork } = await import("./print-render");

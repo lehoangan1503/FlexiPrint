@@ -109,12 +109,16 @@ export function CustomizeProductList({
       setBulk({ title, lines: [...lines], running: true });
     };
     setBulk({ title, lines: [...lines], running: true });
+    /** Mockup: the jobs each product started — the line says "Xong" only once they are drawn (2026-11-19: it said
+     * "Xong" at the start, and photos that failed or were still queued never showed). */
+    const started = new Map<number, string[]>();
     for (let i = 0; i < rows.length; i++) {
       set(i, { state: "run", text: kind === "mockup" ? "Đang đặt thiết kế lên phôi…" : "Đang deploy…" });
       try {
         if (kind === "mockup") {
           const r = await ctApi.autoMockups(rows[i].id);
-          set(i, { state: "ok", text: `AI đang tạo ${r.jobs.length} ảnh (mở sản phẩm → Mockups để xem)` });
+          started.set(i, r.jobs.map((j) => j.id));
+          set(i, { state: "run", text: `AI đang vẽ 0/${r.jobs.length} ảnh…` });
         } else {
           const r = await ctApi.autoDeploy(rows[i].id);
           if (r.ok) {
@@ -126,6 +130,28 @@ export function CustomizeProductList({
         }
       } catch (e) {
         set(i, { state: "fail", text: e instanceof Error ? e.message : "Lỗi" });
+      }
+    }
+    // Wait for the photos themselves (the server draws 4 at a time for everyone; a photo takes 1–2 min).
+    while (started.size) {
+      await new Promise((r) => setTimeout(r, 15000));
+      for (const [i, ids] of [...started]) {
+        try {
+          const jobs = (await ctApi.mockupJobs(rows[i].id)).filter((j) => ids.includes(j.id));
+          const done = jobs.filter((j) => j.status === "done").length;
+          const failed = jobs.filter((j) => j.status === "failed");
+          const lost = ids.length - jobs.length;
+          if (jobs.some((j) => j.status === "running")) {
+            set(i, { state: "run", text: `AI đang vẽ ${done}/${ids.length} ảnh${failed.length ? ` · ${failed.length} hỏng` : ""}…` });
+            continue;
+          }
+          started.delete(i);
+          const bad = failed.length + lost;
+          if (!bad) set(i, { state: "ok", text: `Đủ ${done}/${ids.length} ảnh` });
+          else set(i, { state: "fail", text: `Được ${done}/${ids.length} ảnh — ${bad} hỏng: ${[...new Set(failed.map((j) => j.error || "lỗi không rõ"))].join(" · ").slice(0, 300) || "job bị xoá"} (mở sản phẩm → Mockups để vẽ lại)` });
+        } catch {
+          // a network blip: ask again next round
+        }
       }
     }
     setBulk({ title, lines: [...lines], running: false });

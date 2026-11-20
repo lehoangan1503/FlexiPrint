@@ -356,18 +356,40 @@ async function remote(method, params) {
 }
 
 let serverTools = null;
+let serverAt = 0;
 let serverInstructions = "";
-async function loadServer() {
-  if (serverTools) return serverTools;
-  const init = await remote("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "flexiprint-local", version: VERSION } });
-  serverInstructions = init?.instructions ?? "";
+/** The server's tool list is asked again after this long (2026-11-20: a client that keeps this process for a whole
+ * session never saw tools added on flexi2 since it started). */
+const TOOLS_TTL_MS = 60 * 1000;
+async function loadServer(force = false) {
+  if (serverTools && !force && Date.now() - serverAt < TOOLS_TTL_MS) return serverTools;
+  if (!serverInstructions) {
+    const init = await remote("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "flexiprint-local", version: VERSION } });
+    serverInstructions = init?.instructions ?? "";
+  }
   const list = await remote("tools/list", {});
   serverTools = list?.tools ?? [];
+  serverAt = Date.now();
   return serverTools;
 }
 
+/** Tell the client when flexi2's tools change (it then asks tools/list again — no new chat needed). */
+let toolNames = "";
+function watchTools() {
+  const t = setInterval(async () => {
+    try {
+      const names = (await loadServer(true)).map((x) => x.name).sort().join(",");
+      if (toolNames && names !== toolNames) send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+      toolNames = names;
+    } catch {
+      // flexi2 unreachable for a moment: ask again next round
+    }
+  }, 2 * TOOLS_TTL_MS);
+  t.unref?.();
+}
+
 // ---------------------------------------------------------------- MCP (stdio, newline-delimited JSON-RPC)
-const VERSION = "2.0.0";
+const VERSION = "2.1.0";
 const INSTRUCTIONS =
   "FlexiPrint (flexi2) từ máy này: import folder bộ, ảnh từ máy lên, lưu file về máy (flexiprint_*), cùng mọi tool của server flexi2 (thư viện, artwork, sản phẩm, mockup, deploy Shopify, bộ nhân vật) với quyền tài khoản của bạn. Đọc read_guide trước. Làm sản phẩm: list_base_products → create_artwork_product / set_artwork_layers → make_product_from_artwork → make_product_mockups → wait_product_mockups → check_deploy → deploy_product (bỏ task_id).";
 
@@ -404,14 +426,18 @@ async function handle(msg) {
         id,
         result: {
           protocolVersion: params?.protocolVersion ?? "2025-06-18",
-          capabilities: { tools: {}, resources: {} },
+          capabilities: { tools: { listChanged: true }, resources: {} },
           serverInfo: { name: "flexiprint", version: VERSION },
           instructions: [INSTRUCTIONS, serverInstructions].filter(Boolean).join("\n\n"),
         },
       });
     }
     if (method === "ping") return send({ jsonrpc: "2.0", id, result: {} });
-    if (method === "tools/list") return send({ jsonrpc: "2.0", id, result: { tools: await listTools() } });
+    if (method === "tools/list") {
+      const tools = await listTools();
+      toolNames = (serverTools ?? []).map((x) => x.name).sort().join(",");
+      return send({ jsonrpc: "2.0", id, result: { tools } });
+    }
     if (method === "tools/call") {
       try {
         return send({ jsonrpc: "2.0", id, result: await callTool(params?.name, params?.arguments) });
@@ -438,6 +464,7 @@ if (cmd === "import" || cmd === "status") {
   const out = await callTool(a1, a2 ? JSON.parse(a2) : {});
   console.log(out.content?.map((c) => c.text ?? `[${c.type}]`).join("\n"), out.isError ? "\n(isError)" : "");
 } else {
+  watchTools();
   let buf = "";
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk) => {

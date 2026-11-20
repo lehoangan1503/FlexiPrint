@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Layers, Loader2, Plus, Rocket, Search, ShoppingBag, Sparkles, Trash2, X } from "lucide-react";
+import { Check, Layers, Loader2, Plus, Rocket, Search, ShoppingBag, Sparkles, Trash2, X } from "lucide-react";
 import { CT_CONFIG } from "../config";
 import type { CtProductKind, CtProductListRow, CtProductStatus } from "../types";
 import { ctApi } from "../lib/api-client";
@@ -35,6 +35,9 @@ const FILTER_TEST: Record<ProductFilter, (p: CtProductListRow) => boolean> = {
   "no-mockup": (p) => !p.mockup_url,
 };
 
+/** The people ticked in the "Người đăng" filter (localStorage, user ids). */
+const OWNER_KEY = "ct-list-owners";
+
 /** Most products one bulk "Tạo mockup" takes (each makes 2–3 AI photos). */
 const BULK_MOCKUP_MAX = 20;
 
@@ -45,6 +48,13 @@ interface BulkLine {
   state: "wait" | "run" | "ok" | "skip" | "fail";
   text: string;
 }
+
+/**
+ * The poster's badge and a ticked person in the filter: one solid colour, white text (6.3:1) — reads the same on the
+ * light and the dark theme (the app's dark theme is a class, Tailwind's dark: here follows the OS, not it).
+ */
+const OWNER_BADGE = "bg-indigo-600 text-white";
+const OWNER_ON = "border-indigo-600 bg-indigo-600 text-white";
 
 const STATUS_LABEL: Record<CtProductStatus, string> = { draft: "Nháp", ready: "Sẵn sàng", archived: "Lưu trữ" };
 const STATUS_CLASS: Record<CtProductStatus, string> = {
@@ -76,7 +86,33 @@ export function CustomizeProductList({
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ProductFilter>("all");
-  const shown = products.filter(FILTER_TEST[filter]);
+  // Only the products of the ticked people (asked 2026-11-20); none ticked = everyone. Kept per browser.
+  const [owners, setOwners] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(OWNER_KEY) ?? "[]") as unknown;
+      if (Array.isArray(saved)) setOwners(new Set(saved.filter((x): x is string => typeof x === "string")));
+    } catch {
+      // a broken saved value: start with everyone
+    }
+  }, []);
+  const toggleOwner = (id: string) =>
+    setOwners((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      localStorage.setItem(OWNER_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  const clearOwners = () => {
+    setOwners(new Set());
+    localStorage.removeItem(OWNER_KEY);
+  };
+  // The people in this list, most products first.
+  const people = [...products.reduce((m, p) => m.set(p.user_id, { id: p.user_id, name: p.owner_name || "(không tên)", n: (m.get(p.user_id)?.n ?? 0) + 1 }), new Map<string, { id: string; name: string; n: number }>()).values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+  // A ticked person with nothing in this list (other store / tab) does not hide everything.
+  const activeOwners = [...owners].filter((id) => people.some((x) => x.id === id));
+  const shown = products.filter((p) => FILTER_TEST[filter](p) && (!activeOwners.length || activeOwners.includes(p.user_id)));
   // Bulk (asked 2026-11-17): tick products, then "Tạo mockup" (each with its own prompts) or "Deploy".
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [bulk, setBulk] = useState<{ title: string; lines: BulkLine[]; running: boolean } | null>(null);
@@ -209,6 +245,38 @@ export function CustomizeProductList({
           )}
         </div>
       </div>
+      {people.length > 1 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Lọc theo người đăng">
+          <span className="text-xs font-medium text-muted-foreground">Người đăng:</span>
+          {people.map((x) => {
+            const on = activeOwners.includes(x.id);
+            return (
+              <button
+                key={x.id}
+                type="button"
+                aria-pressed={on}
+                onClick={() => toggleOwner(x.id)}
+                className={cx(
+                  "inline-flex min-h-8 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors pointer-coarse:min-h-10",
+                  on ? OWNER_ON : "border-border bg-card text-foreground hover:bg-accent",
+                )}
+              >
+                <span className={cx("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", on ? "border-white bg-white" : "border-muted-foreground")}>
+                  {on && <Check className="h-3 w-3 text-indigo-600" strokeWidth={3} />}
+                </span>
+                {x.name}
+                <span className="opacity-70">{x.n}</span>
+              </button>
+            );
+          })}
+          {activeOwners.length > 0 && (
+            <button type="button" onClick={clearOwners} className="min-h-8 rounded px-2 text-xs text-muted-foreground underline hover:text-foreground pointer-coarse:min-h-10">
+              Bỏ lọc
+            </button>
+          )}
+        </div>
+      )}
+
       {kind === "artwork" ? <CreateArtworkDialog open={creating} onOpenChange={setCreating} /> : <CreateProductDialog open={creating} onOpenChange={setCreating} />}
       {fromArtwork && (
         <CreateProductDialog
@@ -313,7 +381,13 @@ export function CustomizeProductList({
                     <div className="truncate text-sm font-medium">{p.name}</div>
                     {p.base_product && <div className="truncate text-[10px] text-muted-foreground">{p.base_product.name}</div>}
                     {p.artwork_from && <div className="truncate text-[10px] text-muted-foreground">artwork “{p.artwork_from.name}”</div>}
-                    {p.owner_name && <div className="truncate text-[10px] text-muted-foreground" title={`Người đăng: ${p.owner_name}`}>đăng bởi {p.owner_name}</div>}
+                    {p.owner_name && (
+                      <div className="mt-0.5">
+                        <span className={cx("inline-block max-w-full truncate rounded px-1.5 py-0.5 align-top text-[11px] font-semibold", OWNER_BADGE)} title={`Người đăng: ${p.owner_name}`}>
+                          {p.owner_name}
+                        </span>
+                      </div>
+                    )}
                     <div className="mt-0.5 flex flex-wrap items-center gap-1.5 whitespace-nowrap">
                       <span className={cx("rounded px-1.5 py-0.5 text-[10px] font-medium", STATUS_CLASS[p.status])}>{STATUS_LABEL[p.status]}</span>
                       {kind !== "artwork" && p.shopify && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-600">Đã deploy</span>}

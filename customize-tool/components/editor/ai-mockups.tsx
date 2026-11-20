@@ -353,6 +353,22 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
     if (!(await ctConfirm({ title: `Xoá mockup “${a.name}”?`, tone: "danger", confirmLabel: "Xoá" }))) return;
     await props.onDelete(a);
   };
+  // Delete every unticked mockup at once (asked 2026-11-20): the pictures not going to Shopify are the unused ones.
+  const [bulkDeleting, setBulkDeleting] = useState(0);
+  const removeUnticked = async () => {
+    const gone = mockups.filter((m) => mockOff.includes(m.id));
+    if (!gone.length) return;
+    if (!(await ctConfirm({ title: `Xoá ${gone.length} mockup không đưa lên Shopify?`, message: "Các ảnh đang bỏ chọn (không có số) bị xoá hẳn, không lấy lại được. Ảnh đang có số giữ nguyên.", tone: "danger", confirmLabel: `Xoá ${gone.length} ảnh` }))) return;
+    setBulkDeleting(gone.length);
+    try {
+      for (const m of gone) {
+        await props.onDelete(m);
+        setBulkDeleting((n) => n - 1);
+      }
+    } finally {
+      setBulkDeleting(0);
+    }
+  };
 
   return (
     <div className="h-full overflow-y-auto">
@@ -569,7 +585,12 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
             <span className="text-sm font-semibold" title="Kéo ô tay cầm để đổi thứ tự, bấm số / ô vuông để chọn hoặc bỏ. Đây là thứ tự và các ảnh trang Deploy đưa lên Shopify — ảnh 1 là ảnh chính.">
               Ảnh sản phẩm ({mockups.length - mockOff.length}/{mockups.length} đưa lên Shopify)
             </span>
-            <CtButton size="sm" variant="outline" className="ml-auto" disabled={uploading > 0} onClick={() => fileRef.current?.click()} title="Thêm mockup có sẵn (ảnh chụp, Photoshop…)">
+            {mockOff.length > 0 && (
+              <CtButton size="sm" variant="outline" className="ml-auto text-red-600 hover:text-red-700" disabled={bulkDeleting > 0} onClick={() => void removeUnticked()} title="Xoá hẳn các mockup đang bỏ chọn (không đưa lên Shopify)">
+                {bulkDeleting > 0 ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} {bulkDeleting > 0 ? `Đang xoá ${bulkDeleting}…` : `Xoá ${mockOff.length} ảnh bỏ chọn`}
+              </CtButton>
+            )}
+            <CtButton size="sm" variant="outline" className={mockOff.length > 0 ? "" : "ml-auto"} disabled={uploading > 0} onClick={() => fileRef.current?.click()} title="Thêm mockup có sẵn (ảnh chụp, Photoshop…)">
               {uploading > 0 ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} {uploading > 0 ? `Đang upload ${uploading}…` : "Import mockup"}
             </CtButton>
             <input

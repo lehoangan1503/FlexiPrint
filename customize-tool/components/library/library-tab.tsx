@@ -29,6 +29,7 @@ import { KindHelpButton } from "../char/kind-help";
 import { ImportButton } from "../char/import-button";
 import { FilterChips } from "../filter-chips";
 import { FontsTab } from "./fonts-tab";
+import { thumbUrl } from "../../lib/thumb-url";
 
 export type CtLibraryTab = "clipart" | "fonts";
 
@@ -239,7 +240,7 @@ function SetCard({ project: p, thumb, options, mine, onOpen, onRemove }: { proje
       <div className="relative aspect-square" style={CHECKER_STYLE}>
         {thumb ? (
           // eslint-disable-next-line @next/next/no-img-element -- our R2 WebP preview
-          <img src={thumb} alt={p.name} className="h-full w-full object-contain p-2" loading="lazy" />
+          <img src={thumbUrl(thumb) ?? thumb} alt={p.name} className="h-full w-full object-contain p-2" loading="lazy" />
         ) : (
           <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Chưa có ảnh</div>
         )}
@@ -249,7 +250,7 @@ function SetCard({ project: p, thumb, options, mine, onOpen, onRemove }: { proje
             {options.map((src) => (
               <span key={src} className="h-11 w-11 overflow-hidden rounded-md border-2 border-background bg-white shadow">
                 {/* eslint-disable-next-line @next/next/no-img-element -- option thumbnail */}
-                <img src={src} alt="" className="h-full w-full object-contain" loading="lazy" />
+                <img src={thumbUrl(src, 200) ?? src} alt="" className="h-full w-full object-contain" loading="lazy" />
               </span>
             ))}
             <span className="flex h-11 w-11 items-center justify-center rounded-md border-2 border-background bg-muted text-muted-foreground shadow">

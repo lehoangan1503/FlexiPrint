@@ -16,6 +16,7 @@ import { normalizeBaseConfig } from "../../lib/base-product";
 import { formatUsd } from "../../lib/pricing";
 import { priceSummary } from "../product-create";
 import { ctPrompt } from "../dialogs";
+import { thumbUrl } from "../../lib/thumb-url";
 import { CHECKER_STYLE, CtButton, CtInput } from "../ui";
 import { BaseImportDialog } from "./base-import-dialog";
 
@@ -98,7 +99,7 @@ export function BaseProductsTab({ admin }: { admin: boolean }) {
                 <div className="aspect-square" style={CHECKER_STYLE}>
                   {pic ? (
                     // eslint-disable-next-line @next/next/no-img-element -- our R2 picture
-                    <img src={pic} alt={b.name} className={b.mockup_url ? "h-full w-full object-cover" : "h-full w-full object-contain p-3"} loading="lazy" />
+                    <img src={thumbUrl(pic) ?? pic} alt={b.name} className={b.mockup_url ? "h-full w-full object-cover" : "h-full w-full object-contain p-3"} loading="lazy" />
                   ) : (
                     <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Chưa có phôi</div>
                   )}

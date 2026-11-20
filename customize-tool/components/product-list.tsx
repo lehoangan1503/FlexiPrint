@@ -19,6 +19,7 @@ import { CHECKER_STYLE, CtButton, CtInput, cx } from "./ui";
 import { CreateArtworkDialog, CreateProductDialog } from "./product-create";
 import { ctConfirm } from "./dialogs";
 import { FilterChips, type CtFilterOption } from "./filter-chips";
+import { thumbUrl } from "../lib/thumb-url";
 
 /** The list's filters (asked 2026-11-03); a new one = one more entry here + its test in FILTER_TEST. */
 type ProductFilter = "all" | "deployed" | "not-deployed" | "no-mockup";
@@ -371,7 +372,7 @@ export function CustomizeProductList({
                 )}
                 <Link href={`${CT_CONFIG.basePath}/${p.id}`} className="block aspect-square" style={CHECKER_STYLE}>
                   {thumb ? (
-                    <img src={thumb} alt={p.name} className={p.mockup_url ? "h-full w-full object-cover" : "h-full w-full object-contain p-2"} loading="lazy" />
+                    <img src={thumbUrl(thumb) ?? thumb} alt={p.name} className={p.mockup_url ? "h-full w-full object-cover" : "h-full w-full object-contain p-2"} loading="lazy" />
                   ) : (
                     <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Chưa có mockup</div>
                   )}

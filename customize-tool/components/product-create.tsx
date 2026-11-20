@@ -17,6 +17,7 @@ import { CT_CONFIG } from "../config";
 import type { CtBaseProductRow, CtProductListRow } from "../types";
 import { ctApi } from "../lib/api-client";
 import { formatUsd, priceCells } from "../lib/pricing";
+import { thumbUrl } from "../lib/thumb-url";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, cx } from "./ui";
 
 /** "$19.95 – $139.50 · 18 biến thể" */
@@ -53,7 +54,7 @@ function BaseCard({ b, on, onPick }: { b: CtBaseProductRow; on: boolean; onPick:
       className={cx("flex w-full items-center gap-3 rounded-lg border p-2 text-left hover:bg-accent", on && "border-sky-500 ring-2 ring-sky-500/40")}
     >
       <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md border" style={CHECKER_STYLE}>
-        {pic ? <img src={pic} alt="" className="h-full w-full object-contain" /> : null}
+        {pic ? <img src={thumbUrl(pic, 200) ?? pic} alt="" className="h-full w-full object-contain" /> : null}
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">{b.name}</div>
@@ -140,7 +141,7 @@ export function CreateProductDialog({
                       className={cx("overflow-hidden rounded-lg border text-left hover:bg-accent", artId === a.id && "border-sky-500 ring-2 ring-sky-500/40")}
                     >
                       <div className="aspect-square" style={CHECKER_STYLE}>
-                        {pic && <img src={pic} alt="" className="h-full w-full object-contain p-1" loading="lazy" />}
+                        {pic && <img src={thumbUrl(pic, 200) ?? pic} alt="" className="h-full w-full object-contain p-1" loading="lazy" />}
                       </div>
                       <div className="truncate px-1.5 py-1 text-[11px]">{a.name}</div>
                     </button>

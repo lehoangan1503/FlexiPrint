@@ -208,15 +208,20 @@ async function drawAssembled(ctx: CanvasRenderingContext2D, input: CompositeInpu
     ctx.drawImage(off, 0, 0);
     // Where its part of the photo reaches past its box (the blanket rising behind the hood's trim): the box's edge
     // mirrored, so it carries on with the piece's own content, never another piece's.
+    // In canvas px; the mirror's axis 2 px inside the box: the box's own edge row is half see-through (anti-aliased),
+    // mirrored it showed the phôi through as a light line (2026-11-20) — the band covers that row too.
     const b = shapeBounds(piece.clip);
+    const IN = 2;
+    const [bx0, by0, bx1, by1] = [b.x * scale, b.y * scale, (b.x + b.w) * scale, (b.y + b.h) * scale];
+    const [fx0, fy0, fx1, fy1] = [f.x * scale, f.y * scale, (f.x + f.w) * scale, (f.y + f.h) * scale];
     const sides: Array<{ band: CtBounds; m: [number, number, number, number, number, number] }> = [];
-    if (b.y < f.y) sides.push({ band: { x: b.x, y: b.y, w: b.w, h: f.y - b.y }, m: [1, 0, 0, -1, 0, 2 * f.y * scale] });
-    if (b.y + b.h > f.y + f.h) sides.push({ band: { x: b.x, y: f.y + f.h, w: b.w, h: b.y + b.h - f.y - f.h }, m: [1, 0, 0, -1, 0, 2 * (f.y + f.h) * scale] });
-    if (b.x < f.x) sides.push({ band: { x: b.x, y: f.y, w: f.x - b.x, h: f.h }, m: [-1, 0, 0, 1, 2 * f.x * scale, 0] });
-    if (b.x + b.w > f.x + f.w) sides.push({ band: { x: f.x + f.w, y: f.y, w: b.x + b.w - f.x - f.w, h: f.h }, m: [-1, 0, 0, 1, 2 * (f.x + f.w) * scale, 0] });
+    if (by0 < fy0) sides.push({ band: { x: bx0, y: by0, w: bx1 - bx0, h: fy0 + IN - by0 }, m: [1, 0, 0, -1, 0, 2 * (fy0 + IN)] });
+    if (by1 > fy1) sides.push({ band: { x: bx0, y: fy1 - IN, w: bx1 - bx0, h: by1 - fy1 + IN }, m: [1, 0, 0, -1, 0, 2 * (fy1 - IN)] });
+    if (bx0 < fx0) sides.push({ band: { x: bx0, y: fy0, w: fx0 + IN - bx0, h: fy1 - fy0 }, m: [-1, 0, 0, 1, 2 * (fx0 + IN), 0] });
+    if (bx1 > fx1) sides.push({ band: { x: fx1 - IN, y: fy0, w: bx1 - fx1 + IN, h: fy1 - fy0 }, m: [-1, 0, 0, 1, 2 * (fx1 - IN), 0] });
     for (const { band, m } of sides) {
       ctx.save();
-      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.beginPath();
       ctx.rect(band.x, band.y, band.w, band.h);
       ctx.clip();

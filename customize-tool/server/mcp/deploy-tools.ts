@@ -795,6 +795,22 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
           primary_collection_id: str(args.primary_collection_id) || draft.primaryCollectionId || "",
         };
       }
+      // Already on Shopify and no draft: what it has there now (as check_deploy shows) — a deploy again with only
+      // product_id (e.g. to turn the customer note off) keeps its text instead of being refused for a missing title.
+      const linked = st.info.product;
+      if (linked) {
+        args = {
+          ...args,
+          title: str(args.title) || linked.title,
+          description_html: str(args.description_html) || linked.descriptionHtml,
+          status: str(args.status) || linked.status,
+          tags: strings(args.tags).length ? args.tags : linked.tags,
+          product_type: str(args.product_type) || linked.productType,
+          vendor: str(args.vendor) || linked.vendor,
+          collection_ids: strings(args.collection_ids).length ? args.collection_ids : linked.collectionIds,
+          primary_collection_id: str(args.primary_collection_id) || linked.primaryCollectionId || "",
+        };
+      }
       const tableId = str(args.price_table_id) || defaultTable(st, product);
       const named = strings(args.media_asset_ids).filter((id) => st.mockups.some((a) => a.id === id));
       const mediaIds = named.length ? named : defaultMedia(st, product);

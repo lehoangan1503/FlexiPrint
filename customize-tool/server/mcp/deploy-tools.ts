@@ -188,7 +188,9 @@ async function saveDraft(db: CtServiceClient, product: CtProduct, args: Record<s
   const cfg = normalizeProductConfig(product.config);
   const old = cfg.deployDraft;
   const given = (k: string) => args[k] !== undefined;
-  const draft = normalizeDeployDraft({
+  // Only the customer note given: the draft (and its date — a deployed one must stay old) is left as it is.
+  const draftGiven = ["title", "description_html", "tags", "product_type", "vendor", "status", "collection_ids", "primary_collection_id"].some(given);
+  const draft = !draftGiven ? old : normalizeDeployDraft({
     title: given("title") ? str(args.title) : (old?.title ?? ""),
     descriptionHtml: given("description_html") ? str(args.description_html) : (old?.descriptionHtml ?? ""),
     tags: given("tags") ? strings(args.tags) : (old?.tags ?? []),
@@ -767,12 +769,16 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         media_asset_ids: { type: "array", items: { type: "string" }, description: "Mockup ids, in order (default: the product's ticked mockups in its order — set in the editor's Ảnh sản phẩm — else those on Shopify, else all scene mockups). Ids not in the list are taken off Shopify." },
         collection_ids: { type: "array", items: { type: "string" }, description: "gid://shopify/Collection/… from check_deploy, smart ones too (default: the ones that fit the title)." },
         primary_collection_id: { type: "string", description: "The breadcrumb collection (one of collection_ids)." },
+        customer_note: { ...DRAFT_PROPS.customer_note, description: `${DRAFT_PROPS.customer_note.description.replace(" Goes up on the next deploy.", "")} Default: the product's (check_deploy customerNote).` },
       },
       required: ["product_id"],
     },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
-      const { db, task, s, product } = await openProduct(ctx, args);
+      const opened = await openProduct(ctx, args);
+      const { db, task, s } = opened;
+      // A customer note box given here is kept on the product (like the Deploy page's tick), then deployed with it.
+      const product = args.customer_note && typeof args.customer_note === "object" ? await saveDraft(db, opened.product, { customer_note: args.customer_note }) : opened.product;
       const st = await deployState(db, s, product);
       // What the agent leaves out comes from the draft saved ahead (save_deploy_draft / Lưu nháp).
       const draft = liveDraft(product);

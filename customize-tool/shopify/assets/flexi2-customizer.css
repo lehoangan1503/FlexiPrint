@@ -199,6 +199,14 @@
 /* Form: options panel → Quantity row → Add to cart. */
 .ct-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin: 0; }
 .ct-form .ct-options:empty { display: none; }
+/* Customer note box (metafield customize_tool.customer_note): what the customer types goes in the order line. */
+.ct-note { display: grid; gap: 6px; }
+.ct-note__label { font-size: 14px; font-weight: 600; color: var(--ct-ink); }
+.ct-note__req { color: #b3261e; }
+.ct-note__input { width: 100%; box-sizing: border-box; min-height: 64px; padding: 10px 12px; border: 1.5px solid var(--ct-border-strong); border-radius: 10px;
+  background: #fff; color: var(--ct-ink); font: inherit; font-size: 15px; line-height: 1.4; resize: vertical; }
+.ct-note__input:focus { outline: none; border-color: var(--ct-accent, #f06724); }
+.ct-note__input.is-missing { border-color: #b3261e; background: #fff8f7; }
 .ct-qty { display: flex; align-items: center; gap: 14px; }
 .ct-qty__label { font-size: 14px; color: var(--ct-muted); }
 .ct-qty__box { display: inline-flex; align-items: center; height: 44px; border: 1.5px solid var(--ct-border-strong); border-radius: 999px; background: #fff; }

@@ -909,6 +909,39 @@ export interface CtProductConfig {
   mockupOrder: string[];
   /** Mockups NOT sent to Shopify (unticked in "Ảnh sản phẩm" / the Deploy page); a deploy writes what it left out. */
   mockupOff: string[];
+  /**
+   * The Deploy page's "Lưu nháp" (asked 2026-11-20: title + description written ahead, mockups later, then one click on
+   * Deploy). Used instead of the Shopify product's text while it is newer than the last deploy (lib/deploy-draft.ts).
+   * Written by the deploy page / MCP save_deploy_draft / make_product_from_artwork only, never by a design save.
+   */
+  deployDraft: CtDeployDraft | null;
+  /** A box on the Shopify product page for the customer to type a note (not printed) — set by Lưu nháp / deploy. */
+  customerNote: CtCustomerNote;
+}
+
+/** CtProductConfig.deployDraft */
+export interface CtDeployDraft {
+  title: string;
+  descriptionHtml: string;
+  tags: string[];
+  productType: string;
+  vendor: string;
+  status: CtShopifyStatus;
+  collectionIds: string[];
+  primaryCollectionId: string | null;
+  savedAt: string;
+}
+
+/**
+ * CtProductConfig.customerNote (asked 2026-11-20): a text box on the product page; what the customer types goes in the
+ * order line as the property named `label` (never printed). required = Add to cart refused while it is empty.
+ */
+export interface CtCustomerNote {
+  enabled: boolean;
+  label: string;
+  placeholder: string;
+  required: boolean;
+  maxChars: number;
 }
 
 /** CtProductConfig.previewBox — the sheet's box (photo px, like CtBaseProductConfig.preview.box) on the photo `url`. */
@@ -1130,7 +1163,7 @@ export interface CtMockupEdit {
 }
 
 /** What a published template carries (no design samples). */
-export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupScenes" | "mockupRefs" | "mockupVary" | "mockupOrder" | "mockupOff">;
+export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupScenes" | "mockupRefs" | "mockupVary" | "mockupOrder" | "mockupOff" | "deployDraft" | "customerNote">;
 
 /**
  * What a ct_products row is (migration 031, asked 2026-11-07 — Teeinblue's Artwork / Campaign):
@@ -1172,6 +1205,8 @@ export interface CtProductListRow extends CtProduct {
   main_asset: Pick<CtAsset, "url" | "width" | "height"> | null;
   /** The product's first mockup (the card shows it before the main object). */
   mockup_url: string | null;
+  /** Who made it (user_profiles nickname, else email; asked 2026-11-20 "hiển thị người đăng"). */
+  owner_name?: string | null;
   /** An artwork: its first saved print file (Lưu artwork) — the card's picture. */
   preview_url?: string | null;
   /** Made from an artwork (config.artworkLink): its name and whether the artwork has a newer revision. */
@@ -2168,6 +2203,10 @@ export interface CtUpdateProductBody {
   /** Mockup order + the unticked ones (CtProductConfig.mockupOrder / mockupOff) — merged into the stored config. */
   mockupOrder?: string[];
   mockupOff?: string[];
+  /** The Deploy page's Lưu nháp (CtProductConfig.deployDraft, savedAt set by the server); null = drop it. */
+  deployDraft?: Omit<CtDeployDraft, "savedAt"> | null;
+  /** CtProductConfig.customerNote */
+  customerNote?: CtCustomerNote;
 }
 
 export interface CtSaveDesignBody {
@@ -2610,6 +2649,8 @@ export interface CtDeployBody {
   primaryCollectionId: string | null;
   /** CtProductConfig.customerPhoi to store before publishing; absent = keep the product's. */
   customerPhoi?: boolean;
+  /** CtProductConfig.customerNote to store and put on the product page; absent = keep the product's. */
+  customerNote?: CtCustomerNote;
   /** Images added by hand on Shopify (not FlexiPrint mockups) to take off; the rest of those stay after the mockups. */
   removeShopifyMediaIds?: string[];
 }

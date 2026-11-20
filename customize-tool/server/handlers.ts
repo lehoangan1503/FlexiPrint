@@ -36,6 +36,7 @@ import type {
 } from "../types";
 import { normalizeProductConfig, normalizeRegion, normalizeSamples } from "../lib/design";
 import { CT_DEPLOY_MEDIA_MAX, defaultDeployMedia, effectivePicks, idList, picksAfterDeploy } from "../lib/deploy-media";
+import { normalizeCustomerNote, normalizeDeployDraft } from "../lib/deploy-draft";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctLibraryPath, ctPublicUploadPath, ctRemove, ctStoragePath, ctUpload } from "./storage";
 import { buildTemplate } from "../lib/template";
@@ -159,6 +160,13 @@ export async function listProducts(s: CtSession, search: string, kind: CtProduct
     users.clear();
     for (const m of made ?? []) if (m.artworkId) users.set(m.artworkId, (users.get(m.artworkId) ?? 0) + 1);
   }
+  // Who made each one (asked 2026-11-20 "hiển thị thêm người đăng"): nickname, else email.
+  const ownerIds = [...new Set((data ?? []).map((p) => p.user_id).filter(Boolean))];
+  const owners = new Map<string, string>();
+  if (ownerIds.length) {
+    const { data: profiles } = await s.supabase.from("user_profiles").select("user_id,nickname,email").in("user_id", ownerIds).returns<Array<{ user_id: string; nickname: string | null; email: string | null }>>();
+    for (const p of profiles ?? []) owners.set(p.user_id, p.nickname || p.email || "");
+  }
   const products: CtProductListRow[] = (data ?? [])
     .filter((p) => !hidden.has(p.id))
     .map((p) => {
@@ -170,6 +178,7 @@ export async function listProducts(s: CtSession, search: string, kind: CtProduct
         preview_url: art.get(p.id) ?? null,
         artwork_from: l ? { id: l.artworkId, name: src?.name ?? "(artwork đã xoá)", outdated: !!src && normalizeProductConfig(src.config).artworkRevision > l.revision } : null,
         artwork_users: users.get(p.id) ?? 0,
+        owner_name: owners.get(p.user_id) || null,
       };
     });
   return NextResponse.json({ products });
@@ -227,6 +236,15 @@ export async function updateProduct(s: CtSession, productId: string, body: CtUpd
   if (body.mockupOrder !== undefined || body.mockupOff !== undefined) {
     const cfg = patch.config ?? normalizeProductConfig(product.config);
     patch.config = { ...cfg, ...(body.mockupOrder !== undefined ? { mockupOrder: idList(body.mockupOrder) } : {}), ...(body.mockupOff !== undefined ? { mockupOff: idList(body.mockupOff) } : {}) };
+  }
+  // The Deploy page's Lưu nháp (asked 2026-11-20): the draft (null = drop it) and / or the customer note box.
+  if (body.deployDraft !== undefined || body.customerNote !== undefined) {
+    const cfg = patch.config ?? normalizeProductConfig(product.config);
+    patch.config = {
+      ...cfg,
+      ...(body.deployDraft !== undefined ? { deployDraft: body.deployDraft === null ? null : normalizeDeployDraft({ ...body.deployDraft, savedAt: new Date().toISOString() }) } : {}),
+      ...(body.customerNote !== undefined ? { customerNote: normalizeCustomerNote(body.customerNote) } : {}),
+    };
   }
   if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
   if (body.status === "draft" || body.status === "ready" || body.status === "archived") patch.status = body.status;
@@ -299,6 +317,9 @@ export async function saveDesign(s: CtSession, productId: string, body: CtSaveDe
             mockupOff: normalizeProductConfig(owned.config).mockupOff,
             // Set on the deploy page only (POST products/:id/preview-box).
             previewBox: normalizeProductConfig(owned.config).previewBox,
+            // Set by the deploy page's Lưu nháp / deploy (PATCH products/:id deployDraft / customerNote).
+            deployDraft: normalizeProductConfig(owned.config).deployDraft,
+            customerNote: normalizeProductConfig(owned.config).customerNote,
           },
           owned,
         ),
@@ -448,6 +469,7 @@ export function readDeployBody(raw: unknown): CtDeployBody | null {
     primaryCollectionId: typeof b.primaryCollectionId === "string" && /^gid:\/\/shopify\/Collection\/\d+$/.test(b.primaryCollectionId) ? b.primaryCollectionId : null,
     shopifyProductId: typeof b.shopifyProductId === "string" && /^gid:\/\/shopify\/Product\/\d+$/.test(b.shopifyProductId) ? b.shopifyProductId : null,
     ...(typeof b.customerPhoi === "boolean" ? { customerPhoi: b.customerPhoi } : {}),
+    ...(b.customerNote && typeof b.customerNote === "object" ? { customerNote: normalizeCustomerNote(b.customerNote) } : {}),
     ...(Array.isArray(b.removeShopifyMediaIds) ? { removeShopifyMediaIds: strings(b.removeShopifyMediaIds, 100).filter((id) => /^gid:\/\/shopify\/\w+\/\d+$/.test(id)) } : {}),
   };
 }
@@ -504,8 +526,12 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
   }
 
   // 0. The deploy page's "Phôi AI có ảnh khách" tick goes in the product before its template is made.
-  if (typeof body.customerPhoi === "boolean") {
-    const config = { ...normalizeProductConfig(product.config), customerPhoi: body.customerPhoi };
+  if (typeof body.customerPhoi === "boolean" || body.customerNote) {
+    const config = {
+      ...normalizeProductConfig(product.config),
+      ...(typeof body.customerPhoi === "boolean" ? { customerPhoi: body.customerPhoi } : {}),
+      ...(body.customerNote ? { customerNote: body.customerNote } : {}),
+    };
     const { error: cfgErr } = await s.supabase.from(CT_TABLES.products).update({ config }).eq("id", productId);
     if (cfgErr) return { error: cfgErr.message, status: 500 };
     product = { ...product, config };
@@ -548,6 +574,7 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
       templateVersion: pub.publish.version,
       templateUrl: pub.cdnUrl,
       staticPrintUrl,
+      customerNote: normalizeProductConfig(product.config).customerNote,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Deploy Shopify thất bại";

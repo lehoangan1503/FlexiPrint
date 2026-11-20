@@ -10,7 +10,7 @@
 
 import { drawComposite } from "../lib/compositor";
 import { Customizer, initGallery, initVariants } from "./customizer";
-import { initCart, initExtras, initQuantity, initSticky } from "./shop-extras";
+import { initCart, initExtras, initNote, initQuantity, initSticky } from "./shop-extras";
 import { startTaskCenter } from "./tasks";
 
 function boot(): void {
@@ -23,6 +23,8 @@ function boot(): void {
     const { showMedia } = initGallery(root);
     initExtras(root);
     if (!form) continue;
+    // First: a required note must stop Add to cart before the Customizer starts uploading.
+    initNote(root, form);
     initVariants(root, form, showMedia);
     initQuantity(root);
     initSticky(root, form);

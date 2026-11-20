@@ -30,6 +30,7 @@ import { CT_MOCKUP_REFS_MAX, defaultMockupWrap, mockupRefList } from "../../lib/
 import { defaultScenes, splitScenes } from "../../lib/mockup-scenes";
 import { ensureVersionPhoi, jobName } from "../version-phoi";
 import { normalizeProductConfig } from "../../lib/design";
+import { liveDraft, normalizeCustomerNote, normalizeDeployDraft } from "../../lib/deploy-draft";
 import { CT_CONFIG, CT_TABLES } from "../../config";
 import type { CtServiceClient, CtSession } from "../supabase";
 import { OPT_TASK_ARG, actorOf, json, liveStatus } from "./task-common";
@@ -165,6 +166,47 @@ export function defaultMedia(st: DeployState, product: CtProduct): string[] {
 
 const strings = (v: unknown) => (Array.isArray(v) ? v.map(str).filter(Boolean) : []);
 
+/** The deploy fields an agent may write ahead (save_deploy_draft, make_product_from_artwork). */
+const DRAFT_PROPS = {
+  title: { type: "string", description: "Shopify title (US English), saved ahead: Deploy later uses it." },
+  description_html: { type: "string", description: "Shopify description (p, ul/li, strong, h3 only; ≥ 200 characters of text to deploy), saved ahead." },
+  tags: { type: "array", items: { type: "string" }, description: "Shopify tags, saved ahead." },
+  product_type: { type: "string", description: "Shopify product type (default: the base's)." },
+  vendor: { type: "string", description: "Shopify vendor (empty = the shop's)." },
+  status: { type: "string", description: "ACTIVE (default) | DRAFT — what Deploy will use." },
+  collection_ids: { type: "array", items: { type: "string" }, description: "gid://shopify/Collection/… (check_deploy collections)." },
+  primary_collection_id: { type: "string", description: "The breadcrumb collection (one of collection_ids)." },
+  customer_note: {
+    type: "object",
+    description:
+      'A text box on the Shopify product page for the customer (NOT printed — for a printed name / text add an editable text layer to the artwork): {"enabled": true, "label": "Gift message" (shown above the box and the order line\'s name for it), "placeholder": "…", "required": true = Add to cart waits until it is filled, "max_chars": 250}. {"enabled": false} = no box. Goes up on the next deploy.',
+  },
+} as const;
+
+/** Merge the given deploy fields into the product's saved draft (Lưu nháp) and / or its customer note box. */
+async function saveDraft(db: CtServiceClient, product: CtProduct, args: Record<string, unknown>): Promise<CtProduct> {
+  const cfg = normalizeProductConfig(product.config);
+  const old = cfg.deployDraft;
+  const given = (k: string) => args[k] !== undefined;
+  const draft = normalizeDeployDraft({
+    title: given("title") ? str(args.title) : (old?.title ?? ""),
+    descriptionHtml: given("description_html") ? str(args.description_html) : (old?.descriptionHtml ?? ""),
+    tags: given("tags") ? strings(args.tags) : (old?.tags ?? []),
+    productType: given("product_type") ? str(args.product_type) : (old?.productType ?? ""),
+    vendor: given("vendor") ? str(args.vendor) : (old?.vendor ?? ""),
+    status: given("status") ? str(args.status).toUpperCase() : (old?.status ?? "ACTIVE"),
+    collectionIds: given("collection_ids") ? strings(args.collection_ids) : (old?.collectionIds ?? []),
+    primaryCollectionId: given("primary_collection_id") ? str(args.primary_collection_id) : (old?.primaryCollectionId ?? null),
+    savedAt: new Date().toISOString(),
+  });
+  const n = args.customer_note && typeof args.customer_note === "object" ? (args.customer_note as Record<string, unknown>) : null;
+  const customerNote = n ? normalizeCustomerNote({ ...cfg.customerNote, ...n, ...(n.max_chars !== undefined ? { maxChars: Number(n.max_chars) } : {}) }) : cfg.customerNote;
+  const config = { ...cfg, deployDraft: draft ?? old, customerNote };
+  const { data, error } = await db.from(CT_TABLES.products).update({ config }).eq("id", product.id).select("*").single<CtProduct>();
+  if (error || !data) throw new Error(error?.message ?? "Could not save the draft");
+  return data;
+}
+
 export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "shopify_preview_links",
@@ -223,8 +265,9 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       const collections = await listCollections(await storeOfProduct(db, product)).catch((): CtShopifyCollection[] => []);
       const linked = st.info.product;
       const tableId = defaultTable(st, product);
-      const title = linked?.title || st.content?.title || "";
-      const descriptionHtml = linked?.descriptionHtml || st.content?.descriptionHtml || "";
+      const draft = liveDraft(product);
+      const title = draft?.title || linked?.title || st.content?.title || "";
+      const descriptionHtml = draft?.descriptionHtml || linked?.descriptionHtml || st.content?.descriptionHtml || "";
       const fit = suggestCollections(collections, { title: title || product.name, description: descriptionHtml });
       return json({
         product: { id: product.id, name: product.name, status: product.status, publishedVersion: product.published_version },
@@ -248,6 +291,8 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         mockups: st.mockups.map((a) => ({ id: a.id, url: a.url, default: defaultMedia(st, product).includes(a.id) })),
         collections: collections.map((c) => ({ id: c.id, title: c.title, smart: c.smart, rules: c.smart ? c.rules.map((r) => `${r.column} ${r.relation} ${r.condition}`) : undefined, suggested: fit.some((x) => x.id === c.id) })),
         lastContent: st.content ? { title: st.content.title, descriptionHtml: st.content.descriptionHtml } : null,
+        draft: draft ? { ...draft, note: "Saved ahead (save_deploy_draft / the Deploy page's Lưu nháp): deploy_product uses it for what you leave out." } : null,
+        customerNote: normalizeProductConfig(product.config).customerNote,
         missing: blockers(st, { kind: product.kind ?? "artwork", tableId, title, descriptionHtml, mediaIds: defaultMedia(st, product) }),
         next: "Fill what is missing (title + description_html in US English per the content rules; a price table that fits — never create one, the editor keeps them; make_product_mockups when there is none), then deploy_product. Collections: reuse the store's — the suggested ones fit the title; a smart (rule-based) one is joined through its rules (the deploy adds the tag / type), so pick it like any other. Never create a collection when one fits.",
       });
@@ -293,6 +338,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         name: { type: "string", description: "Product title (theme), default = the artwork's name." },
         mockup_scenes: { type: "string", description: "Optional: this product's own mockup scene prompts (English; one per line, or split by an empty line / ---; no limit on count or length), kept on it instead of the base's." },
         mockup_refs: { type: "array", items: { type: "string" }, description: "Optional: this product's own reference pictures for its mockups (https urls, max 4) instead of the base's." },
+        ...DRAFT_PROPS,
       },
       required: ["artwork_id", "base_product_id"],
     },
@@ -310,6 +356,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         scenes: typeof args.mockup_scenes === "string" && args.mockup_scenes.trim() ? args.mockup_scenes : undefined,
         refs: Array.isArray(args.mockup_refs) && args.mockup_refs.length ? args.mockup_refs : undefined,
       });
+      if (str(args.title) || str(args.description_html) || args.customer_note) product = await saveDraft(db, product, args);
       await progress(db, task?.id, `Đã tạo sản phẩm “${product.name}” từ artwork “${artwork.name}” trên ${base.name}`);
       return json({ product_id: product.id, editor: `${siteUrl()}${CT_CONFIG.basePath}/${product.id}`, next: "make_product_mockups on product_id, then check_deploy / deploy_product." });
     },
@@ -687,6 +734,21 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
     },
   },
   {
+    name: "save_deploy_draft",
+    description:
+      "Write a product's Deploy fields AHEAD — the Deploy page's Lưu nháp (asked 2026-11-20): title, description, tags, type, vendor, status, collections, and the customer note box. Give only what changes (the rest of the draft stays). The Deploy page opens filled with it and deploy_product / the product list's bulk Deploy use it, so once the mockups are made the editor only presses Deploy. Kept until the next deploy (after that the Shopify product's text wins). Nothing goes to Shopify now. → the saved draft.",
+    inputSchema: { type: "object", properties: { ...OPT_TASK_ARG, product_id: { type: "string", description: "The FlexiPrint product (kind product)." }, ...DRAFT_PROPS }, required: ["product_id"] },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const { db, task, product } = await openProduct(ctx, args);
+      if ((product.kind ?? "artwork") !== "product") throw new Error("That is an artwork — make_product_from_artwork, then save the draft on the product");
+      const saved = await saveDraft(db, product, args);
+      const cfg = normalizeProductConfig(saved.config);
+      await progress(db, task?.id, `Đã lưu nháp deploy cho “${saved.name}”`);
+      return json({ product_id: saved.id, draft: cfg.deployDraft, customerNote: cfg.customerNote, deploy_page: `${siteUrl()}${CT_CONFIG.basePath}/${saved.id}/deploy`, next: "make_product_mockups if it has none, then deploy_product {product_id} (the draft fills the rest) — ask the user before ACTIVE." });
+    },
+  },
+  {
     name: "deploy_product",
     description:
       "Deploy a product to Shopify — the editor's Deploy button: publishes the storefront template, then creates (or updates, keeping its variants) the Shopify product with the price table's variants, the title / description, and mockups as images. Refuses with the list of blockers (title, description_html ≥ 200 chars of text, a valid price table, ≥ 1 mockup, the template builds, Shopify configured). status ACTIVE (default, on sale at once) | DRAFT. → the Shopify link (store url, admin url), preview url, warnings, template version.",
@@ -695,8 +757,8 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       properties: {
         ...OPT_TASK_ARG,
         product_id: { type: "string", description: "The FlexiPrint product." },
-        title: { type: "string", description: "Shopify title (US English)." },
-        description_html: { type: "string", description: "Shopify description: p, ul/li, strong, h3 only." },
+        title: { type: "string", description: "Shopify title (US English). Default: the draft saved ahead (check_deploy draft)." },
+        description_html: { type: "string", description: "Shopify description: p, ul/li, strong, h3 only. Default: the draft saved ahead." },
         price_table_id: { type: "string", description: "A price table from check_deploy (default: the linked one, else the newest)." },
         status: { type: "string", description: "ACTIVE (default, on sale at once) | DRAFT." },
         tags: { type: "array", items: { type: "string" }, description: "Shopify tags." },
@@ -706,12 +768,27 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         collection_ids: { type: "array", items: { type: "string" }, description: "gid://shopify/Collection/… from check_deploy, smart ones too (default: the ones that fit the title)." },
         primary_collection_id: { type: "string", description: "The breadcrumb collection (one of collection_ids)." },
       },
-      required: ["product_id", "title", "description_html"],
+      required: ["product_id"],
     },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, task, s, product } = await openProduct(ctx, args);
       const st = await deployState(db, s, product);
+      // What the agent leaves out comes from the draft saved ahead (save_deploy_draft / Lưu nháp).
+      const draft = liveDraft(product);
+      if (draft) {
+        args = {
+          ...args,
+          title: str(args.title) || draft.title,
+          description_html: str(args.description_html) || draft.descriptionHtml,
+          status: str(args.status) || draft.status,
+          tags: strings(args.tags).length ? args.tags : draft.tags,
+          product_type: str(args.product_type) || draft.productType,
+          vendor: str(args.vendor) || draft.vendor,
+          collection_ids: strings(args.collection_ids).length ? args.collection_ids : draft.collectionIds,
+          primary_collection_id: str(args.primary_collection_id) || draft.primaryCollectionId || "",
+        };
+      }
       const tableId = str(args.price_table_id) || defaultTable(st, product);
       const named = strings(args.media_asset_ids).filter((id) => st.mockups.some((a) => a.id === id));
       const mediaIds = named.length ? named : defaultMedia(st, product);

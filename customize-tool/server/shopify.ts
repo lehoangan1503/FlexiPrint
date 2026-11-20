@@ -15,6 +15,7 @@
 
 import type {
   CtAsset,
+  CtCustomerNote,
   CtShopifyCollection,
   CtShopifyCollectionRule,
   CtPriceTableConfig,
@@ -243,6 +244,8 @@ export interface ShopifyDeployInput {
   templateUrl: string | null;
   /** Static product (nothing to customize, lib/option-audit isStaticTemplate): its print file; null = customizable. */
   staticPrintUrl: string | null;
+  /** The customer note box (metafield customize_tool.customer_note, read by flexi2-product.liquid); off = removed. */
+  customerNote?: CtCustomerNote;
 }
 
 interface ExistingProduct {
@@ -353,6 +356,17 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
             { namespace: CT_METAFIELD_NS, key: "print_url", type: "single_line_text_field", value: input.staticPrintUrl },
           ]
         : []),
+      // The customer note box under the options (asked 2026-11-20): what the customer types goes in the order line.
+      ...(input.customerNote?.enabled
+        ? [
+            {
+              namespace: CT_METAFIELD_NS,
+              key: "customer_note",
+              type: "json",
+              value: JSON.stringify({ label: input.customerNote.label, placeholder: input.customerNote.placeholder, required: input.customerNote.required, max: input.customerNote.maxChars }),
+            },
+          ]
+        : []),
     ],
     collections: picked.filter((c) => !c.smart).map((c) => c.id),
     ...(manageMedia ? { files: [...files, ...foreign] } : {}),
@@ -399,6 +413,14 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
       st,
       `mutation($m: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $m) { userErrors { field message } } }`,
       { m: [{ ownerId: p.id, namespace: CT_METAFIELD_NS, key: "breadcrumb_collection" }] },
+    ).catch(() => undefined);
+  }
+
+  if (!input.customerNote?.enabled && existing) {
+    await gql<{ metafieldsDelete: { userErrors: UserError[] } }>(
+      st,
+      `mutation($m: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $m) { userErrors { field message } } }`,
+      { m: [{ ownerId: p.id, namespace: CT_METAFIELD_NS, key: "customer_note" }] },
     ).catch(() => undefined);
   }
 

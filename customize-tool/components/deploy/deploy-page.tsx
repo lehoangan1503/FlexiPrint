@@ -13,11 +13,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, Check, CheckCircle2, ExternalLink, Info, Link2, Loader2, Pencil, Plus, Rocket, Star, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, CheckCircle2, ExternalLink, Info, Link2, Loader2, Pencil, Plus, Rocket, Save, Star, X } from "lucide-react";
 import { CT_CONFIG } from "../../config";
 import type {
   CtBaseProductRow,
   CtAsset,
+  CtCustomerNote,
   CtDeployResponse,
   CtPriceTable,
   CtProductBundle,
@@ -36,6 +37,7 @@ import { isAiStyleRef } from "../../lib/photo-styles";
 import { suggestCollections } from "../../lib/collections";
 import { effectivePicks, pickedMockups, productMockups, type CtMockupPicks } from "../../lib/deploy-media";
 import { normalizeProductConfig } from "../../lib/design";
+import { DEFAULT_CUSTOMER_NOTE, liveDraft } from "../../lib/deploy-draft";
 import { SortableMockups } from "../sortable-mockups";
 import { ZoomThumbs } from "../zoom-thumbs";
 import { auditOptions, type CtAuditLevel } from "../../lib/option-audit";
@@ -86,6 +88,10 @@ export function DeployPage({ productId }: { productId: string }) {
   const [primary, setPrimary] = useState<string | null>(null);
   // "Phôi AI có ảnh khách" (2026-11-10): off by default, stored on the product at deploy.
   const [customerPhoi, setCustomerPhoi] = useState(false);
+  // The customer note box on the Shopify page (asked 2026-11-20) and the Lưu nháp state.
+  const [note, setNote] = useState<CtCustomerNote>({ ...DEFAULT_CUSTOMER_NOTE });
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [draftAt, setDraftAt] = useState<string | null>(null);
 
   const fill = useCallback((p: CtShopifyProductSummary | null, fallbackTitle: string) => {
     setForm({
@@ -119,6 +125,7 @@ export function DeployPage({ productId }: { productId: string }) {
         setBundle(b);
         setStore(stores?.stores.find((x) => x.id === (b.product.store_id ?? stores.stores[0]?.id)) ?? null);
         setCustomerPhoi(b.product.config?.customerPhoi === true);
+        setNote(normalizeProductConfig(b.product.config).customerNote);
         setTables(list);
         setInfo(shop);
         setCollections(cols);
@@ -144,6 +151,24 @@ export function DeployPage({ productId }: { productId: string }) {
         // What is on Shopify now is ticked, in its order; the rest unticked (asked 2026-11-19). Saved picks win.
         const mine = productMockups(b.assets, b.product.id);
         setPicks(effectivePicks(mine, normalizeProductConfig(b.product.config), link?.media));
+        // A draft saved ahead (Lưu nháp, or an agent's save_deploy_draft) fills the page until it is deployed.
+        const draft = liveDraft(b.product);
+        setDraftAt(draft?.savedAt ?? null);
+        if (draft) {
+          setForm((f) => ({
+            title: draft.title || f.title,
+            descriptionHtml: draft.descriptionHtml || f.descriptionHtml,
+            status: draft.status,
+            vendor: draft.vendor || f.vendor,
+            productType: draft.productType || f.productType,
+            tags: draft.tags.length ? draft.tags.join(", ") : f.tags,
+          }));
+          const known = draft.collectionIds.filter((id) => cols.some((c) => c.id === id));
+          if (known.length) {
+            setPicked(known);
+            setPrimary(draft.primaryCollectionId && known.includes(draft.primaryCollectionId) ? draft.primaryCollectionId : known[0]);
+          }
+        }
       })
       .catch((e: Error) => !cancelled && setLoadError(e.message));
     return () => {
@@ -235,7 +260,9 @@ export function DeployPage({ productId }: { productId: string }) {
         collectionIds: picked,
         primaryCollectionId: primary && picked.includes(primary) ? primary : (picked[0] ?? null),
         ...(aiPhoto ? { customerPhoi } : {}),
+        customerNote: note,
       });
+      setDraftAt(null);
       setResult(r);
       setBundle({ ...bundle, product: r.product });
       setDropForeign([]);
@@ -244,6 +271,32 @@ export function DeployPage({ productId }: { productId: string }) {
       setError(e instanceof Error ? e.message : "Deploy thất bại");
     } finally {
       setRunning(false);
+    }
+  };
+
+  const saveDraft = async () => {
+    setSavingDraft(true);
+    setError(null);
+    try {
+      const p = await ctApi.updateProduct(product.id, {
+        deployDraft: {
+          title: form.title.trim(),
+          descriptionHtml: form.descriptionHtml,
+          status: form.status,
+          vendor: form.vendor,
+          productType: form.productType,
+          tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
+          collectionIds: picked,
+          primaryCollectionId: primary && picked.includes(primary) ? primary : (picked[0] ?? null),
+        },
+        customerNote: note,
+      });
+      setBundle({ ...bundle, product: p });
+      setDraftAt(normalizeProductConfig(p.config).deployDraft?.savedAt ?? new Date().toISOString());
+    } catch (e) {
+      setError(`Không lưu được nháp: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setSavingDraft(false);
     }
   };
 
@@ -263,6 +316,11 @@ export function DeployPage({ productId }: { productId: string }) {
           </div>
           <span className="ml-auto" />
           <ImportStatus />
+          {draftAt && <span className="hidden text-[11px] text-muted-foreground sm:inline">Nháp lưu {new Date(draftAt).toLocaleString("vi-VN")}</span>}
+          <CtButton onClick={() => void saveDraft()} disabled={savingDraft || running} title="Lưu tên, mô tả, tag, collection, ô ghi chú vào sản phẩm — mở lại trang là có sẵn, chưa đưa lên Shopify">
+            {savingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Lưu nháp
+          </CtButton>
           <CtButton variant="primary" onClick={() => void deploy()} disabled={!canDeploy || running}>
             {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
             {link ? "Deploy cập nhật" : "Deploy lên Shopify"}
@@ -455,6 +513,31 @@ export function DeployPage({ productId }: { productId: string }) {
               )}
             </Card>
           )}
+
+          <Card title="Ô ghi chú cho khách">
+            <CtCheckbox
+              checked={note.enabled}
+              onChange={(enabled) => setNote({ ...note, enabled })}
+              label="Hiện ô cho khách gõ ghi chú trên trang Shopify"
+              hint="Khách gõ gì thì nằm trong đơn hàng, dưới tên sản phẩm. Không in lên sản phẩm — muốn in tên / lời chúc thì thêm lớp chữ cho khách gõ trong artwork. Có hiệu lực từ lần deploy sau."
+            />
+            {note.enabled && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <CtField label="Tên ô (khách thấy, tiếng Anh)">
+                  <CtInput value={note.label} onChange={(e) => setNote({ ...note, label: e.target.value })} placeholder="Gift message" />
+                </CtField>
+                <CtField label="Chữ mờ gợi ý trong ô">
+                  <CtInput value={note.placeholder} onChange={(e) => setNote({ ...note, placeholder: e.target.value })} placeholder="e.g. Happy birthday Mom!" />
+                </CtField>
+                <CtField label="Số ký tự tối đa">
+                  <CtInput type="number" min={1} max={2000} value={note.maxChars} onChange={(e) => setNote({ ...note, maxChars: Number(e.target.value) || 1 })} />
+                </CtField>
+                <div className="flex items-end pb-1">
+                  <CtCheckbox checked={note.required} onChange={(required) => setNote({ ...note, required })} label="Bắt buộc gõ mới Add to cart được" />
+                </div>
+              </div>
+            )}
+          </Card>
 
           {/* Customer options */}
           <Card title="Option cho khách (kiểm tra trước deploy)">

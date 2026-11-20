@@ -68,7 +68,9 @@ flexiprint_save_files (urls → a folder).
   guides, or the print file with chosen options), list_product_options, make_version_phoi → version_phoi_status (the
   customer's preview photo per version on an acrylic base; an import folder's own preview is kept, never redrawn).
 - Products: make_product_from_artwork {artwork_id, base_product_id} → make_product_mockups → wait_product_mockups →
-  check_deploy → deploy_product, all on the PRODUCT id; list_artwork_products (an artwork's products, outdated ones) → sync_product_from_artwork updates an outdated one in place (never a new product).
+  check_deploy → deploy_product, all on the PRODUCT id. Title / description / tags / collections / customer note box
+  known ahead → give them to make_product_from_artwork or save_deploy_draft (= the Deploy page's Lưu nháp): after the
+  mockups the editor only presses Deploy, and deploy_product {product_id} alone uses them. list_artwork_products (an artwork's products, outdated ones) → sync_product_from_artwork updates an outdated one in place (never a new product).
 - Change / remove (every step): update_base_product / delete_base_product, list_price_tables / delete_price_table,
   set_artwork_layers (an artwork) / delete_product (artwork or product), update_product (name, status, move base,
   mockup order / off), delete_mockup, set_shopify_status (ACTIVE / DRAFT / ARCHIVED), delete_shopify_product.

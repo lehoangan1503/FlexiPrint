@@ -66,6 +66,42 @@ function updateHeaderBubble(sections: Record<string, string | null> | undefined)
 // Quantity
 // ---------------------------------------------------------------------------
 
+/**
+ * The customer note box (asked 2026-11-20, sections/flexi2-product.liquid [data-ct-note]): a required one stops Add to
+ * cart while it is empty. Capture phase and registered before the Customizer's own submit, so nothing is uploaded and
+ * the cart drawer never opens until it is filled.
+ */
+export function initNote(root: HTMLElement, form: HTMLFormElement): void {
+  const note = root.querySelector<HTMLTextAreaElement>("textarea[data-ct-note]");
+  if (!note || note.dataset.required !== "true") return;
+  const errorBox = root.querySelector<HTMLElement>("[data-ct-cart-error]");
+  note.addEventListener("input", () => {
+    if (!note.value.trim()) return;
+    note.classList.remove("is-missing");
+    if (errorBox && errorBox.dataset.ctNoteError) {
+      errorBox.hidden = true;
+      delete errorBox.dataset.ctNoteError;
+    }
+  });
+  form.addEventListener(
+    "submit",
+    (e) => {
+      if (note.value.trim()) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      note.classList.add("is-missing");
+      if (errorBox) {
+        errorBox.textContent = `Please fill in: ${note.dataset.label || "Note"}`;
+        errorBox.dataset.ctNoteError = "1";
+        errorBox.hidden = false;
+      }
+      note.scrollIntoView({ behavior: "smooth", block: "center" });
+      note.focus({ preventScroll: true });
+    },
+    true,
+  );
+}
+
 export function initQuantity(root: HTMLElement): void {
   for (const box of Array.from(root.querySelectorAll<HTMLElement>("[data-ct-qty]"))) {
     const input = box.querySelector<HTMLInputElement>("input");

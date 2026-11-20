@@ -46,6 +46,7 @@ import { defaultMaterialConfig, normalizeMaterialConfig } from "./materials";
 import { defaultScene, normalizeScene } from "./scene";
 import { isPrintKind, normalizePrintSpec } from "./print-template";
 import { normalizePrintAssembly } from "./assembly";
+import { DEFAULT_CUSTOMER_NOTE, normalizeCustomerNote, normalizeDeployDraft } from "./deploy-draft";
 import { mockupRefList } from "./mockup-prompt";
 import { idList } from "./deploy-media";
 
@@ -317,6 +318,8 @@ export function defaultProductConfig(): CtProductConfig {
     mockupVary: true,
     mockupOrder: [],
     mockupOff: [],
+    deployDraft: null,
+    customerNote: { ...DEFAULT_CUSTOMER_NOTE },
   };
 }
 
@@ -409,6 +412,8 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     mockupVary: raw?.mockupVary !== false,
     mockupOrder: idList(raw?.mockupOrder),
     mockupOff: idList(raw?.mockupOff),
+    deployDraft: normalizeDeployDraft(raw?.deployDraft),
+    customerNote: normalizeCustomerNote(raw?.customerNote),
   };
 }
 

@@ -15,6 +15,7 @@ import type { CtAutoDeployResult, CtShopifyCollection } from "../types";
 import { suggestCollections } from "../lib/collections";
 import { jsonError, ownedProduct, readDeployBody, runDeploy } from "./handlers";
 import { listCollections } from "./shopify";
+import { liveDraft } from "../lib/deploy-draft";
 import { storeOfProduct } from "./stores";
 import { blockers, defaultMedia, defaultTable, deployState } from "./mcp/deploy-tools";
 import type { CtSession } from "./supabase";
@@ -26,27 +27,33 @@ export async function autoDeploy(s: CtSession, productId: string, origin: string
   const linked = st.info.product;
   const tableId = defaultTable(st, product);
   const mediaIds = defaultMedia(st, product);
-  const title = linked?.title || st.content?.title || product.shopify?.title || "";
-  const descriptionHtml = linked?.descriptionHtml || st.content?.descriptionHtml || st.base?.config.description || "";
+  // A draft saved ahead (Deploy page Lưu nháp / MCP save_deploy_draft, asked 2026-11-20) wins until it is deployed.
+  const draft = liveDraft(product);
+  const title = draft?.title || linked?.title || st.content?.title || product.shopify?.title || "";
+  const descriptionHtml = draft?.descriptionHtml || linked?.descriptionHtml || st.content?.descriptionHtml || st.base?.config.description || "";
   // The agent's wording names its tools: the editor reads plain words.
   const missing = blockers(st, { kind: product.kind ?? "artwork", tableId, title, descriptionHtml, mediaIds }).map((m) =>
     m.replace(" — make_product_mockups trước.", " — bấm Tạo mockup trước.").replace(" (price_table_id)", " — gắn bảng giá cho product base"),
   );
   if (missing.length) return NextResponse.json({ ok: false, missing } satisfies CtAutoDeployResult);
-  const collectionIds = linked?.collectionIds.length
+  const collectionIds = draft?.collectionIds.length
+    ? draft.collectionIds
+    : linked?.collectionIds.length
     ? linked.collectionIds
     : suggestCollections(await listCollections(await storeOfProduct(s.supabase, product)).catch((): CtShopifyCollection[] => []), { title, description: descriptionHtml }).map((c) => c.id);
   const body = readDeployBody({
     priceTableId: tableId ?? "",
     title,
     descriptionHtml,
-    status: linked?.status === "DRAFT" ? "DRAFT" : "ACTIVE",
-    vendor: linked?.vendor ?? "",
-    productType: linked?.productType || st.base?.config.productType || "",
-    tags: linked?.tags ?? [],
+    status: draft ? draft.status : linked?.status === "DRAFT" ? "DRAFT" : "ACTIVE",
+    vendor: draft?.vendor || (linked?.vendor ?? ""),
+    productType: draft?.productType || linked?.productType || st.base?.config.productType || "",
+    tags: draft?.tags.length ? draft.tags : (linked?.tags ?? []),
     mediaAssetIds: mediaIds,
     collectionIds,
-    primaryCollectionId: linked?.primaryCollectionId && collectionIds.includes(linked.primaryCollectionId) ? linked.primaryCollectionId : (collectionIds[0] ?? null),
+    primaryCollectionId: draft?.primaryCollectionId && collectionIds.includes(draft.primaryCollectionId)
+      ? draft.primaryCollectionId
+      : linked?.primaryCollectionId && collectionIds.includes(linked.primaryCollectionId) ? linked.primaryCollectionId : (collectionIds[0] ?? null),
     shopifyProductId: null,
   });
   if (!body) return NextResponse.json({ ok: false, missing: ["Thiếu title hoặc bảng giá."] } satisfies CtAutoDeployResult);

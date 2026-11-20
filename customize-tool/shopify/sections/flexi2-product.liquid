@@ -44,6 +44,11 @@
   endcomment
   assign ct_static = product.metafields.customize_tool.static.value
   assign ct_static_print = product.metafields.customize_tool.print_url.value | default: product.metafields.customize_tool.print_url | strip
+  comment
+    The customer note box (deploy sets customize_tool.customer_note when it is on, asked 2026-11-20): what the customer
+    types goes in the order line under its label; never printed. required = Add to cart waits for it (storefront initNote).
+  endcomment
+  assign ct_note = product.metafields.customize_tool.customer_note.value
   assign is_custom = false
   if ct_id != blank and api_base != blank and ct_static != true
     assign is_custom = true
@@ -276,6 +281,25 @@
       {%- elsif ct_static == true and ct_static_print != blank -%}
         <input type="hidden" name="properties[_ct_print]" value="{{ ct_static_print | escape }}">
         <input type="hidden" name="properties[_ct_template]" value="{{ ct_id | escape }}@static">
+      {%- endif -%}
+
+      {%- if ct_note.label != blank -%}
+        <div class="ct-note">
+          <label class="ct-note__label" for="CtNote-{{ section.id }}">
+            {{ ct_note.label | escape }}{% if ct_note.required %} <span class="ct-note__req" aria-hidden="true">*</span>{% endif %}
+          </label>
+          <textarea
+            id="CtNote-{{ section.id }}"
+            class="ct-note__input"
+            name="properties[{{ ct_note.label | escape }}]"
+            rows="2"
+            maxlength="{{ ct_note.max | default: 250 }}"
+            placeholder="{{ ct_note.placeholder | escape }}"
+            data-ct-note
+            data-label="{{ ct_note.label | escape }}"
+            {% if ct_note.required %}data-required="true" aria-required="true"{% endif %}
+          ></textarea>
+        </div>
       {%- endif -%}
 
       <div class="ct-qty">

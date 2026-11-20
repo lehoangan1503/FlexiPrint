@@ -354,6 +354,11 @@ export async function createFromArtwork(s: CtSession, artworkId: string, body: u
   }
 }
 
+/** The product written again from its artwork's latest design (the editor's update button, the MCP). */
+export async function resyncProduct(db: Db, artwork: CtProduct, product: CtProduct): Promise<CtProduct> {
+  return snapshot(db, artwork, product);
+}
+
 /** POST products/:id/artwork-sync */
 export async function syncFromArtwork(s: CtSession, id: string): Promise<NextResponse> {
   const product = await ownedProduct(s, id);

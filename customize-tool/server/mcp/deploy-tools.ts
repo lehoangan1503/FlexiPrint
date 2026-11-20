@@ -23,7 +23,7 @@ import { listCollections, previewLinks, shopifyConfigured, shopifyInfo } from ".
 import { loadStores, storeOfProduct } from "../stores";
 import { siteUrl } from "../site-url";
 import { listBaseRows, loadBaseProduct } from "../base-products";
-import { applyBase, makeProductFromArtwork } from "../artwork-link";
+import { applyBase, makeProductFromArtwork, resyncProduct } from "../artwork-link";
 import { saveOwnMockupPrompt } from "../product-mockups";
 import { normalizeBaseConfig, normalizeBaseMockup } from "../../lib/base-product";
 import { CT_MOCKUP_REFS_MAX, defaultMockupWrap, mockupRefList } from "../../lib/mockup-prompt";
@@ -662,6 +662,28 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
           return { product_id: p.id, name: p.name, base: p.base_product_id ? (bases.get(p.base_product_id) ?? p.base_product_id) : null, outdated: !!link && link.revision < revision, shopify: p.shopify ? { handle: p.shopify.handle, status: p.shopify.status } : null, editor: `${siteUrl()}${CT_CONFIG.basePath}/${p.id}` };
         }),
       });
+    },
+  },
+  {
+    name: "sync_product_from_artwork",
+    description:
+      "Update a product to its artwork's latest design in place — the editor's «cập nhật theo artwork» button (asked 2026-11-19): layers, options and versions are copied again; the product keeps its id, name, base, price table, mockups and Shopify link. Use it when list_artwork_products says outdated, instead of making a new product. Old mockups still show the old design → make_product_mockups again, then deploy_product to push it to Shopify. → the product's new revision.",
+    inputSchema: { type: "object", properties: { ...OPT_TASK_ARG, product_id: { type: "string", description: "The product (from list_artwork_products)." } }, required: ["product_id"] },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const { db, s } = await openActor(ctx, args);
+      const id = str(args.product_id);
+      if (!UUID.test(id)) throw new Error("product_id is not a valid id");
+      const product = await ownedProduct(s, id);
+      if (!product) throw new Error("No such product, or you may not edit it");
+      const link = normalizeProductConfig(product.config).artworkLink;
+      if (!link) throw new Error("This product was not made from an artwork");
+      const artwork = await ownedProduct(s, link.artworkId);
+      if (!artwork) throw new Error("Its artwork is gone, or you may not edit it");
+      const before = link.revision;
+      const saved = await resyncProduct(db, artwork, product);
+      const after = normalizeProductConfig(saved.config).artworkLink?.revision ?? before;
+      return json({ product_id: saved.id, name: saved.name, artwork: artwork.name, revision_before: before, revision_now: after, next: "make_product_mockups (the old mockups show the old design), then deploy_product", editor: `${siteUrl()}${CT_CONFIG.basePath}/${saved.id}` });
     },
   },
   {

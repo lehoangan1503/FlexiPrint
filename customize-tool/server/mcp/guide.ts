@@ -68,7 +68,7 @@ flexiprint_save_files (urls → a folder).
   guides, or the print file with chosen options), list_product_options, make_version_phoi → version_phoi_status (the
   customer's preview photo per version on an acrylic base; an import folder's own preview is kept, never redrawn).
 - Products: make_product_from_artwork {artwork_id, base_product_id} → make_product_mockups → wait_product_mockups →
-  check_deploy → deploy_product, all on the PRODUCT id; list_artwork_products (an artwork's products, outdated ones).
+  check_deploy → deploy_product, all on the PRODUCT id; list_artwork_products (an artwork's products, outdated ones) → sync_product_from_artwork updates an outdated one in place (never a new product).
 - Mockup prompts: kept on the PRODUCT BASE (get_base_mockup_prompt / set_base_mockup_prompt — scenes, the sentence
   around each scene, reference pictures; only the base's maker or an admin edits). A product's own (its editor box, or
   make_product_mockups save_scenes / save_refs, make_product_from_artwork mockup_scenes / mockup_refs) wins over the base's.

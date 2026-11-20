@@ -545,6 +545,9 @@ export function GuidePage() {
                   <li>
                     <code>list_artwork_products</code> — sản phẩm của 1 artwork, cái nào cũ
                   </li>
+                  <li>
+                    <code>sync_product_from_artwork</code> — cập nhật sản phẩm cũ theo artwork mới (giữ nguyên sản phẩm, link Shopify)
+                  </li>
                 </ul>
               </div>
             </div>

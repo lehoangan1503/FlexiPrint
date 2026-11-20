@@ -265,7 +265,7 @@ export function CustomizeProductList({
                   {on && <Check className="h-3 w-3 text-indigo-600" strokeWidth={3} />}
                 </span>
                 {x.name}
-                <span className="opacity-70">{x.n}</span>
+                <span className="font-normal">({x.n})</span>
               </button>
             );
           })}

@@ -69,6 +69,10 @@ flexiprint_save_files (urls → a folder).
   customer's preview photo per version on an acrylic base; an import folder's own preview is kept, never redrawn).
 - Products: make_product_from_artwork {artwork_id, base_product_id} → make_product_mockups → wait_product_mockups →
   check_deploy → deploy_product, all on the PRODUCT id; list_artwork_products (an artwork's products, outdated ones) → sync_product_from_artwork updates an outdated one in place (never a new product).
+- Change / remove (every step): update_base_product / delete_base_product, list_price_tables / delete_price_table,
+  set_artwork_layers (an artwork) / delete_product (artwork or product), update_product (name, status, move base,
+  mockup order / off), delete_mockup, set_shopify_status (ACTIVE / DRAFT / ARCHIVED), delete_shopify_product.
+  Deleting anything, or putting a product ACTIVE: ask the user first.
 - Mockup prompts: kept on the PRODUCT BASE (get_base_mockup_prompt / set_base_mockup_prompt — scenes, the sentence
   around each scene, reference pictures; only the base's maker or an admin edits). A product's own (its editor box, or
   make_product_mockups save_scenes / save_refs, make_product_from_artwork mockup_scenes / mockup_refs) wins over the base's.

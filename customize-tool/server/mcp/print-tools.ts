@@ -22,7 +22,7 @@ import sharp from "sharp";
 import { CT_CONFIG, CT_FONTS, CT_TABLES } from "../../config";
 import type { CtAiStyleParams, CtAsset, CtBounds, CtProduct, CtRegion, CtRegionItem, CtShape } from "../../types";
 import type { CtPrintBlank, CtPrintSpec, CtPrintTemplate } from "../../types/print";
-import { defaultRegionConfig } from "../../lib/design";
+import { defaultRegionConfig, normalizeProductConfig } from "../../lib/design";
 import { newId, shapeBounds } from "../../lib/geometry";
 import { normalizePrintSpec, safeShapes, sizedTemplateSpec } from "../../lib/print-template";
 import { str } from "../ai/llm";
@@ -284,6 +284,19 @@ async function saveLayers(db: PrintDb, productId: string, frame: CtRegion | null
   const regions = frame ? [frame, ...built.regions] : built.regions;
   const { error } = await db.rpc("ct_save_design", { p_product_id: productId, p_regions: regions.map((r, i) => ({ ...r, sort_order: i })), p_items: built.items });
   if (error) throw new Error(error.message);
+}
+
+/**
+ * An artwork's layers changed: one more revision, as the editor's save does (handlers.ts withArtworkRevision), so its
+ * products show "Có bản artwork mới" and sync_product_from_artwork has something to take (2026-11-20: MCP edits left
+ * the revision at 0 — the products never looked outdated).
+ */
+async function bumpArtworkRevision(db: PrintDb, artworkId: string): Promise<void> {
+  const { data } = await db.from(CT_TABLES.products).select("config").eq("id", artworkId).maybeSingle<{ config: Record<string, unknown> | null }>();
+  if (!data) return;
+  const cfg = normalizeProductConfig(data.config);
+  if (cfg.artworkLink) return;
+  await db.from(CT_TABLES.products).update({ config: { ...(data.config ?? {}), artworkRevision: cfg.artworkRevision + 1 } }).eq("id", artworkId);
 }
 
 /** Who the mockups are made as: the signed-in editor, or (agent) the product's owner. */
@@ -586,6 +599,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       const frame = bundle.regions.find((r) => r.config.materialFrame) ?? null;
       const built = await buildLayers(ctx.db, bundle.product.id, specOf(bundle), await layerPictures(ctx.db, bundle.product.user_id, args.layers), 1);
       await saveLayers(ctx.db, bundle.product.id, frame, built);
+      await bumpArtworkRevision(ctx.db, bundle.product.id);
       const next = await loadArtwork(ctx.db, bundle.product.id);
       return json({ product_id: bundle.product.id, safeZone: next ? await safeReport(next) : [] });
     },
@@ -670,6 +684,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       const shape: CtShape = str(args.shape) === "rect" ? { type: "rect", x, y, w, h: bh, radius: 0 } : { type: "ellipse", cx: x + w / 2, cy: y + bh / 2, rx: w / 2, ry: bh / 2 };
       const { error } = await ctx.db.from(CT_TABLES.regions).update({ shape }).eq("id", target.id);
       if (error) throw new Error(error.message);
+      if (bundle.product.kind !== "product") await bumpArtworkRevision(ctx.db, bundle.product.id);
       const { data: product } = await ctx.db.from(CT_TABLES.products).select("user_id, published_version").eq("id", bundle.product.id).maybeSingle<{ user_id: string; published_version: number | null }>();
       let published = false;
       if (product?.published_version) published = (await h.publish(await serviceSession(ctx.service ?? ctx.db, product.user_id), bundle.product.id, siteUrl())).ok;

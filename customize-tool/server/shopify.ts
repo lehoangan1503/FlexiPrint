@@ -610,3 +610,28 @@ function smartNeeds(collections: CtShopifyCollection[], have: { tags: string[]; 
   }
   return { tags: [...new Set(tags)], productType, vendor, unmet };
 }
+
+// ---------------------------------------------------------------------------
+// Status / delete (MCP, asked 2026-11-20: every step from base to Shopify can be added, changed, removed)
+// ---------------------------------------------------------------------------
+
+/** Set the Shopify product's status (ACTIVE on sale, DRAFT hidden, ARCHIVED put away). */
+export async function setShopifyStatus(st: ShopifyStore, productGid: string, status: "ACTIVE" | "DRAFT" | "ARCHIVED"): Promise<void> {
+  const data = await gql<{ productUpdate: { userErrors: UserError[] } }>(
+    st,
+    `mutation($p: ProductUpdateInput!) { productUpdate(product: $p) { userErrors { field message } } }`,
+    { p: { id: productGid, status } },
+  );
+  userErrors(data.productUpdate.userErrors);
+}
+
+/** Delete the Shopify product for good (orders keep their lines). A product already gone counts as deleted. */
+export async function deleteShopifyProduct(st: ShopifyStore, productGid: string): Promise<void> {
+  const data = await gql<{ productDelete: { deletedProductId: string | null; userErrors: UserError[] } }>(
+    st,
+    `mutation($i: ProductDeleteInput!) { productDelete(input: $i) { deletedProductId userErrors { field message } } }`,
+    { i: { id: productGid } },
+  );
+  const errs = data.productDelete.userErrors.filter((e) => !/not exist|not found/i.test(e.message));
+  userErrors(errs);
+}

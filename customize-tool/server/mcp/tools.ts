@@ -17,6 +17,7 @@ import { clip, record, str } from "../ai/llm";
 import sharp from "sharp";
 import { CT_MCP_PRINT_TOOLS } from "./print-tools";
 import { CT_MCP_DEPLOY_TOOLS } from "./deploy-tools";
+import { CT_MCP_CRUD_TOOLS } from "./crud-tools";
 import { CT_MCP_CHAR_TOOLS, charTaskView, submitCharResult } from "./char-tools";
 import { CT_MCP_RESOURCES } from "./guide";
 import { CT_MCP_MOCKUP_TOOLS, mockupTaskView, submitMockupResult } from "./mockup-tools";
@@ -394,4 +395,4 @@ const taskTools: CtMcpTool[] = [
   },
 ];
 
-export const CT_MCP_TOOLS: CtMcpTool[] = [...categoryTools, ...taskTools, ...CT_MCP_CHAR_TOOLS, ...CT_MCP_PRINT_TOOLS, ...CT_MCP_DEPLOY_TOOLS, ...CT_MCP_MOCKUP_TOOLS, ...CT_MCP_BASE_PREVIEW_TOOLS];
+export const CT_MCP_TOOLS: CtMcpTool[] = [...categoryTools, ...taskTools, ...CT_MCP_CHAR_TOOLS, ...CT_MCP_PRINT_TOOLS, ...CT_MCP_DEPLOY_TOOLS, ...CT_MCP_CRUD_TOOLS, ...CT_MCP_MOCKUP_TOOLS, ...CT_MCP_BASE_PREVIEW_TOOLS];

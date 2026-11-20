@@ -16,6 +16,7 @@ import type { CtBaseRepublishResult, CtBaseStoreState, CtProduct, CtProductScene
 import { normalizeProductConfig } from "../lib/design";
 import { normalizeBaseConfig } from "../lib/base-product";
 import { normalizeScene } from "../lib/scene";
+import { normalizePrintAssembly } from "../lib/assembly";
 import { publish } from "./handlers";
 import { applyBase } from "./artwork-link";
 import type { CtSession } from "./supabase";
@@ -23,7 +24,7 @@ import type { CtSession } from "./supabase";
 interface PublishedRow {
   product_id: string;
   version: number;
-  template: { config?: { scene?: unknown } } | null;
+  template: { config?: { scene?: unknown; assembly?: unknown } } | null;
 }
 
 const sameScene = (a: CtProductScene, b: CtProductScene) =>
@@ -48,7 +49,10 @@ export async function baseStoreState(db: CtSession["supabase"], baseId: string):
       .eq("version", p.published_version as number)
       .maybeSingle<PublishedRow>();
     const live = normalizeScene(row?.template?.config?.scene ?? null);
-    if (!sameScene(live, normalizeProductConfig(p.config).scene)) stale.push({ id: p.id, name: p.name });
+    const now = normalizeProductConfig(p.config);
+    // The sewn pieces too (2026-11-20: each piece's part of the photo, CtSewnPiece.clip) — the store sews its preview.
+    const liveSewn = normalizePrintAssembly(row?.template?.config?.assembly ?? null);
+    if (!sameScene(live, now.scene) || JSON.stringify(liveSewn) !== JSON.stringify(now.assembly)) stale.push({ id: p.id, name: p.name });
   }
   return { deployed: list.length, stale, ids: stale.map((p) => p.id) };
 }

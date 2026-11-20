@@ -222,6 +222,84 @@ export async function previewParts(scene: CtProductScene, W: number, H: number):
   return { body, hood };
 }
 
+/** Overlay alpha from which a pixel is off the product / a trim or seam (Printbelle's trim is 255, the cloth ~48). */
+const WALL_ALPHA = 200;
+
+/**
+ * Where each piece really shows on the photo (asked 2026-11-20: "vùng cắt của cái nón chỉ nên dừng lại ở nẹp chăn,
+ * phần phía dưới nội dung phải thuộc về hình chữ nhật to của chăn"): the overlay's see-through parts, each closed by
+ * the opaque trims / seams around it, given to the piece whose box holds most of it (two pieces that share one part —
+ * the hood's halves — split it by their boxes). Works for any sewn product whose overlay keeps its seams opaque; a
+ * piece left with nothing keeps its box (all of them, when a shown piece finds no part: the overlay does not split them).
+ */
+export async function pieceClips(scene: CtProductScene, W: number, H: number, pieces: CtSewnPiece[]): Promise<CtSewnPiece[]> {
+  if (!scene.overlay) return pieces;
+  const { data, info } = await sharp(await fetchImage(scene.overlay)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const pw = info.width;
+  const ph = info.height;
+  const ch = info.channels;
+  const solid = new Uint8Array(pw * ph);
+  for (let i = 0; i < pw * ph; i++) solid[i] = data[i * ch + 3] >= WALL_ALPHA ? 1 : 0;
+  // One px thicker: a pinhole in a trim must not join the parts it closes.
+  const wall = grow(solid, pw, ph, 1);
+  const open = new Uint8Array(pw * ph);
+  for (let i = 0; i < pw * ph; i++) open[i] = wall[i] ? 0 : 1;
+  // The sheet's px → the photo's (scene.box = where the sheet lies on the photo) and back.
+  const kx = scene.box.w / W;
+  const ky = scene.box.h / H;
+  const shown = pieces.map((p, i) => ({ p, i })).filter(({ p }) => p.role !== "other");
+  const rects = shown.map(({ p }) => ({ x0: scene.box.x + p.from.x * kx, y0: scene.box.y + p.from.y * ky, x1: scene.box.x + (p.from.x + p.from.w) * kx, y1: scene.box.y + (p.from.y + p.from.h) * ky }));
+  const inside = (r: (typeof rects)[number], x: number, y: number) => x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1;
+  const away = (r: (typeof rects)[number], x: number, y: number) => Math.hypot(Math.max(r.x0 - x, 0, x - r.x1), Math.max(r.y0 - y, 0, y - r.y1));
+  const owner = new Int16Array(pw * ph).fill(-1);
+  for (const g of groupsOf(open, pw, ph)) {
+    if (g.px.length < 0.002 * pw * ph) continue;
+    const n = rects.map(() => 0);
+    for (const i of g.px) {
+      const x = i % pw;
+      const y = (i - x) / pw;
+      rects.forEach((r, j) => inside(r, x, y) && n[j]++);
+    }
+    const top = Math.max(...n);
+    if (!top) continue;
+    const owners = n.map((v, j) => (v >= 0.25 * top ? j : -1)).filter((j) => j >= 0);
+    for (const i of g.px) {
+      const x = i % pw;
+      const y = (i - x) / pw;
+      let best = owners.find((j) => inside(rects[j], x, y)) ?? -1;
+      if (best < 0) best = owners.reduce((a, j) => (away(rects[j], x, y) < away(rects[a], x, y) ? j : a), owners[0]);
+      owner[i] = best;
+    }
+  }
+  const r = (v: number) => Math.round(v * 10) / 10;
+  const clips: Array<CtShape | null> = shown.map((_, j) => {
+    const mine = new Uint8Array(pw * ph);
+    for (let i = 0; i < pw * ph; i++) if (owner[i] === j) mine[i] = 1;
+    // Its biggest part, holes filled (the overlay covers them), a little under the trim (no bare seam line).
+    const g = groupsOf(mine, pw, ph).sort((a, b) => b.px.length - a.px.length)[0];
+    if (!g || g.px.length < 0.002 * pw * ph) return null;
+    const ox = g.x0 - 4;
+    const oy = g.y0 - 4;
+    const bw = g.x1 - g.x0 + 9;
+    const bh = g.y1 - g.y0 + 9;
+    const local = new Uint8Array(bw * bh);
+    for (const i of g.px) {
+      const x = i % pw;
+      local[((i - x) / pw - oy) * bw + (x - ox)] = 1;
+    }
+    const outside = reach(local, bw, bh);
+    const filled = new Uint8Array(bw * bh);
+    for (let i = 0; i < bw * bh; i++) filled[i] = outside[i] ? 0 : 1;
+    const pts = simplify(outline(grow(filled, bw, bh, 2), bw, bh), 0.75);
+    if (pts.length < 3) return null;
+    return { type: "polygon", points: pts.map((q) => ({ x: r((ox + q.x + 0.5 - scene.box.x) / kx), y: r((oy + q.y + 0.5 - scene.box.y) / ky) })) };
+  });
+  if (clips.some((c) => !c)) return pieces;
+  const out = pieces.slice();
+  shown.forEach(({ p, i }, j) => (out[i] = { ...p, clip: clips[j] as CtShape }));
+  return out;
+}
+
 /** The plain phôi whose overlay tells where the product is: the preview, else the plain one an AI scene was made from. */
 function overlayScene(base: CtBaseProduct): CtProductScene | null {
   const { preview, previewScenes } = base.config;
@@ -297,7 +375,11 @@ export async function readAssembly(base: CtBaseProduct, template: CtPrintTemplat
   const scene = overlayScene(base);
   const parts = scene ? await previewParts(scene, W, H) : null;
   const sewn = parts && pieces.length >= 3 ? sewPieces(pieces, parts, swap) : "Phôi không có lớp phủ (overlay) để biết nón / thân nằm đâu trên preview";
-  if (typeof sewn !== "string") return { kind: "hooded-blanket", overflow, pieces: sewn.pieces, guideUrl: null, swap, note: `${sewn.note} · ${OVERFLOW_NOTE[overflow]}`, at };
+  if (typeof sewn !== "string") {
+    const list = scene ? await pieceClips(scene, W, H, sewn.pieces) : sewn.pieces;
+    const clipped = list.some((p) => p.clip) ? " · mỗi mảnh chỉ hiện trong phần của nó trên phôi (nón dừng ở nẹp, dưới nẹp là thân)" : " · lớp phủ không tách được nón / thân theo nẹp: mỗi mảnh hiện cả ô";
+    return { kind: "hooded-blanket", overflow, pieces: list, guideUrl: null, swap, note: `${sewn.note}${clipped} · ${OVERFLOW_NOTE[overflow]}`, at };
+  }
   if (overflow === "hood") return sewn;
   const list = plainSheet(pieces);
   return { kind: "sheet", overflow, pieces: list, guideUrl: null, swap: false, note: `Tờ ${list.length} mảnh (không thấy nón trên phôi: ${sewn}) · xem trước = tờ in như cũ · ${OVERFLOW_NOTE.wrap}`, at };

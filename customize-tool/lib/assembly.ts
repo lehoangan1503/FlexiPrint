@@ -18,7 +18,9 @@
  *  - the hood: what any layer reaches ABOVE the body's top edge is printed on the hood pieces (hoodFolds), live — in
  *    the editor, the print file and the preview (a layer can turn it off: CtRegionConfig.noHood). Backgrounds (fills)
  *    are not folded: the pieces keep the background they lie on, like Printbelle's sample;
- *  - preview: the product sewn from the sheet (lib/compositor `assembled`): body → blanket, hood pieces → hood.
+ *  - preview: the product sewn from the sheet (lib/compositor `assembled`): body → blanket, hood pieces → hood — each
+ *    only inside its own part of the phôi photo (CtSewnPiece.clip, read off the overlay: the trim between hood and
+ *    body closes it), the body drawn last.
  * The base holds it in the khuôn's sheet px (server/base-assembly.ts reads it); withBase lays it on the canvas.
  */
 
@@ -74,7 +76,8 @@ function pieces(raw: unknown): CtSewnPiece[] {
     if (!sh || !from || !to) continue;
     const role = p.role === "hood" || p.role === "other" ? p.role : "body";
     const half: Pick<CtSewnPiece, "half"> = role === "hood" && (p.half === "left" || p.half === "right") ? { half: p.half } : {};
-    out.push({ name: typeof p.name === "string" ? p.name.slice(0, 60) : "", role, ...half, shape: sh, from, to });
+    const clip = p.role === "other" ? null : shape(p.clip);
+    out.push({ name: typeof p.name === "string" ? p.name.slice(0, 60) : "", role, ...half, shape: sh, from, to, ...(clip ? { clip } : {}) });
   }
   return out.slice(0, 12);
 }
@@ -134,7 +137,13 @@ export function moveShapeBy(s: CtShape, k: number, dx: number, dy: number): CtSh
 /** The base's assembly (sheet px) where the sheet lies on the canvas (`place`, canvas px). */
 export function assemblyOnCanvas(a: CtBaseAssembly, sheetWidth: number, place: CtBounds): CtSewnPiece[] {
   const k = place.w / sheetWidth;
-  return a.pieces.map((p) => ({ ...p, shape: moveShapeBy(p.shape, k, place.x, place.y), from: moveBox(p.from, k, place.x, place.y), to: moveBox(p.to, k, place.x, place.y) }));
+  return a.pieces.map((p) => ({
+    ...p,
+    shape: moveShapeBy(p.shape, k, place.x, place.y),
+    from: moveBox(p.from, k, place.x, place.y),
+    to: moveBox(p.to, k, place.x, place.y),
+    ...(p.clip ? { clip: moveShapeBy(p.clip, k, place.x, place.y) } : {}),
+  }));
 }
 
 /** The piece of the sheet a shape (sheet / canvas px) lies on — by its middle; null = none. */

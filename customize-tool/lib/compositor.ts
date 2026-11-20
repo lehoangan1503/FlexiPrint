@@ -5,7 +5,7 @@
  * scaled once at the end, so preview and full-res export are the same picture.
  */
 
-import type { CtFillConfig, CtMainFrame, CtMainLayout, CtPrintSilhouette, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtPrintAssembly, CtSelection, CtSewnPiece, CtShape, CtTextConfig, CtTransform } from "../types";
+import type { CtBounds, CtFillConfig, CtMainFrame, CtMainLayout, CtPrintSilhouette, CtRegion, CtRegionItem, CtRenderAsset, CtRenditionPad, CtPrintAssembly, CtSelection, CtSewnPiece, CtShape, CtTextConfig, CtTransform } from "../types";
 import { itemPlacement, photoFrameBox, resolvePhotoFrame, shapeBounds, textBand } from "./geometry";
 
 export { textBand };
@@ -158,31 +158,72 @@ export async function renderComposite(input: CompositeInput): Promise<HTMLCanvas
 }
 
 /**
- * The product as it is sewn (input.assembled): each piece of the sheet (`to`, clipped to its outline) drawn where it
- * shows on the product (`from`) — the layers themselves at that scale, not pixels.
+ * The product as it is sewn (input.assembled): each piece of the sheet (`to`) drawn where it shows on the product
+ * (`from`) — the layers themselves at that scale, not pixels. A piece with a `clip` (its own part of the phôi photo,
+ * closed by the trim / seams) is drawn only there, its box's edge mirrored where that part reaches past the box; the
+ * body last, so where pieces meet the blanket wins (asked 2026-11-20).
  */
 async function drawAssembled(ctx: CanvasRenderingContext2D, input: CompositeInput, pieces: CtSewnPiece[]): Promise<void> {
   const { scale } = input;
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  for (const piece of pieces) {
-    // A piece the photo does not show (a pocket): printed, not drawn here.
-    if (piece.role === "other") continue;
+  const W = ctx.canvas.width;
+  const H = ctx.canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  const off = document.createElement("canvas");
+  off.width = W;
+  off.height = H;
+  const octx = off.getContext("2d");
+  if (!octx) return;
+  // A piece the photo does not show (a pocket): printed, not drawn here.
+  const shown = pieces.filter((p) => p.role !== "other");
+  const order = [...shown.filter((p) => p.role !== "body"), ...shown.filter((p) => p.role === "body")];
+  for (const piece of order) {
+    const k = piece.from.w / piece.to.w;
+    if (!(k > 0) || !Number.isFinite(k)) continue;
     // Sheet → product: its sheet box drawn into its product box, whole — the corners a rounded piece leaves (a hood
     // piece's crown seam) show the sheet's background there, not a notch in the photo.
-    const p = { shape: { type: "rect" as const, ...piece.from, radius: 0 }, from: piece.to, to: piece.from };
-    const k = p.to.w / p.from.w;
-    if (!(k > 0) || !Number.isFinite(k)) continue;
+    const f = piece.from;
+    octx.setTransform(1, 0, 0, 1, 0, 0);
+    octx.clearRect(0, 0, W, H);
+    octx.save();
+    octx.setTransform(scale, 0, 0, scale, 0, 0);
+    octx.beginPath();
+    octx.rect(f.x, f.y, f.w, f.h);
+    octx.clip();
+    octx.setTransform(1, 0, 0, 1, 0, 0);
+    if (input.background) {
+      octx.fillStyle = input.background;
+      octx.fillRect(0, 0, W, H);
+    }
+    // drawComposite maps a design point q to (q + offset) × its scale: to.x → from.x.
+    await drawComposite(octx, { ...input, scale: scale * k, background: undefined }, { x: f.x / k - piece.to.x, y: f.y / k - piece.to.y });
+    octx.restore();
+    if (!piece.clip) {
+      ctx.drawImage(off, 0, 0);
+      continue;
+    }
     ctx.save();
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
-    clipShape(ctx, p.shape);
+    clipShape(ctx, piece.clip);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    if (input.background) {
-      ctx.fillStyle = input.background;
-      ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.drawImage(off, 0, 0);
+    // Where its part of the photo reaches past its box (the blanket rising behind the hood's trim): the box's edge
+    // mirrored, so it carries on with the piece's own content, never another piece's.
+    const b = shapeBounds(piece.clip);
+    const sides: Array<{ band: CtBounds; m: [number, number, number, number, number, number] }> = [];
+    if (b.y < f.y) sides.push({ band: { x: b.x, y: b.y, w: b.w, h: f.y - b.y }, m: [1, 0, 0, -1, 0, 2 * f.y * scale] });
+    if (b.y + b.h > f.y + f.h) sides.push({ band: { x: b.x, y: f.y + f.h, w: b.w, h: b.y + b.h - f.y - f.h }, m: [1, 0, 0, -1, 0, 2 * (f.y + f.h) * scale] });
+    if (b.x < f.x) sides.push({ band: { x: b.x, y: f.y, w: f.x - b.x, h: f.h }, m: [-1, 0, 0, 1, 2 * f.x * scale, 0] });
+    if (b.x + b.w > f.x + f.w) sides.push({ band: { x: f.x + f.w, y: f.y, w: b.x + b.w - f.x - f.w, h: f.h }, m: [-1, 0, 0, 1, 2 * (f.x + f.w) * scale, 0] });
+    for (const { band, m } of sides) {
+      ctx.save();
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.beginPath();
+      ctx.rect(band.x, band.y, band.w, band.h);
+      ctx.clip();
+      ctx.setTransform(...m);
+      ctx.drawImage(off, 0, 0);
+      ctx.restore();
     }
-    // drawComposite maps a design point q to (q + offset) × its scale: from.x → to.x.
-    await drawComposite(ctx, { ...input, scale: scale * k, background: undefined }, { x: p.to.x / k - p.from.x, y: p.to.y / k - p.from.y });
     ctx.restore();
   }
 }

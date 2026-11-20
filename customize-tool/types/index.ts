@@ -1979,6 +1979,12 @@ export interface CtSewnPiece {
   from: CtBounds;
   /** Where it lies on the print sheet (same shape as `from`). */
   to: CtBounds;
+  /**
+   * Where the piece really shows on the phôi photo (asked 2026-11-20: "vùng cắt của cái nón chỉ nên dừng lại ở nẹp
+   * chăn"): its own see-through part of the overlay, closed by the seams / trims the overlay keeps opaque — same px as
+   * `from`. The preview draws the piece only there; past `from` it shows `from`'s edge mirrored. None = its `from` box.
+   */
+  clip?: CtShape;
 }
 
 /** CtBaseProductConfig.assembly — read off the khuôn (its pieces) + the phôi's overlay (where the hood is). */

@@ -17,6 +17,7 @@ import { normalizeSamples } from "../lib/design";
 import { isAdmin } from "./ai-styles";
 import { readImageInfo } from "./image-size";
 import { insertClipart } from "./library";
+import { inChunks } from "./in-chunks";
 import { ctLibraryPath, ctRemove, ctUpload } from "./storage";
 import type { CtServiceClient, CtSession, CtSupabase } from "./supabase";
 
@@ -162,15 +163,17 @@ export async function listAllArtworks(s: CtSession, productId: string | null): P
   const list = data ?? [];
   const productIds = [...new Set(list.map((a) => a.meta.artwork?.productId).filter((x): x is string => !!x))];
   const versionIds = [...new Set(list.map((a) => a.meta.artwork?.versionId).filter((x): x is string => !!x))];
-  const [products, versions] = await Promise.all([
-    productIds.length
-      ? s.supabase.from(CT_TABLES.products).select("id, name, thumbnail_url").in("id", productIds).returns<Array<{ id: string; name: string; thumbnail_url: string | null }>>()
-      : Promise.resolve({ data: [] as Array<{ id: string; name: string; thumbnail_url: string | null }> }),
-    versionIds.length ? s.supabase.from(CT_TABLES.assets).select("id, name").in("id", versionIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
+  // In slices: a long id list in one `in(...)` makes a URL nginx refuses with 502 (server/in-chunks.ts).
+  type P = { id: string; name: string; thumbnail_url: string | null };
+  type V = { id: string; name: string };
+  type M = { product_id: string; url: string };
+  const [productRows, versionRows, mockups] = await Promise.all([
+    inChunks(productIds, (c) => s.supabase.from(CT_TABLES.products).select("id, name, thumbnail_url").in("id", c).returns<P[]>()).catch((): P[] => []),
+    inChunks(versionIds, (c) => s.supabase.from(CT_TABLES.assets).select("id, name").in("id", c).returns<V[]>()).catch((): V[] => []),
+    inChunks(productIds, (c) => s.supabase.from(CT_TABLES.assets).select("product_id, url").in("product_id", c).eq("role", "mockup").order("created_at").returns<M[]>()).catch((): M[] => []),
   ]);
-  const { data: mockups } = productIds.length
-    ? await s.supabase.from(CT_TABLES.assets).select("product_id, url").in("product_id", productIds).eq("role", "mockup").order("created_at").returns<Array<{ product_id: string; url: string }>>()
-    : { data: [] as Array<{ product_id: string; url: string }> };
+  const products = { data: productRows };
+  const versions = { data: versionRows };
   const firstMockup = new Map<string, string>();
   for (const m of mockups ?? []) if (!firstMockup.has(m.product_id)) firstMockup.set(m.product_id, m.url);
   const byProduct = new Map((products.data ?? []).map((p) => [p.id, { ...p, mockup_url: firstMockup.get(p.id) ?? null }]));

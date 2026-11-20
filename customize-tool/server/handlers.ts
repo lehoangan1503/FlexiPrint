@@ -102,9 +102,11 @@ export async function listProducts(s: CtSession, search: string, kind: CtProduct
   if (error) return jsonError(error.message, 500);
   // The card shows the product as it is sold: its first mockup (oldest = the straight-on one).
   const ids = (data ?? []).map((p) => p.id);
-  const { data: mockups } = ids.length
-    ? await s.supabase.from(CT_TABLES.assets).select("id, name, product_id, url").in("product_id", ids).eq("role", "mockup").order("created_at").returns<Array<{ id: string; name: string; product_id: string; url: string }>>()
-    : { data: [] };
+  // In slices (found 2026-11-20: 162 products → one `in(...)` URL nginx refused with 502, every card lost its mockup).
+  type MockupRow = { id: string; name: string; product_id: string; url: string };
+  const mockups = ids.length
+    ? (await inChunks(ids, (chunk) => s.supabase.from(CT_TABLES.assets).select("id, name, product_id, url").in("product_id", chunk).eq("role", "mockup").order("created_at").returns<MockupRow[]>()).catch((): MockupRow[] => []))
+    : [];
   // Picture 1 of the product's Shopify order ("Ảnh sản phẩm", asked 2026-11-19), else its oldest mockup.
   const first = new Map<string, string>();
   const byProduct = new Map<string, Array<{ id: string; name: string; product_id: string; url: string }>>();
@@ -148,9 +150,9 @@ export async function listProducts(s: CtSession, search: string, kind: CtProduct
   // Artwork ↔ products (server/artwork-link.ts): the source of a made product, newer or not; how many use an artwork.
   const links = new Map((data ?? []).flatMap((p) => { const l = normalizeProductConfig(p.config).artworkLink; return l ? [[p.id, l] as const] : []; }));
   const sourceIds = [...new Set([...links.values()].map((l) => l.artworkId))];
-  const { data: sources } = sourceIds.length
-    ? await s.supabase.from(CT_TABLES.products).select("id,name,config").in("id", sourceIds).returns<Array<Pick<CtProduct, "id" | "name" | "config">>>()
-    : { data: [] };
+  const sources = sourceIds.length
+    ? await inChunks(sourceIds, (chunk) => s.supabase.from(CT_TABLES.products).select("id,name,config").in("id", chunk).returns<Array<Pick<CtProduct, "id" | "name" | "config">>>()).catch((): Array<Pick<CtProduct, "id" | "name" | "config">> => [])
+    : [];
   const sourceById = new Map((sources ?? []).map((x) => [x.id, x]));
   const users = new Map<string, number>();
   for (const l of links.values()) users.set(l.artworkId, (users.get(l.artworkId) ?? 0) + 1);

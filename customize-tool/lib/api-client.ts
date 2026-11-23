@@ -5,6 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
+import type { CtMockupBlock } from "../types";
 import type { CtBaseRepublishResult, CtBaseStoreState, CtCloneBaseBody, CtCloneProductBody, CtSheetOverflow, CtBasePlacement, CtPreviewBoxBody, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseScenesAuto, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
   CtFulfillCatalogPage, CtFulfillProvider, CtTeeinblueStatus, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind, CtStoreList, CtPhotoStyleRef } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
@@ -241,13 +242,13 @@ export const ctApi = {
   /** AI mockups of the product (server/product-mockups.ts): jobs newest first. */
   mockupJobs: (productId: string) => call<{ jobs: CtPackImage[] }>(`products/${productId}/mockups`).then((r) => r.jobs),
   /** The artwork laid on the phôi (exact) + one AI photo per scene (running in the background). */
-  /** `text`: the box as typed, kept on the product (the bulk "Tạo mockup" uses it). */
+  /** `blocks`: one prompt each with its own reference pictures; `keep`: they become the product's own (the bulk "Tạo mockup" uses them). */
   /** `print`: one artwork for every scene, or one per scene (each a different custom pick); `vary`: the box's tick, kept. */
-  makeMockups: (productId: string, print: Blob | Blob[], scenes: string[], text?: string, vary?: boolean) => {
+  makeMockups: (productId: string, print: Blob | Blob[], blocks: CtMockupBlock[], keep?: boolean, vary?: boolean) => {
     const form = new FormData();
     for (const p of Array.isArray(print) ? print : [print]) form.append("print", p, "print.png");
-    form.append("scenes", JSON.stringify(scenes));
-    if (text !== undefined) form.append("text", text);
+    form.append("scenes", JSON.stringify(blocks));
+    if (keep) form.append("keep", "1");
     if (vary !== undefined) form.append("vary", vary ? "1" : "0");
     return call<{ jobs: CtPackImage[]; front: CtAsset }>(`products/${productId}/mockups`, { method: "POST", body: form });
   },
@@ -256,8 +257,8 @@ export const ctApi = {
     call<{ samples: Array<{ url: string | null; error: string }> }>(`products/${productId}/mockups/samples`, json("POST", { regionId, items })).then((r) => r.samples),
   /** The product list's bulk "Tạo mockup": made on the server with the product's own prompts. */
   /** Drops the product's own mockup scenes: its mockups follow the product base's prompts again. */
-  /** The product's own mockup reference pictures ([] = back to its base's). */
-  setMockupRefs: (productId: string, refs: string[]) => call<{ product: CtProduct }>(`products/${productId}/mockups/refs`, json("POST", { refs })),
+  /** The product's own mockup prompt blocks, pictures per prompt ([] = back to its base's). */
+  setMockupBlocks: (productId: string, blocks: CtMockupBlock[]) => call<{ product: CtProduct }>(`products/${productId}/mockups/blocks`, json("POST", { blocks })),
   clearMockupScenes: (productId: string) => call<{ product: CtProduct }>(`products/${productId}/mockups/prompt`, json("POST", {})),
   autoMockups: (productId: string) => call<{ jobs: CtPackImage[]; front: CtAsset }>(`products/${productId}/mockups/auto`, json("POST", {})),
   /** An AI phôi trơn from the product's khuôn in → config.scene. */

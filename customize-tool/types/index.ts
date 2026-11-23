@@ -889,13 +889,12 @@ export interface CtProductConfig {
    */
   customerPhoi: boolean;
   /**
-   * The Mockups box's text as last used to make mockups (asked 2026-11-17: the prompts stay with the product; a bulk
-   * "Tạo mockup" on the product list uses them). "" = never used: the defaults for the product's name
-   * (lib/mockup-scenes.ts). Written by the server when mockups are made, never by a design save.
+   * The product's own mockup prompts, one block = one AI photo (asked 2026-11-23: "mỗi prompt 1 khối, up ảnh tham chiếu
+   * riêng lên từng khối"): its prompt and the reference pictures sent with THAT prompt only. [] = its base's scenes
+   * (CtBaseMockup). Read from the older mockupScenes text / mockupRefs when a product has no blocks yet
+   * (lib/mockup-prompt.ts mockupBlocksOf). Written by the server only (POST products/:id/mockups/blocks, a mockup call).
    */
-  mockupScenes: string;
-  /** The product's own mockup reference pictures (https urls); [] = its base's (CtBaseMockup.refs). */
-  mockupRefs: string[];
+  mockupBlocks: CtMockupBlock[];
   /**
    * Each mockup a different custom pick of what the customer can change (asked 2026-11-17: version, options, names, a
    * different sample person in each photo zone — lib/mockup-variants.ts). The Mockups box's tick as last used; on by
@@ -1163,7 +1162,7 @@ export interface CtMockupEdit {
 }
 
 /** What a published template carries (no design samples). */
-export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupScenes" | "mockupRefs" | "mockupVary" | "mockupOrder" | "mockupOff" | "deployDraft" | "customerNote">;
+export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupBlocks" | "mockupVary" | "mockupOrder" | "mockupOff" | "deployDraft" | "customerNote">;
 
 /**
  * What a ct_products row is (migration 031, asked 2026-11-07 — Teeinblue's Artwork / Campaign):
@@ -1956,6 +1955,14 @@ export interface CtBaseProductConfig {
  * editable on the base page and over MCP by the base's maker or an admin). A product's own (CtProductConfig.mockupScenes,
  * mockupRefs) wins over these; "" / [] = the next one down (product → base); nothing at all → making mockups is refused (asked 2026-11-18: no hidden prompt).
  */
+/** One mockup prompt of a product (CtProductConfig.mockupBlocks): one AI photo. */
+export interface CtMockupBlock {
+  /** The scene prompt — put into the base's wrap at {scene}, or sent alone when the base has no wrap. */
+  prompt: string;
+  /** Pictures sent with this prompt only, after the product's front picture (picture 2, 3…); [] = the base's refs. */
+  refs: string[];
+}
+
 export interface CtBaseMockup {
   /** The scene prompts, one AI photo each — written like the editor's Mockups box (split by ---, empty line, or line). */
   scenes: string;

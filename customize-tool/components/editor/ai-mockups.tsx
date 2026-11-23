@@ -17,14 +17,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Loader2, RefreshCw, Sparkles, Trash2, Upload, Wallpaper } from "lucide-react";
-import type { CtAgentTask, CtAsset, CtBaseMockup, CtPackImage, CtPhotoStyleRef, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtSelection } from "../../types";
+import { Bot, Loader2, Plus, RefreshCw, Sparkles, Trash2, Upload, Wallpaper } from "lucide-react";
+import type { CtAgentTask, CtAsset, CtBaseMockup, CtMockupBlock, CtPackImage, CtPhotoStyleRef, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import { ctApi } from "../../lib/api-client";
 import { canvasToBlob, renderComposite } from "../../lib/compositor";
 import { defaultCategoryRules, displayAssets } from "../../lib/library";
 import { ctConfirm } from "../dialogs";
 import { splitScenes } from "../../lib/mockup-scenes";
-import { CT_MOCKUP_REFS_MAX } from "../../lib/mockup-prompt";
+import { CT_MOCKUP_BLOCK_REFS_MAX } from "../../lib/mockup-prompt";
 import { MockupPics } from "../base/base-mockup-section";
 import { SortableMockups } from "../sortable-mockups";
 import { effectivePicks, orderMockups, pickedMockups, type CtMockupPicks } from "../../lib/deploy-media";
@@ -62,34 +62,49 @@ const ART_PREVIEW_SIDE = 700;
 /** The image model refused the request on safety grounds (as server/product-mockups.ts isSafetyRefusal). */
 const isSafetyRefusal = (error: string) => /safety system|safety_violations|moderation_blocked|content policy/i.test(error);
 
+/** Same prompts, same pictures. */
+const sameBlocks = (a: CtMockupBlock[], b: CtMockupBlock[]) => a.length === b.length && a.every((x, i) => x.prompt === b[i].prompt && x.refs.join("\n") === b[i].refs.join("\n"));
+
 const isOpenTask = (t: CtAgentTask) => t.status === "pending" || t.status === "running" || t.status === "waiting";
 
 
 export function AiMockupsPanel(props: AiMockupsPanelProps) {
   const { product, main, assets, regions, items, selection, config } = props;
-  // The product's own prompts as last used (kept on the product), else its base's, else nothing (asked 2026-11-18: no hidden prompt).
+  // One block = one prompt = one AI photo, with its own reference pictures (asked 2026-11-23). The product's own blocks
+  // (kept on it), else its base's scenes, else nothing (asked 2026-11-18: no hidden prompt).
   const baseScenes = props.baseMockup?.scenes.trim() ?? "";
-  // null = not typed in yet: the box follows what it starts from (the bases load after the panel).
-  const [typed, setScenes] = useState<string | null>(null);
+  const baseList = useMemo<CtMockupBlock[]>(() => (baseScenes ? splitScenes(baseScenes).scenes.map((prompt) => ({ prompt, refs: [] })) : []), [baseScenes]);
+  // null = not edited yet: the blocks follow what they start from (the bases load after the panel).
+  const [typed, setTyped] = useState<CtMockupBlock[] | null>(null);
   // What the server keeps (the design's config is not reloaded after a mockup call).
-  const [savedScenes, setSavedScenes] = useState(config.mockupScenes);
-  const scenes = typed ?? (savedScenes || baseScenes);
-  const parsed = useMemo(() => splitScenes(scenes), [scenes]);
-  // Where the box's prompts come from (asked 2026-11-18: the base's box and this one looked like one).
-  const followText = baseScenes;
-  const own = typed !== null ? typed.trim() !== "" && typed.trim() !== followText : !!savedScenes.trim() && savedScenes.trim() !== followText;
+  const [saved, setSaved] = useState<CtMockupBlock[]>(config.mockupBlocks);
+  const blocks = typed ?? (saved.length ? saved : baseList);
+  const ready = useMemo(() => blocks.filter((b) => b.prompt.trim()).map((b) => ({ prompt: b.prompt.trim(), refs: b.refs })), [blocks]);
+  const own = ready.length > 0 && !sameBlocks(ready, baseList);
   const hasBase = !!product.base_product_id;
-  // Reference pictures (asked 2026-11-18): the product's own, else its base's; picture 1 is the product itself.
-  const [ownRefs, setOwnRefs] = useState<string[]>(config.mockupRefs);
+  // Picture 1 is the product itself; a block without pictures of its own is sent with the base's.
   const baseRefs = props.baseMockup?.refs ?? [];
-  const refList = ownRefs.length ? ownRefs : baseRefs;
   const [frontZoom, setFrontZoom] = useState<number | null>(null);
-  const saveRefs = async (urls: string[]) => {
+  const [savingBlocks, setSavingBlocks] = useState(false);
+  const editBlock = (i: number, b: CtMockupBlock | null) => {
+    const next = [...blocks];
+    if (b) next[i] = b;
+    else next.splice(i, 1);
+    setTyped(next);
+    return next;
+  };
+  const saveBlocks = async (list: CtMockupBlock[], quiet = false) => {
+    setSavingBlocks(true);
     try {
-      await ctApi.setMockupRefs(product.id, urls);
-      setOwnRefs(urls);
+      const keep = list.filter((b) => b.prompt.trim()).map((b) => ({ prompt: b.prompt.trim(), refs: b.refs }));
+      const r = await ctApi.setMockupBlocks(product.id, keep);
+      setSaved(normalizeProductConfig(r.product.config).mockupBlocks);
+      props.onProductRow?.(r.product);
+      if (!quiet) props.flash("Đã lưu prompt mockup của sản phẩm");
     } catch (e) {
-      props.flash(e instanceof Error ? e.message : "Không lưu được ảnh tham chiếu");
+      props.flash(e instanceof Error ? e.message : "Không lưu được prompt");
+    } finally {
+      setSavingBlocks(false);
     }
   };
   const [backBusy, setBackBusy] = useState(false);
@@ -97,8 +112,8 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
     setBackBusy(true);
     try {
       const r = await ctApi.clearMockupScenes(product.id);
-      setScenes(null);
-      setSavedScenes("");
+      setTyped(null);
+      setSaved([]);
       props.onProduct(r.product);
       props.flash(baseScenes ? "Sản phẩm dùng lại prompt của product base" : "Đã bỏ cảnh riêng — product base chưa có cảnh nào, Tạo mockup sẽ báo lỗi");
     } catch (e) {
@@ -256,8 +271,8 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
   }, [running.length, loadJobs, product.id]);
 
   const make = async () => {
-    if (!parsed.scenes.length) {
-      props.flash("Không có prompt cảnh nào — viết cảnh vào ô trên hoặc ô «Cảnh» ở trang product base.");
+    if (!ready.length) {
+      props.flash("Không có prompt cảnh nào — viết vào một khối prompt ở trên hoặc ô «Cảnh» ở trang product base.");
       return;
     }
     setMaking("print");
@@ -266,11 +281,11 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
       // printed goes on it.
       const printOf = async (sel: CtSelection) =>
         canvasToBlob(await renderComposite({ main, assets: displayAssets(assets, "flat"), regions, items, selection: sel, scale: 1, layouts: config.layouts, cutToFrame: true }), "image/png");
-      const lines = parsed.scenes;
-      const keep = scenes.trim() === followText ? "" : scenes;
+      const lines = ready.map((b) => b.prompt);
+      const keep = own ? ready : [];
       if (!varying) {
-        const r = await ctApi.makeMockups(product.id, await printOf(selection), lines, scenes, canVary ? false : undefined);
-        setSavedScenes(keep);
+        const r = await ctApi.makeMockups(product.id, await printOf(selection), ready, true, canVary ? false : undefined);
+        setSaved(keep);
         setJobs((cur) => [...r.jobs, ...cur.filter((j) => !r.jobs.some((x) => x.id === j.id))]);
         props.flash(`AI đang tạo ${lines.length} ảnh bối cảnh từ artwork trên phôi (1–2 phút / ảnh)`);
         return;
@@ -302,8 +317,8 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
       const prints: Blob[] = [];
       for (const v of variants) prints.push(await printOf(v.selection));
       setPicks(prints.map((b, i) => ({ url: URL.createObjectURL(b), label: variants[i].label, scene: lines[i] ?? "" })));
-      const r = await ctApi.makeMockups(product.id, prints, lines, scenes, true);
-      setSavedScenes(keep);
+      const r = await ctApi.makeMockups(product.id, prints, ready, true, true);
+      setSaved(keep);
       setJobs((cur) => [...r.jobs, ...cur.filter((j) => !r.jobs.some((x) => x.id === j.id))]);
       const missed = [...new Set(problems)];
       props.flash(`AI đang tạo ${prints.length} ảnh, mỗi ảnh 1 bản custom khác nhau (1–2 phút / ảnh)${missed.length ? ` — ảnh khách mẫu lỗi: ${missed.join("; ")}` : ""}`);
@@ -454,7 +469,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
             <div>
               <h3 className="text-sm font-semibold">Mockup bằng AI</h3>
               <p className="text-xs text-muted-foreground">
-                Artwork hoàn chỉnh (nội dung đang chọn ở Thiết kế) được đặt đúng lên phôi → 1 ảnh chụp thẳng chính xác. Từ ảnh đó AI tạo ảnh sản phẩm trong từng bối cảnh dưới đây, giữ nguyên hình in và chất liệu (hệ thống tự thêm). Mỗi dòng 1 ảnh; prompt dài nhiều dòng thì ngăn các prompt bằng một dòng trống hoặc một dòng chỉ có ---. Không giới hạn số prompt hay độ dài — mỗi ảnh là một lượt AI tính tiền.
+                Artwork hoàn chỉnh (nội dung đang chọn ở Thiết kế) được đặt đúng lên phôi → 1 ảnh chụp thẳng chính xác. Từ ảnh đó AI tạo ảnh sản phẩm trong từng bối cảnh dưới đây, giữ nguyên hình in và chất liệu (hệ thống tự thêm). Mỗi khối prompt 1 ảnh, bấm «Thêm prompt» để thêm khối; mỗi khối có ảnh tham chiếu riêng, chỉ gửi kèm prompt của khối đó. Không giới hạn số prompt hay độ dài — mỗi ảnh là một lượt AI tính tiền.
               </p>
             </div>
             <div className={cx("flex flex-wrap items-center gap-2 rounded-md border px-2 py-1.5 text-xs", own ? "border-amber-500/50 bg-amber-500/10" : "border-sky-500/40 bg-sky-500/10")}>
@@ -476,46 +491,60 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                 </button>
               )}
             </div>
-            <CtTextarea rows={6} value={scenes} onChange={(e) => setScenes(e.target.value)} placeholder={"hanging on a Christmas tree with warm lights\n---\nheld in a hand by the fireplace,\nsoft bokeh lights behind"} />
-            <div className="space-y-2 rounded-lg border p-2 text-xs">
-              <div className="font-medium text-foreground">Ảnh gửi cho AI</div>
-              <div className="flex items-start gap-3">
-                <div className="shrink-0">
-                  <button type="button" disabled={!art} onClick={() => setFrontZoom(0)} className="flex h-24 w-24 cursor-zoom-in items-center justify-center overflow-hidden rounded-md border bg-white" title="Bấm để phóng to">
-                    {art ? (
-                      // eslint-disable-next-line @next/next/no-img-element -- a local blob
-                      <img src={art} alt="Ảnh sản phẩm" className="h-full w-full object-contain" />
-                    ) : (
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    )}
-                  </button>
-                  <div className="mt-1 text-center text-[11px] font-medium text-foreground">Ảnh 1 · sản phẩm</div>
-                </div>
-                <div className="min-w-0 flex-1 space-y-1.5">
+            <div className="space-y-2">
+              {blocks.map((b, i) => (
+                <div key={i} className="space-y-1.5 rounded-lg border p-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-foreground">Prompt {i + 1}</span>
+                    <span className="text-foreground/70">· 1 ảnh</span>
+                    <button
+                      type="button"
+                      title="Xoá prompt này"
+                      className="ml-auto rounded p-1 text-foreground/70 hover:bg-accent hover:text-foreground"
+                      onClick={() => void saveBlocks(editBlock(i, null), true)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <CtTextarea
+                    rows={3}
+                    value={b.prompt}
+                    onChange={(e) => editBlock(i, { ...b, prompt: e.target.value })}
+                    onBlur={() => typed && void saveBlocks(typed, true)}
+                    placeholder="hanging on a Christmas tree with warm lights, same room as picture 2"
+                  />
                   <div className="text-foreground">
-                    Ảnh tham chiếu ({refList.length}/{CT_MOCKUP_REFS_MAX}) — {ownRefs.length ? "riêng của sản phẩm này" : refList.length ? "lấy từ product base" : "chưa có"}
+                    Ảnh tham chiếu riêng của prompt này ({b.refs.length}/{CT_MOCKUP_BLOCK_REFS_MAX}) —{" "}
+                    {b.refs.length ? "chỉ gửi kèm prompt này, là ảnh 2, 3… sau ảnh sản phẩm" : baseRefs.length ? `chưa có, sẽ gửi ${baseRefs.length} ảnh tham chiếu của product base` : "chưa có, chỉ gửi ảnh sản phẩm"}
                   </div>
-                  <MockupPics urls={refList} max={CT_MOCKUP_REFS_MAX} first={2} readOnly={!ownRefs.length && refList.length > 0} onChange={(u) => void saveRefs(u)} />
-                  <div className="flex flex-wrap gap-2">
-                    {!ownRefs.length && baseRefs.length > 0 && (
-                      <button className="rounded border bg-background px-2 py-0.5 font-medium text-foreground hover:bg-accent" onClick={() => void saveRefs([...baseRefs])}>
-                        Dùng ảnh riêng cho sản phẩm này
-                      </button>
-                    )}
-                    {ownRefs.length > 0 && (
-                      <button className="rounded border bg-background px-2 py-0.5 font-medium text-foreground hover:bg-accent" onClick={() => void saveRefs([])}>
-                        {hasBase ? "Bỏ ảnh riêng, dùng ảnh của base" : "Bỏ hết ảnh tham chiếu"}
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-foreground/75">Trong prompt gọi bằng số: “same room as picture 2”. Ảnh 1 là thiết kế được server đặt lên phôi khi tạo mockup.</p>
+                  <MockupPics urls={b.refs} max={CT_MOCKUP_BLOCK_REFS_MAX} first={2} onChange={(refs) => void saveBlocks(editBlock(i, { ...b, refs }), true)} />
                 </div>
+              ))}
+              <div className="flex flex-wrap items-center gap-2">
+                <CtButton size="sm" onClick={() => setTyped([...blocks, { prompt: "", refs: [] }])}>
+                  <Plus className="h-4 w-4" /> Thêm prompt
+                </CtButton>
+                {savingBlocks && <span className="flex items-center gap-1 text-xs text-foreground/70"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang lưu…</span>}
               </div>
+            </div>
+            <div className="flex items-start gap-3 rounded-lg border p-2 text-xs">
+              <div className="shrink-0">
+                <button type="button" disabled={!art} onClick={() => setFrontZoom(0)} className="flex h-20 w-20 cursor-zoom-in items-center justify-center overflow-hidden rounded-md border bg-white" title="Bấm để phóng to">
+                  {art ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- a local blob
+                    <img src={art} alt="Ảnh sản phẩm" className="h-full w-full object-contain" />
+                  ) : (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  )}
+                </button>
+                <div className="mt-1 text-center text-[11px] font-medium text-foreground">Ảnh 1 · sản phẩm</div>
+              </div>
+              <p className="text-foreground/80">
+                Ảnh 1 (thiết kế đặt lên phôi) luôn gửi kèm mọi prompt. Ảnh tham chiếu của khối nào chỉ đi theo prompt của khối đó; trong prompt gọi bằng số: “same room as picture 2”. Khối không có ảnh riêng thì dùng ảnh tham chiếu của product base.
+              </p>
               <CtLightbox images={art ? [{ url: art, name: "Ảnh 1 · sản phẩm" }] : []} index={frontZoom} onIndex={setFrontZoom} />
             </div>
-            <p className="text-xs text-muted-foreground">
-              {parsed.scenes.length ? `Sẽ tạo ${parsed.scenes.length} ảnh — ${parsed.split === "dash" ? "tách theo dòng ---" : parsed.split === "blank" ? "tách theo dòng trống" : "mỗi dòng 1 ảnh"}.` : "Chưa có cảnh nào — Tạo mockup sẽ báo lỗi."}
-            </p>
+            <p className="text-xs text-muted-foreground">{ready.length ? `Sẽ tạo ${ready.length} ảnh — mỗi khối prompt 1 ảnh.` : "Chưa có prompt nào — Tạo mockup sẽ báo lỗi."}</p>
             {canVary && (
               <label className="flex cursor-pointer items-start gap-2 rounded-lg border bg-muted/30 p-2 text-xs">
                 <input type="checkbox" className="mt-0.5" checked={vary} onChange={(e) => setVary(e.target.checked)} />

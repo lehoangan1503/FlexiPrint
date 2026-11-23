@@ -26,7 +26,7 @@ import { listBaseRows, loadBaseProduct } from "../base-products";
 import { applyBase, makeProductFromArtwork, resyncProduct } from "../artwork-link";
 import { saveOwnMockupPrompt } from "../product-mockups";
 import { baseImage, normalizeBaseConfig, normalizeBaseMockup } from "../../lib/base-product";
-import { CT_MOCKUP_REFS_MAX, defaultMockupWrap, mockupRefList } from "../../lib/mockup-prompt";
+import { CT_MOCKUP_BLOCK_REFS_MAX, CT_MOCKUP_REFS_MAX, badBlockRefs, defaultMockupWrap, mockupRefList } from "../../lib/mockup-prompt";
 import { defaultScenes, splitScenes } from "../../lib/mockup-scenes";
 import { ensureVersionPhoi, jobName } from "../version-phoi";
 import { normalizeProductConfig } from "../../lib/design";
@@ -339,8 +339,8 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         artwork_id: { type: "string", description: "The artwork (a set's product id, an import's, render_artwork's)." },
         base_product_id: { type: "string", description: "From list_base_products — the one of the artwork's material / khuôn." },
         name: { type: "string", description: "Product title (theme), default = the artwork's name." },
-        mockup_scenes: { type: "string", description: "Optional: this product's own mockup scene prompts (English; one per line, or split by an empty line / ---; no limit on count or length), kept on it instead of the base's." },
-        mockup_refs: { type: "array", items: { type: "string" }, description: "Optional: this product's own reference pictures for its mockups (https urls, max 4) instead of the base's." },
+        mockup_blocks: { type: "array", items: { type: "object" }, description: `Optional: this product's own mockup prompts, one photo each, pictures per prompt: [{"prompt": "<English scene>", "refs": ["<https url>", …]}] — a block's refs (max ${CT_MOCKUP_BLOCK_REFS_MAX}) go with that prompt only (picture 2, 3… after the front picture); no refs = the base's. Wins over mockup_scenes.` },
+        mockup_scenes: { type: "string", description: "Optional, older form of mockup_blocks: this product's own scene prompts as one text (English; one per line, or split by an empty line / ---), no pictures of their own." },
         ...DRAFT_PROPS,
       },
       required: ["artwork_id", "base_product_id"],
@@ -354,10 +354,13 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       if (!artwork) throw new Error("No such artwork, or the task's user may not edit it");
       const base = await loadBaseProduct(db, str(args.base_product_id));
       if (!base) throw new Error("No such product base — list_base_products");
+      if (args.mockup_refs !== undefined) throw new Error("mockup_refs is gone (2026-11-23): reference pictures are per prompt now — mockup_blocks [{prompt, refs}]");
+      const badBlocks = badBlockRefs(args.mockup_blocks);
+      if (badBlocks) throw new Error(`mockup_blocks: ${badBlocks}`);
       let product = await makeProductFromArtwork(db, userId, artwork, base, str(args.name) || undefined);
       product = await saveOwnMockupPrompt(db, product, {
+        blocks: Array.isArray(args.mockup_blocks) && args.mockup_blocks.length ? args.mockup_blocks : undefined,
         scenes: typeof args.mockup_scenes === "string" && args.mockup_scenes.trim() ? args.mockup_scenes : undefined,
-        refs: Array.isArray(args.mockup_refs) && args.mockup_refs.length ? args.mockup_refs : undefined,
       });
       if (str(args.title) || str(args.description_html) || args.customer_note) product = await saveDraft(db, product, args);
       await progress(db, task?.id, `Đã tạo sản phẩm “${product.name}” từ artwork “${artwork.name}” trên ${base.name}`);

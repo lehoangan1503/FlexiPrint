@@ -78,7 +78,7 @@
  *   POST   products/:id/artworks/prune   { versionIds } — artworks of removed versions are deleted
  *   GET    products/:id/mockups          → { jobs } AI mockups being made / made (server/product-mockups.ts)
  *   POST   products/:id/mockups          multipart: print, scenes (JSON), text (the box, kept on the product) → front mockup on the phôi + AI scenes
- *   POST   products/:id/mockups/refs     {refs} → {product}: the product's own mockup reference pictures ([] = its base's)
+ *   POST   products/:id/mockups/blocks   {blocks: [{prompt, refs}]} → {product}: the product's own mockup prompts, pictures per prompt ([] = its base's)
  *   POST   products/:id/mockups/prompt   {} → {product}: drops the product's own mockup scenes (back to its base's)
  *   POST   products/:id/mockups/auto     {} → the same, made on the server from the design's content + the product's own prompts (bulk)
  *   POST   products/:id/mockups/samples  { regionId, items: [{ style, name }] } → { samples } a different sample person / pet per
@@ -427,8 +427,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return productMockups.listMockupJobs(session, id);
     } else if (sub === "mockups" && path[3] === "auto" && method === "POST") {
       return productMockups.autoProductMockups(session, id);
-    } else if (sub === "mockups" && path[3] === "refs" && method === "POST") {
-      return productMockups.setOwnMockupRefs(session, id, await readJson<unknown>(req));
+    } else if (sub === "mockups" && path[3] === "blocks" && method === "POST") {
+      return productMockups.setOwnMockupBlocks(session, id, await readJson<unknown>(req));
     } else if (sub === "mockups" && path[3] === "prompt" && method === "POST") {
       return productMockups.clearOwnMockupScenes(session, id);
     } else if (sub === "mockups" && path[3] === "samples" && method === "POST") {

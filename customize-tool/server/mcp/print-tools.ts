@@ -34,7 +34,8 @@ import { frameRegion, makeBaseArtwork, makeTemplateProduct, productPrintOf, type
 import { loadBaseProduct } from "../base-products";
 import { loadArtwork, renderArtwork, safeReport, type ArtworkBundle } from "../print-render";
 import { productOptions, selectionFromNames } from "../product-options";
-import { failOrphans, makeProductBlank, productMockups, productScenes, saveOwnMockupPrompt } from "../product-mockups";
+import { failOrphans, makeProductBlank, productBlocks, productMockups, saveOwnMockupPrompt } from "../product-mockups";
+import { CT_MOCKUP_BLOCK_REFS_MAX, badBlockRefs, mockupBlockList } from "../../lib/mockup-prompt";
 import { serviceSession } from "../char/product";
 import type { CtPackImage } from "../../types";
 import type { CtSession } from "../supabase";
@@ -728,16 +729,16 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
         mockups: {
           type: "array",
           items: { type: "object" },
-          description: `[{"label": "Christmas", "options": {"<layer>": "<option>"}, "scenes": ["<English: where the product is and what is around it — e.g. hanging on a decorated Christmas tree with warm bokeh lights>"]}] — any number of entries and scenes (one photo per scene, no limit). An entry without scenes uses the product's own prompts, else its PRODUCT BASE's (get_base_mockup_prompt); none anywhere → refused (no built-in prompt). The prompt sent = the base's wrap with {product} / {scene} filled, nothing added; a base without a wrap sends each scene alone as the whole prompt.`,
+          description: `[{"label": "Christmas", "options": {"<layer>": "<option>"}, "scenes": ["<English: where the product is and what is around it — e.g. hanging on a decorated Christmas tree with warm bokeh lights>", {"prompt": "<a scene that copies a setting>", "refs": ["https://… pictures sent with THIS scene only"]}]}] — any number of entries and scenes (one photo per scene, no limit). A scene is a string, or a block {prompt, refs}: its refs (https urls, max ${CT_MOCKUP_BLOCK_REFS_MAX}) go with that prompt only, after the product's front picture (picture 1) — call them picture 2, 3… in the prompt; a scene with no refs gets the base's reference pictures. An entry without scenes uses the product's own blocks, else its PRODUCT BASE's scenes (get_base_mockup_prompt); none anywhere → refused (no built-in prompt). The prompt sent = the base's wrap with {product} / {scene} filled, nothing added; a base without a wrap sends each scene alone as the whole prompt.`,
+        },
+        save_blocks: {
+          type: "array",
+          items: { type: "object" },
+          description: `Optional: keep these prompt blocks on THIS product (its editor's Mockups blocks, one photo each): [{"prompt": "<scene>", "refs": ["<https url>", …]}] — a block's refs (max ${CT_MOCKUP_BLOCK_REFS_MAX}) are sent with that prompt only; no refs = the base's. Used instead of the base's scenes from now on (also by the bulk "Tạo mockup"). [] = drop the product's own, back to the base's.`,
         },
         save_scenes: {
           type: "string",
-          description: 'Optional: keep these scene prompts on THIS product (its editor Mockups box; one per line, or split by an empty line / ---; no limit on count or length) — used instead of the base\'s from now on. "" = drop the product\'s own, back to the base\'s.',
-        },
-        save_refs: {
-          type: "array",
-          items: { type: "string" },
-          description: "Optional: keep reference pictures (https urls, max 4) on THIS product for the setting / light / style, sent after the product's front picture instead of the base's. [] = back to the base's.",
+          description: 'Optional, older form of save_blocks: scene prompts as one text (one per line, or split by an empty line / ---), no pictures of their own. "" = back to the base\'s.',
         },
         task_id: { type: "string", description: "Agent: the task it is for (its user owns the mockups)." },
       },
@@ -750,25 +751,30 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       if (bundle.product.kind !== "product") throw new Error("That is an ARTWORK: mockups are of a product (artwork + base) — make_product_from_artwork {artwork_id, base_product_id}, then make_product_mockups on the product id");
       const list = (Array.isArray(args.mockups) ? args.mockups : []).map((x) => (x && typeof x === "object" ? (x as Record<string, unknown>) : {}));
       if (!list.length) throw new Error('"mockups" must list at least one {label, options, scenes}');
+      if (args.save_refs !== undefined) throw new Error("save_refs is gone (2026-11-23): reference pictures are per prompt now — save_blocks [{prompt, refs}], or refs inside a scene of mockups");
+      for (const m of list) {
+        const bad = badBlockRefs(m.scenes);
+        if (bad) throw new Error(`mockups "${str(m.label)}": ${bad}`);
+      }
       const s = await sessionFor(ctx, bundle.product.user_id);
       // The product's own prompts sent with the call are kept first (asked 2026-11-17), so these mockups use them.
       const product = await saveOwnMockupPrompt(ctx.service ?? ctx.db, bundle.product, {
+        blocks: Array.isArray(args.save_blocks) ? args.save_blocks : undefined,
         scenes: typeof args.save_scenes === "string" ? args.save_scenes : undefined,
-        refs: Array.isArray(args.save_refs) ? args.save_refs : undefined,
       });
-      const kept = await productScenes(ctx.service ?? ctx.db, product);
+      const kept = await productBlocks(ctx.service ?? ctx.db, product);
       const out: Array<{ label: string; front: string; jobs: Array<{ id: string; scene: string; status: string }> }> = [];
       for (const m of list) {
         const options = m.options && typeof m.options === "object" ? (m.options as Record<string, unknown>) : {};
         const selection = selectionFromNames(bundle, Object.fromEntries(Object.entries(options).map(([k, v]) => [k, str(v)])));
-        const given = (Array.isArray(m.scenes) ? m.scenes : []).map(str).filter(Boolean);
-        const scenes = given.length ? given : kept.scenes;
+        const given = mockupBlockList(m.scenes);
+        const scenes = given.length ? given : kept.blocks;
         // With the version's own picture, like the editor's Tạo mockup (lib/compositor draws it): an artwork that IS one
         // picture (Girl Soccer blanket, 2026-11-17) gave an empty print and a blank front mockup.
         const print = await renderArtwork(bundle, selection, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print", { withMain: true });
         const label = str(m.label).slice(0, 60);
         const r = await productMockups(s, product, print, scenes, label);
-        out.push({ label, front: r.front.url, jobs: r.jobs.filter((j) => j.status === "running").map((j) => ({ id: j.id, scene: j.description, status: j.status })) });
+        out.push({ label, front: r.front.url, jobs: r.jobs.filter((j) => j.status === "running").map((j) => ({ id: j.id, scene: j.description, refs: j.refs.length - 1, status: j.status })) });
       }
       return json({ mockups: out, scenesFrom: kept.from, next: "wait_product_mockups with the job ids, then view_image each photo (the print must be unchanged on it)." });
     },

@@ -76,8 +76,10 @@ flexiprint_save_files (urls → a folder).
   mockup order / off), delete_mockup, set_shopify_status (ACTIVE / DRAFT / ARCHIVED), delete_shopify_product.
   Deleting anything, or putting a product ACTIVE: ask the user first.
 - Mockup prompts: kept on the PRODUCT BASE (get_base_mockup_prompt / set_base_mockup_prompt — scenes, the sentence
-  around each scene, reference pictures; only the base's maker or an admin edits). A product's own (its editor box, or
-  make_product_mockups save_scenes / save_refs, make_product_from_artwork mockup_scenes / mockup_refs) wins over the base's.
+  around each scene, reference pictures; only the base's maker or an admin edits). A product's own prompt BLOCKS win over
+  the base's scenes — one block = one photo = {prompt, refs}, its refs sent with that prompt only (picture 2, 3…; none =
+  the base's): the editor's Mockups blocks, make_product_mockups save_blocks (or refs inside a scene of mockups),
+  make_product_from_artwork mockup_blocks.
 - Khuôn in (the base's physical shape, rarely touched): list_print_templates / get_print_template.
 
 ## The 3 kinds of bộ (kiểu 1 / 2 / 3)

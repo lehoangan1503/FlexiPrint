@@ -317,8 +317,7 @@ export async function saveDesign(s: CtSession, productId: string, body: CtSaveDe
             versionPhoi: normalizeProductConfig(owned.config).versionPhoi,
             customerPhoi: normalizeProductConfig(owned.config).customerPhoi,
             // Written when mockups are made (server/product-mockups.ts).
-            mockupScenes: normalizeProductConfig(owned.config).mockupScenes,
-            mockupRefs: normalizeProductConfig(owned.config).mockupRefs,
+            mockupBlocks: normalizeProductConfig(owned.config).mockupBlocks,
             mockupVary: normalizeProductConfig(owned.config).mockupVary,
             // Set by "Ảnh sản phẩm" / a deploy (PATCH products/:id mockupOrder / mockupOff).
             mockupOrder: normalizeProductConfig(owned.config).mockupOrder,

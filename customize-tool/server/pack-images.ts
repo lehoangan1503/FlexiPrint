@@ -147,7 +147,8 @@ async function drawCpa(model: string, prompt: string, refs: string[], aspect: st
   const base = (process.env.CPA_BASE_URL || "https://cpa.next.lc/v1").replace(/\/+$/, "");
   const { size, ratio } = cpaSize(aspect);
   const images = await Promise.all(
-    refs.slice(0, 8).map(async (u) => {
+    // 17 = a mockup block's front picture + 16 of its own (lib/mockup-prompt CT_MOCKUP_BLOCK_REFS_MAX; 32 taken, measured 2026-11-23).
+    refs.slice(0, 17).map(async (u) => {
       const r = await fetch(u, { signal: AbortSignal.timeout(60_000) });
       if (!r.ok) throw new Error(`Ảnh tham khảo ${r.status}`);
       const mime = r.headers.get("content-type")?.split(";")[0] ?? "image/png";

@@ -6,6 +6,9 @@
  * Shared by the server (server/product-mockups.ts) and the base page (components/base/base-mockup-section.tsx).
  */
 
+import type { CtMockupBlock } from "../types";
+import { splitScenes } from "./mockup-scenes";
+
 export const KEEP_PRINT =
   " The printed artwork on the product must stay EXACTLY as in the reference picture: the same characters, the same colours, " +
   "the same text letter for letter, the same size and position on the product. Do not redraw, restyle, crop or change the print. " +
@@ -27,14 +30,55 @@ export function isGlass(material: string | undefined, label = ""): boolean {
   return material === "glass_clear" || /\b(glass|crystal)\b|kính|thuỷ tinh|thủy tinh|pha lê/i.test(label);
 }
 
-/** Most reference pictures (besides the product's own front picture) sent with each mockup. */
+/** Most reference pictures on a product base (its refs, its size charts). */
 export const CT_MOCKUP_REFS_MAX = 4;
 
+/**
+ * Most reference pictures on ONE prompt block of a product (asked 2026-11-23: "không giới hạn" — the image model took
+ * 32 in one call when measured that day; 16 keeps one call's upload reasonable).
+ */
+export const CT_MOCKUP_BLOCK_REFS_MAX = 16;
+
 /** Well-formed reference urls (https, no repeats, at most CT_MOCKUP_REFS_MAX). */
-export function mockupRefList(raw: unknown): string[] {
+export function mockupRefList(raw: unknown, max = CT_MOCKUP_REFS_MAX): string[] {
   if (!Array.isArray(raw)) return [];
   const urls = raw.filter((u): u is string => typeof u === "string" && /^https:\/\/\S+$/.test(u.trim()) && u.length <= 1000).map((u) => u.trim());
-  return [...new Set(urls)].slice(0, CT_MOCKUP_REFS_MAX);
+  return [...new Set(urls)].slice(0, max);
+}
+
+/** Well-formed prompt blocks: a prompt each (empty ones dropped), their refs as mockupRefList (≤ CT_MOCKUP_BLOCK_REFS_MAX). */
+export function mockupBlockList(raw: unknown): CtMockupBlock[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((b) => {
+    const o = b && typeof b === "object" ? (b as { prompt?: unknown; refs?: unknown }) : null;
+    const prompt = typeof b === "string" ? b.trim() : typeof o?.prompt === "string" ? o.prompt.trim() : "";
+    return prompt ? [{ prompt, refs: mockupRefList(o?.refs, CT_MOCKUP_BLOCK_REFS_MAX) }] : [];
+  });
+}
+
+/** Blocks given that would be refused (a ref that is not an https url, a repeat, over the cap) — for a clear error. */
+export function badBlockRefs(raw: unknown): string | null {
+  if (!Array.isArray(raw)) return null;
+  for (const [i, b] of raw.entries()) {
+    const refs = b && typeof b === "object" ? (b as { refs?: unknown }).refs : undefined;
+    if (refs === undefined) continue;
+    if (!Array.isArray(refs)) return `Prompt ${i + 1}: refs must be a list of https urls`;
+    const ok = mockupRefList(refs, CT_MOCKUP_BLOCK_REFS_MAX);
+    if (refs.length > ok.length) return `Prompt ${i + 1}: reference pictures are https urls only, at most ${CT_MOCKUP_BLOCK_REFS_MAX}, no repeats (${refs.length - ok.length} refused)`;
+  }
+  return null;
+}
+
+/**
+ * A product's blocks from its stored config: mockupBlocks, else (a product saved before 2026-11-23) its old Mockups
+ * box text split into prompts, each with its old own refs (those used to go with every prompt).
+ */
+export function mockupBlocksOf(raw: { mockupBlocks?: unknown; mockupScenes?: unknown; mockupRefs?: unknown } | null | undefined): CtMockupBlock[] {
+  if (Array.isArray(raw?.mockupBlocks)) return mockupBlockList(raw.mockupBlocks);
+  const text = typeof raw?.mockupScenes === "string" ? raw.mockupScenes : "";
+  if (!text.trim()) return [];
+  const refs = mockupRefList(raw?.mockupRefs);
+  return splitScenes(text).scenes.map((prompt) => ({ prompt, refs: [...refs] }));
 }
 
 export interface CtMockupLook {

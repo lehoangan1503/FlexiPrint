@@ -142,7 +142,19 @@ export function normalizeBaseConfig(raw: unknown): CtBaseProductConfig {
     scenesAuto: str(c.scenesAuto, 40) || null,
     assembly: normalizeBaseAssembly(c.assembly),
     mockup: normalizeBaseMockup(c.mockup),
+    image: baseImage(c.image),
   };
+}
+
+/** CtBaseProductConfig.image: an http(s) url, else null. */
+export function baseImage(v: unknown): string | null {
+  const u = str(v, 1000);
+  return /^https?:\/\/\S+$/.test(u) ? u : null;
+}
+
+/** The picture a base is shown by: its own image; an old base without one falls back to its phôi / fulfiller photo. */
+export function basePicture(b: { config: CtBaseProductConfig; template?: { blankUrl: string | null } | null }): string | null {
+  return b.config.image ?? b.template?.blankUrl ?? b.config.preview.url ?? b.config.source?.photos[0] ?? null;
 }
 
 const SCENE_PRESETS: CtBaseScenePreset[] = ["home", "holiday", "minimal", "custom"];

@@ -31,7 +31,7 @@ import { PrintSheet } from "../print/print-sheet";
 import { ctConfirm } from "../dialogs";
 import { BaseCutSection, BasePreviewSection } from "./base-cut-preview";
 import { BaseAssemblySection } from "./base-assembly-section";
-import { BaseExtraPics, BaseMockupSection } from "./base-mockup-section";
+import { BaseExtraPics, BaseMockupSection, MockupPics } from "./base-mockup-section";
 import { ZoomThumbs } from "../zoom-thumbs";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, CtSelect, CtTextarea, CtTooltipProvider, cx } from "../ui";
 import { useDoneAlert } from "../use-done-alert";
@@ -321,6 +321,12 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                   <CtTextarea rows={2} value={cfg.notes} onChange={(e) => patch({ notes: e.target.value })} />
                 </CtField>
               </div>
+            </Section>
+
+            <Section title="Ảnh product base">
+              <p className="mb-2 text-xs text-foreground/80">Ảnh cố định của base: hiện ở thẻ trong tab Product base và khi chọn base. Mockup của sản phẩm không thay ảnh này. Bỏ ảnh cũ rồi thêm ảnh mới để đổi, nhớ bấm Lưu.</p>
+              <MockupPics urls={cfg.image ? [cfg.image] : []} max={1} first={0} onChange={(urls) => patch({ image: urls[0] ?? null })} />
+              {!cfg.image && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Chưa có ảnh product base — thẻ đang tạm hiện phôi / ảnh nhà in.</p>}
             </Section>
 
             <Section title={`Ảnh kèm sản phẩm (${cfg.mockup.sizeCharts.length}/4)`}>

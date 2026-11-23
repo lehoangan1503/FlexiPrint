@@ -25,7 +25,7 @@ import { siteUrl } from "../site-url";
 import { listBaseRows, loadBaseProduct } from "../base-products";
 import { applyBase, makeProductFromArtwork, resyncProduct } from "../artwork-link";
 import { saveOwnMockupPrompt } from "../product-mockups";
-import { normalizeBaseConfig, normalizeBaseMockup } from "../../lib/base-product";
+import { baseImage, normalizeBaseConfig, normalizeBaseMockup } from "../../lib/base-product";
 import { CT_MOCKUP_REFS_MAX, defaultMockupWrap, mockupRefList } from "../../lib/mockup-prompt";
 import { defaultScenes, splitScenes } from "../../lib/mockup-scenes";
 import { ensureVersionPhoi, jobName } from "../version-phoi";
@@ -315,6 +315,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
           name: b.name,
           material: b.config.material,
           productType: b.config.productType,
+          image: b.config.image,
           khuon: b.template ? { id: b.template.id, name: b.template.name, width: b.template.width, height: b.template.height, phoi: b.template.blankUrl } : null,
           printAreas: b.config.printAreas,
           cut: b.config.cut,
@@ -443,6 +444,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       properties: {
         ...OPT_TASK_ARG,
         name: { type: "string", description: "The base's name (the kind of product)." },
+        image_url: { type: "string", description: "REQUIRED: the base's own fixed picture (https; a file on this machine → flexiprint_upload_image first). Shown on the base's card and picker; product mockups never replace it." },
         product_type: { type: "string", description: "Shopify product type (the store's collections key on it)." },
         description: { type: "string", description: "Product page description until a product's own replaces it (HTML ok)." },
         material: { type: "string", description: "none | acrylic_white | acrylic_clear | glass_clear | ceramic_gloss | ceramic_matte | aluminum | wood (default none)." },
@@ -453,13 +455,15 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         price_table: { type: "object", description: '{size_label?: "Size", sizes: [{label, price, compare_at?}], pack_label?, packs?: [{qty, label?, discount_pct}]} — no packs = one piece only.' },
         mockup: { type: "object", description: "{scenes?: string, wrap?: string, refs?: [urls ≤ 4], size_charts?: [urls ≤ 4]}" },
       },
-      required: ["name"],
+      required: ["name", "image_url"],
     },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, userId } = await actorOf(ctx, args.task_id);
       const name = str(args.name).slice(0, 160);
       if (!name) throw new Error("name is needed");
+      const image = baseImage(args.image_url);
+      if (!image) throw new Error("image_url is needed — the base's own picture (https; a file on this machine → flexiprint_upload_image first)");
       const obj = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
       const list = (v: unknown) => (Array.isArray(v) ? v.map(obj).filter((x): x is Record<string, unknown> => !!x) : []);
       let priceTableId = str(args.price_table_id) || null;
@@ -494,6 +498,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         noKhuon: typeof args.no_khuon === "boolean" ? args.no_khuon : !templateId,
         printAreas: area ? [{ name: area.name, width: area.width, height: area.height, dpi: area.dpi }] : [],
         mockup,
+        image,
       });
       const { data: base, error } = await db.from(CT_TABLES.baseProducts).insert({ user_id: userId, name, config }).select("id").single<{ id: string }>();
       if (error || !base) throw new Error(error?.message ?? "Base not saved");
@@ -518,6 +523,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         price_table_id: { type: "string", description: "Switch to this existing price table." },
         price_table: { type: "object", description: 'The whole new table: {size_label?, sizes: [{label, price, compare_at?}], pack_label?, packs?: [{qty, label?, discount_pct}]}.' },
         mockup: { type: "object", description: "{scenes?, wrap?, refs?: [urls ≤ 4], size_charts?: [urls ≤ 4]} — only the keys given change." },
+        image_url: { type: "string", description: "A new fixed picture for the base (https; a file on this machine → flexiprint_upload_image first)." },
       },
       required: ["base_product_id"],
     },
@@ -538,6 +544,12 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       if (name !== row.name) changed.push("name");
       if (typeof args.product_type === "string") { raw.productType = args.product_type; changed.push("product_type"); }
       if (typeof args.description === "string") { raw.description = args.description; changed.push("description"); }
+      if (typeof args.image_url === "string") {
+        const image = baseImage(args.image_url);
+        if (!image) throw new Error("image_url: an https picture url");
+        raw.image = image;
+        changed.push("image");
+      }
       if (typeof args.material === "string") { raw.material = args.material; changed.push("material"); }
       if (typeof args.template_id === "string") {
         const t = args.template_id.trim();

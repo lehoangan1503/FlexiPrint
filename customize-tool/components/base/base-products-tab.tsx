@@ -12,13 +12,13 @@ import { useRouter } from "next/navigation";
 import { Download, Loader2, Plus, Search } from "lucide-react";
 import type { CtBaseProductRow } from "../../types";
 import { ctApi } from "../../lib/api-client";
-import { normalizeBaseConfig } from "../../lib/base-product";
+import { basePicture } from "../../lib/base-product";
 import { formatUsd } from "../../lib/pricing";
 import { priceSummary } from "../product-create";
-import { ctPrompt } from "../dialogs";
 import { thumbUrl } from "../../lib/thumb-url";
 import { CHECKER_STYLE, CtButton, CtInput } from "../ui";
 import { BaseImportDialog } from "./base-import-dialog";
+import { BaseCreateDialog } from "./base-create-dialog";
 
 /** " · giá vốn $4.50 – $6.20" of an imported base's fulfiller variants. */
 function costRange(b: CtBaseProductRow): string {
@@ -34,6 +34,7 @@ export function BaseProductsTab({ admin }: { admin: boolean }) {
   const [bases, setBases] = useState<CtBaseProductRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   // Search (asked 2026-11-12): name, fulfiller + catalog id, khuôn name, product type — every word must match.
   const [search, setSearch] = useState("");
   const shown = useMemo(() => {
@@ -53,16 +54,6 @@ export function BaseProductsTab({ admin }: { admin: boolean }) {
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  const create = async () => {
-    const name = await ctPrompt({ title: "Product base mới", label: "Loại sản phẩm (tên)", defaultValue: "Wooden Ornament 1 side", confirmLabel: "Tạo" });
-    if (!name?.trim()) return;
-    try {
-      const b = await ctApi.createBaseProduct({ name: name.trim(), config: normalizeBaseConfig({}) });
-      router.push(`/base-products/${b.id}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Không tạo được");
-    }
-  };
 
   return (
     <div className="space-y-4">
@@ -74,7 +65,7 @@ export function BaseProductsTab({ admin }: { admin: boolean }) {
         <p className="text-sm text-muted-foreground">Loại sản phẩm bán: biến thể + giá (bảng giá Notion), khuôn in + phôi. Mockup ở đây là mockup của các sản phẩm làm từ nó.</p>
         {admin && (
           <div className="ml-auto flex shrink-0 gap-2">
-            <CtButton variant="outline" onClick={() => void create()}>
+            <CtButton variant="outline" onClick={() => setCreateOpen(true)}>
               <Plus className="h-4 w-4" /> Product base
             </CtButton>
             <CtButton variant="primary" onClick={() => setImportOpen(true)} title="Import từ Printbelle / Merchize">
@@ -93,13 +84,14 @@ export function BaseProductsTab({ admin }: { admin: boolean }) {
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
           {shown.map((b) => {
-            const pic = b.mockup_url ?? b.template?.blankUrl ?? b.config.preview.url ?? b.config.source?.photos[0] ?? null;
+            // The base's own fixed picture (asked 2026-11-23), never a product's newest mockup.
+            const pic = basePicture(b);
             return (
               <Link key={b.id} href={`/base-products/${b.id}`} className="overflow-hidden rounded-xl border bg-card hover:border-foreground/40">
                 <div className="aspect-square" style={CHECKER_STYLE}>
                   {pic ? (
                     // eslint-disable-next-line @next/next/no-img-element -- our R2 picture
-                    <img src={thumbUrl(pic) ?? pic} alt={b.name} className={b.mockup_url ? "h-full w-full object-cover" : "h-full w-full object-contain p-3"} loading="lazy" />
+                    <img src={thumbUrl(pic) ?? pic} alt={b.name} className={b.config.image ? "h-full w-full object-cover" : "h-full w-full object-contain p-3"} loading="lazy" />
                   ) : (
                     <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Chưa có phôi</div>
                   )}
@@ -123,6 +115,7 @@ export function BaseProductsTab({ admin }: { admin: boolean }) {
         </div>
       )}
       {admin && <BaseImportDialog open={importOpen} onOpenChange={setImportOpen} />}
+      {admin && <BaseCreateDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={(id) => router.push(`/base-products/${id}`)} />}
     </div>
   );
 }

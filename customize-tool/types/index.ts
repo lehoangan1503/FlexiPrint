@@ -1943,6 +1943,12 @@ export interface CtBaseProductConfig {
   assembly: CtBaseAssembly | null;
   /** The AI mockup prompts of every product made on it (lib/mockup-prompt.ts). */
   mockup: CtBaseMockup;
+  /**
+   * The base's own picture (asked 2026-11-23: "ảnh product base là cố định, người dùng phải up lên khi tạo"): the
+   * card in the Product base tab and the base picker show it, never a product's newest mockup. Uploaded when the base
+   * is made (an import takes the fulfiller's first photo), changed on the base page. null = an old base without one.
+   */
+  image: string | null;
 }
 
 /**

@@ -94,7 +94,7 @@ async function existingBases(s: CtSession): Promise<Map<string, ExistingBase>> {
       name: b.name,
       provider,
       catalogId,
-      image: cfg.preview.url ?? cfg.source?.photos[0] ?? null,
+      image: cfg.image ?? cfg.preview.url ?? cfg.source?.photos[0] ?? null,
       cost: minCost(cfg.variants.map((v) => v.cost)),
       variants: cfg.variants.length,
       printArea: cfg.printAreas[0] ? { width: cfg.printAreas[0].width, height: cfg.printAreas[0].height } : null,
@@ -363,6 +363,8 @@ export async function importBase(s: CtSession, raw: unknown): Promise<NextRespon
       notes: `${note} · ${new Date().toISOString().slice(0, 10)}`,
       cut: { mode: cutMode, borderMm: cutMode === "alpha" ? 2 : 0, silhouette: true, hole: false, holeSize: 9 },
     });
+    // The base's own picture (asked 2026-11-23, fixed): the fulfiller's first product photo, else its phôi.
+    config.image = config.source?.photos[0] ?? config.preview.url ?? null;
     // The fulfiller's phôi kept apart: the preview may move to an AI background, the khuôn's phôi trơn copies this one.
     if (config.source && config.preview.url) config.source = { ...config.source, phoi: config.preview };
     const { data: last } = await s.supabase.from(CT_TABLES.baseProducts).select("sort_order").order("sort_order", { ascending: false }).limit(1).maybeSingle<{ sort_order: number }>();

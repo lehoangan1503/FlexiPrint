@@ -195,6 +195,8 @@ export async function getBaseProduct(s: CtSession, id: string): Promise<NextResp
 export async function createBaseProduct(s: CtSession, raw: unknown): Promise<NextResponse> {
   const body = readBody(raw);
   if (!body) return jsonError("Product base cần tên (loại sản phẩm)", 400);
+  // The base's picture is fixed and given by its maker (asked 2026-11-23): no base without one.
+  if (!body.config.image) return jsonError("Product base cần ảnh — tải ảnh lên khi tạo", 400);
   const { data, error } = await s.supabase.from(CT_TABLES.baseProducts).insert({ user_id: s.user.id, name: body.name, config: body.config }).select("*").single<CtBaseProduct>();
   if (error) return jsonError(error.message, 500);
   return NextResponse.json({ base: normalizeRow(data) }, { status: 201 });
@@ -203,6 +205,11 @@ export async function createBaseProduct(s: CtSession, raw: unknown): Promise<Nex
 export async function updateBaseProduct(s: CtSession, id: string, raw: unknown): Promise<NextResponse> {
   const body = readBody(raw);
   if (!body) return jsonError("Product base cần tên (loại sản phẩm)", 400);
+  // A base that has its picture keeps one (asked 2026-11-23): it can be changed, not removed.
+  if (!body.config.image) {
+    const { data: was } = await s.supabase.from(CT_TABLES.baseProducts).select("config").eq("id", id).maybeSingle<{ config: Record<string, unknown> | null }>();
+    if (was?.config?.image) return jsonError("Product base cần ảnh — thêm ảnh mới thay cho ảnh vừa bỏ", 400);
+  }
   const { data, error } = await s.supabase.from(CT_TABLES.baseProducts).update({ name: body.name, config: body.config }).eq("id", id).select("*").maybeSingle<CtBaseProduct>();
   if (error) return jsonError(error.message, 500);
   if (!data) return jsonError("Không có quyền sửa product base này (chỉ người tạo hoặc admin)", 403);

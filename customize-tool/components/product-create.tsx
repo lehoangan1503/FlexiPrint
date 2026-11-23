@@ -18,6 +18,7 @@ import type { CtBaseProductRow, CtProductListRow } from "../types";
 import { ctApi } from "../lib/api-client";
 import { formatUsd, priceCells } from "../lib/pricing";
 import { thumbUrl } from "../lib/thumb-url";
+import { basePicture } from "../lib/base-product";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, cx } from "./ui";
 
 /** "$19.95 – $139.50 · 18 biến thể" */
@@ -46,7 +47,7 @@ function useBases(open: boolean): { bases: CtBaseProductRow[] | null; error: str
 
 /** One base product to pick: its phôi / mockup, name, price range. */
 function BaseCard({ b, on, onPick }: { b: CtBaseProductRow; on: boolean; onPick: () => void }) {
-  const pic = b.template?.blankUrl ?? b.mockup_url;
+  const pic = basePicture(b);
   return (
     <button
       type="button"

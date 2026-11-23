@@ -58,7 +58,7 @@ flexiprint_save_files (urls → a folder).
   of the set's page, any tab, with screenshots): char_update_brief, char_cut, char_status besides
   the master / edits tools; char_approve_master (only when the editor hands you the whole set), char_draw_backdrops
   and char_remake_product for step 4 — get_task gives the whole set.
-- Bases: list_base_products (print area, khuôn, cut, preview photo, variants + price); create_base_product (a new base
+- Bases: list_base_products (print area, khuôn, cut, preview photo, variants + price); create_base_product (a new base: image_url = its fixed picture, required —
   with its price table + mockup prompts / reference pictures / size charts — no khuôn needed for a piece not cut to shape),
   ONLY when no base of that kind exists; any change to an existing base (name, price, description, khuôn, prompts) is
   update_base_product on the same id — never a new base.

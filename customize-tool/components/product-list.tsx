@@ -39,6 +39,9 @@ const FILTER_TEST: Record<ProductFilter, (p: CtProductListRow) => boolean> = {
 /** The people ticked in the "Người đăng" filter (localStorage, user ids). */
 const OWNER_KEY = "ct-list-owners";
 
+/** Cards per page of the list ("Xem thêm" loads the next page; 2026-11-23: a flat 200 cap hid the rest). */
+const PAGE_SIZE = 100;
+
 /** Most products one bulk "Tạo mockup" takes (each makes 2–3 AI photos). */
 const BULK_MOCKUP_MAX = 20;
 
@@ -84,6 +87,9 @@ export function CustomizeProductList({
   const word = kind === "artwork" ? "artwork" : "sản phẩm";
   const [products, setProducts] = useState<CtProductListRow[]>([]);
   const [loading, setLoading] = useState(true);
+  /** Paging: how many there are in all, whether older ones remain, the offset to ask next. */
+  const [page, setPage] = useState<{ total: number; more: boolean; next: number }>({ total: 0, more: false, next: 0 });
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ProductFilter>("all");
@@ -198,13 +204,22 @@ export function CustomizeProductList({
     setBulk({ title, lines: [...lines], running: false });
     setPicked(new Set());
     // The list again, quietly: each card's picture as the server picks it (picture 1 of the Shopify order).
-    if (kind === "mockup") ctApi.listProducts(search.trim(), listKind).then(setProducts).catch(() => undefined);
+    if (kind === "mockup")
+      ctApi
+        .listProductsPage(search.trim(), listKind, 0, Math.max(PAGE_SIZE, products.length))
+        .then((r) => {
+          setProducts(r.products);
+          setPage({ total: r.total, more: r.more, next: r.next });
+        })
+        .catch(() => undefined);
   };
 
   const load = useCallback(async (q: string) => {
     setLoading(true);
     try {
-      setProducts(await ctApi.listProducts(q, kind));
+      const r = await ctApi.listProductsPage(q, kind, 0, PAGE_SIZE);
+      setProducts(r.products);
+      setPage({ total: r.total, more: r.more, next: r.next });
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không tải được danh sách");
@@ -217,6 +232,23 @@ export function CustomizeProductList({
     const t = setTimeout(() => void load(search.trim()), 250);
     return () => clearTimeout(t);
   }, [search, load]);
+
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const r = await ctApi.listProductsPage(search.trim(), kind, page.next, PAGE_SIZE);
+      setProducts((cur) => {
+        const seen = new Set(cur.map((x) => x.id));
+        return [...cur, ...r.products.filter((x) => !seen.has(x.id))];
+      });
+      setPage({ total: r.total, more: r.more, next: r.next });
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không tải thêm được");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const remove = async (p: CtProductListRow) => {
     if (!(await ctConfirm({ title: `Xoá “${p.name}”?`, message: "Xoá cùng toàn bộ asset, vùng custom và mockup của sản phẩm. Không hoàn tác được.", tone: "danger", confirmLabel: "Xoá" }))) return;
@@ -419,6 +451,18 @@ export function CustomizeProductList({
               </div>
             );
           })}
+        </div>
+      )}
+      {!loading && products.length > 0 && (
+        <div className="mt-6 flex flex-col items-center gap-2 pb-6 text-sm text-muted-foreground">
+          <span>
+            Đang hiện {products.length}/{page.total} {word}
+          </span>
+          {page.more && (
+            <CtButton variant="outline" disabled={loadingMore} onClick={() => void loadMore()}>
+              {loadingMore && <Loader2 className="h-4 w-4 animate-spin" />} Xem thêm {Math.min(PAGE_SIZE, page.total - products.length)}
+            </CtButton>
+          )}
         </div>
       )}
     </div>

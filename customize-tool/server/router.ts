@@ -358,7 +358,11 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     if (!id) {
       if (method === "GET") {
         const kind = req.nextUrl.searchParams.get("kind");
-        return h.listProducts(session, req.nextUrl.searchParams.get("q")?.trim() ?? "", kind === "artwork" || kind === "product" ? kind : null, req.nextUrl.searchParams.get("store"));
+        const sp = req.nextUrl.searchParams;
+        return h.listProducts(session, sp.get("q")?.trim() ?? "", kind === "artwork" || kind === "product" ? kind : null, sp.get("store"), {
+          offset: Number(sp.get("offset") ?? 0),
+          limit: sp.get("limit") ? Number(sp.get("limit")) : undefined,
+        });
       }
       if (method === "POST") {
         const body = await readJson<CtCreateProductBody>(req);

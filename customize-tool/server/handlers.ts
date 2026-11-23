@@ -86,20 +86,26 @@ export async function ownedProduct(s: CtSession, productId: string): Promise<CtP
 // Products
 // ---------------------------------------------------------------------------
 
-export async function listProducts(s: CtSession, search: string, kind: CtProductKind | null = null, store: string | null = null): Promise<NextResponse> {
+export async function listProducts(s: CtSession, search: string, kind: CtProductKind | null = null, store: string | null = null, page: { offset?: number; limit?: number } = {}): Promise<NextResponse> {
+  // Paged (found 2026-11-23: a flat 200 cap hid every older product, with no way to reach them).
+  const offset = Math.max(0, Math.floor(page.offset ?? 0) || 0);
+  const limit = Math.min(1000, Math.max(1, Math.floor(page.limit ?? 200) || 200));
   // One store's artworks / products (migration 032): the asked one, else the user's current store; "all" = every store.
   const storeId = store === "all" ? null : store?.trim() || (await currentStoreId(s.supabase, s.user.id));
   let q = s.supabase
     .from(CT_TABLES.products)
-    .select("*, main_asset:ct_assets!ct_products_main_asset_fk(url,width,height), base_product:ct_base_products(id,name)")
+    .select("*, main_asset:ct_assets!ct_products_main_asset_fk(url,width,height), base_product:ct_base_products(id,name)", { count: "exact" })
     // Newest made first — not the last one edited (asked 2026-10-29: opening a product must not move it up).
     .order("created_at", { ascending: false })
-    .limit(200);
+    .order("id", { ascending: false })
+    .range(offset, offset + limit - 1);
   if (search) q = q.ilike("name", `%${search}%`);
   if (kind) q = q.eq("kind", kind);
   if (storeId) q = q.eq("store_id", storeId);
-  const { data, error } = await q.returns<Omit<CtProductListRow, "mockup_url">[]>();
+  const { data, error, count } = await q.returns<Omit<CtProductListRow, "mockup_url">[]>();
   if (error) return jsonError(error.message, 500);
+  const total = count ?? offset + (data?.length ?? 0);
+  const more = offset + (data?.length ?? 0) < total;
   // The card shows the product as it is sold: its first mockup (oldest = the straight-on one).
   const ids = (data ?? []).map((p) => p.id);
   // In slices (found 2026-11-20: 162 products → one `in(...)` URL nginx refused with 502, every card lost its mockup).
@@ -183,7 +189,7 @@ export async function listProducts(s: CtSession, search: string, kind: CtProduct
         owner_name: owners.get(p.user_id) || null,
       };
     });
-  return NextResponse.json({ products });
+  return NextResponse.json({ products, total, more, next: offset + (data?.length ?? 0) });
 }
 
 export async function createProduct(s: CtSession, body: CtCreateProductBody): Promise<NextResponse> {

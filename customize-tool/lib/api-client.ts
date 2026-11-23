@@ -102,6 +102,11 @@ export const ctApi = {
   /** Of the user's current store (migration 032). */
   listProducts: (q: string, kind?: CtProductKind) =>
     call<{ products: CtProductListRow[] }>(`products?q=${encodeURIComponent(q)}${kind ? `&kind=${kind}` : ""}`).then((r) => r.products),
+  /** One page of the list (newest first): `more` = there are older ones, `next` = the offset to ask next. */
+  listProductsPage: (q: string, kind: CtProductKind | undefined, offset: number, limit: number) =>
+    call<{ products: CtProductListRow[]; total: number; more: boolean; next: number }>(
+      `products?q=${encodeURIComponent(q)}${kind ? `&kind=${kind}` : ""}&offset=${offset}&limit=${limit}`,
+    ),
   /** A hand-made artwork: on a base product's khuôn, or a blank canvas of any size. */
   createArtwork: (body: CtCreateArtworkBody) => call<{ product: CtProduct }>("products/artwork", json("POST", body)).then((r) => r.product),
   /** Product base (server/base-products.ts). */

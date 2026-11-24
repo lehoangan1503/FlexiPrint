@@ -16,7 +16,7 @@ import { Check, Loader2, Search } from "lucide-react";
 import { CT_CONFIG } from "../config";
 import type { CtBaseProductRow, CtProductListRow } from "../types";
 import { ctApi } from "../lib/api-client";
-import { formatUsd, priceCells } from "../lib/pricing";
+import { effectiveOptions, formatUsd, priceCells } from "../lib/pricing";
 import { thumbUrl } from "../lib/thumb-url";
 import { basePicture } from "../lib/base-product";
 import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, cx } from "./ui";
@@ -24,7 +24,7 @@ import { CHECKER_STYLE, CtButton, CtField, CtInput, CtModal, cx } from "./ui";
 /** "$19.95 – $139.50 · 18 biến thể" */
 export function priceSummary(b: CtBaseProductRow): string {
   if (!b.priceTable) return "Chưa gắn bảng giá";
-  const cells = priceCells(b.priceTable.config);
+  const cells = priceCells(b.priceTable.config, effectiveOptions(b.priceTable.config, b.config.options));
   if (!cells.length) return "Bảng giá trống";
   const prices = cells.map((c) => c.price);
   const lo = Math.min(...prices);

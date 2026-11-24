@@ -3,7 +3,7 @@
  * (base product page) and on the server (server/base-products.ts).
  */
 
-import type { CtBaseMockup, CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseSource, CtBaseVariant, CtMaterialId, CtPrintArea, CtProductScene, CtSideLoss } from "../types";
+import type { CtBaseMockup, CtBaseOption, CtBaseCut, CtBaseCutMode, CtBaseProductConfig, CtBaseScene, CtBaseScenePreset, CtBaseSource, CtBaseVariant, CtMaterialId, CtPrintArea, CtProductScene, CtSideLoss } from "../types";
 import { newId } from "./geometry";
 import { normalizeScene } from "./scene";
 import { normalizeBaseAssembly } from "./assembly";
@@ -84,6 +84,26 @@ function normalizeVariants(raw: unknown): CtBaseVariant[] {
     .slice(0, 500);
 }
 
+/**
+ * CtBaseProductConfig.options (2026-11-24): ≤ 3 rows, names ≤ 60, values ≤ 120 chars, ≤ 100 per row. Values are kept
+ * as typed except blanks and repeats (case-insensitive), so the base page can hold a value being typed only after save.
+ */
+export function normalizeBaseOptions(raw: unknown): CtBaseOption[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((o): o is Record<string, unknown> => !!o && typeof o === "object")
+    .map((o): CtBaseOption => {
+      const seen = new Set<string>();
+      const values = (Array.isArray(o.values) ? o.values : [])
+        .map((v) => str(v, 120))
+        .filter((v) => v && !seen.has(v.toLowerCase()) && !!seen.add(v.toLowerCase()))
+        .slice(0, 100);
+      return { id: str(o.id, 64) || newId(), name: str(o.name, 60), values };
+    })
+    .filter((o) => o.name || o.values.length)
+    .slice(0, 3);
+}
+
 function normalizeSource(raw: unknown): CtBaseSource | null {
   if (!raw || typeof raw !== "object") return null;
   const s = raw as Partial<Record<keyof CtBaseSource, unknown>>;
@@ -117,6 +137,7 @@ export function normalizeBaseConfig(raw: unknown): CtBaseProductConfig {
     description: str(c.description, 20000),
     productType: str(c.productType, 120),
     material,
+    options: normalizeBaseOptions(c.options),
     priceTableId: uuidOrNull(c.priceTableId),
     templateId,
     noKhuon: c.noKhuon === true && !templateId,

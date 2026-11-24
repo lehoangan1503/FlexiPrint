@@ -15,7 +15,8 @@ import type { CtAgentTask, CtAsset, CtBaseProduct, CtContentResult, CtPriceTable
 import { auditOptions } from "../../lib/option-audit";
 import { suggestCollections } from "../../lib/collections";
 import { defaultDeployMedia, effectivePicks } from "../../lib/deploy-media";
-import { normalizePriceTableConfig, priceCells, priceTableFor, priceTableProblems } from "../../lib/pricing";
+import { effectiveOptions, normalizePriceTableConfig, priceCells, priceTableFor, usesPacks, variantProblems } from "../../lib/pricing";
+import { CONFIRM_ARG, OPTIONS_ARG, PRICE_TABLE_ARG, confirmToken, previewAnswer, readOptions, readPriceTable, variantPreview } from "./base-variants";
 import { str } from "../ai/llm";
 import { serviceSession } from "../char/product";
 import { ownedProduct, productTemplate, readDeployBody, runDeploy } from "../handlers";
@@ -143,8 +144,8 @@ export function blockers(st: DeployState, pick: { kind: string; name: string; ta
   if (!st.tables.length) out.push("Chưa có bảng giá nào — editor tạo bảng giá ở trang Deploy.");
   else if (!table) out.push("Chưa chọn bảng giá (price_table_id).");
   else {
-    const problems = priceTableProblems(table.config);
-    if (problems.length) out.push(`Bảng giá “${table.name}”: ${problems.join(" ")}`);
+    const problems = variantProblems(table.config, st.base?.config.options);
+    if (problems.length) out.push(`Biến thể / bảng giá “${table.name}”: ${problems.join(" ")}`);
   }
   if (!pick.title.trim()) out.push("Thiếu title Shopify.");
   const text = textOf(pick.descriptionHtml);
@@ -294,8 +295,8 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
           id: t.id,
           name: t.name,
           default: t.id === tableId,
-          cells: priceCells(t.config).map((c) => [c.size?.label, c.pack?.label, `${c.price}`].filter(Boolean).join(" · ")),
-          problems: priceTableProblems(t.config),
+          cells: priceCells(t.config, effectiveOptions(t.config, st.base?.config.options)).map((c) => [...c.values, usesPacks(t.config) ? c.pack?.label : "", c.missing ? "NO PRICE" : `${c.price}`].filter(Boolean).join(" · ")),
+          problems: variantProblems(t.config, st.base?.config.options),
         })),
         template: st.templateError
           ? { ok: false, error: st.templateError }
@@ -313,7 +314,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "list_base_products",
     description:
-      "Product bases (like Teeinblue): the blank products sold — they OWN the physical piece: print area (= the canvas of an artwork made for it), khuôn in (fixed shape) or cut along the design (cut.mode khuon | alpha | none, border mm, silhouette, hanging hole), the preview photo / phôi (preview), material, Shopify product type, the price table (variants sizes × packs with prices), how many products use each. An artwork is only the design; a product (what is sold) = an artwork + one of these.",
+      "Product bases (like Teeinblue): the blank products sold — they OWN the physical piece: print area (= the canvas of an artwork made for it), khuôn in (fixed shape) or cut along the design (cut.mode khuon | alpha | none, border mm, silhouette, hanging hole), the preview photo / phôi (preview), material, Shopify product type, its variants (options: the rows of buttons on Shopify, e.g. Material × Size) and their prices (the price table, + packs), how many products use each. An artwork is only the design; a product (what is sold) = an artwork + one of these.",
     inputSchema: { type: "object", properties: { ...OPT_TASK_ARG }, required: [] },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
@@ -330,7 +331,12 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
           printAreas: b.config.printAreas,
           cut: b.config.cut,
           preview: b.config.preview.url ? { url: b.config.preview.url, kind: b.config.cut.mode === "alpha" ? "background (AI phôi per version: make_version_phoi)" : "phôi photo" } : null,
-          variants: b.priceTable ? priceCells(b.priceTable.config).map((c) => ({ size: c.size?.label ?? "", pack: c.pack?.label ?? "", price: c.price, compareAt: c.compareAt })) : [],
+          // The base owns the variants (options), the table prices them (2026-11-24).
+          options: effectiveOptions(b.priceTable?.config ?? null, b.config.options).map((o) => ({ name: o.name, values: o.values })),
+          variants: b.priceTable
+            ? priceCells(b.priceTable.config, effectiveOptions(b.priceTable.config, b.config.options)).map((c) => ({ options: c.values, pack: usesPacks(b.priceTable!.config) ? (c.pack?.label ?? "") : "", price: c.missing ? null : c.price, compareAt: c.compareAt }))
+            : [],
+          variantProblems: b.priceTable ? variantProblems(b.priceTable.config, b.config.options) : ["No price table"],
           priceTable: b.priceTable?.name ?? null,
           products: b.products,
           mockupPrompt: { scenes: b.config.mockup.scenes.trim() ? splitScenes(b.config.mockup.scenes).scenes.length : 0, wrap: !!b.config.mockup.wrap.trim(), refs: b.config.mockup.refs.length, sizeCharts: b.config.mockup.sizeCharts.length },
@@ -451,7 +457,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "create_base_product",
     description:
-      "A NEW product base (you become its maker) — only for a kind of product that has no base yet (list_base_products first); to change or fix an existing base use update_base_product, never a new one: what is sold and how — name, Shopify product type, description, material, the print area (= the canvas of artworks made for it, px), the price table (variants: sizes × packs with prices — e.g. two kinds of blanket as two \"sizes\" with size_label \"Blanket type\"), and the mockup prompts (scenes, wrap, refs = reference pictures for the AI, size_charts = pictures added after the mockups on every deploy). No khuôn in (a fixed shape) is needed for a product that is not cut to a shape: no_khuon defaults to true without template_id. Pictures on this machine → flexiprint_upload_image first. → base_product_id, price_table_id, its page. Then create_artwork_product {base_product_id} per idea → make_product_from_artwork → make_product_mockups → deploy_product.",
+      "A NEW product base (you become its maker) — only for a kind of product that has no base yet (list_base_products first); to change or fix an existing base use update_base_product, never a new one: what is sold and how — name, Shopify product type, description, material, the print area (= the canvas of artworks made for it, px), its VARIANTS (options: one row of buttons per kind of difference — two kinds of blanket in 3 sizes = options Material [2] + Size [3], never 6 glued \"sizes\"), its PRICES (price_table: one price per combination; or price_table_id), and the mockup prompts (scenes, wrap, refs = reference pictures for the AI, size_charts = pictures added after the mockups on every deploy). No khuôn in (a fixed shape) is needed for a product that is not cut to a shape: no_khuon defaults to true without template_id. ASK THE USER FIRST: the first call saves nothing and answers a preview + confirm_token — show the preview, ask whether the variants and prices are right, then call again with the same arguments + confirm_token. Pictures on this machine → flexiprint_upload_image first. → base_product_id, price_table_id, its page. Then create_artwork_product {base_product_id} per idea → make_product_from_artwork → make_product_mockups → deploy_product.",
     inputSchema: {
       type: "object",
       properties: {
@@ -464,8 +470,10 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         print_area: { type: "object", description: "{width, height, dpi?, name?} px — the artwork canvas (default 1000×1000)." },
         template_id: { type: "string", description: "Optional khuôn in (list_print_templates) — only for a piece cut to a fixed shape." },
         no_khuon: { type: "boolean", description: "Needs no khuôn (default true when no template_id)." },
-        price_table_id: { type: "string", description: "An existing price table, instead of price_table." },
-        price_table: { type: "object", description: '{size_label?: "Size", sizes: [{label, price, compare_at?}], pack_label?, packs?: [{qty, label?, discount_pct}]} — no packs = one piece only.' },
+        options: OPTIONS_ARG,
+        price_table_id: { type: "string", description: "An existing price table (list_price_tables) whose rows price these options, instead of price_table." },
+        price_table: PRICE_TABLE_ARG,
+        confirm_token: CONFIRM_ARG,
         mockup: { type: "object", description: "{scenes?: string, wrap?: string, refs?: [urls ≤ 4], size_charts?: [urls ≤ 4]}" },
       },
       required: ["name", "image_url"],
@@ -481,20 +489,25 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       const list = (v: unknown) => (Array.isArray(v) ? v.map(obj).filter((x): x is Record<string, unknown> => !!x) : []);
       let priceTableId = str(args.price_table_id) || null;
       if (priceTableId && !UUID.test(priceTableId)) throw new Error("price_table_id is not a valid id");
-      const pt = obj(args.price_table);
-      if (pt) {
-        const packs = list(pt.packs);
-        const cfg = normalizePriceTableConfig({
-          sizeLabel: pt.size_label,
-          packLabel: pt.pack_label,
-          itemLabel: pt.item_label,
-          sizes: list(pt.sizes).map((x) => ({ label: x.label, price: x.price, compareAt: x.compare_at ?? null })),
-          packs: packs.length ? packs.map((x) => ({ qty: x.qty, label: x.label, discountPct: x.discount_pct })) : [{ qty: 1, label: "1 PC", discountPct: 0 }],
-          overrides: {},
-        });
-        const problems = priceTableProblems(cfg);
-        if (problems.length) throw new Error(`price_table: ${problems.join(" ")}`);
-        const { data, error } = await db.from(CT_TABLES.priceTables).insert({ user_id: userId, name: name.slice(0, 120), config: cfg }).select("id").single<{ id: string }>();
+      // Variants and prices are given apart (2026-11-24); the user confirms the preview before anything is saved.
+      const givenOptions = readOptions(args.options);
+      const newTable = readPriceTable(args.price_table, givenOptions) ?? null;
+      let table = newTable;
+      if (!table && priceTableId) {
+        const { data } = await db.from(CT_TABLES.priceTables).select("config").eq("id", priceTableId).maybeSingle<{ config: unknown }>();
+        if (!data) throw new Error("No such price table — list_price_tables");
+        table = normalizePriceTableConfig(data.config);
+      }
+      const options = givenOptions ?? (table ? effectiveOptions(table, []) : []);
+      const preview = variantPreview(table, options);
+      const token = confirmToken("create", { name, options, table: newTable, tableId: newTable ? null : priceTableId });
+      if (str(args.confirm_token) !== token) {
+        if (str(args.confirm_token)) throw new Error("confirm_token does not fit these arguments (they changed since the preview) — call without confirm_token for a new preview and ask the user again");
+        return json(previewAnswer(token, preview, { base: name }));
+      }
+      if (table && preview.problems.length) throw new Error(`Variants / prices: ${preview.problems.join(" ")}`);
+      if (newTable) {
+        const { data, error } = await db.from(CT_TABLES.priceTables).insert({ user_id: userId, name: name.slice(0, 120), config: newTable }).select("id").single<{ id: string }>();
         if (error || !data) throw new Error(error?.message ?? "Price table not saved");
         priceTableId = data.id;
       }
@@ -506,6 +519,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         description: args.description,
         productType: args.product_type,
         material: args.material,
+        options,
         priceTableId,
         templateId,
         noKhuon: typeof args.no_khuon === "boolean" ? args.no_khuon : !templateId,
@@ -515,13 +529,13 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       });
       const { data: base, error } = await db.from(CT_TABLES.baseProducts).insert({ user_id: userId, name, config }).select("id").single<{ id: string }>();
       if (error || !base) throw new Error(error?.message ?? "Base not saved");
-      return json({ base_product_id: base.id, price_table_id: priceTableId, page: `${siteUrl()}/base-products/${base.id}`, next: "create_artwork_product {base_product_id, layers} per idea (a finished picture: a clipart layer with image_url), then make_product_from_artwork → make_product_mockups → deploy_product." });
+      return json({ saved: true, base_product_id: base.id, price_table_id: priceTableId, variants: preview, page: `${siteUrl()}/base-products/${base.id}`, next: "create_artwork_product {base_product_id, layers} per idea (a finished picture: a clipart layer with image_url), then make_product_from_artwork → make_product_mockups → deploy_product." });
     },
   },
   {
     name: "update_base_product",
     description:
-      "Change an EXISTING product base in place (only its maker or an admin) — the way to fix or change a base; never create_base_product again for a change. Give only what changes: name, product_type, description, material, print_area, template_id ('' = no khuôn), price_table (edits the base's own table in place; a table other bases share is copied first) or price_table_id (switch to another table), mockup {scenes?, wrap?, refs?, size_charts?} (only the keys given). Every product on the base is laid on it again. → the base as list_base_products shows it.",
+      "Change an EXISTING product base in place (only its maker or an admin) — the way to fix or change a base; never create_base_product again for a change. Give only what changes: name, product_type, description, material, print_area, template_id ('' = no khuôn), options (the variants: rows of buttons on Shopify, e.g. Material × Size — the whole list), price_table (prices only; edits the base's own table in place, a table other bases share is copied first) or price_table_id (switch to another table) — a change of options / prices saves nothing on the first call: it answers a preview + confirm_token, show it to the user, ask, then call again with the same arguments + confirm_token; mockup {scenes?, wrap?, refs?, size_charts?} (only the keys given). Every product on the base is laid on it again. → the base as list_base_products shows it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -533,8 +547,10 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         material: { type: "string", description: "none | acrylic_white | acrylic_clear | glass_clear | ceramic_gloss | ceramic_matte | aluminum | wood." },
         print_area: { type: "object", description: "{width, height, dpi?, name?} px — replaces the first print area (its id is kept)." },
         template_id: { type: "string", description: "Khuôn in (list_print_templates); '' = none." },
+        options: OPTIONS_ARG,
         price_table_id: { type: "string", description: "Switch to this existing price table." },
-        price_table: { type: "object", description: 'The whole new table: {size_label?, sizes: [{label, price, compare_at?}], pack_label?, packs?: [{qty, label?, discount_pct}]}.' },
+        price_table: { ...PRICE_TABLE_ARG, description: `The whole new table. ${PRICE_TABLE_ARG.description}` },
+        confirm_token: CONFIRM_ARG,
         mockup: { type: "object", description: "{scenes?, wrap?, refs?: [urls ≤ 4], size_charts?: [urls ≤ 4]} — only the keys given change." },
         image_url: { type: "string", description: "A new fixed picture for the base (https; a file on this machine → flexiprint_upload_image first)." },
       },
@@ -578,25 +594,37 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         changed.push("print_area");
       }
       const pid = str(args.price_table_id);
-      if (pid) {
-        if (!UUID.test(pid)) throw new Error("price_table_id is not a valid id");
-        raw.priceTableId = pid;
-        changed.push("price_table_id");
+      if (pid && !UUID.test(pid)) throw new Error("price_table_id is not a valid id");
+      // Variants / prices change only after the user has seen the preview (2026-11-24).
+      const givenOptions = readOptions(args.options);
+      const newTable = readPriceTable(args.price_table, givenOptions ?? now.options) ?? null;
+      let priceTableId = pid || now.priceTableId;
+      if (givenOptions || newTable || pid) {
+        let table = newTable;
+        if (!table && priceTableId) {
+          const { data } = await db.from(CT_TABLES.priceTables).select("config").eq("id", priceTableId).maybeSingle<{ config: unknown }>();
+          if (!data) throw new Error("No such price table — list_price_tables");
+          table = normalizePriceTableConfig(data.config);
+        }
+        const options = givenOptions ?? now.options;
+        const preview = variantPreview(table, options);
+        const token = confirmToken("update:" + id, { name, options, table: newTable, tableId: priceTableId });
+        if (str(args.confirm_token) !== token) {
+          if (str(args.confirm_token)) throw new Error("confirm_token does not fit these arguments (they changed since the preview) — call without confirm_token for a new preview and ask the user again");
+          return json(previewAnswer(token, preview, { base: name, base_product_id: id, note: "Every product on this base deploys with these variants from its next deploy." }));
+        }
+        if (table && preview.problems.length) throw new Error(`Variants / prices: ${preview.problems.join(" ")}`);
+        if (givenOptions) {
+          raw.options = givenOptions;
+          changed.push("options");
+        }
+        if (pid) {
+          raw.priceTableId = pid;
+          changed.push("price_table_id");
+        }
       }
-      let priceTableId = (raw.priceTableId as string | null | undefined) ?? now.priceTableId;
-      const pt = obj(args.price_table);
-      if (pt) {
-        const packs = list(pt.packs);
-        const cfg = normalizePriceTableConfig({
-          sizeLabel: pt.size_label,
-          packLabel: pt.pack_label,
-          itemLabel: pt.item_label,
-          sizes: list(pt.sizes).map((x) => ({ label: x.label, price: x.price, compareAt: x.compare_at ?? null })),
-          packs: packs.length ? packs.map((x) => ({ qty: x.qty, label: x.label, discountPct: x.discount_pct })) : [{ qty: 1, label: "1 PC", discountPct: 0 }],
-          overrides: {},
-        });
-        const problems = priceTableProblems(cfg);
-        if (problems.length) throw new Error(`price_table: ${problems.join(" ")}`);
+      if (newTable) {
+        const cfg = newTable;
         // Edit the base's own table in place; one other bases also use is copied, so they keep their prices.
         let shared = true;
         if (priceTableId) {

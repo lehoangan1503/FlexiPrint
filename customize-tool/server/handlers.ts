@@ -69,7 +69,7 @@ async function staticPrintFile(s: CtSession, product: CtProduct): Promise<string
   const png = await renderArtwork(bundle, normalizeProductConfig(product.config).samples, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print");
   return ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/${product.id}/static-print/${crypto.randomUUID()}.png`, png, "image/png");
 }
-import { priceTableProblems } from "../lib/pricing";
+import { effectiveOptions, variantProblems } from "../lib/pricing";
 import { cleanCustomerName } from "../lib/ai-style-models";
 
 const ROLES: CtAssetRole[] = ["main", "sub", "variant", "rendition", "composite", "mockup", "reference"];
@@ -569,8 +569,10 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
   if (base && !body.productType) body = { ...body, productType: base.config.productType };
   const table = await loadPriceTable(s, body.priceTableId);
   if (!table) return { error: "Không tìm thấy bảng giá", status: 404 };
-  const problems = priceTableProblems(table.config);
-  if (problems.length) return { error: `Bảng giá “${table.name}”: ${problems.join(" ")}`, status: 400 };
+  // The base says which variants exist (2026-11-24), the table prices them: a variant without a price never goes up.
+  const problems = variantProblems(table.config, base?.config.options);
+  if (problems.length) return { error: `Biến thể / bảng giá “${table.name}”: ${problems.join(" ")}`, status: 400 };
+  const options = effectiveOptions(table.config, base?.config.options);
 
   let media: Array<{ asset: CtAsset; url: string }> = [];
   if (body.mediaAssetIds.length) {
@@ -628,6 +630,7 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
       primaryCollectionId: body.primaryCollectionId && body.collectionIds.includes(body.primaryCollectionId) ? body.primaryCollectionId : null,
       priceTableId: table.id,
       pricing: table.config,
+      options,
       media,
       dropMedia: body.removeShopifyMediaIds ?? [],
       templateVersion: pub.publish.version,

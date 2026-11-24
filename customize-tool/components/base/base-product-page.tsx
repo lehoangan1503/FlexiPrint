@@ -9,8 +9,9 @@
  *   Cắt + file in    fixed khuôn / along the art / flat, the silhouette (2026-11-08, base-cut-preview.tsx)
  *   Phôi / nền       the preview photo (a phôi, or a background for the acrylic plate made from the design)
  *   Print areas      the file(s) the factory takes (name, px, dpi)
- *   Biến thể + giá   the fulfiller's variants + base cost (imported bases, read-only) and the Notion price table (sizes ×
- *                    packs): edited here, every product on this base deploys with it
+ *   Biến thể + giá   the fulfiller's variants + base cost (imported bases, read-only); the base's OWN options (2026-11-24:
+ *                    Material × Size → the Shopify buttons) and the price table that prices them (+ packs): edited
+ *                    here, every product on this base deploys with them
  *   Mockups          none of its own: the mockups of every product made on it, by product
  */
 
@@ -18,13 +19,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Download, ExternalLink, Loader2, Plus, Save, Trash2, X } from "lucide-react";
 import { CT_CONFIG } from "../../config";
-import type { CtBaseProductConfig, CtBaseProductDetail, CtBaseScenesAuto, CtPriceTable, CtPrintArea } from "../../types";
+import type { CtBaseProductConfig, CtBaseProductDetail, CtBaseScenesAuto, CtPriceRow, CtPriceTable, CtPriceTableConfig, CtPrintArea } from "../../types";
 import type { CtPrintTemplate } from "../../types/print";
 import { ctApi } from "../../lib/api-client";
 import { printApi } from "../../lib/print-api";
-import { formatUsd, priceCells } from "../../lib/pricing";
+import { CT_SHOPIFY_OPTIONS_MAX, cleanOptions, effectiveOptions, formatUsd, normalizePriceTableConfig, optionsFromTable, usesPacks, valueKey, variantProblems } from "../../lib/pricing";
 import { newId } from "../../lib/geometry";
 import { PriceTableEditor } from "../deploy/price-table-editor";
+import { type CtOptionRename, OptionsEditor, PriceGrid, ShopifyOptionsPreview } from "../deploy/variant-ui";
 import { PhoiRow } from "../print/phoi-tab";
 import { KhuonPreview, KhuonTab } from "../print/khuon-tab";
 import { PrintSheet } from "../print/print-sheet";
@@ -82,6 +84,22 @@ function Section({ title, children, right, fold, folded = false, summary }: { ti
   );
 }
 
+/** Rows of a price table after values were renamed ({index, from, to}): moved, or copied (`copy`, old rows stay). */
+function renamedRows(rows: CtPriceRow[], list: CtOptionRename[], copy: boolean): CtPriceRow[] {
+  let out = rows;
+  const key = (v: string[]) => v.map(valueKey).join("|");
+  for (const r of list) {
+    const hit = (x: CtPriceRow) => valueKey(x.values[r.index] ?? "") === valueKey(r.from);
+    if (!out.some(hit)) continue;
+    const move = (x: CtPriceRow): CtPriceRow => ({ ...x, id: copy ? newId() : x.id, values: x.values.map((v, i) => (i === r.index ? r.to : v)) });
+    if (copy) {
+      const have = new Set(out.map((x) => key(x.values)));
+      out = [...out, ...out.filter(hit).map(move).filter((x) => !have.has(key(x.values)))];
+    } else out = out.map((x) => (hit(x) ? move(x) : x));
+  }
+  return out;
+}
+
 export function BaseProductView({ baseId }: { baseId: string }) {
   const [detail, setDetail] = useState<CtBaseProductDetail | null>(null);
   const [name, setName] = useState("");
@@ -92,7 +110,10 @@ export function BaseProductView({ baseId }: { baseId: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [templates, setTemplates] = useState<CtPrintTemplate[]>([]);
   const [tables, setTables] = useState<CtPriceTable[]>([]);
-  const [editTable, setEditTable] = useState(false);
+  /** The price table editor: its table ("edit") or a new one for this base ("new"). */
+  const [editTable, setEditTable] = useState<false | "edit" | "new">(false);
+  /** Option values typed over since the last save: the price table's rows follow them on save. */
+  const [renames, setRenames] = useState<CtOptionRename[]>([]);
   const [phoiBusy, setPhoiBusy] = useState<string | null>(null);
   /** The khuôn editor (draw / change a khuôn by AI, faces, sizes) — what the old Thư viện → Khuôn in tab was. */
   const [khuonOpen, setKhuonOpen] = useState(false);
@@ -111,6 +132,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
       setDetail(d);
       setName(d.base.name);
       setCfg(d.base.config);
+      setRenames([]);
       setDirty(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không tải được");
@@ -136,6 +158,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
     setSaving(true);
     setError(null);
     try {
+      await followRenames();
       const r = await ctApi.updateBaseProduct(baseId, { name: name.trim() || detail?.base.name || "Product base", config: cfg });
       await load();
       flash(r.reapplied ? `Đã lưu · ${r.reapplied} sản phẩm đã cập nhật khuôn / phôi theo base` : "Đã lưu");
@@ -214,7 +237,25 @@ export function BaseProductView({ baseId }: { baseId: string }) {
     }
   };
   const table = useMemo(() => tables.find((t) => t.id === cfg?.priceTableId) ?? null, [tables, cfg?.priceTableId]);
-  const cells = table ? priceCells(table.config) : [];
+  const tableCfg = useMemo(() => (table ? normalizePriceTableConfig(table.config) : null), [table]);
+
+  /**
+   * Values renamed on this page → the price table's rows of the old value take the new one, so the price stays. A
+   * table other bases also use keeps the old rows and gets copies (their prices must not move).
+   */
+  async function followRenames() {
+    if (!table || !tableCfg || !renames.length) return;
+    const shared = (await ctApi.listBaseProducts().catch(() => [])).some((b) => b.id !== baseId && b.config.priceTableId === table.id);
+    const rows = renamedRows(tableCfg.rows, renames, shared);
+    if (rows !== tableCfg.rows) {
+      const config: CtPriceTableConfig = { ...tableCfg, rows };
+      const t = await ctApi.updatePriceTable(table.id, { name: table.name, config });
+      setTables((ts) => ts.map((x) => (x.id === t.id ? t : x)));
+    }
+    setRenames([]);
+  }
+  /** The table as this page shows it: with the values renamed but not saved yet (old rows kept). */
+  const tableView = tableCfg && renames.length ? { ...tableCfg, rows: renamedRows(tableCfg.rows, renames, true) } : tableCfg;
 
   const phoiWork = async (label: string, job: () => Promise<CtPrintTemplate>) => {
     setPhoiBusy(label);
@@ -333,16 +374,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
               <BaseExtraPics cfg={cfg} onChange={(mockup) => patch({ mockup })} />
             </Section>
 
-            <Section
-              title="Biến thể + giá"
-              right={
-                table && (
-                  <CtButton size="sm" variant="outline" onClick={() => setEditTable(true)}>
-                    Sửa bảng giá
-                  </CtButton>
-                )
-              }
-            >
+            <Section title="Biến thể + giá">
               {cfg.variants.length > 0 && (
                 <div className="mb-3">
                   <div className="mb-1 text-[11px] font-medium text-muted-foreground">Biến thể nhà in ({cfg.variants.length}) · giá vốn</div>
@@ -377,33 +409,53 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                   </div>
                 </div>
               )}
-              <CtField label="Bảng giá (Notion)">
-                <CtSelect<string> value={cfg.priceTableId ?? ""} onChange={(priceTableId) => patch({ priceTableId })} options={tables.map((t) => ({ value: t.id, label: t.name }))} placeholder="Chọn bảng giá…" />
-              </CtField>
-              {table && (
-                <div className="mt-3 max-h-80 overflow-auto rounded-md border">
-                  <table className="w-full text-xs">
-                    <thead className="sticky top-0 bg-muted text-left text-xs text-muted-foreground">
-                      <tr>
-                        <th className="px-2 py-1 font-medium">{table.config.sizeLabel}</th>
-                        <th className="px-2 py-1 font-medium">{table.config.packLabel}</th>
-                        <th className="px-2 py-1 text-right font-medium">Giá</th>
-                        <th className="px-2 py-1 text-right font-medium">Giá gạch</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cells.map((c, i) => (
-                        <tr key={i} className="border-t">
-                          <td className="px-2 py-1">{c.size?.label || "—"}</td>
-                          <td className="px-2 py-1">{c.pack?.label || "—"}</td>
-                          <td className="px-2 py-1 text-right font-medium">{formatUsd(c.price)}</td>
-                          <td className="px-2 py-1 text-right text-muted-foreground line-through">{c.compareAt !== null ? formatUsd(c.compareAt) : ""}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div className="space-y-2">
+                <div>
+                  <div className="text-xs font-medium">Biến thể trên Shopify</div>
+                  <p className="text-[11px] text-foreground/80">Mỗi hàng là một hàng nút khách bấm chọn (vd. Material, Size). Mỗi tổ hợp là 1 variant. Sửa ở đây, mọi sản phẩm trên base này deploy theo.</p>
                 </div>
-              )}
+                <OptionsEditor
+                  options={cfg.options}
+                  onChange={(options) => patch({ options })}
+                  onRename={(r) => setRenames((list) => [...list, r])}
+                  max={tableCfg && usesPacks(tableCfg) ? CT_SHOPIFY_OPTIONS_MAX - 1 : CT_SHOPIFY_OPTIONS_MAX}
+                  fromTable={tableCfg ? optionsFromTable(tableCfg) : null}
+                />
+                <ShopifyOptionsPreview cfg={tableView} options={tableView ? effectiveOptions(tableView, cfg.options) : cleanOptions(cfg.options)} />
+              </div>
+              <div className="mt-4 space-y-2">
+                <div className="text-xs font-medium">Giá</div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="min-w-[220px] flex-1">
+                    <CtField label="Bảng giá (Notion)">
+                      <CtSelect<string> value={cfg.priceTableId ?? ""} onChange={(priceTableId) => patch({ priceTableId })} options={tables.map((t) => ({ value: t.id, label: t.name }))} placeholder="Chọn bảng giá…" />
+                    </CtField>
+                  </div>
+                  {table ? (
+                    <CtButton size="sm" variant="outline" onClick={() => setEditTable("edit")}>
+                      Sửa bảng giá
+                    </CtButton>
+                  ) : (
+                    <CtButton size="sm" variant="outline" onClick={() => setEditTable("new")}>
+                      <Plus className="h-3.5 w-3.5" /> Tạo bảng giá cho base này
+                    </CtButton>
+                  )}
+                </div>
+                {tableView && <PriceGrid cfg={tableView} options={effectiveOptions(tableView, cfg.options)} />}
+                {tableView &&
+                  (() => {
+                    const problems = variantProblems(tableView, cfg.options);
+                    return problems.length ? (
+                      <div className="flex gap-1.5 rounded-md border border-amber-500/50 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>{problems.join(" ")} Bấm “Sửa bảng giá” để điền.</span>
+                      </div>
+                    ) : null;
+                  })()}
+                {!cleanOptions(cfg.options).length && tableCfg && tableCfg.rows.some((r) => r.values.length) && (
+                  <p className="text-[11px] text-foreground/80">Base chưa có biến thể riêng nên đang lấy theo bảng giá. Bấm “Lấy theo bảng giá” ở trên để sửa được.</p>
+                )}
+              </div>
             </Section>
 
             <Section
@@ -642,14 +694,18 @@ export function BaseProductView({ baseId }: { baseId: string }) {
             </div>
           </CtModal>
         )}
-        {editTable && table && (
+        {editTable && (editTable === "new" || table) && (
           <PriceTableEditor
-            table={table}
+            table={editTable === "edit" && table && tableView ? { ...table, config: tableView } : null}
+            options={cfg.options}
+            defaultName={name}
             onClose={() => setEditTable(false)}
             onSaved={(t) => {
-              setTables((list) => list.map((x) => (x.id === t.id ? t : x)));
+              setTables((list) => (list.some((x) => x.id === t.id) ? list.map((x) => (x.id === t.id ? t : x)) : [...list, t]));
+              if (editTable === "new") patch({ priceTableId: t.id });
+              else setRenames([]);
               setEditTable(false);
-              flash("Đã lưu bảng giá");
+              flash(editTable === "new" ? "Đã tạo bảng giá — bấm Lưu để gắn vào base" : "Đã lưu bảng giá");
             }}
             onDeleted={(id) => {
               setTables((list) => list.filter((x) => x.id !== id));

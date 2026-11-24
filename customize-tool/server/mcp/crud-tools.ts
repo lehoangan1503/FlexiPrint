@@ -8,7 +8,7 @@
 
 import type { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
-import type { CtProduct, CtShopifyStatus } from "../../types";
+import type { CtPriceTable, CtProduct, CtShopifyStatus } from "../../types";
 import { str } from "../ai/llm";
 import { serviceSession } from "../char/product";
 import { deleteAsset, deleteProduct, ownedProduct, updateProduct } from "../handlers";
@@ -200,14 +200,23 @@ export const CT_MCP_CRUD_TOOLS: CtMcpTool[] = [
   },
   {
     name: "list_price_tables",
-    description: "Every price table (sizes × packs with prices): id, name, sizes, packs, whose. Change one through update_base_product price_table (the base's own) or pick one with price_table_id.",
+    description: "Every price table — PRICES only (one row per combination of option values + packs; the product base holds the variants): id, name, option names, rows, packs, whose. Change one through update_base_product price_table (the base's own) or pick one with price_table_id.",
     inputSchema: { type: "object", properties: { ...OPT_TASK_ARG }, required: [] },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
       const s = await session(ctx, args);
       const out = await answer(await listPriceTables(s));
-      const tables = (out.tables as Array<{ id: string; name: string; user_id: string; config: { sizes: Array<{ label: string; price: number }>; packs: Array<{ qty: number; discountPct: number }> } }>) ?? [];
-      return json({ tables: tables.map((t) => ({ id: t.id, name: t.name, mine: t.user_id === s.user.id, sizes: t.config.sizes.map((x) => `${x.label} ${x.price}`), packs: t.config.packs.map((x) => `${x.qty}×${x.discountPct ? ` −${x.discountPct}%` : ""}`) })) });
+      const tables = (out.tables as CtPriceTable[]) ?? [];
+      return json({
+        tables: tables.map((t) => ({
+          id: t.id,
+          name: t.name,
+          mine: t.user_id === s.user.id,
+          optionNames: t.config.optionNames,
+          rows: t.config.rows.map((r) => `${r.values.join(" · ") || "(one price)"}: ${r.price}${r.compareAt !== null ? ` (was ${r.compareAt})` : ""}`),
+          packs: t.config.packs.map((x) => `${x.qty}×${x.discountPct ? ` −${x.discountPct}%` : ""}`),
+        })),
+      });
     },
   },
   {

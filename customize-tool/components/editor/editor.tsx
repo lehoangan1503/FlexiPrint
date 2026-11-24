@@ -1280,7 +1280,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
               </div>
               <div className="flex min-w-0 flex-1 flex-col">
                 <div className="min-h-0 flex-1">
-                <StorefrontPreview compact product={product} assets={assets} regions={allRegions} items={allItems} config={config} priceTableId={base?.config.priceTableId ?? null} />
+                <StorefrontPreview compact product={product} assets={assets} regions={allRegions} items={allItems} config={config} priceTableId={base?.config.priceTableId ?? null} baseOptions={base?.config.options} />
                 </div>
               </div>
             </div>

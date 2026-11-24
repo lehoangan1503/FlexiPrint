@@ -26,8 +26,9 @@ this MCP. Everything you read here is live production data.
 
 ## Product base · Artwork · Sản phẩm (since 2026-11-07, like Teeinblue Product Base / Artwork / Campaign)
 - PRODUCT BASE (list_base_products): the blank product sold — name = kind of product (Acrylic Ornament 1 side,
-  Glass Ornament 1 side, Ceramic Ornament 2 sides, Poseable Doll), its Notion price table (variants: sizes × packs
-  with prices), Shopify product type, print areas, and (since 2026-11-08) the WHOLE physical piece: its khuôn in,
+  Glass Ornament 1 side, Ceramic Ornament 2 sides, Poseable Doll), its VARIANTS (options = the rows of buttons on
+  Shopify, ≤ 3 with the pack: two kinds of blanket in 3 sizes = Material [2] × Size [3], never 6 glued "sizes"), its
+  Notion price table (PRICES only: one per combination + the packs), Shopify product type, print areas, and (since 2026-11-08) the WHOLE physical piece: its khuôn in,
   how it is cut (fixed khuôn / along the art + border mm / flat), the silhouette in the print file, the phôi or the
   preview background. No design.
 - ARTWORK (ct_products kind "artwork"): ONE whole design — every version, layer, option. Its canvas is the print
@@ -59,8 +60,11 @@ flexiprint_save_files (urls → a folder).
   the master / edits tools; char_approve_master (only when the editor hands you the whole set), char_draw_backdrops
   and char_remake_product for step 4 — get_task gives the whole set.
 - Bases: list_base_products (print area, khuôn, cut, preview photo, variants + price); create_base_product (a new base: image_url = its fixed picture, required —
-  with its price table + mockup prompts / reference pictures / size charts — no khuôn needed for a piece not cut to shape),
-  ONLY when no base of that kind exists; any change to an existing base (name, price, description, khuôn, prompts) is
+  with its options (variants) and its price table (prices) given APART + mockup prompts / reference pictures / size
+  charts — no khuôn needed for a piece not cut to shape), ONLY when no base of that kind exists. Creating a base, or
+  changing its options / prices, ALWAYS goes through the user: the first call saves nothing and answers a preview +
+  confirm_token — show the option rows, variant count and prices, ask, and only on their yes call again with the
+  same arguments + confirm_token. Unsure how the kind of product splits into options → ask before the first call; any change to an existing base (name, price, description, khuôn, prompts) is
   update_base_product on the same id — never a new base.
   Size charts (get/set_base_mockup_prompt size_charts) go up after the mockups on every deploy of the base's products.
 - Artworks: create_artwork_product {base_product_id} / set_artwork_layers / check_artwork (an artwork laid out from

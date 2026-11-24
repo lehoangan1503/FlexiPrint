@@ -17,13 +17,13 @@
 import "../../shopify/assets/flexi2-customizer.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Eye, ShoppingCart, X } from "lucide-react";
-import type { CtAsset, CtPriceTable, CtPriceTableConfig, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtTemplate } from "../../types";
+import type { CtAsset, CtBaseOption, CtPriceTable, CtPriceTableConfig, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtTemplate } from "../../types";
 import { buildTemplate } from "../../lib/template";
 import { isAiStyleRef } from "../../lib/photo-styles";
 import { normalizeRegion } from "../../lib/design";
 import { ctApi } from "../../lib/api-client";
 import { Customizer, initGallery, initVariants, type CtCartPreview } from "../../storefront/customizer";
-import { formatUsd, priceCells, shopifyPricing, usesPacks, usesSizes } from "../../lib/pricing";
+import { cellOptionValues, effectiveOptions, formatUsd, priceCells, shopifyOptions, shopifyPricing } from "../../lib/pricing";
 import { useAiStyles } from "./ai-styles-store";
 import { CtButton } from "../ui";
 
@@ -35,6 +35,8 @@ export interface StorefrontPreviewProps {
   config: CtProductConfig;
   /** The price table to show (a product's base product, 2026-11-07); default = the one it was deployed with. */
   priceTableId?: string | null;
+  /** The base's own options (Material × Size, 2026-11-24): the variants the table prices. */
+  baseOptions?: CtBaseOption[] | null;
   /** The product page's narrow column: smaller side padding. */
   compact?: boolean;
 }
@@ -49,7 +51,7 @@ const SECTION_TEXT = {
   add: "Add to cart",
 };
 
-export function StorefrontPreview({ product, assets, regions, items, config, priceTableId, compact }: StorefrontPreviewProps) {
+export function StorefrontPreview({ product, assets, regions, items, config, priceTableId, baseOptions, compact }: StorefrontPreviewProps) {
   const { names } = useAiStyles();
   const [cart, setCart] = useState<CtCartPreview | null>(null);
   // The price table the product is deployed with: Size / Pack pickers and a pack's designs, as on Shopify.
@@ -67,6 +69,7 @@ export function StorefrontPreview({ product, assets, regions, items, config, pri
     };
   }, [tableId]);
   const pricing = tableId && table?.id === tableId ? table.config : null;
+  const options = useMemo(() => (pricing ? effectiveOptions(pricing, baseOptions) : []), [pricing, baseOptions]);
 
   const draft = useMemo((): { template: CtTemplate | null; error: string | null } => {
     const refs = new Set(regions.map(normalizeRegion).flatMap((r) => (r.kind === "photo" ? r.config.photo.styles.filter(isAiStyleRef) : [])));
@@ -90,7 +93,7 @@ export function StorefrontPreview({ product, assets, regions, items, config, pri
   // Product media on the left = the mockups (what a Shopify product would list). A new product
   // without mockups starts on the live design, like a Shopify product without media.
   const mockups = useMemo(() => assets.filter((a) => a.role === "mockup"), [assets]);
-  const mountKey = `${product.id}|${mockups.map((m) => m.id).join(",")}|${pricing ? JSON.stringify(pricing) : ""}`;
+  const mountKey = `${product.id}|${mockups.map((m) => m.id).join(",")}|${pricing ? JSON.stringify(pricing) : ""}|${JSON.stringify(options)}`;
 
   return (
     <div className="flex h-full flex-col">
@@ -113,6 +116,7 @@ export function StorefrontPreview({ product, assets, regions, items, config, pri
             mockups={mockups}
             template={draft.template}
             pricing={pricing}
+            options={options}
             photoUrl={ctApi.photoEndpoint(product.id)}
             onCart={setCart}
             stacked={compact}
@@ -139,6 +143,7 @@ function LiveStorefront({
   mockups,
   template,
   pricing,
+  options,
   photoUrl,
   onCart,
   stacked,
@@ -148,6 +153,7 @@ function LiveStorefront({
   mockups: CtAsset[];
   template: CtTemplate;
   pricing: CtPriceTableConfig | null;
+  options: CtBaseOption[];
   photoUrl: string;
   onCart: (cart: CtCartPreview) => void;
 }) {
@@ -234,7 +240,7 @@ function LiveStorefront({
 
       <div className="ct-product__info">
         <h1 className="ct-product__title">{title}</h1>
-        <PricePreview pricing={pricing} />
+        <PricePreview pricing={pricing} options={options} />
         <form ref={formRef} className="ct-form" data-ct-form noValidate onSubmit={(e) => e.preventDefault()}>
           <div className="ct-options" data-ct-options />
           <div className="ct-qty">
@@ -262,22 +268,17 @@ function LiveStorefront({
  * Price + Shopify option pickers as flexi2-product.liquid renders them for a product deployed with `pricing`
  * (variants numbered 1…n here), with the same data scripts the storefront reads.
  */
-function PricePreview({ pricing }: { pricing: CtPriceTableConfig | null }) {
+function PricePreview({ pricing, options: baseOpts }: { pricing: CtPriceTableConfig | null; options: CtBaseOption[] }) {
   if (!pricing) {
     return (
       <div className="ct-product__price">
-        <span style={{ color: "#6b6b6b", fontSize: 15 }}>Giá + Size / Pack lấy từ bảng giá khi Deploy sản phẩm</span>
+        <span style={{ color: "#6b6b6b", fontSize: 15 }}>Giá + biến thể lấy từ product base + bảng giá khi Deploy sản phẩm</span>
       </div>
     );
   }
-  const cells = priceCells(pricing);
-  const options: Array<{ name: string; values: string[]; pack: boolean }> = [];
-  if (usesSizes(pricing)) options.push({ name: pricing.sizeLabel, values: pricing.sizes.map((s) => s.label), pack: false });
-  if (usesPacks(pricing)) options.push({ name: pricing.packLabel, values: pricing.packs.map((p) => p.label), pack: true });
-  const rows = cells.map((c, i) => ({
-    id: i + 1,
-    options: [...(usesSizes(pricing) && c.size ? [c.size.label] : []), ...(usesPacks(pricing) && c.pack ? [c.pack.label] : [])],
-  }));
+  const cells = priceCells(pricing, baseOpts);
+  const options = shopifyOptions(pricing, baseOpts);
+  const rows = cells.map((c, i) => ({ id: i + 1, options: cellOptionValues(pricing, baseOpts, c).map((o) => o.value) }));
   const variants: Record<string, { price: string; compare: string | null; available: boolean; media: null; cents: number }> = {};
   cells.forEach((c, i) => {
     variants[String(i + 1)] = { price: formatUsd(c.price), compare: c.compareAt !== null ? formatUsd(c.compareAt) : null, available: true, media: null, cents: Math.round(c.price * 100) };
@@ -322,7 +323,7 @@ function PricePreview({ pricing }: { pricing: CtPriceTableConfig | null }) {
       </div>
       <script type="application/json" data-ct-variants dangerouslySetInnerHTML={{ __html: JSON.stringify(variants) }} />
       <script type="application/json" data-ct-variant-options dangerouslySetInnerHTML={{ __html: JSON.stringify(rows) }} />
-      <script type="application/json" data-ct-pricing dangerouslySetInnerHTML={{ __html: JSON.stringify(shopifyPricing(pricing)) }} />
+      <script type="application/json" data-ct-pricing dangerouslySetInnerHTML={{ __html: JSON.stringify(shopifyPricing(pricing, baseOpts)) }} />
     </>
   );
 }

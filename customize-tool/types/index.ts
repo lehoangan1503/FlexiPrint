@@ -1833,6 +1833,17 @@ export interface CtBaseProductFulfillment {
  */
 export type CtFulfillProvider = "printbelle" | "merchize";
 
+/**
+ * One row of choices the customer picks on Shopify (2026-11-24: the base owns its variants): "Material" →
+ * Plush Blanket, Sherpa Blanket; "Size" → 30 x 40 inches, … Every combination is one variant; the price table only
+ * prices them.
+ */
+export interface CtBaseOption {
+  id: string;
+  name: string;
+  values: string[];
+}
+
 /** One variant of the fulfiller's product: what the factory sells it as and what it costs us. */
 export interface CtBaseVariant {
   id: string;
@@ -1913,7 +1924,9 @@ export interface CtBaseProductConfig {
   productType: string;
   /** The piece's material (pricing, mockup prompts, priceTableFor). */
   material: CtMaterialId;
-  /** The Notion price table that makes the variants (Size × Pack). */
+  /** The Shopify options of the products on this base (≤ 3 with the pack): every combination is a variant. */
+  options: CtBaseOption[];
+  /** The Notion price table that prices those variants (+ the packs). */
   priceTableId: string | null;
   /** The khuôn in of the piece (ct_print_templates): artworks for it start from its sheet, cut line and phôi. */
   templateId: string | null;
@@ -2564,10 +2577,14 @@ export interface CtPackImage {
 // Bảng giá + Deploy sản phẩm lên Shopify (migration 018; lib/pricing.ts, server/shopify.ts)
 // ---------------------------------------------------------------------------
 
-/** One size of a price table ("3.5 inches"): the price of ONE piece. */
-export interface CtPriceSize {
+/**
+ * One price of a price table (2026-11-24: the table holds prices only, the product base holds the variants): the
+ * price of ONE piece of the variant whose option values are `values`, in the base's option order
+ * (["Plush Blanket", "30 x 40 inches"]); [] = the one price of a product without options.
+ */
+export interface CtPriceRow {
   id: string;
-  label: string;
+  values: string[];
   price: number;
   /** Struck-through price of one piece; null = none (a pack discount still shows the undiscounted total). */
   compareAt: number | null;
@@ -2589,20 +2606,20 @@ export interface CtPriceCellOverride {
 }
 
 /**
- * A named price table. Deploy turns it into the Shopify product's options (Size, Pack) and one variant per cell,
- * priced at the cell's TOTAL (a 6-pack variant costs the 6 pieces). A dimension with a single entry is left out
- * (no 1-value option on the product page).
+ * A named price table — PRICES only (2026-11-24). The product base says which variants exist (config.options, e.g.
+ * Material × Size); each variant takes the row whose values match it, × each pack ("Buy More Save More", the last
+ * Shopify option) priced at the pack's TOTAL. Tables are shared: rows other bases need are simply not used.
  */
 export interface CtPriceTableConfig {
-  /** Shopify option name of the sizes ("Size"). */
-  sizeLabel: string;
+  /** Option names the rows' values are for — used only when a base has no options of its own (lib/pricing). */
+  optionNames: string[];
+  rows: CtPriceRow[];
   /** Shopify option name of the packs ("Buy More Save More (Different Designs)"). */
   packLabel: string;
   /** What one design of a pack is called on the storefront ("Ornament" → tabs "Ornament 1…6"). */
   itemLabel: string;
-  sizes: CtPriceSize[];
   packs: CtPricePack[];
-  /** "<sizeId>:<packId>" → hand-set cell. */
+  /** "<rowId>:<packId>" → hand-set cell. */
   overrides: Record<string, CtPriceCellOverride>;
 }
 
@@ -2622,7 +2639,10 @@ export interface CtPriceTableBody {
 
 /** One computed cell = one Shopify variant. */
 export interface CtPriceCell {
-  size: CtPriceSize | null;
+  /** The variant's option values (base option order), without the pack. */
+  values: string[];
+  /** The price row it takes; null = the table has no price for it (missing). */
+  row: CtPriceRow | null;
   pack: CtPricePack | null;
   qty: number;
   /** Total of the pack. */
@@ -2631,6 +2651,7 @@ export interface CtPriceCell {
   /** price / qty. */
   unit: number;
   overridden: boolean;
+  missing: boolean;
 }
 
 /**

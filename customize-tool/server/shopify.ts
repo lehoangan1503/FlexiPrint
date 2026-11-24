@@ -18,6 +18,7 @@ import type {
   CtCustomerNote,
   CtShopifyCollection,
   CtShopifyCollectionRule,
+  CtBaseOption,
   CtPriceTableConfig,
   CtShopifyInfo,
   CtShopifyLink,
@@ -26,7 +27,7 @@ import type {
   CtStore,
 } from "../types";
 import { sameCollection } from "../lib/collections";
-import { priceCells, shopifyPricing, usesPacks, usesSizes } from "../lib/pricing";
+import { cellOptionValues, priceCells, shopifyOptions, shopifyPricing } from "../lib/pricing";
 import { variantSku } from "../lib/sku";
 import { CT_DEFAULT_STORE, storeCredentials } from "./stores";
 
@@ -235,6 +236,8 @@ export interface ShopifyDeployInput {
   tags: string[];
   priceTableId: string;
   pricing: CtPriceTableConfig;
+  /** The variants' options (lib/pricing effectiveOptions: the base's, else the table's) — the pack comes after. */
+  options: CtBaseOption[];
   /** Custom collections the product is in; `primaryCollectionId` = the one the breadcrumb shows. */
   collectionIds: string[];
   primaryCollectionId: string | null;
@@ -288,20 +291,17 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
     }
   }
 
-  // Options + one variant per price cell.
+  // Options (the base's, then the pack) + one variant per combination.
   const cfg = input.pricing;
-  const sizes = usesSizes(cfg);
-  const packs = usesPacks(cfg);
-  const productOptions: Array<{ name: string; position: number; values: Array<{ name: string }> }> = [];
-  if (sizes) productOptions.push({ name: cfg.sizeLabel, position: productOptions.length + 1, values: cfg.sizes.map((s) => ({ name: s.label })) });
-  if (packs) productOptions.push({ name: cfg.packLabel, position: productOptions.length + 1, values: cfg.packs.map((p) => ({ name: p.label })) });
+  const opts = shopifyOptions(cfg, input.options);
+  const productOptions: Array<{ name: string; position: number; values: Array<{ name: string }> }> = opts.map((o, i) => ({ name: o.name, position: i + 1, values: o.values.map((v) => ({ name: v })) }));
   if (!productOptions.length) productOptions.push({ name: DEFAULT_OPTION.name, position: 1, values: [{ name: DEFAULT_OPTION.value }] });
 
   const oldVariants = new Map((existing?.variants.nodes ?? []).map((v) => [variantKey(v.selectedOptions), v.id]));
-  const variants = priceCells(cfg).map((cell, i) => {
-    const values: Array<{ name: string; value: string }> = [];
-    if (sizes && cell.size) values.push({ name: cfg.sizeLabel, value: cell.size.label });
-    if (packs && cell.pack) values.push({ name: cfg.packLabel, value: cell.pack.label });
+  const cells = priceCells(cfg, input.options);
+  if (cells.some((c) => c.missing)) throw new ShopifyError("Bảng giá thiếu giá cho một số biến thể");
+  const variants = cells.map((cell, i) => {
+    const values: Array<{ name: string; value: string }> = cellOptionValues(cfg, input.options, cell);
     if (!values.length) values.push(DEFAULT_OPTION);
     const id = oldVariants.get(variantKey(values));
     return {
@@ -347,7 +347,7 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
     variants,
     metafields: [
       { namespace: CT_METAFIELD_NS, key: "product_id", type: "single_line_text_field", value: input.ctProductId },
-      { namespace: CT_METAFIELD_NS, key: "pricing", type: "json", value: JSON.stringify(shopifyPricing(cfg)) },
+      { namespace: CT_METAFIELD_NS, key: "pricing", type: "json", value: JSON.stringify(shopifyPricing(cfg, input.options)) },
       // The collection flexi2-product.liquid shows in the breadcrumb (Home › Ornaments › product).
       ...(input.primaryCollectionId ? [{ namespace: CT_METAFIELD_NS, key: "breadcrumb_collection", type: "collection_reference", value: input.primaryCollectionId }] : []),
       // The storefront loads the template from the CDN (fast in the US), flexi2 when this is missing.

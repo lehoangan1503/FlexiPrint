@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeft, Check, CheckCircle2, ExternalLink, Info, Link2, Loader2, Pencil, Plus, Rocket, Save, Star, X } from "lucide-react";
 import { CT_CONFIG } from "../../config";
 import type {
+  CtBaseOption,
   CtBaseProductRow,
   CtAsset,
   CtCustomerNote,
@@ -42,9 +43,10 @@ import { normalizeSku, skuName, skuProblem, twinProblem, variantSku } from "../.
 import { SortableMockups } from "../sortable-mockups";
 import { ZoomThumbs } from "../zoom-thumbs";
 import { auditOptions, type CtAuditLevel } from "../../lib/option-audit";
-import { formatUsd, priceCell, priceCells, priceTableFor, priceTableProblems, usesPacks, usesSizes } from "../../lib/pricing";
+import { cellOptionValues, effectiveOptions, formatUsd, priceCells, priceTableFor, shopifyOptions, variantProblems } from "../../lib/pricing";
 import { CHECKER_STYLE, CtButton, CtCheckbox, CtField, CtInput, CtSelect, CtTextarea, cx } from "../ui";
 import { PriceTableEditor } from "./price-table-editor";
+import { PriceGrid } from "./variant-ui";
 import { ContentAgent } from "./content-agent";
 import { PreviewBoxCard } from "./preview-box-card";
 import { ImportStatus } from "../char/import-status";
@@ -196,7 +198,9 @@ export function DeployPage({ productId }: { productId: string }) {
   );
 
   const table = tables.find((t) => t.id === tableId) ?? null;
-  const problems = table ? priceTableProblems(table.config) : [];
+  // The variants are the base's (2026-11-24); a product without a base / a base without options: the table's.
+  const options = table ? effectiveOptions(table.config, base?.config.options) : [];
+  const problems = table ? variantProblems(table.config, base?.config.options) : [];
   const pictures = useMemo(() => (bundle ? productMockups(bundle.assets, bundle.product.id, picks) : []), [bundle, picks]);
   const media = useMemo(() => pickedMockups(pictures, picks), [pictures, picks]);
   // Images on the Shopify product that no deploy put there (added by hand on Shopify).
@@ -245,7 +249,7 @@ export function DeployPage({ productId }: { productId: string }) {
   const sku = normalizeSku(product.name);
   // What the variants get: the SKU + size / pack (the first two as examples).
   const skuSamples = sku && table
-    ? priceCells(table.config).slice(0, 2).map((c) => variantSku(sku, [usesSizes(table.config) ? c.size?.label ?? "" : "", usesPacks(table.config) ? c.pack?.label ?? "" : ""]))
+    ? priceCells(table.config, options).slice(0, 2).map((c) => variantSku(sku, cellOptionValues(table.config, options, c).map((o) => o.value)))
     : [];
   const canDeploy = Boolean(!badSku && table && !problems.length && template.tpl && form.title.trim() && info?.configured !== false);
 
@@ -356,7 +360,7 @@ export function DeployPage({ productId }: { productId: string }) {
                 SKU: <span className="font-mono font-medium text-foreground">{sku}</span>
                 {skuName(product.name) !== product.name.trim() && <> (tên sẽ đổi thành “{skuName(product.name)}” khi deploy)</>}
                 {skuSamples.length > 0 && skuSamples[0] !== sku && (
-                  <> · variant: <span className="font-mono text-foreground">{skuSamples.join(", ")}</span>{priceCells(table!.config).length > 2 && " …"}</>
+                  <> · variant: <span className="font-mono text-foreground">{skuSamples.join(", ")}</span>{priceCells(table!.config, options).length > 2 && " …"}</>
                 )}
               </div>
             )}
@@ -402,7 +406,7 @@ export function DeployPage({ productId }: { productId: string }) {
                   facts={[
                     ...audit.versions.flatMap((v) => (audit.versions.length > 1 ? [`Version "${v.name}": ${v.fields.join("; ") || "no customer field"}`] : v.fields)),
                     ...audit.lines.filter((l) => l.level === "ok").map((l) => l.text),
-                    ...(table ? [`Price table: ${priceFacts(table)}`] : []),
+                    ...(table ? [`Price table: ${priceFacts(table, options)}`] : []),
                     ...(form.productType ? [`Product type: ${form.productType}`] : []),
                   ]}
                   imageUrls={media.map((id) => pictures.find((a) => a.id === id)?.url ?? "").filter(Boolean)}
@@ -516,7 +520,7 @@ export function DeployPage({ productId }: { productId: string }) {
               </CtButton>
             </div>
             )}
-            {table ? <PriceSummary table={table} /> : <p className="text-xs text-muted-foreground">Deploy cần 1 bảng giá: Size × Pack, mỗi ô là 1 variant Shopify có giá.</p>}
+            {table ? <PriceGrid cfg={table.config} options={options} /> : <p className="text-xs text-muted-foreground">Deploy cần 1 bảng giá: giá cho từng biến thể của base (× pack), mỗi ô là 1 variant Shopify.</p>}
             {problems.length > 0 && <Notice level="warn" text={problems.join(" ")} />}
           </Card>
 
@@ -602,6 +606,8 @@ export function DeployPage({ productId }: { productId: string }) {
       {editing && (
         <PriceTableEditor
           table={editing === "new" ? null : editing}
+          options={base?.config.options}
+          defaultName={base?.name}
           onClose={() => setEditing(null)}
           onSaved={(t) => {
             setTables((list) => [t, ...list.filter((x) => x.id !== t.id)]);
@@ -619,12 +625,12 @@ export function DeployPage({ productId }: { productId: string }) {
   );
 }
 
-function priceFacts(t: CtPriceTable): string {
-  const cells = priceCells(t.config);
+function priceFacts(t: CtPriceTable, options: CtBaseOption[]): string {
+  const cells = priceCells(t.config, options).filter((c) => !c.missing);
   const lo = Math.min(...cells.map((c) => c.unit));
   const hi = Math.max(...cells.map((c) => c.unit));
-  const parts = [usesSizes(t.config) ? `${t.config.sizeLabel}: ${t.config.sizes.map((s) => s.label).join(", ")}` : "", usesPacks(t.config) ? `${t.config.packLabel}: ${t.config.packs.map((p) => p.label).join(", ")} (each piece a different design)` : ""];
-  return `${parts.filter(Boolean).join("; ")}; ${formatUsd(lo)}–${formatUsd(hi)} per piece`;
+  const parts = shopifyOptions(t.config, options).map((o) => `${o.name}: ${o.values.join(", ")}${o.pack ? " (each piece a different design)" : ""}`);
+  return `${parts.join("; ")}${parts.length ? "; " : ""}${cells.length ? `${formatUsd(lo)}–${formatUsd(hi)} per piece` : "no price"}`;
 }
 
 /**
@@ -833,48 +839,6 @@ function ResultBox({ error, result }: { error: string | null; result: CtDeployRe
       {result.warnings.map((w, i) => (
         <Notice key={i} level="warn" text={w} />
       ))}
-    </div>
-  );
-}
-
-function PriceSummary({ table }: { table: CtPriceTable }) {
-  const cfg = table.config;
-  const cells = priceCells(cfg);
-  const sizes = usesSizes(cfg) ? cfg.sizes : [];
-  const packs = usesPacks(cfg) ? cfg.packs : [];
-  return (
-    <div className="space-y-2 text-xs">
-      <div className="overflow-x-auto rounded-md border">
-        <table className="w-full">
-          <thead className="bg-muted/40">
-            <tr>
-              <th className="px-2 py-1 text-left font-medium">{sizes.length ? cfg.sizeLabel : ""}</th>
-              {(packs.length ? packs : [null]).map((p, i) => (
-                <th key={p?.id ?? i} className="px-2 py-1 text-left font-medium">
-                  {p?.label ?? "Giá"}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {(sizes.length ? sizes : [null]).map((s, si) => (
-              <tr key={s?.id ?? si} className="border-t">
-                <td className="whitespace-nowrap px-2 py-1 font-medium">{s?.label ?? ""}</td>
-                {(packs.length ? packs : [null]).map((p, pi) => {
-                  const c = priceCell(cfg, s ?? cfg.sizes[0] ?? null, p ?? cfg.packs[0] ?? null);
-                  return (
-                    <td key={p?.id ?? pi} className="whitespace-nowrap px-2 py-1">
-                      <b>{formatUsd(c.price)}</b>
-                      {c.qty > 1 && <span className="ml-1 text-muted-foreground">{formatUsd(c.unit)}/pc</span>}
-                      {c.compareAt !== null && <s className="ml-1 text-muted-foreground">{formatUsd(c.compareAt)}</s>}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }

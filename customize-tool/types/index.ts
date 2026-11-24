@@ -2774,6 +2774,8 @@ export interface CtShopifyInfo {
   /** The linked product as it is on Shopify now (null: none / deleted there). */
   product: CtShopifyProductSummary | null;
   error?: string;
+  /** Other products whose name holds the same SKU (server/sku-twins.ts) — the Deploy page blocks on it. */
+  skuTwins?: Array<{ id: string; name: string }>;
 }
 
 import type { CtCharChatAttachment, CtCharProject, CtCharTaskInput, CtCharTaskResult } from "./char";

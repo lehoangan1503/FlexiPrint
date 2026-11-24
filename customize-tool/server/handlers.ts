@@ -39,6 +39,7 @@ import { normalizeProductConfig, normalizeRegion, normalizeSamples } from "../li
 import { CT_DEPLOY_MEDIA_MAX, defaultDeployMedia, effectivePicks, idList, picksAfterDeploy } from "../lib/deploy-media";
 import { normalizeCustomerNote, normalizeDeployDraft } from "../lib/deploy-draft";
 import { normalizeSku, skuName, skuProblem } from "../lib/sku";
+import { skuTwins, twinProblem } from "./sku-twins";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctLibraryPath, ctPublicUploadPath, ctRemove, ctStoragePath, ctUpload } from "./storage";
 import { buildTemplate } from "../lib/template";
@@ -553,6 +554,8 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
   // Typed any other way (case, accents, spaces…) it is read, and the name's SKU part is rewritten in the standard form.
   const sku = normalizeSku(product.name);
   if (!sku) return { error: skuProblem(product.name) ?? "SKU không hợp lệ", status: 400 };
+  const twin = twinProblem(product.name, await skuTwins(s, product).catch((e: Error) => [{ id: "", name: e.message }]));
+  if (twin) return { error: twin, status: 409 };
   const fixedName = skuName(product.name);
   if (product.name !== fixedName) {
     const { error: nameErr } = await s.supabase.from(CT_TABLES.products).update({ name: fixedName }).eq("id", productId);
@@ -664,7 +667,8 @@ export async function shopifyStatus(s: CtSession, productId: string): Promise<Ne
   const store = await storeOfProduct(s.supabase, product).catch(() => null);
   if (!store) return NextResponse.json({ configured: false, shop: null, product: null, error: `Không thấy store "${product.store_id ?? ""}"` } satisfies CtShopifyInfo);
   try {
-    return NextResponse.json(await shopifyInfo(store, product.shopify?.productId ?? null));
+    const [info, twins] = await Promise.all([shopifyInfo(store, product.shopify?.productId ?? null), skuTwins(s, product).catch(() => [])]);
+    return NextResponse.json({ ...info, skuTwins: twins } satisfies CtShopifyInfo);
   } catch (e) {
     const info: CtShopifyInfo = { configured: shopifyConfigured(store), shop: null, product: null, error: e instanceof Error ? e.message : String(e) };
     return NextResponse.json(info);

@@ -38,7 +38,7 @@ import { suggestCollections } from "../../lib/collections";
 import { effectivePicks, pickedMockups, productMockups, type CtMockupPicks } from "../../lib/deploy-media";
 import { normalizeProductConfig } from "../../lib/design";
 import { DEFAULT_CUSTOMER_NOTE, liveDraft } from "../../lib/deploy-draft";
-import { normalizeSku, skuName, skuProblem, variantSku } from "../../lib/sku";
+import { normalizeSku, skuName, skuProblem, twinProblem, variantSku } from "../../lib/sku";
 import { SortableMockups } from "../sortable-mockups";
 import { ZoomThumbs } from "../zoom-thumbs";
 import { auditOptions, type CtAuditLevel } from "../../lib/option-audit";
@@ -239,7 +239,9 @@ export function DeployPage({ productId }: { productId: string }) {
   const link = product.shopify ?? null;
   const linked = info?.product ?? null;
   // The name is the SKU (lib/sku.ts, asked 2026-11-24): a name off n0x-POD-yyy never goes to Shopify.
-  const badSku = skuProblem(product.name);
+  const twins = info?.skuTwins ?? [];
+  // Two products never share an SKU (asked 2026-11-24); the server says which (server/sku-twins.ts).
+  const badSku = skuProblem(product.name) ?? twinProblem(product.name, twins);
   const sku = normalizeSku(product.name);
   // What the variants get: the SKU + size / pack (the first two as examples).
   const skuSamples = sku && table

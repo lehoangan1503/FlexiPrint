@@ -32,6 +32,7 @@ import { ensureVersionPhoi, jobName } from "../version-phoi";
 import { normalizeProductConfig } from "../../lib/design";
 import { liveDraft, normalizeCustomerNote, normalizeDeployDraft } from "../../lib/deploy-draft";
 import { skuProblem } from "../../lib/sku";
+import { skuTwins, twinProblem } from "../sku-twins";
 import { CT_CONFIG, CT_TABLES } from "../../config";
 import type { CtServiceClient, CtSession } from "../supabase";
 import { OPT_TASK_ARG, actorOf, json, liveStatus } from "./task-common";
@@ -79,12 +80,14 @@ interface DeployState {
   templateError: string | null;
   audit: ReturnType<typeof auditOptions> | null;
   content: CtContentResult | null;
+  /** Other products with the same SKU (server/sku-twins.ts). */
+  skuTwins: Array<{ id: string; name: string }>;
 }
 
 /** Everything a deploy of the product reads. */
 export async function deployState(db: CtServiceClient, s: CtSession, product: CtProduct): Promise<DeployState> {
   const store = await storeOfProduct(db, product);
-  const [base, info, tables, mockups, built, content] = await Promise.all([
+  const [base, info, tables, mockups, built, content, twins] = await Promise.all([
     product.base_product_id ? loadBaseProduct(db, product.base_product_id) : Promise.resolve(null),
     shopifyInfo(store, product.shopify?.productId ?? null).catch((e: Error): CtShopifyInfo => ({ configured: shopifyConfigured(store), shop: null, product: null, error: e.message })),
     db
@@ -113,6 +116,7 @@ export async function deployState(db: CtServiceClient, s: CtSession, product: Ct
       .limit(1)
       .maybeSingle<{ result: CtContentResult | null }>()
       .then((r) => r.data?.result ?? null),
+    (product.kind ?? "artwork") === "product" ? skuTwins(s, product).catch(() => []) : Promise.resolve([]),
   ]);
   return {
     base,
@@ -122,6 +126,7 @@ export async function deployState(db: CtServiceClient, s: CtSession, product: Ct
     templateError: "error" in built ? built.error : null,
     audit: "error" in built ? null : auditOptions(built.template),
     content,
+    skuTwins: twins,
   };
 }
 
@@ -131,6 +136,8 @@ export function blockers(st: DeployState, pick: { kind: string; name: string; ta
   if (pick.kind !== "product") out.push("Đây là ARTWORK, không phải sản phẩm — make_product_from_artwork (artwork + product base) rồi deploy sản phẩm đó.");
   const badSku = pick.kind === "product" ? skuProblem(pick.name) : null;
   if (badSku) out.push(badSku);
+  const twin = pick.kind === "product" && !badSku ? twinProblem(pick.name, st.skuTwins) : null;
+  if (twin) out.push(twin);
   if (!st.info.configured) out.push("Chưa cấu hình Shopify trên server (SHOPIFY_STORE_DOMAIN / CLIENT_ID / CLIENT_SECRET).");
   const table = st.tables.find((t) => t.id === pick.tableId);
   if (!st.tables.length) out.push("Chưa có bảng giá nào — editor tạo bảng giá ở trang Deploy.");

@@ -31,6 +31,7 @@ import { defaultScenes, splitScenes } from "../../lib/mockup-scenes";
 import { ensureVersionPhoi, jobName } from "../version-phoi";
 import { normalizeProductConfig } from "../../lib/design";
 import { liveDraft, normalizeCustomerNote, normalizeDeployDraft } from "../../lib/deploy-draft";
+import { skuProblem } from "../../lib/sku";
 import { CT_CONFIG, CT_TABLES } from "../../config";
 import type { CtServiceClient, CtSession } from "../supabase";
 import { OPT_TASK_ARG, actorOf, json, liveStatus } from "./task-common";
@@ -125,9 +126,11 @@ export async function deployState(db: CtServiceClient, s: CtSession, product: Ct
 }
 
 /** What blocks a deploy (Vietnamese, the editor reads it). */
-export function blockers(st: DeployState, pick: { kind: string; tableId: string | null; title: string; descriptionHtml: string; mediaIds: string[] }): string[] {
+export function blockers(st: DeployState, pick: { kind: string; name: string; tableId: string | null; title: string; descriptionHtml: string; mediaIds: string[] }): string[] {
   const out: string[] = [];
   if (pick.kind !== "product") out.push("Đây là ARTWORK, không phải sản phẩm — make_product_from_artwork (artwork + product base) rồi deploy sản phẩm đó.");
+  const badSku = pick.kind === "product" ? skuProblem(pick.name) : null;
+  if (badSku) out.push(badSku);
   if (!st.info.configured) out.push("Chưa cấu hình Shopify trên server (SHOPIFY_STORE_DOMAIN / CLIENT_ID / CLIENT_SECRET).");
   const table = st.tables.find((t) => t.id === pick.tableId);
   if (!st.tables.length) out.push("Chưa có bảng giá nào — editor tạo bảng giá ở trang Deploy.");
@@ -295,7 +298,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         lastContent: st.content ? { title: st.content.title, descriptionHtml: st.content.descriptionHtml } : null,
         draft: draft ? { ...draft, note: "Saved ahead (save_deploy_draft / the Deploy page's Lưu nháp): deploy_product uses it for what you leave out." } : null,
         customerNote: normalizeProductConfig(product.config).customerNote,
-        missing: blockers(st, { kind: product.kind ?? "artwork", tableId, title, descriptionHtml, mediaIds: defaultMedia(st, product) }),
+        missing: blockers(st, { kind: product.kind ?? "artwork", name: product.name, tableId, title, descriptionHtml, mediaIds: defaultMedia(st, product) }),
         next: "Fill what is missing (title + description_html in US English per the content rules; a price table that fits — never create one, the editor keeps them; make_product_mockups when there is none), then deploy_product. Collections: reuse the store's — the suggested ones fit the title; a smart (rule-based) one is joined through its rules (the deploy adds the tag / type), so pick it like any other. Never create a collection when one fits.",
       });
     },
@@ -768,7 +771,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "deploy_product",
     description:
-      "Deploy a product to Shopify — the editor's Deploy button: publishes the storefront template, then creates (or updates, keeping its variants) the Shopify product with the price table's variants, the title / description, and mockups as images. Refuses with the list of blockers (title, description_html ≥ 200 chars of text, a valid price table, ≥ 1 mockup, the template builds, Shopify configured). status ACTIVE (default, on sale at once) | DRAFT. → the Shopify link (store url, admin url), preview url, warnings, template version.",
+      "Deploy a product to Shopify — the editor's Deploy button: publishes the storefront template, then creates (or updates, keeping its variants) the Shopify product with the price table's variants, the title / description, and mockups as images. Refuses with the list of blockers (the product NAME is its SKU and must be n0x-POD-yyy — x one digit, yyy a number with no leading 0, e.g. n06-POD-126; rename with update_product — title, description_html ≥ 200 chars of text, a valid price table, ≥ 1 mockup, the template builds, Shopify configured). Every variant gets the name as SKU. status ACTIVE (default, on sale at once) | DRAFT. → the Shopify link (store url, admin url), preview url, warnings, template version.",
     inputSchema: {
       type: "object",
       properties: {
@@ -844,7 +847,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         primaryCollectionId: str(args.primary_collection_id) || collectionIds[0] || null,
         shopifyProductId: null,
       });
-      const missing = blockers(st, { kind: product.kind ?? "artwork", tableId, title: body?.title ?? "", descriptionHtml: body?.descriptionHtml ?? "", mediaIds });
+      const missing = blockers(st, { kind: product.kind ?? "artwork", name: product.name, tableId, title: body?.title ?? "", descriptionHtml: body?.descriptionHtml ?? "", mediaIds });
       if (!body || missing.length) throw new Error(`Chưa deploy được:\n- ${(missing.length ? missing : ["Thiếu title hoặc bảng giá."]).join("\n- ")}`);
       await progress(db, task?.id, `Đang deploy “${body.title}” lên Shopify (${body.status})…`);
       const r = await runDeploy(s, product, body, siteUrl());

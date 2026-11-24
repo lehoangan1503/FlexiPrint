@@ -38,6 +38,7 @@ import type {
 import { normalizeProductConfig, normalizeRegion, normalizeSamples } from "../lib/design";
 import { CT_DEPLOY_MEDIA_MAX, defaultDeployMedia, effectivePicks, idList, picksAfterDeploy } from "../lib/deploy-media";
 import { normalizeCustomerNote, normalizeDeployDraft } from "../lib/deploy-draft";
+import { productSku, skuProblem } from "../lib/sku";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctLibraryPath, ctPublicUploadPath, ctRemove, ctStoragePath, ctUpload } from "./storage";
 import { buildTemplate } from "../lib/template";
@@ -547,6 +548,9 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
   if (!shopifyConfigured(store)) return { error: `Store ${store.name} chưa cấu hình app Shopify trên server`, status: 501 };
   // Only a product is sold (migration 031): an artwork is made into one first, on a base product.
   if ((product.kind ?? "artwork") !== "product") return { error: "Đây là artwork — tạo sản phẩm từ artwork (chọn product base) rồi deploy sản phẩm đó", status: 400 };
+  // The name is the SKU and must be n0x-POD-yyy (lib/sku.ts, asked 2026-11-24): nothing else goes to Shopify.
+  const badSku = skuProblem(product.name);
+  if (badSku) return { error: badSku, status: 400 };
   // The base product owns the variants + prices and the product type.
   const base = product.base_product_id ? await loadBaseProduct(s.supabase, product.base_product_id) : null;
   if (base?.config.priceTableId) body = { ...body, priceTableId: base.config.priceTableId };
@@ -602,6 +606,7 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
       link: product.shopify ?? null,
       targetId: body.shopifyProductId ?? null,
       title: body.title,
+      sku: productSku(product.name),
       descriptionHtml: body.descriptionHtml,
       status: body.status,
       vendor: body.vendor,

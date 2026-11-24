@@ -225,6 +225,8 @@ export interface ShopifyDeployInput {
   /** Deploy onto this product (gid) — else the linked one, else a new product. */
   targetId: string | null;
   title: string;
+  /** Every variant's SKU = the product's name (lib/sku.ts). */
+  sku: string;
   descriptionHtml: string;
   status: CtShopifyStatus;
   vendor: string;
@@ -309,7 +311,7 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
       compareAtPrice: cell.compareAt !== null ? cell.compareAt.toFixed(2) : null,
       // Made to order: never "sold out".
       inventoryPolicy: "CONTINUE",
-      inventoryItem: { tracked: false, requiresShipping: true },
+      inventoryItem: { tracked: false, requiresShipping: true, sku: input.sku },
       taxable: true,
     };
   });

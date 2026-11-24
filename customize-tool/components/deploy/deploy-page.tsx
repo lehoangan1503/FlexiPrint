@@ -38,6 +38,7 @@ import { suggestCollections } from "../../lib/collections";
 import { effectivePicks, pickedMockups, productMockups, type CtMockupPicks } from "../../lib/deploy-media";
 import { normalizeProductConfig } from "../../lib/design";
 import { DEFAULT_CUSTOMER_NOTE, liveDraft } from "../../lib/deploy-draft";
+import { productSku, skuProblem } from "../../lib/sku";
 import { SortableMockups } from "../sortable-mockups";
 import { ZoomThumbs } from "../zoom-thumbs";
 import { auditOptions, type CtAuditLevel } from "../../lib/option-audit";
@@ -237,7 +238,9 @@ export function DeployPage({ productId }: { productId: string }) {
   const product = bundle.product;
   const link = product.shopify ?? null;
   const linked = info?.product ?? null;
-  const canDeploy = Boolean(table && !problems.length && template.tpl && form.title.trim() && info?.configured !== false);
+  // The name is the SKU (lib/sku.ts, asked 2026-11-24): a name off n0x-POD-yyy never goes to Shopify.
+  const badSku = skuProblem(product.name);
+  const canDeploy = Boolean(!badSku && table && !problems.length && template.tpl && form.title.trim() && info?.configured !== false);
 
   const deploy = async () => {
     if (!table) return;
@@ -339,6 +342,13 @@ export function DeployPage({ productId }: { productId: string }) {
             ) : info?.error ? (
               <Notice level="warn" text={info.error} />
             ) : null}
+            {badSku ? (
+              <Notice level="error" text={badSku} />
+            ) : (
+              <div className="text-xs text-muted-foreground">
+                SKU mọi variant: <span className="font-mono font-medium text-foreground">{productSku(product.name)}</span> (tên sản phẩm)
+              </div>
+            )}
             <div className="flex items-center gap-3 rounded-md border p-2.5">
               {linked?.imageUrl ? (
                 <img src={linked.imageUrl} alt="" className="h-12 w-12 rounded object-cover" />

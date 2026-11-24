@@ -28,6 +28,7 @@ import { jsonError, ownedProduct } from "./handlers";
 import type { CtServiceClient, CtSession } from "./supabase";
 import { loadBaseProduct } from "./base-products";
 import { templateRow } from "./print-templates";
+import { skuName } from "../lib/sku";
 
 /** What the snapshot copies from the artwork's config: the design. The rest (photos, mockups) is the product's own. */
 const DESIGN_KEYS = ["main", "layouts", "samples", "material", "print", "printGuide", "printSilhouette", "versionPhoi"] as const;
@@ -237,7 +238,7 @@ export async function cloneProduct(s: CtSession, id: string, raw: unknown): Prom
   const baseId = typeof b.baseProductId === "string" && b.baseProductId ? b.baseProductId : src.base_product_id;
   const base = baseId ? await loadBaseProduct(s.supabase, baseId) : null;
   if (baseId && !base) return jsonError("Không tìm thấy product base", 404);
-  const name = ((typeof b.name === "string" && b.name.trim()) || `${src.name} (bản sao)`).slice(0, 200);
+  const name = skuName((typeof b.name === "string" && b.name.trim()) || `${src.name} (bản sao)`).slice(0, 200);
   const db = s.supabase;
   const { regions, items } = await loadDesign(db, src.id);
   // A picture uploaded on the product itself (not the artwork's, not the library's) belongs to it alone: deleting it
@@ -313,7 +314,7 @@ export async function artworkStatus(s: CtSession, id: string): Promise<NextRespo
  */
 export async function makeProductFromArtwork(db: Db, userId: string, artwork: CtProduct, base: CtBaseProduct, name?: string): Promise<CtProduct> {
   if ((artwork.kind ?? "artwork") !== "artwork" || normalizeProductConfig(artwork.config).artworkLink) throw new Error(`"${artwork.name}" là sản phẩm, không phải artwork — tạo từ artwork gốc của nó`);
-  const title = (name?.trim() || artwork.name).slice(0, 200);
+  const title = skuName(name?.trim() || artwork.name).slice(0, 200);
   const { count: before } = await db.from(CT_TABLES.products).select("id", { count: "exact", head: true }).eq("kind", "product").eq("config->artworkLink->>artworkId", artwork.id);
   const { data: product, error } = await db.from(CT_TABLES.products).insert({ user_id: userId, name: title, kind: "product", base_product_id: base.id, ...(artwork.store_id ? { store_id: artwork.store_id } : {}) }).select("*").single<CtProduct>();
   if (error || !product) throw new Error(error?.message ?? "Không tạo được sản phẩm");

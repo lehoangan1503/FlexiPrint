@@ -27,6 +27,7 @@ import type {
 } from "../types";
 import { sameCollection } from "../lib/collections";
 import { priceCells, shopifyPricing, usesPacks, usesSizes } from "../lib/pricing";
+import { variantSku } from "../lib/sku";
 import { CT_DEFAULT_STORE, storeCredentials } from "./stores";
 
 const API_VERSION = () => process.env.SHOPIFY_API_VERSION || "2026-07";
@@ -225,7 +226,7 @@ export interface ShopifyDeployInput {
   /** Deploy onto this product (gid) — else the linked one, else a new product. */
   targetId: string | null;
   title: string;
-  /** Every variant's SKU = the product's name (lib/sku.ts). */
+  /** The product's SKU (its name, lib/sku.ts); each variant adds its size / pack (variantSku). */
   sku: string;
   descriptionHtml: string;
   status: CtShopifyStatus;
@@ -311,7 +312,7 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
       compareAtPrice: cell.compareAt !== null ? cell.compareAt.toFixed(2) : null,
       // Made to order: never "sold out".
       inventoryPolicy: "CONTINUE",
-      inventoryItem: { tracked: false, requiresShipping: true, sku: input.sku },
+      inventoryItem: { tracked: false, requiresShipping: true, sku: variantSku(input.sku, values.filter((v) => v !== DEFAULT_OPTION).map((v) => v.value)) },
       taxable: true,
     };
   });

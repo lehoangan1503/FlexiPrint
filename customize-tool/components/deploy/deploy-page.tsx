@@ -38,7 +38,7 @@ import { suggestCollections } from "../../lib/collections";
 import { effectivePicks, pickedMockups, productMockups, type CtMockupPicks } from "../../lib/deploy-media";
 import { normalizeProductConfig } from "../../lib/design";
 import { DEFAULT_CUSTOMER_NOTE, liveDraft } from "../../lib/deploy-draft";
-import { productSku, skuProblem } from "../../lib/sku";
+import { normalizeSku, skuName, skuProblem, variantSku } from "../../lib/sku";
 import { SortableMockups } from "../sortable-mockups";
 import { ZoomThumbs } from "../zoom-thumbs";
 import { auditOptions, type CtAuditLevel } from "../../lib/option-audit";
@@ -240,6 +240,11 @@ export function DeployPage({ productId }: { productId: string }) {
   const linked = info?.product ?? null;
   // The name is the SKU (lib/sku.ts, asked 2026-11-24): a name off n0x-POD-yyy never goes to Shopify.
   const badSku = skuProblem(product.name);
+  const sku = normalizeSku(product.name);
+  // What the variants get: the SKU + size / pack (the first two as examples).
+  const skuSamples = sku && table
+    ? priceCells(table.config).slice(0, 2).map((c) => variantSku(sku, [usesSizes(table.config) ? c.size?.label ?? "" : "", usesPacks(table.config) ? c.pack?.label ?? "" : ""]))
+    : [];
   const canDeploy = Boolean(!badSku && table && !problems.length && template.tpl && form.title.trim() && info?.configured !== false);
 
   const deploy = async () => {
@@ -346,7 +351,11 @@ export function DeployPage({ productId }: { productId: string }) {
               <Notice level="error" text={badSku} />
             ) : (
               <div className="text-xs text-muted-foreground">
-                SKU mọi variant: <span className="font-mono font-medium text-foreground">{productSku(product.name)}</span> (tên sản phẩm)
+                SKU: <span className="font-mono font-medium text-foreground">{sku}</span>
+                {skuName(product.name) !== product.name.trim() && <> (tên sẽ đổi thành “{skuName(product.name)}” khi deploy)</>}
+                {skuSamples.length > 0 && skuSamples[0] !== sku && (
+                  <> · variant: <span className="font-mono text-foreground">{skuSamples.join(", ")}</span>{priceCells(table!.config).length > 2 && " …"}</>
+                )}
               </div>
             )}
             <div className="flex items-center gap-3 rounded-md border p-2.5">

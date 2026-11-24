@@ -16,7 +16,8 @@
  *               agent rewrites the prompt and draws the same job again (agent task kind mockup, server/mcp/mockup-tools.ts).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ComponentProps } from "react";
 import { Bot, ChevronDown, ChevronRight, Loader2, Plus, RefreshCw, Sparkles, Trash2, Upload, Wallpaper } from "lucide-react";
 import type { CtAgentTask, CtAsset, CtBaseMockup, CtMockupBlock, CtPackImage, CtPhotoStyleRef, CtProduct, CtProductConfig, CtRegion, CtRegionItem, CtSelection } from "../../types";
 import { ctApi } from "../../lib/api-client";
@@ -61,6 +62,35 @@ const ART_PREVIEW_SIDE = 700;
 
 /** The image model refused the request on safety grounds (as server/product-mockups.ts isSafetyRefusal). */
 const isSafetyRefusal = (error: string) => /safety system|safety_violations|moderation_blocked|content policy/i.test(error);
+
+/**
+ * A prompt box as tall as its text (asked 2026-11-24: a long prompt needed a drag to read), up to most of the screen;
+ * a short prompt keeps a short box. Still resizable by hand.
+ */
+function PromptBox(props: ComponentProps<typeof CtTextarea>) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const fit = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight + 2, Math.round(window.innerHeight * 0.7))}px`;
+  }, []);
+  useLayoutEffect(fit, [fit, props.value]);
+  // The text wraps again when the panel gets wider or narrower.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let width = el.clientWidth;
+    const seen = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      fit();
+    });
+    seen.observe(el);
+    return () => seen.disconnect();
+  }, [fit]);
+  return <CtTextarea ref={ref} rows={2} {...props} />;
+}
 
 /** Same prompts, same pictures. */
 const sameBlocks = (a: CtMockupBlock[], b: CtMockupBlock[]) => a.length === b.length && a.every((x, i) => x.prompt === b[i].prompt && x.refs.join("\n") === b[i].refs.join("\n"));
@@ -514,7 +544,14 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
               {blocks.map((b, i) => {
                 const open = openBlocks.has(i);
                 return (
-                <div key={i} className="space-y-1.5 rounded-lg border p-2 text-xs">
+                <div
+                  key={i}
+                  className={cx(
+                    "space-y-1.5 rounded-lg border border-l-4 p-2 text-xs",
+                    // Neighbouring blocks in two tints (asked 2026-11-24: they ran into one another).
+                    i % 2 ? "border-l-amber-500 bg-amber-500/10" : "border-l-sky-500 bg-sky-500/10",
+                  )}
+                >
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -542,8 +579,8 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                   </div>
                   {open && (
                   <>
-                  <CtTextarea
-                    rows={3}
+                  <PromptBox
+                    className="bg-background"
                     value={b.prompt}
                     onChange={(e) => editBlock(i, { ...b, prompt: e.target.value })}
                     onBlur={() => typed && void saveBlocks(typed, true)}

@@ -262,7 +262,7 @@ function SetCard({ project: p, thumb, options, mine, onOpen, onRemove }: { proje
       <div className="p-2.5">
         <div className="truncate text-sm font-medium">{p.name}</div>
         <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="rounded bg-orange-500/15 px-1.5 py-0.5 font-medium text-orange-700 dark:text-orange-300" title={SET_KIND_INFO[k].short}>
+          <span className="rounded bg-orange-500/15 px-1.5 py-0.5 font-medium text-orange-800 dark:text-orange-300" title={SET_KIND_INFO[k].short}>
             {SET_KIND_INFO[k].label}
           </span>
           {isCum(p) && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 font-medium text-sky-700 dark:text-sky-300" title={`Tách từ “${p.brief.extracted?.productName ?? ""}”`}>Cụm</span>}

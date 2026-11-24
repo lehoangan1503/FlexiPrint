@@ -61,7 +61,7 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
           <h1 className="hidden text-lg font-semibold sm:block">FlexiPrint</h1>
           <StoreSwitch onChange={(st) => setStore(st.id)} />
           <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
-            <a href="/news" className="flex h-10 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground" title="Bài viết · hướng dẫn" aria-label="Hướng dẫn">
+            <a href="/news" className="flex h-10 min-w-10 items-center justify-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground" title="Bài viết · hướng dẫn" aria-label="Hướng dẫn">
               <BookOpen className="h-4 w-4" />
               <span className="hidden sm:inline">Hướng dẫn</span>
             </a>

@@ -407,7 +407,7 @@ export function GuidePage() {
           <Section id="tuong-duong" title="5. Bảng tương đương Teeinblue ↔ flexi2" lead="Cùng một phần, mỗi bên nằm ở đâu. Bấm ảnh để xem lớn.">
             <div className="hidden grid-cols-[150px_minmax(0,1fr)_minmax(0,1fr)] gap-3 px-1 text-xs font-semibold text-muted-foreground md:grid">
               <span>Phần</span>
-              <span className="text-blue-600">Teeinblue</span>
+              <span className="text-blue-700 dark:text-blue-300">Teeinblue</span>
               <span className="text-emerald-700 dark:text-emerald-300">flexi2</span>
             </div>
             <div className="space-y-3">

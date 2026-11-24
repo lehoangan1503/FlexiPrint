@@ -250,7 +250,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
             </Link>
             <Link
               href={`${CT_CONFIG.homePath}?tab=bases`}
-              className="hidden rounded px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground hover:underline sm:inline"
+              className="hidden min-h-8 items-center rounded px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground hover:underline sm:flex"
               title="Về danh sách Product base"
             >
               Product base
@@ -348,7 +348,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                   <div className="mb-1 text-[11px] font-medium text-muted-foreground">Biến thể nhà in ({cfg.variants.length}) · giá vốn</div>
                   <div className="max-h-60 overflow-auto rounded-md border">
                     <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-muted text-left text-[11px] text-muted-foreground">
+                      <thead className="sticky top-0 bg-muted text-left text-xs text-muted-foreground">
                         <tr>
                           <th className="px-2 py-1 font-medium">Size</th>
                           <th className="px-2 py-1 font-medium">Màu</th>
@@ -383,7 +383,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
               {table && (
                 <div className="mt-3 max-h-80 overflow-auto rounded-md border">
                   <table className="w-full text-xs">
-                    <thead className="sticky top-0 bg-muted text-left text-[11px] text-muted-foreground">
+                    <thead className="sticky top-0 bg-muted text-left text-xs text-muted-foreground">
                       <tr>
                         <th className="px-2 py-1 font-medium">{table.config.sizeLabel}</th>
                         <th className="px-2 py-1 font-medium">{table.config.packLabel}</th>
@@ -431,19 +431,19 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                     {cfg.printAreas.map((a) => (
                       <tr key={a.id}>
                         <td className="py-0.5 pr-2">
-                          <CtInput className="h-7 text-xs" value={a.name} onChange={(e) => setArea(a.id, { name: e.target.value })} />
+                          <CtInput className="h-7 text-xs" aria-label="Tên vùng in" value={a.name} onChange={(e) => setArea(a.id, { name: e.target.value })} />
                         </td>
                         <td className="py-0.5 pr-2">
-                          <CtInput className="h-7 text-xs" inputMode="numeric" value={String(a.width)} onChange={(e) => setArea(a.id, { width: Number(e.target.value) || 0 })} />
+                          <CtInput className="h-7 text-xs" aria-label="Rộng px" inputMode="numeric" value={String(a.width)} onChange={(e) => setArea(a.id, { width: Number(e.target.value) || 0 })} />
                         </td>
                         <td className="py-0.5 pr-2">
-                          <CtInput className="h-7 text-xs" inputMode="numeric" value={String(a.height)} onChange={(e) => setArea(a.id, { height: Number(e.target.value) || 0 })} />
+                          <CtInput className="h-7 text-xs" aria-label="Cao px" inputMode="numeric" value={String(a.height)} onChange={(e) => setArea(a.id, { height: Number(e.target.value) || 0 })} />
                         </td>
                         <td className="py-0.5 pr-2">
-                          <CtInput className="h-7 text-xs" inputMode="numeric" value={String(a.dpi)} onChange={(e) => setArea(a.id, { dpi: Number(e.target.value) || 0 })} />
+                          <CtInput className="h-7 text-xs" aria-label="DPI" inputMode="numeric" value={String(a.dpi)} onChange={(e) => setArea(a.id, { dpi: Number(e.target.value) || 0 })} />
                         </td>
                         <td>
-                          <button className="rounded p-1 text-muted-foreground hover:bg-accent pointer-coarse:p-2.5" onClick={() => patch({ printAreas: cfg.printAreas.filter((x) => x.id !== a.id) })} aria-label="Xoá">
+                          <button className="rounded p-1 text-muted-foreground hover:bg-accent pointer-coarse:p-3" onClick={() => patch({ printAreas: cfg.printAreas.filter((x) => x.id !== a.id) })} aria-label="Xoá">
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </td>
@@ -594,12 +594,12 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                     {detail.uses.map((u) => (
                       <div key={u.id}>
                         <div className="mb-1.5 flex items-center gap-2 text-xs">
-                          <Link href={`${CT_CONFIG.basePath}/${u.id}`} target="_blank" rel="noreferrer" className="truncate font-medium hover:underline">
+                          <Link href={`${CT_CONFIG.basePath}/${u.id}`} target="_blank" rel="noreferrer" className="truncate py-1 font-medium hover:underline">
                             {u.name}
                           </Link>
                           {u.artwork && <span className="truncate text-muted-foreground">· artwork “{u.artwork.name}”</span>}
                           {u.shopify && <span className="rounded bg-sky-500/15 px-1 text-[10px] text-sky-700 dark:text-sky-300">Shopify</span>}
-                          <Link href={`${CT_CONFIG.basePath}/${u.id}`} target="_blank" rel="noreferrer" title="Mở sản phẩm (tab mới)" className="ml-auto text-muted-foreground hover:text-foreground" aria-label="Mở sản phẩm">
+                          <Link href={`${CT_CONFIG.basePath}/${u.id}`} target="_blank" rel="noreferrer" title="Mở sản phẩm (tab mới)" className="ml-auto rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:p-3" aria-label="Mở sản phẩm">
                             <ExternalLink className="h-3.5 w-3.5" />
                           </Link>
                         </div>

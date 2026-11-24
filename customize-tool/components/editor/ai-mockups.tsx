@@ -552,9 +552,9 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                   key={i}
                   className={cx(
                     "space-y-1.5 rounded-lg border p-2 text-xs",
-                    // Neighbouring blocks in two greys of the page's own colour (asked 2026-11-24: they ran into one
-                    // another; blue / amber tints were refused the same day).
-                    i % 2 ? "bg-foreground/[0.09]" : "bg-foreground/[0.03]",
+                    // Every block the same; the open one gets a darker grey of the page's own colour (asked 2026-11-24,
+                    // after blue / amber tints and then alternating greys were both refused).
+                    open ? "bg-foreground/[0.09]" : "bg-foreground/[0.03]",
                   )}
                 >
                   <div className="flex items-center gap-2">

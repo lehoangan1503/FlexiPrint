@@ -520,12 +520,12 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                     : "Product base chưa có cảnh nào — viết cảnh vào ô dưới (thành prompt riêng của sản phẩm này), ô trống thì Tạo mockup báo lỗi."}
               </span>
               {hasBase && (
-                <a href={`/base-products/${product.base_product_id}`} target="_blank" rel="noreferrer" className="text-sky-700 underline dark:text-sky-300">
+                <a href={`/base-products/${product.base_product_id}`} target="_blank" rel="noreferrer" className="inline-flex min-h-6 items-center text-sky-700 underline dark:text-sky-300">
                   Mở prompt của base
                 </a>
               )}
               {own && (
-                <button className="ml-auto rounded border bg-background px-2 py-0.5 font-medium text-foreground hover:bg-accent disabled:opacity-50" disabled={backBusy} onClick={() => void backToBase()}>
+                <button className="ml-auto rounded border bg-background px-2 py-1 font-medium text-foreground hover:bg-accent disabled:opacity-50" disabled={backBusy} onClick={() => void backToBase()}>
                   {backBusy ? "Đang lưu…" : baseScenes ? "Dùng prompt của base" : "Bỏ cảnh riêng"}
                 </button>
               )}
@@ -533,10 +533,10 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
             <div className="space-y-2">
               {blocks.length > 1 && (
                 <div className="flex gap-3 text-xs">
-                  <button type="button" className="text-foreground underline-offset-2 hover:underline" onClick={() => setOpenBlocks(new Set(blocks.map((_, i) => i)))}>
+                  <button type="button" className="min-h-6 text-foreground underline-offset-2 hover:underline" onClick={() => setOpenBlocks(new Set(blocks.map((_, i) => i)))}>
                     Mở hết
                   </button>
-                  <button type="button" className="text-foreground underline-offset-2 hover:underline" onClick={() => setOpenBlocks(new Set())}>
+                  <button type="button" className="min-h-6 text-foreground underline-offset-2 hover:underline" onClick={() => setOpenBlocks(new Set())}>
                     Thu gọn hết
                   </button>
                 </div>
@@ -557,7 +557,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                       type="button"
                       aria-expanded={open}
                       title={open ? "Thu gọn" : "Bấm để mở"}
-                      className="flex min-w-0 flex-1 items-center gap-1.5 rounded text-left hover:bg-accent"
+                      className="flex min-h-7 min-w-0 flex-1 items-center gap-1.5 rounded text-left hover:bg-accent"
                       onClick={() => toggleBlock(i)}
                     >
                       {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
@@ -568,7 +568,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                     <button
                       type="button"
                       title="Xoá prompt này"
-                      className="shrink-0 rounded p-1 text-foreground/70 hover:bg-accent hover:text-foreground"
+                      className="shrink-0 rounded p-1.5 text-foreground/70 hover:bg-accent hover:text-foreground"
                       onClick={() => {
                         setOpenBlocks(new Set());
                         void saveBlocks(editBlock(i, null), true);

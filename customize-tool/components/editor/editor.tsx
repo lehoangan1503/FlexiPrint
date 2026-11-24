@@ -1217,7 +1217,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
             <Link
               href={CT_CONFIG.homePath}
               title="Về danh sách sản phẩm"
-              className="shrink-0 rounded px-1 py-0.5 text-[11px] font-medium uppercase tracking-wider text-sky-500 hover:bg-sky-500/10 hover:underline"
+              className="inline-flex min-h-6 shrink-0 items-center rounded px-1 py-0.5 text-[11px] font-medium uppercase tracking-wider text-sky-500 hover:bg-sky-500/10 hover:underline"
             >
               Sản phẩm
             </Link>
@@ -1234,7 +1234,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
                 placeholder="Chọn product base…"
               />
               {base && (
-                <Link href={`/base-products/${base.id}`} target="_blank" className="rounded p-1 hover:bg-accent" title="Mở product base">
+                <Link href={`/base-products/${base.id}`} target="_blank" className="rounded p-1.5 hover:bg-accent" title="Mở product base">
                   <ExternalLink className="h-3 w-3" />
                 </Link>
               )}

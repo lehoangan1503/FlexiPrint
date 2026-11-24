@@ -83,7 +83,9 @@ flexiprint_save_files (urls → a folder).
   around each scene, reference pictures; only the base's maker or an admin edits). A product's own prompt BLOCKS win over
   the base's scenes — one block = one photo = {prompt, refs}, its refs sent with that prompt only (picture 2, 3…; none =
   the base's): the editor's Mockups blocks, make_product_mockups save_blocks (or refs inside a scene of mockups),
-  make_product_from_artwork mockup_blocks.
+  make_product_from_artwork mockup_blocks. Read / change ONE product's prompt without drawing:
+  get_product_mockup_prompt / set_product_mockup_prompt (blocks; shared_refs = its own "Ảnh tham chiếu chung" in place
+  of the base's refs — drop / add / replace pictures for that product only, shared_refs_from_base = back to the base's).
 - Khuôn in (the base's physical shape, rarely touched): list_print_templates / get_print_template.
 
 ## The 3 kinds of bộ (kiểu 1 / 2 / 3)

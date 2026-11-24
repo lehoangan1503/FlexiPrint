@@ -8,6 +8,11 @@
  *   retry_mockup      {task_id, prompt} → the job drawn again with that prompt (background, ~1–3 min)
  *   wait_product_mockups (print-tools.ts) → its status
  *   submit_result     {summary, prompt} → submitMockupResult (draws it again itself when the agent has not)
+ *
+ * A product's own mockup prompt, without drawing (asked 2026-11-24: every editor feature also over API + MCP):
+ *   get_product_mockup_prompt {product_id} → its blocks, the base's wrap, the shared reference pictures (its own or the base's)
+ *   set_product_mockup_prompt {product_id, blocks?, shared_refs?} → the editor's Mockups blocks / "Ảnh tham chiếu chung",
+ *     through the same handlers as POST products/:id/mockups/blocks and …/mockups/base-refs
  */
 
 import { CT_TABLES } from "../../config";
@@ -15,9 +20,10 @@ import type { CtAgentTask, CtAgentTaskProgress, CtMockupFixResult, CtPackImage, 
 import type { CtServiceClient } from "../supabase";
 import { clip, str } from "../ai/llm";
 import { serviceSession } from "../char/product";
-import { isSafetyRefusal, jobName, KEEP_PRINT, retryMockupJob } from "../product-mockups";
-import { TASK_ARG, json, liveStatus, loadTask, openTask, patchTask } from "./task-common";
-import type { CtMcpTool } from "./tools";
+import { isSafetyRefusal, jobName, KEEP_PRINT, productMockupPrompt, retryMockupJob, setOwnBaseRefs, setOwnMockupBlocks } from "../product-mockups";
+import { CT_MOCKUP_BLOCK_REFS_MAX, badBlockRefs } from "../../lib/mockup-prompt";
+import { OPT_TASK_ARG, TASK_ARG, actorOf, json, liveStatus, loadTask, openTask, patchTask } from "./task-common";
+import type { CtMcpContext, CtMcpTool } from "./tools";
 
 /** Drawings one task may ask for (each is a paid gpt-image call). */
 const MAX_RETRIES = 4;
@@ -105,7 +111,85 @@ export async function submitMockupResult(db: CtServiceClient, task: CtAgentTask,
   return { result: { summary, prompt, jobId: m.jobId }, message };
 }
 
+/** A web handler's answer: its error text thrown, else its JSON. */
+async function answer(res: Response): Promise<Record<string, unknown>> {
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (res.status >= 400) throw new Error(typeof body.error === "string" ? body.error : `HTTP ${res.status}`);
+  return body;
+}
+
+const PRODUCT_ARG = { product_id: { type: "string", description: "The product (kind product)." } };
+
+/** What get_product_mockup_prompt shows, also the answer of set_product_mockup_prompt. */
+async function promptView(db: CtServiceClient, product: CtProduct): Promise<Record<string, unknown>> {
+  const p = await productMockupPrompt(db, product);
+  return {
+    product: { id: product.id, name: product.name, base_product_id: product.base_product_id },
+    blocks: p.blocks,
+    blocks_from: p.blocksFrom,
+    wrap: p.wrap,
+    shared_refs: p.sharedRefs,
+    shared_refs_from: p.sharedRefsFrom,
+    base_refs: p.baseRefs,
+    how_sent: "Each block = one photo. Picture 1 = the product's front picture; then the block's own refs, or — when it has none — shared_refs (picture 2, 3…). The prompt = wrap with {scene} = the block's prompt ({product} filled); an empty wrap sends the block's prompt alone.",
+  };
+}
+
+async function productFor(ctx: CtMcpContext, args: Record<string, unknown>): Promise<{ db: CtServiceClient; userId: string; product: CtProduct }> {
+  const { db, userId } = await actorOf(ctx, args.task_id);
+  // Read as the caller (a signed-in user sees what the web page lets them see).
+  const { data: product } = await ctx.db.from(CT_TABLES.products).select("*").eq("id", str(args.product_id)).maybeSingle<CtProduct>();
+  if (!product) throw new Error("No such product");
+  if (product.kind !== "product") throw new Error("That is an ARTWORK: mockup prompts are on a product (artwork + base)");
+  return { db, userId, product };
+}
+
 export const CT_MCP_MOCKUP_TOOLS: CtMcpTool[] = [
+  {
+    name: "get_product_mockup_prompt",
+    description:
+      "What a PRODUCT's next mockups are drawn with (the editor's Mockups tab): blocks (one photo each, {prompt, refs}) — blocks_from product = its own, base = its product base's scenes, none = nothing (making mockups is refused); wrap = the base's sentence around each prompt; shared_refs = the reference pictures sent with every block that has no refs of its own — shared_refs_from product = this product's own set (set_product_mockup_prompt shared_refs), base = its base's refs (base_refs). Reads only, draws nothing.",
+    inputSchema: { type: "object", properties: { ...OPT_TASK_ARG, ...PRODUCT_ARG }, required: ["product_id"] },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const { db, product } = await productFor(ctx, args);
+      return json(await promptView(db, product));
+    },
+  },
+  {
+    name: "set_product_mockup_prompt",
+    description: `Change ONE product's own mockup prompt, nothing drawn, its product base untouched (other products on the base keep theirs) — the editor's Mockups tab: blocks = its prompt blocks [{"prompt": "<English scene>", "refs": ["https://…"]}] (one photo each; a block's refs, max ${CT_MOCKUP_BLOCK_REFS_MAX}, go with that prompt only; [] = drop its own, back to the base's scenes); shared_refs = its "Ảnh tham chiếu chung" (the editor's box under "Ảnh 1 · sản phẩm"): the whole new list of https urls (max ${CT_MOCKUP_BLOCK_REFS_MAX}, no repeats) sent with every block that has no refs of its own, in place of the base's refs — drop one = the list without it, add one = the list with its url (a local picture → flexiprint_upload_image first); [] = none at all. shared_refs_from_base: true = back to the base's refs (giving exactly the base's list also counts as back). Give only what changes. → the same view as get_product_mockup_prompt. Then make_product_mockups (no scenes) draws with it.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...OPT_TASK_ARG,
+        ...PRODUCT_ARG,
+        blocks: { type: "array", items: { type: "object" }, description: "The product's prompt blocks, the whole new list; [] = back to the base's scenes." },
+        shared_refs: { type: "array", items: { type: "string" }, description: "The shared reference pictures, the whole new list ([] = none)." },
+        shared_refs_from_base: { type: "boolean", description: "true = drop the product's own shared pictures, back to its base's refs." },
+      },
+      required: ["product_id"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const hasBlocks = Array.isArray(args.blocks);
+      const fromBase = args.shared_refs_from_base === true || args.shared_refs === null;
+      const hasRefs = fromBase || Array.isArray(args.shared_refs);
+      if (fromBase && Array.isArray(args.shared_refs)) throw new Error("Give shared_refs OR shared_refs_from_base, not both");
+      if (!hasBlocks && !hasRefs) throw new Error("Nothing to change — give blocks and/or shared_refs (or shared_refs_from_base: true)");
+      if (hasBlocks) {
+        const bad = badBlockRefs(args.blocks);
+        if (bad) throw new Error(`blocks: ${bad}`);
+      }
+      const { db, userId, product } = await productFor(ctx, args);
+      // The web page's own handlers: ownership (own products; admins all) and the rules are checked the same way.
+      const s = await serviceSession(db, userId);
+      let row = product;
+      if (hasBlocks) row = (await answer(await setOwnMockupBlocks(s, product.id, { blocks: args.blocks }))).product as CtProduct;
+      if (hasRefs) row = (await answer(await setOwnBaseRefs(s, product.id, { refs: fromBase ? null : args.shared_refs }))).product as CtProduct;
+      return json({ ...(await promptView(db, row)), changed: [hasBlocks && "blocks", hasRefs && "shared_refs"].filter(Boolean) });
+    },
+  },
   {
     name: "retry_mockup",
     description:

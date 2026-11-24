@@ -672,6 +672,9 @@ export async function setOwnBaseRefs(s: CtSession, productId: string, raw: unkno
     refs = mockupRefList(given, CT_MOCKUP_BLOCK_REFS_MAX);
     if (given.length > refs.length) return jsonError(`Ảnh tham chiếu chỉ nhận url https, không trùng, tối đa ${CT_MOCKUP_BLOCK_REFS_MAX} ảnh`, 400);
   }
+  // Exactly the base's own pictures → follow the base again, its later changes come through (same rule for the
+  // editor, the API and MCP set_product_mockup_prompt).
+  if (refs && refs.join("\n") === (await baseMockup(ctServiceClient() ?? s.supabase, product)).refs.slice(0, CT_MOCKUP_REFS_MAX).join("\n")) refs = null;
   const config = normalizeProductConfig(product.config);
   const { data, error } = await s.supabase.from(CT_TABLES.products).update({ config: { ...config, mockupBaseRefs: refs } }).eq("id", product.id).select("*").single<CtProduct>();
   if (error || !data) return jsonError(error?.message ?? "Không lưu được", 500);
@@ -688,6 +691,26 @@ export async function setOwnMockupBlocks(s: CtSession, productId: string, raw: u
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không lưu được", 400);
   }
+}
+
+/**
+ * What a product's next mockups are drawn with (MCP get_product_mockup_prompt): its blocks (its own, else its base's
+ * scenes), the base's wrap, and the shared reference pictures sent with every block that has none of its own — the
+ * product's own set (config.mockupBaseRefs) or its base's.
+ */
+export async function productMockupPrompt(db: MockDb, product: CtProduct): Promise<{
+  blocks: CtMockupBlock[];
+  blocksFrom: "product" | "base" | "none";
+  wrap: string;
+  sharedRefs: string[];
+  sharedRefsFrom: "product" | "base";
+  baseRefs: string[];
+}> {
+  const base = await baseMockup(db, product);
+  const own = normalizeProductConfig(product.config).mockupBaseRefs;
+  const baseRefs = base.refs.slice(0, CT_MOCKUP_REFS_MAX);
+  const { blocks, from } = await productBlocks(db, product);
+  return { blocks, blocksFrom: from, wrap: base.wrap, sharedRefs: own ?? baseRefs, sharedRefsFrom: own ? "product" : "base", baseRefs };
 }
 
 /** The prompt blocks a product's mockups use when none are given: its own, else its base's scenes, else none (refused when drawn). */

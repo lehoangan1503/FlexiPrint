@@ -423,7 +423,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "set_base_mockup_prompt",
     description:
-      'Change a PRODUCT BASE\'s AI mockup prompts (only its maker or an admin). Give only what changes: scenes (English, one per line or split by an empty line / ---, no limit on count or length; "" = none — products without scenes of their own then fail), wrap (the whole prompt per scene, must hold {scene}; "" = none — each scene is then sent alone as the whole prompt), refs (https urls, max 4 — the whole new list; [] = none). Products with prompts of their own keep theirs. One product\'s own prompts go with make_product_mockups save_scenes / save_refs instead.',
+      'Change a PRODUCT BASE\'s AI mockup prompts (only its maker or an admin). Give only what changes: scenes (English, one per line or split by an empty line / ---, no limit on count or length; "" = none — products without scenes of their own then fail), wrap (the whole prompt per scene, must hold {scene}; "" = none — each scene is then sent alone as the whole prompt), refs (https urls, max 4 — the whole new list; [] = none). Products with prompts of their own keep theirs. One product\'s own prompts / reference pictures (that product only, the base untouched): set_product_mockup_prompt (blocks, shared_refs) or make_product_mockups save_blocks.',
     inputSchema: {
       type: "object",
       properties: {

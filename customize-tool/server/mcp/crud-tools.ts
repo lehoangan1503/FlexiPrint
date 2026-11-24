@@ -51,13 +51,14 @@ export const CT_MCP_CRUD_TOOLS: CtMcpTool[] = [
   {
     name: "update_product",
     description:
-      "Change a product or an artwork in place: name, status (draft | ready | archived — FlexiPrint's own, not Shopify's), base_product_id (move a product to another base: variants, price, khuôn, phôi follow), mockup_order (asset ids, picture 1 first = the Shopify order) and mockup_off (asset ids not sent to Shopify). Give only what changes. The Shopify product changes on the next deploy_product.",
+      "Change a product or an artwork in place: name, sku (a product's SKU — its own field, never part of the name or the Shopify title: n0x-POD-yyy, typed any way it is brought to the standard form; refused when another product has it; an empty string removes it), status (draft | ready | archived — FlexiPrint's own, not Shopify's), base_product_id (move a product to another base: variants, price, khuôn, phôi follow), mockup_order (asset ids, picture 1 first = the Shopify order) and mockup_off (asset ids not sent to Shopify). Give only what changes. The Shopify product changes on the next deploy_product.",
     inputSchema: {
       type: "object",
       properties: {
         ...OPT_TASK_ARG,
         product_id: { type: "string", description: "The product or artwork." },
         name: { type: "string", description: "New name." },
+        sku: { type: "string", description: "A product only: its SKU, n0x-POD-yyy (e.g. n06-POD-126); \"\" = remove." },
         status: { type: "string", description: "draft | ready | archived." },
         base_product_id: { type: "string", description: "A product only: the base to move it to (list_base_products)." },
         mockup_order: { type: "array", items: { type: "string" }, description: "Mockup asset ids in Shopify order." },
@@ -72,14 +73,15 @@ export const CT_MCP_CRUD_TOOLS: CtMcpTool[] = [
       await owned(s, id);
       const body: Parameters<typeof updateProduct>[2] = {};
       if (typeof args.name === "string" && args.name.trim()) body.name = args.name.trim().slice(0, 200);
+      if (typeof args.sku === "string") body.sku = args.sku;
       if (args.status === "draft" || args.status === "ready" || args.status === "archived") body.status = args.status;
       if (typeof args.base_product_id === "string" && args.base_product_id) body.base_product_id = idOf(args, "base_product_id");
       if (Array.isArray(args.mockup_order)) body.mockupOrder = args.mockup_order.map(String);
       if (Array.isArray(args.mockup_off)) body.mockupOff = args.mockup_off.map(String);
-      if (!Object.keys(body).length) throw new Error("Nothing to change — give name, status, base_product_id, mockup_order or mockup_off");
+      if (!Object.keys(body).length) throw new Error("Nothing to change — give name, sku, status, base_product_id, mockup_order or mockup_off");
       const out = await answer(await updateProduct(s, id, body));
       const p = out.product as CtProduct | undefined;
-      return json({ product_id: id, changed: Object.keys(body), name: p?.name, status: p?.status, base_product_id: p?.base_product_id });
+      return json({ product_id: id, changed: Object.keys(body), name: p?.name, sku: p?.sku ?? null, status: p?.status, base_product_id: p?.base_product_id });
     },
   },
   {

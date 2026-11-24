@@ -32,7 +32,7 @@ import { defaultScenes, splitScenes } from "../../lib/mockup-scenes";
 import { ensureVersionPhoi, jobName } from "../version-phoi";
 import { normalizeProductConfig } from "../../lib/design";
 import { liveDraft, normalizeCustomerNote, normalizeDeployDraft } from "../../lib/deploy-draft";
-import { skuProblem } from "../../lib/sku";
+import { CT_SKU_FORMAT, normalizeSku, skuProblem } from "../../lib/sku";
 import { skuTwins, twinProblem } from "../sku-twins";
 import { CT_CONFIG, CT_TABLES } from "../../config";
 import type { CtServiceClient, CtSession } from "../supabase";
@@ -132,12 +132,12 @@ export async function deployState(db: CtServiceClient, s: CtSession, product: Ct
 }
 
 /** What blocks a deploy (Vietnamese, the editor reads it). */
-export function blockers(st: DeployState, pick: { kind: string; name: string; tableId: string | null; title: string; descriptionHtml: string; mediaIds: string[] }): string[] {
+export function blockers(st: DeployState, pick: { kind: string; sku: string | null; tableId: string | null; title: string; descriptionHtml: string; mediaIds: string[] }): string[] {
   const out: string[] = [];
   if (pick.kind !== "product") out.push("Đây là ARTWORK, không phải sản phẩm — make_product_from_artwork (artwork + product base) rồi deploy sản phẩm đó.");
-  const badSku = pick.kind === "product" ? skuProblem(pick.name) : null;
+  const badSku = pick.kind === "product" ? skuProblem(pick.sku) : null;
   if (badSku) out.push(badSku);
-  const twin = pick.kind === "product" && !badSku ? twinProblem(pick.name, st.skuTwins) : null;
+  const twin = pick.kind === "product" && !badSku ? twinProblem(pick.sku, st.skuTwins) : null;
   if (twin) out.push(twin);
   if (!st.info.configured) out.push("Chưa cấu hình Shopify trên server (SHOPIFY_STORE_DOMAIN / CLIENT_ID / CLIENT_SECRET).");
   const table = st.tables.find((t) => t.id === pick.tableId);
@@ -283,7 +283,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       const descriptionHtml = draft?.descriptionHtml || linked?.descriptionHtml || st.content?.descriptionHtml || "";
       const fit = suggestCollections(collections, { title: title || product.name, description: descriptionHtml });
       return json({
-        product: { id: product.id, name: product.name, status: product.status, publishedVersion: product.published_version },
+        product: { id: product.id, name: product.name, sku: product.sku ?? null, status: product.status, publishedVersion: product.published_version },
         shopify: {
           configured: st.info.configured,
           shop: st.info.shop?.domain ?? null,
@@ -306,7 +306,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         lastContent: st.content ? { title: st.content.title, descriptionHtml: st.content.descriptionHtml } : null,
         draft: draft ? { ...draft, note: "Saved ahead (save_deploy_draft / the Deploy page's Lưu nháp): deploy_product uses it for what you leave out." } : null,
         customerNote: normalizeProductConfig(product.config).customerNote,
-        missing: blockers(st, { kind: product.kind ?? "artwork", name: product.name, tableId, title, descriptionHtml, mediaIds: defaultMedia(st, product) }),
+        missing: blockers(st, { kind: product.kind ?? "artwork", sku: product.sku ?? null, tableId, title, descriptionHtml, mediaIds: defaultMedia(st, product) }),
         next: "Fill what is missing (title + description_html in US English per the content rules; a price table that fits — never create one, the editor keeps them; make_product_mockups when there is none), then deploy_product. Collections: reuse the store's — the suggested ones fit the title; a smart (rule-based) one is joined through its rules (the deploy adds the tag / type), so pick it like any other. Never create a collection when one fits.",
       });
     },
@@ -355,6 +355,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         artwork_id: { type: "string", description: "The artwork (a set's product id, an import's, render_artwork's)." },
         base_product_id: { type: "string", description: "From list_base_products — the one of the artwork's material / khuôn." },
         name: { type: "string", description: "Product title (theme), default = the artwork's name." },
+        sku: { type: "string", description: "Optional: the product's SKU, n0x-POD-yyy (e.g. n06-POD-126) — its own field, not part of the name; refused when another product has it. Needed before deploy_product (or set later with update_product sku)." },
         mockup_blocks: { type: "array", items: { type: "object" }, description: `Optional: this product's own mockup prompts, one photo each, pictures per prompt: [{"prompt": "<English scene>", "refs": ["<https url>", …]}] — a block's refs (max ${CT_MOCKUP_BLOCK_REFS_MAX}) go with that prompt only (picture 2, 3… after the front picture); no refs = the base's. Wins over mockup_scenes.` },
         mockup_scenes: { type: "string", description: "Optional, older form of mockup_blocks: this product's own scene prompts as one text (English; one per line, or split by an empty line / ---), no pictures of their own." },
         ...DRAFT_PROPS,
@@ -373,7 +374,17 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       if (args.mockup_refs !== undefined) throw new Error("mockup_refs is gone (2026-11-23): reference pictures are per prompt now — mockup_blocks [{prompt, refs}]");
       const badBlocks = badBlockRefs(args.mockup_blocks);
       if (badBlocks) throw new Error(`mockup_blocks: ${badBlocks}`);
+      // The SKU is checked before anything is made (lib/sku.ts, server/sku-twins.ts).
+      const sku = str(args.sku) ? normalizeSku(str(args.sku)) : null;
+      if (str(args.sku) && !sku) throw new Error(`sku “${str(args.sku)}” is not ${CT_SKU_FORMAT}`);
+      const twins = sku ? await skuTwins(s, { id: "00000000-0000-0000-0000-000000000000", sku }) : [];
+      if (twins.length) throw new Error(twinProblem(sku, twins) ?? "SKU trùng");
       let product = await makeProductFromArtwork(db, userId, artwork, base, str(args.name) || undefined);
+      if (sku) {
+        const { data, error } = await db.from(CT_TABLES.products).update({ sku }).eq("id", product.id).select("*").single<CtProduct>();
+        if (error || !data) throw new Error(`Đã tạo sản phẩm ${product.id} nhưng chưa lưu được SKU: ${error?.message ?? ""} — update_product sku`);
+        product = data;
+      }
       product = await saveOwnMockupPrompt(db, product, {
         blocks: Array.isArray(args.mockup_blocks) && args.mockup_blocks.length ? args.mockup_blocks : undefined,
         scenes: typeof args.mockup_scenes === "string" && args.mockup_scenes.trim() ? args.mockup_scenes : undefined,
@@ -806,7 +817,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "deploy_product",
     description:
-      "Deploy a product to Shopify — the editor's Deploy button: publishes the storefront template, then creates (or updates, keeping its variants) the Shopify product with the price table's variants, the title / description, and mockups as images. Refuses with the list of blockers (the product NAME is its SKU and must be n0x-POD-yyy — x one digit, yyy a number with no leading 0, e.g. n06-POD-126; rename with update_product — title, description_html ≥ 200 chars of text, a valid price table, ≥ 1 mockup, the template builds, Shopify configured). Every variant gets the name as SKU. status ACTIVE (default, on sale at once) | DRAFT. → the Shopify link (store url, admin url), preview url, warnings, template version.",
+      "Deploy a product to Shopify — the editor's Deploy button: publishes the storefront template, then creates (or updates, keeping its variants) the Shopify product with the price table's variants, the title / description, and mockups as images. Refuses with the list of blockers (the product's SKU — its own field, not the name or title — must be set and be n0x-POD-yyy, x one digit, yyy a number, e.g. n06-POD-126, used by no other product; set it with update_product sku — title, description_html ≥ 200 chars of text, a valid price table, ≥ 1 mockup, the template builds, Shopify configured). Every variant gets the SKU + its size / pack; the Shopify handle = the title's + the SKU at the end (an old handle redirects to the new one). status ACTIVE (default, on sale at once) | DRAFT. → the Shopify link (store url, admin url), preview url, warnings, template version.",
     inputSchema: {
       type: "object",
       properties: {
@@ -882,7 +893,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         primaryCollectionId: str(args.primary_collection_id) || collectionIds[0] || null,
         shopifyProductId: null,
       });
-      const missing = blockers(st, { kind: product.kind ?? "artwork", name: product.name, tableId, title: body?.title ?? "", descriptionHtml: body?.descriptionHtml ?? "", mediaIds });
+      const missing = blockers(st, { kind: product.kind ?? "artwork", sku: product.sku ?? null, tableId, title: body?.title ?? "", descriptionHtml: body?.descriptionHtml ?? "", mediaIds });
       if (!body || missing.length) throw new Error(`Chưa deploy được:\n- ${(missing.length ? missing : ["Thiếu title hoặc bảng giá."]).join("\n- ")}`);
       await progress(db, task?.id, `Đang deploy “${body.title}” lên Shopify (${body.status})…`);
       const r = await runDeploy(s, product, body, siteUrl());

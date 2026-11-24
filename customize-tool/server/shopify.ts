@@ -28,7 +28,7 @@ import type {
 } from "../types";
 import { sameCollection } from "../lib/collections";
 import { cellOptionValues, priceCells, shopifyOptions, shopifyPricing } from "../lib/pricing";
-import { variantSku } from "../lib/sku";
+import { shopifyHandle, variantSku } from "../lib/sku";
 import { CT_DEFAULT_STORE, storeCredentials } from "./stores";
 
 const API_VERSION = () => process.env.SHOPIFY_API_VERSION || "2026-07";
@@ -227,7 +227,7 @@ export interface ShopifyDeployInput {
   /** Deploy onto this product (gid) — else the linked one, else a new product. */
   targetId: string | null;
   title: string;
-  /** The product's SKU (its name, lib/sku.ts); each variant adds its size / pack (variantSku). */
+  /** The product's SKU (ct_products.sku, lib/sku.ts); each variant adds its size / pack (variantSku), the handle ends with it (shopifyHandle). */
   sku: string;
   descriptionHtml: string;
   status: CtShopifyStatus;
@@ -335,8 +335,12 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
   const needs = smartNeeds(picked, { tags: input.tags, productType: input.productType, vendor: input.vendor });
   if (needs.unmet.length) warnings.push(`Chưa vào được collection tự động: ${needs.unmet.join(", ")} (luật của nó không gắn tự động được).`);
 
+  // The handle = the title's + the SKU at the end (asked 2026-11-24); a changed one redirects from the old (links in ads keep working).
+  const handle = shopifyHandle(input.title, input.sku);
   const productInput = {
     title: input.title,
+    handle,
+    ...(existing && existing.handle !== handle ? { redirectNewHandle: true } : {}),
     descriptionHtml: input.descriptionHtml,
     status: input.status,
     vendor: needs.vendor,

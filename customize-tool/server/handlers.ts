@@ -38,7 +38,7 @@ import type {
 import { normalizeProductConfig, normalizeRegion, normalizeSamples } from "../lib/design";
 import { CT_DEPLOY_MEDIA_MAX, defaultDeployMedia, effectivePicks, idList, picksAfterDeploy } from "../lib/deploy-media";
 import { normalizeCustomerNote, normalizeDeployDraft } from "../lib/deploy-draft";
-import { normalizeSku, skuName, skuProblem } from "../lib/sku";
+import { CT_SKU_FORMAT, normalizeSku, skuProblem } from "../lib/sku";
 import { skuTwins, twinProblem } from "./sku-twins";
 import { ctServiceClient, type CtServiceClient, type CtSession } from "./supabase";
 import { ctLibraryPath, ctPublicUploadPath, ctRemove, ctStoragePath, ctUpload } from "./storage";
@@ -266,8 +266,7 @@ export async function productNeighbors(s: CtSession, productId: string): Promise
 }
 
 export async function createProduct(s: CtSession, body: CtCreateProductBody): Promise<NextResponse> {
-  // A name that reads as an SKU is stored in the standard form (lib/sku.ts).
-  const name = skuName(body.name ?? "");
+  const name = (body.name ?? "").trim();
   if (!name) return jsonError("Thiếu tên sản phẩm", 400);
   const { data, error } = await s.supabase
     .from(CT_TABLES.products)
@@ -328,7 +327,16 @@ export async function updateProduct(s: CtSession, productId: string, body: CtUpd
       ...(body.customerNote !== undefined ? { customerNote: normalizeCustomerNote(body.customerNote) } : {}),
     };
   }
-  if (typeof body.name === "string" && body.name.trim()) patch.name = skuName(body.name);
+  if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
+  // The SKU box (lib/sku.ts, asked 2026-11-24): typed any way, stored in the standard form; never another product's.
+  if (body.sku !== undefined) {
+    const typed = (body.sku ?? "").trim();
+    const sku = typed ? normalizeSku(typed) : null;
+    if (typed && !sku) return jsonError(`SKU “${typed}” không đúng chuẩn ${CT_SKU_FORMAT}`, 400);
+    const twins = sku ? await skuTwins(s, product, sku) : [];
+    if (twins.length) return jsonError(twinProblem(sku, twins) ?? "SKU trùng", 409);
+    patch.sku = sku;
+  }
   if (body.status === "draft" || body.status === "ready" || body.status === "archived") patch.status = body.status;
   if (body.main_asset_id !== undefined) patch.main_asset_id = body.main_asset_id;
   if (body.thumbnail_url !== undefined) patch.thumbnail_url = body.thumbnail_url;
@@ -587,18 +595,11 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
   if (!shopifyConfigured(store)) return { error: `Store ${store.name} chưa cấu hình app Shopify trên server`, status: 501 };
   // Only a product is sold (migration 031): an artwork is made into one first, on a base product.
   if ((product.kind ?? "artwork") !== "product") return { error: "Đây là artwork — tạo sản phẩm từ artwork (chọn product base) rồi deploy sản phẩm đó", status: 400 };
-  // The name is the SKU and must be n0x-POD-yyy (lib/sku.ts, asked 2026-11-24): nothing else goes to Shopify.
-  // Typed any other way (case, accents, spaces…) it is read, and the name's SKU part is rewritten in the standard form.
-  const sku = normalizeSku(product.name);
-  if (!sku) return { error: skuProblem(product.name) ?? "SKU không hợp lệ", status: 400 };
-  const twin = twinProblem(product.name, await skuTwins(s, product).catch((e: Error) => [{ id: "", name: e.message }]));
+  // The product's own SKU must be n0x-POD-yyy (lib/sku.ts, asked 2026-11-24) and nobody else's: nothing else goes to Shopify.
+  const sku = normalizeSku(product.sku);
+  if (!sku) return { error: skuProblem(product.sku) ?? "SKU không hợp lệ", status: 400 };
+  const twin = twinProblem(sku, await skuTwins(s, product).catch((e: Error) => [{ id: "", name: e.message }]));
   if (twin) return { error: twin, status: 409 };
-  const fixedName = skuName(product.name);
-  if (product.name !== fixedName) {
-    const { error: nameErr } = await s.supabase.from(CT_TABLES.products).update({ name: fixedName }).eq("id", productId);
-    if (nameErr) return { error: nameErr.message, status: 500 };
-    product = { ...product, name: fixedName };
-  }
   // The base product owns the variants + prices and the product type.
   const base = product.base_product_id ? await loadBaseProduct(s.supabase, product.base_product_id) : null;
   if (base?.config.priceTableId) body = { ...body, priceTableId: base.config.priceTableId };

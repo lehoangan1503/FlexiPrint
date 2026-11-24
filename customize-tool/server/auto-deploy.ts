@@ -32,7 +32,7 @@ export async function autoDeploy(s: CtSession, productId: string, origin: string
   const title = draft?.title || linked?.title || st.content?.title || product.shopify?.title || "";
   const descriptionHtml = draft?.descriptionHtml || linked?.descriptionHtml || st.content?.descriptionHtml || st.base?.config.description || "";
   // The agent's wording names its tools: the editor reads plain words.
-  const missing = blockers(st, { kind: product.kind ?? "artwork", name: product.name, tableId, title, descriptionHtml, mediaIds }).map((m) =>
+  const missing = blockers(st, { kind: product.kind ?? "artwork", sku: product.sku ?? null, tableId, title, descriptionHtml, mediaIds }).map((m) =>
     m.replace(" — make_product_mockups trước.", " — bấm Tạo mockup trước.").replace(" (price_table_id)", " — gắn bảng giá cho product base"),
   );
   if (missing.length) return NextResponse.json({ ok: false, missing } satisfies CtAutoDeployResult);

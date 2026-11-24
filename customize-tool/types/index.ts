@@ -1188,6 +1188,8 @@ export interface CtProduct {
   kind?: CtProductKind;
   /** A "product" row: the base product it is made on (variants, price, product type). */
   base_product_id?: string | null;
+  /** A "product" row: its SKU, n0x-POD-yyy in the standard form (migration 040, lib/sku.ts); null = none yet. */
+  sku?: string | null;
   /** The Shopify store the artwork / product belongs to (migration 032, CtStore.id); absent before it ran. */
   store_id?: string;
   status: CtProductStatus;
@@ -2238,6 +2240,8 @@ export interface CtBaseImportBody {
 
 export interface CtUpdateProductBody {
   name?: string;
+  /** The product's SKU, typed any way (lib/sku.ts normalizeSku); "" / null = none. Refused when off n0x-POD-yyy or another product has it. */
+  sku?: string | null;
   status?: CtProductStatus;
   main_asset_id?: string | null;
   thumbnail_url?: string | null;
@@ -2802,7 +2806,7 @@ export interface CtShopifyInfo {
   /** The linked product as it is on Shopify now (null: none / deleted there). */
   product: CtShopifyProductSummary | null;
   error?: string;
-  /** Other products whose name holds the same SKU (server/sku-twins.ts) — the Deploy page blocks on it. */
+  /** Other products with the same SKU (server/sku-twins.ts) — the Deploy page blocks on it. */
   skuTwins?: Array<{ id: string; name: string }>;
 }
 

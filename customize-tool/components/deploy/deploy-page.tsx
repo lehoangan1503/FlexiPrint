@@ -22,6 +22,7 @@ import type {
   CtCustomerNote,
   CtDeployResponse,
   CtPriceTable,
+  CtProduct,
   CtProductBundle,
   CtShopifyCollection,
   CtShopifyCollectionRule,
@@ -39,7 +40,7 @@ import { suggestCollections } from "../../lib/collections";
 import { effectivePicks, pickedMockups, productMockups, type CtMockupPicks } from "../../lib/deploy-media";
 import { normalizeProductConfig } from "../../lib/design";
 import { DEFAULT_CUSTOMER_NOTE, liveDraft } from "../../lib/deploy-draft";
-import { normalizeSku, skuName, skuProblem, twinProblem, variantSku } from "../../lib/sku";
+import { normalizeSku, shopifyHandle, skuProblem, twinProblem, variantSku } from "../../lib/sku";
 import { SortableMockups } from "../sortable-mockups";
 import { ZoomThumbs } from "../zoom-thumbs";
 import { auditOptions, type CtAuditLevel } from "../../lib/option-audit";
@@ -95,6 +96,10 @@ export function DeployPage({ productId }: { productId: string }) {
   const [note, setNote] = useState<CtCustomerNote>({ ...DEFAULT_CUSTOMER_NOTE });
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftAt, setDraftAt] = useState<string | null>(null);
+  /** The SKU box (its own field, asked 2026-11-24): what is typed, saved on blur / Enter / before a deploy. */
+  const [skuDraft, setSkuDraft] = useState("");
+  const [skuSaving, setSkuSaving] = useState(false);
+  const [skuError, setSkuError] = useState<string | null>(null);
 
   const fill = useCallback((p: CtShopifyProductSummary | null, fallbackTitle: string) => {
     setForm({
@@ -126,6 +131,7 @@ export function DeployPage({ productId }: { productId: string }) {
       .then(([b, list, shop, cols, bases, stores]) => {
         if (cancelled) return;
         setBundle(b);
+        setSkuDraft(b.product.sku ?? "");
         setStore(stores?.stores.find((x) => x.id === (b.product.store_id ?? stores.stores[0]?.id)) ?? null);
         setCustomerPhoi(b.product.config?.customerPhoi === true);
         setNote(normalizeProductConfig(b.product.config).customerNote);
@@ -242,16 +248,38 @@ export function DeployPage({ productId }: { productId: string }) {
   const product = bundle.product;
   const link = product.shopify ?? null;
   const linked = info?.product ?? null;
-  // The name is the SKU (lib/sku.ts, asked 2026-11-24): a name off n0x-POD-yyy never goes to Shopify.
+  // The SKU is its own field (lib/sku.ts, asked 2026-11-24): none, or off n0x-POD-yyy, never goes to Shopify.
   const twins = info?.skuTwins ?? [];
-  // Two products never share an SKU (asked 2026-11-24); the server says which (server/sku-twins.ts).
-  const badSku = skuProblem(product.name) ?? twinProblem(product.name, twins);
-  const sku = normalizeSku(product.name);
+  // Two products never share an SKU; the server says which (server/sku-twins.ts) and refuses to save a twin.
+  const skuTyped = skuDraft.trim();
+  const skuDirty = skuTyped !== (product.sku ?? "");
+  const sku = normalizeSku(skuTyped);
+  const badSku = skuProblem(skuTyped) ?? (skuDirty ? null : twinProblem(product.sku, twins));
   // What the variants get: the SKU + size / pack (the first two as examples).
   const skuSamples = sku && table
     ? priceCells(table.config, options).slice(0, 2).map((c) => variantSku(sku, cellOptionValues(table.config, options, c).map((o) => o.value)))
     : [];
-  const canDeploy = Boolean(!badSku && table && !problems.length && template.tpl && form.title.trim() && info?.configured !== false);
+  const handle = sku && form.title.trim() ? shopifyHandle(form.title.trim(), sku) : null;
+  const canDeploy = Boolean(!badSku && !skuSaving && table && !problems.length && template.tpl && form.title.trim() && info?.configured !== false);
+
+  /** Save the SKU box when it changed: the product as saved, or null when the server refused it (shown under the box). */
+  const saveSku = async (): Promise<CtProduct | null> => {
+    if (!skuDirty) return product;
+    setSkuSaving(true);
+    setSkuError(null);
+    try {
+      const p = await ctApi.updateProduct(product.id, { sku: skuTyped });
+      setBundle((b) => (b ? { ...b, product: p } : b));
+      setSkuDraft(p.sku ?? "");
+      setInfo(await ctApi.shopifyInfo(product.id).catch(() => info));
+      return p;
+    } catch (e) {
+      setSkuError(e instanceof Error ? e.message : String(e));
+      return null;
+    } finally {
+      setSkuSaving(false);
+    }
+  };
 
   const deploy = async () => {
     if (!table) return;
@@ -259,6 +287,7 @@ export function DeployPage({ productId }: { productId: string }) {
     setError(null);
     setResult(null);
     try {
+      if (!(await saveSku())) return;
       const r = await ctApi.deploy(product.id, {
         priceTableId: table.id,
         title: form.title.trim(),
@@ -353,14 +382,38 @@ export function DeployPage({ productId }: { productId: string }) {
             ) : info?.error ? (
               <Notice level="warn" text={info.error} />
             ) : null}
-            {badSku ? (
+            <CtField label="SKU">
+              <CtInput
+                value={skuDraft}
+                onChange={(e) => {
+                  setSkuDraft(e.target.value);
+                  setSkuError(null);
+                }}
+                onBlur={() => void saveSku()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void saveSku();
+                }}
+                disabled={skuSaving}
+                placeholder="n06-POD-126"
+                className="font-mono"
+              />
+            </CtField>
+            {skuError ? (
+              <Notice level="error" text={skuError} />
+            ) : badSku ? (
               <Notice level="error" text={badSku} />
             ) : (
               <div className="text-xs text-muted-foreground">
                 SKU: <span className="font-mono font-medium text-foreground">{sku}</span>
-                {skuName(product.name) !== product.name.trim() && <> (tên sẽ đổi thành “{skuName(product.name)}” khi deploy)</>}
+                {sku !== skuTyped && <> (sẽ lưu thành “{sku}”)</>}
                 {skuSamples.length > 0 && skuSamples[0] !== sku && (
                   <> · variant: <span className="font-mono text-foreground">{skuSamples.join(", ")}</span>{priceCells(table!.config, options).length > 2 && " …"}</>
+                )}
+                {handle && (
+                  <>
+                    {" "}· handle: <span className="font-mono text-foreground">{handle}</span>
+                    {link?.handle && link.handle !== handle && " (link cũ tự chuyển sang link mới)"}
+                  </>
                 )}
               </div>
             )}

@@ -549,8 +549,10 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                   className={cx(
                     "space-y-1.5 rounded-lg border border-l-4 p-2 text-xs",
                     // Neighbouring blocks in two tints (asked 2026-11-24: they ran into one another).
-                    i % 2 ? "border-l-amber-500 bg-amber-500/10" : "border-l-sky-500 bg-sky-500/10",
+                    i % 2 ? "bg-amber-500/10" : "bg-sky-500/10",
                   )}
+                  // Inline: the app's `* { border-color }` (globals.css, unlayered) beats Tailwind's border colour classes.
+                  style={{ borderLeftColor: i % 2 ? "#f59e0b" : "#0ea5e9" }}
                 >
                   <div className="flex items-center gap-2">
                     <button

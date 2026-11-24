@@ -23,6 +23,7 @@ import { CT_MCP_BASE_TOOLS } from "./base-tools";
 import { CT_MCP_CHAR_TOOLS, charTaskView, submitCharResult } from "./char-tools";
 import { CT_MCP_RESOURCES } from "./guide";
 import { CT_MCP_MOCKUP_TOOLS, mockupTaskView, submitMockupResult } from "./mockup-tools";
+import { CT_MCP_LIBRARY_TOOLS } from "./library-tools";
 import { CT_MCP_BASE_PREVIEW_TOOLS, basePreviewTaskView, submitBasePreviewResult } from "./base-preview-tools";
 import { TASK_ARG, json, liveStatus, loadTask, openQuestion, openTask, patchTask } from "./task-common";
 
@@ -397,4 +398,4 @@ const taskTools: CtMcpTool[] = [
   },
 ];
 
-export const CT_MCP_TOOLS: CtMcpTool[] = [...categoryTools, ...taskTools, ...CT_MCP_CHAR_TOOLS, ...CT_MCP_PRINT_TOOLS, ...CT_MCP_DEPLOY_TOOLS, ...CT_MCP_CRUD_TOOLS, ...CT_MCP_PRODUCT_TOOLS, ...CT_MCP_BASE_TOOLS, ...CT_MCP_MOCKUP_TOOLS, ...CT_MCP_BASE_PREVIEW_TOOLS];
+export const CT_MCP_TOOLS: CtMcpTool[] = [...categoryTools, ...taskTools, ...CT_MCP_CHAR_TOOLS, ...CT_MCP_PRINT_TOOLS, ...CT_MCP_DEPLOY_TOOLS, ...CT_MCP_CRUD_TOOLS, ...CT_MCP_PRODUCT_TOOLS, ...CT_MCP_BASE_TOOLS, ...CT_MCP_MOCKUP_TOOLS, ...CT_MCP_BASE_PREVIEW_TOOLS, ...CT_MCP_LIBRARY_TOOLS];

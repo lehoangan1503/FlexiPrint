@@ -44,7 +44,7 @@ import * as h from "../handlers";
 import { makeVersionThumbs } from "../version-thumbs";
 import { addTemplateBlank, saveTemplateBlanks, setDefaultBlank } from "../print-blanks";
 import { fetchImage } from "../char/files";
-import { insertClipart } from "../library";
+import { insertClipart, isOwnUploadUrl } from "../library";
 import { json } from "./task-common";
 import type { CtMcpContext, CtMcpTool } from "./tools";
 
@@ -337,7 +337,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
   {
     name: "update_ai_style",
     description:
-      `Change an AI photo style of the library (list_ai_styles id): its prompt (≤ ${CT_AI_STYLE_PROMPT_MAX} characters, takes effect for customers at once; [NAME] in it = the name the customer types), name, output shape, ask-name. Only the fields given change. Ask-name / name reach the store when the product is deployed again. Figures of a khuôn with 2+ safe areas in the photo zone (a doll's front + back) are centred on their areas by the server — no setting.`,
+      `Change an AI photo style of the library (list_ai_styles id): its prompt (≤ ${CT_AI_STYLE_PROMPT_MAX} characters, takes effect for customers at once; [NAME] in it = the name the customer types), name, output shape, ask-name, remove_background, ref_urls (style reference pictures, ≤ 4 — our own urls: upload_image first; [] = none). Only the fields given change. A signed-in user changes only their own styles (admins all). Ask-name / name reach the store when the product is deployed again. Figures of a khuôn with 2+ safe areas in the photo zone (a doll's front + back) are centred on their areas by the server — no setting.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -346,20 +346,29 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
         prompt: { type: "string", description: "The whole prompt." },
         aspect: { type: "string", description: `Output shape: ${CT_AI_STYLE_ASPECTS.map((x) => x.id).join(" | ")} ("auto" = the photo's shape). Said in the prompt and the picture padded to it exactly — pick the shape of the artwork / print area it fills.` },
         ask_name: { type: "boolean", description: "true = the customer types a name in the photo dialog, added at the end of the prompt as \"Name: …\" (nothing when empty)." },
+        remove_background: { type: "boolean", description: "true = the subject is cut out (the dialog's \"Xoá nền\" tick)." },
+        ref_urls: { type: "array", items: { type: "string" }, description: "Style reference pictures (our own urls, upload_image), given whole." },
       },
       required: ["style_id"],
     },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
       const id = str(args.style_id).replace(/^ai:/, "");
-      const { data: row, error: readError } = await ctx.db.from(CT_TABLES.aiStyles).select("id,name,prompt,params").eq("id", id).maybeSingle<{ id: string; name: string; prompt: string; params: Partial<CtAiStyleParams> | null }>();
+      const { data: row, error: readError } = await ctx.db.from(CT_TABLES.aiStyles).select("id,user_id,name,prompt,params").eq("id", id).maybeSingle<{ id: string; user_id: string | null; name: string; prompt: string; params: Partial<CtAiStyleParams> | null }>();
       if (readError) throw new Error(readError.message);
       if (!row) throw new Error(`Không có style ${id}`);
+      // The service client skips RLS: a signed-in user changes their own styles only (the page's rule, ai-styles.ts).
+      if (ctx.caller === "user" && !ctx.admin && row.user_id !== ctx.userId) throw new Error("Chỉ người tạo style hoặc admin mới được sửa");
+      const refs = Array.isArray(args.ref_urls) ? args.ref_urls.map(String).map((u) => u.trim()).filter(Boolean) : null;
+      if (refs && refs.length > 4) throw new Error("Tối đa 4 ảnh tham chiếu");
+      if (refs?.some((u) => !isOwnUploadUrl(u))) throw new Error("ref_urls phải là ảnh trên kho của FlexiPrint — upload_image trước");
       const patch: { name?: string; prompt?: string; params: CtAiStyleParams } = {
         params: normalizeAiStyleParams({
           ...normalizeAiStyleParams(row.params),
           ...(isAiStyleAspect(args.aspect) ? { aspect: args.aspect } : {}),
           ...(typeof args.ask_name === "boolean" ? { askName: args.ask_name } : {}),
+          ...(typeof args.remove_background === "boolean" ? { removeBackground: args.remove_background } : {}),
+          ...(refs ? { refUrls: refs } : {}),
         }),
       };
       if (args.aspect !== undefined && !isAiStyleAspect(args.aspect)) throw new Error(`aspect phải là một trong: ${CT_AI_STYLE_ASPECTS.map((x) => x.id).join(", ")}`);
@@ -373,8 +382,10 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
       const { data, error } = await ctx.db.from(CT_TABLES.aiStyles).update(patch).eq("id", id).select("id,name,prompt,params").maybeSingle<{ id: string; name: string; prompt: string; params: Partial<CtAiStyleParams> | null }>();
       if (error) throw new Error(error.message);
       if (!data) throw new Error("Không có quyền sửa style này");
+      // Like the page (ai-styles.ts updateAiStyle): the templates on the CDN carry whether a style asks the name.
+      void import("../template-cdn").then((m) => m.syncAllTemplateCdnLater());
       const p = normalizeAiStyleParams(data.params);
-      return json({ id: data.id, ref: aiStyleRef(data.id), name: data.name, promptLength: data.prompt.length, aspect: p.aspect, askName: aiStyleAsksName(p, data.prompt) });
+      return json({ id: data.id, ref: aiStyleRef(data.id), name: data.name, promptLength: data.prompt.length, aspect: p.aspect, askName: aiStyleAsksName(p, data.prompt), removeBackground: p.removeBackground, refUrls: p.refUrls });
     },
   },
   {
@@ -527,6 +538,8 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
     callers: ["agent", "user"],
     run: async (ctx, args) => {
       const t = await templateOf(ctx.db, args.template_id);
+      // The service client skips RLS: a signed-in user deletes their own khuôn only (print-templates.ts deleteTemplate's rule).
+      if (ctx.caller === "user" && !ctx.admin && t.user_id !== ctx.userId) throw new Error("Chỉ người tạo khuôn hoặc admin mới được xoá");
       const [{ data: products }, { data: sets }] = await Promise.all([
         ctx.db.from(CT_TABLES.products).select("id, name").eq("config->print->>templateId", t.id).limit(20).returns<Array<{ id: string; name: string }>>(),
         ctx.db.from(CT_TABLES.charProjects).select("id, name").eq("brief->product->>templateId", t.id).limit(20).returns<Array<{ id: string; name: string }>>(),

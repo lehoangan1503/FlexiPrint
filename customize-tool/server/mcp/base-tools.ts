@@ -224,7 +224,7 @@ export const CT_MCP_BASE_TOOLS: CtMcpTool[] = [
       const id = idOf(args, "product_id");
       await owned(s, id);
       const b = await bundleOf(s, id);
-      const versions = b.assets.filter((a) => a.role === "main" && a.product_id === id).map((a) => ({ id: a.id, name: a.name, url: a.url, width: a.width, height: a.height }));
+      const versions = b.assets.filter((a) => a.role === "main").map((a) => ({ id: a.id, name: a.name, url: a.url, width: a.width, height: a.height, own: a.product_id === id }));
       return json({ product_id: id, name: b.product.name, kind: b.product.kind, base_product_id: b.product.base_product_id ?? null, main_asset_id: b.product.main_asset_id, versions, regions: b.regions, items: b.items, config: normalizeProductConfig(b.product.config) });
     },
   },

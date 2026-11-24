@@ -126,6 +126,18 @@ What the web page does, a tool does — through the same handler, so the same ow
   preview / assembly changed: republish_base (no confirm = which products show an old preview on the store; confirm
   true = Cập nhật store).
 - Base preview tasks (kind "base_preview"): the same tools with task_id; set_base_preview ONLY when the request says apply.
+- Clipart library: create_category / update_category (only the fields given) / delete_category (empty only);
+  upload_clipart (image_url or data_base64; parent_id = a set member, rendition = a vật liệu version), update_clipart
+  (name, spec, tags, category — origins only), clipart_usage → delete_clipart (force only after the editor says so) or
+  replace_clipart (an edited one takes its place in every product); promote_to_library (a product's picture → library).
+- Fonts: list_fonts / upload_font (.ttf .otf .woff) / delete_font. AI photo styles: create_ai_style → make_ai_style_demo
+  (paid: one AI picture) / update_ai_style (also remove_background, ref_urls — our urls) / delete_ai_style.
+- Khuôn in: draw_print_template_ai (not saved: look, then) → save_print_template (any shape: no template_id = new;
+  spec given whole), make_template_blank_ai (phôi AI). upload_image: a picture (url or base64) → our url for every
+  tool that takes one. create_blank_artwork: an empty artwork on a base or a W×H canvas.
+- A signed-in user also: list_agent_tasks / open_agent_task (content, mockup, base_preview, char — what the buttons
+  open) / cancel_agent_task / answer_agent_task; char_list_sets, char_rename_set, char_delete_set (confirm, ask first).
+  Every change above is its maker's or an admin's; deletes are asked first.
 - Bộ nhân vật, besides the steps above: char_get_brief (the brief only, small), char_plan_pictures (your 3b plan),
   char_refine_master (an in-place edit of a master), char_use_edit (back to an earlier, better 3b attempt),
   char_make_blank (step 4 phôi trơn). Drawn pose by pose: char_draw_poses → char_compose (each version's placement) →

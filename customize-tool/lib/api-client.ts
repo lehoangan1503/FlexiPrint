@@ -245,6 +245,8 @@ export const ctApi = {
   pruneProductArtworks: (productId: string, versionIds: string[]) => call<{ removed: number }>(`products/${productId}/artworks/prune`, json("POST", { versionIds })),
   /** AI mockups of the product (server/product-mockups.ts): jobs newest first. */
   mockupJobs: (productId: string) => call<{ jobs: CtPackImage[] }>(`products/${productId}/mockups`).then((r) => r.jobs),
+  /** Drops the product's failed AI mockup cards (the photos and running jobs stay). */
+  clearFailedMockupJobs: (productId: string) => call<{ removed: number }>(`products/${productId}/mockups/failed`, { method: "DELETE" }).then((r) => r.removed),
   /** The artwork laid on the phôi (exact) + one AI photo per scene (running in the background). */
   /** `blocks`: one prompt each with its own reference pictures; `keep`: they become the product's own (the bulk "Tạo mockup" uses them). */
   /** `print`: one artwork for every scene, or one per scene (each a different custom pick); `vary`: the box's tick, kept. */

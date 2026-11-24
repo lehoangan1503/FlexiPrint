@@ -79,7 +79,8 @@
  *   POST   products/:id/artworks/prune   { versionIds } — artworks of removed versions are deleted
  *   GET    products/:id/mockups          → { jobs } AI mockups being made / made (server/product-mockups.ts)
  *   POST   products/:id/mockups          multipart: print, scenes (JSON), text (the box, kept on the product) → front mockup on the phôi + AI scenes
- *   POST   products/:id/mockups/blocks   {blocks: [{prompt, refs}]} → {product}: the product's own mockup prompts, pictures per prompt ([] = its base's)
+ *   DELETE products/:id/mockups/failed  → { removed } drops the failed AI mockup cards (photos and running jobs stay)
+ *   POST   products/:id/mockups/blocks  {blocks: [{prompt, refs}]} → {product}: the product's own mockup prompts, pictures per prompt ([] = its base's)
  *   POST   products/:id/mockups/prompt   {} → {product}: drops the product's own mockup scenes (back to its base's)
  *   POST   products/:id/mockups/base-refs {refs: string[] | null} → {product}: the base's reference pictures for this product only (null = the base's own)
  *   POST   products/:id/mockups/auto     {} → the same, made on the server from the design's content + the product's own prompts (bulk)
@@ -431,6 +432,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return artworks.pruneProductArtworks(session, id, await readJson<unknown>(req));
     } else if (sub === "mockups" && method === "GET") {
       return productMockups.listMockupJobs(session, id);
+    } else if (sub === "mockups" && path[3] === "failed" && method === "DELETE") {
+      return productMockups.clearFailedMockupJobs(session, id);
     } else if (sub === "mockups" && path[3] === "auto" && method === "POST") {
       return productMockups.autoProductMockups(session, id);
     } else if (sub === "mockups" && path[3] === "blocks" && method === "POST") {

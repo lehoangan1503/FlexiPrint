@@ -553,6 +553,20 @@ export async function listMockupJobs(s: CtSession, productId: string): Promise<N
   return NextResponse.json({ jobs });
 }
 
+/**
+ * DELETE products/:id/mockups/failed — drops the product's failed mockup cards (asked 2026-11-24: "nút xoá mấy cái
+ * này"). Only the failed job rows: a failed job has no photo (url null), its refs are the shared front, so nothing in
+ * storage goes; running jobs and the product's mockup photos (assets) are untouched.
+ */
+export async function clearFailedMockupJobs(s: CtSession, productId: string): Promise<NextResponse> {
+  const product = await ownedProduct(s, productId);
+  if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
+  const db = ctServiceClient() ?? s.supabase;
+  const { data, error } = await db.from(CT_TABLES.packImages).delete().eq("name", jobName(productId)).eq("status", "failed").select("id");
+  if (error) return jsonError(error.message, 500);
+  return NextResponse.json({ removed: data?.length ?? 0 });
+}
+
 /** When this process started: a "running" job last touched before it was drawn by an app that is gone. */
 const PROCESS_STARTED = Date.now();
 export const ORPHAN_ERROR = "Bị ngắt giữa chừng vì server khởi động lại (triển khai bản mới) — bấm Tạo mockup để vẽ lại.";

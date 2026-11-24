@@ -221,6 +221,22 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
     }
   };
   const running = jobs.filter((j) => j.status === "running");
+  // The failed cards (asked 2026-11-24): one button drops them all — only the job rows, never the mockup photos.
+  const failed = jobs.filter((j) => j.status === "failed");
+  const [clearingFailed, setClearingFailed] = useState(false);
+  const clearFailed = async () => {
+    if (!(await ctConfirm({ title: `Xoá ${failed.length} ô tạo lỗi?`, message: "Chỉ xoá các ô báo lỗi. Ảnh sản phẩm và ảnh đang tạo giữ nguyên.", tone: "danger", confirmLabel: "Xoá" }))) return;
+    setClearingFailed(true);
+    try {
+      const removed = await ctApi.clearFailedMockupJobs(product.id);
+      setJobs((cur) => cur.filter((j) => j.status !== "failed"));
+      props.flash(`Đã xoá ${removed} ô tạo lỗi`);
+    } catch (e) {
+      props.flash(e instanceof Error ? e.message : "Không xoá được ô lỗi");
+    } finally {
+      setClearingFailed(false);
+    }
+  };
   const [art, setArt] = useState<string | null>(null);
 
   // The finished artwork (what "Tạo mockup" sends) at preview size, for the phôi + thiết kế picture.
@@ -726,8 +742,20 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
           </section>
         )}
 
-        {(running.length > 0 || jobs.some((j) => j.status === "failed")) && (
-          <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+        {(running.length > 0 || failed.length > 0) && (
+          <section className="rounded-xl border border-dashed p-3">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-sm font-semibold">
+                Đang tạo / tạo lỗi{running.length > 0 ? ` · ${running.length} đang chạy` : ""}
+                {failed.length > 0 ? ` · ${failed.length} lỗi` : ""}
+              </span>
+              {failed.length > 0 && (
+                <CtButton size="sm" variant="outline" className="ml-auto text-red-600 hover:text-red-700" disabled={clearingFailed} onClick={() => void clearFailed()} title="Xoá các ô báo lỗi trong khung này. Ảnh sản phẩm bên dưới và ảnh đang tạo giữ nguyên.">
+                  {clearingFailed ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} {clearingFailed ? "Đang xoá…" : `Xoá ${failed.length} ô lỗi`}
+                </CtButton>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
             {jobs
               .filter((j) => j.status !== "done")
               .map((j) => (
@@ -745,6 +773,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                   </figcaption>
                 </figure>
               ))}
+            </div>
           </section>
         )}
 

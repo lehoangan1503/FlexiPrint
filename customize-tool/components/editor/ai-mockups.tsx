@@ -63,9 +63,13 @@ const ART_PREVIEW_SIDE = 700;
 /** The image model refused the request on safety grounds (as server/product-mockups.ts isSafetyRefusal). */
 const isSafetyRefusal = (error: string) => /safety system|safety_violations|moderation_blocked|content policy/i.test(error);
 
+/** Tallest a prompt box grows by itself: about ten lines. */
+const PROMPT_BOX_MAX = 220;
+
 /**
- * A prompt box as tall as its text (asked 2026-11-24: a long prompt needed a drag to read), up to most of the screen;
- * a short prompt keeps a short box. Still resizable by hand.
+ * A prompt box as tall as its text (asked 2026-11-24: a long prompt needed a drag to read), up to about ten lines —
+ * a longer one scrolls inside (asked the same day: a box most of the screen tall was too much); a short prompt keeps a
+ * short box. Still resizable by hand.
  */
 function PromptBox(props: ComponentProps<typeof CtTextarea>) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -73,7 +77,7 @@ function PromptBox(props: ComponentProps<typeof CtTextarea>) {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight + 2, Math.round(window.innerHeight * 0.7))}px`;
+    el.style.height = `${Math.min(el.scrollHeight + 2, PROMPT_BOX_MAX)}px`;
   }, []);
   useLayoutEffect(fit, [fit, props.value]);
   // The text wraps again when the panel gets wider or narrower.
@@ -547,12 +551,11 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                 <div
                   key={i}
                   className={cx(
-                    "space-y-1.5 rounded-lg border border-l-4 p-2 text-xs",
-                    // Neighbouring blocks in two tints (asked 2026-11-24: they ran into one another).
-                    i % 2 ? "bg-amber-500/10" : "bg-sky-500/10",
+                    "space-y-1.5 rounded-lg border p-2 text-xs",
+                    // Neighbouring blocks in two greys of the page's own colour (asked 2026-11-24: they ran into one
+                    // another; blue / amber tints were refused the same day).
+                    i % 2 ? "bg-foreground/[0.09]" : "bg-foreground/[0.03]",
                   )}
-                  // Inline: the app's `* { border-color }` (globals.css, unlayered) beats Tailwind's border colour classes.
-                  style={{ borderLeftColor: i % 2 ? "#f59e0b" : "#0ea5e9" }}
                 >
                   <div className="flex items-center gap-2">
                     <button

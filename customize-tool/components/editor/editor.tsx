@@ -179,6 +179,8 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   // ---------------------------------------------------------------- load
   /** Bumped to load the bundle again (a product's base / placement changed on the server: its layers + config). */
   const [reloadKey, setReloadKey] = useState(0);
+  /** Old shared layers were claimed for the default main on load and are not saved yet (saved with the next save / deploy). */
+  const claimPending = useRef(false);
   useEffect(() => {
     ctApi
       .getBundle(productId)
@@ -194,13 +196,11 @@ export function CustomizeEditor({ productId }: { productId: string }) {
         const regions = b.regions.map(normalizeRegion);
         // Every main version has its own layers: an older design's shared layers belong to the default main.
         const claimed = b.product.main_asset_id ? claimSharedLayers(regions, b.product.main_asset_id) : null;
-        if (claimed) {
-          // The default main never carried a layout of its own; other versions' old layouts no longer apply.
-          design.reset({ regions: claimed, items: b.items, config: { ...config, layouts: {} } }, true);
-          setNotice("Mỗi version main giờ có bộ layer riêng — layer cũ thuộc main mặc định, nhớ Lưu thiết kế");
-        } else {
-          design.reset({ regions, items: b.items, config });
-        }
+        // The default main never carried a layout of its own; other versions' old layouts no longer apply.
+        // Not "unsaved" (2026-11-24: opening a product and going back asked to save though nothing was touched —
+        // 341/466 products, 265/498 artworks): the claim rides along with the next real save, or a deploy.
+        claimPending.current = !!claimed;
+        design.reset(claimed ? { regions: claimed, items: b.items, config: { ...config, layouts: {} } } : { regions, items: b.items, config });
       })
       .catch((e: Error) => setLoadError(e.message));
     // design.reset is stable
@@ -459,6 +459,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
       const config = { ...design.state.config, samples: savedSamples.current.samples };
       await ctApi.saveDesign(product.id, { regions: design.state.regions, items: design.state.items, config });
       design.markSaved();
+      claimPending.current = false;
       setSavedTick((n) => n + 1);
       setNotice("Đã lưu");
       setTimeout(() => setNotice(null), 1500);
@@ -511,7 +512,7 @@ export function CustomizeEditor({ productId }: { productId: string }) {
   const openDeploy = async () => {
     if (!product) return;
     setDeploying(true);
-    if (design.dirty && !(await save())) {
+    if ((design.dirty || claimPending.current) && !(await save())) {
       setDeploying(false);
       return;
     }

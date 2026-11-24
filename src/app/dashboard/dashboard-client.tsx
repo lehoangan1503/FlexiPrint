@@ -6,6 +6,7 @@ import type { UserProfile } from "@/types/auth";
 import { UserDropdown } from "@/components/user-dropdown";
 import { FirstLoginDialog } from "@/components/first-login-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ScrollEdgeButtons } from "@/components/scroll-edge-buttons";
 import { CustomizeProductList } from "../../../customize-tool/components/product-list";
 import { ImportStatus } from "../../../customize-tool/components/char/import-status";
 import { LibraryTab } from "../../../customize-tool/components/library/library-tab";
@@ -93,6 +94,7 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
           <LibraryTab currentUserId={profile.user_id} admin={admin} />
         )}
       </main>
+      <ScrollEdgeButtons />
       <FirstLoginDialog
         open={askNickname}
         onComplete={(nickname) => {

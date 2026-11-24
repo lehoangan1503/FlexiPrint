@@ -17,6 +17,7 @@ import type {
   CtDeployBody,
   CtDeployResponse,
   CtGeneration,
+  CtListPerson,
   CtProduct,
   CtProductConfig,
   CtProductKind,
@@ -86,12 +87,34 @@ export async function ownedProduct(s: CtSession, productId: string): Promise<CtP
 // Products
 // ---------------------------------------------------------------------------
 
-export async function listProducts(s: CtSession, search: string, kind: CtProductKind | null = null, store: string | null = null, page: { offset?: number; limit?: number } = {}): Promise<NextResponse> {
+export async function listProducts(
+  s: CtSession,
+  search: string,
+  kind: CtProductKind | null = null,
+  store: string | null = null,
+  page: { offset?: number; limit?: number; owners?: "saved" | string[] } = {},
+): Promise<NextResponse> {
   // Paged (found 2026-11-23: a flat 200 cap hid every older product, with no way to reach them).
   const offset = Math.max(0, Math.floor(page.offset ?? 0) || 0);
   const limit = Math.min(1000, Math.max(1, Math.floor(page.limit ?? 200) || 200));
   // One store's artworks / products (migration 032): the asked one, else the user's current store; "all" = every store.
   const storeId = store === "all" ? null : store?.trim() || (await currentStoreId(s.supabase, s.user.id));
+  // "Người đăng" (asked 2026-11-24): the people come from the whole list in the DB, not from the page loaded — the
+  // filter vanished when the 100 newest were one person's; the ticked ones are kept in ct_user_prefs (migration 038).
+  let people: CtListPerson[] = [];
+  let activeOwners: string[] = [];
+  if (page.owners) {
+    const { data } = await s.supabase.rpc("ct_product_owners", { p_store: storeId, p_kind: kind });
+    const rows = (data ?? []) as Array<{ user_id: string; name: string | null; n: number | string }>;
+    people = rows.map((r) => ({ id: r.user_id, name: r.name || "(không tên)", n: Number(r.n) || 0 }));
+    let wanted = page.owners === "saved" ? [] : page.owners;
+    if (page.owners === "saved") {
+      const { data: pref } = await s.supabase.from(CT_TABLES.userPrefs).select("list_owners").eq("user_id", s.user.id).maybeSingle<{ list_owners: string[] | null }>();
+      wanted = pref?.list_owners ?? [];
+    }
+    // A ticked person with nothing in this list (other store / tab) does not hide everything.
+    activeOwners = wanted.filter((id) => people.some((x) => x.id === id));
+  }
   let q = s.supabase
     .from(CT_TABLES.products)
     .select("*, main_asset:ct_assets!ct_products_main_asset_fk(url,width,height), base_product:ct_base_products(id,name)", { count: "exact" })
@@ -102,6 +125,7 @@ export async function listProducts(s: CtSession, search: string, kind: CtProduct
   if (search) q = q.ilike("name", `%${search}%`);
   if (kind) q = q.eq("kind", kind);
   if (storeId) q = q.eq("store_id", storeId);
+  if (activeOwners.length) q = q.in("user_id", activeOwners);
   const { data, error, count } = await q.returns<Omit<CtProductListRow, "mockup_url">[]>();
   if (error) return jsonError(error.message, 500);
   const total = count ?? offset + (data?.length ?? 0);
@@ -189,7 +213,18 @@ export async function listProducts(s: CtSession, search: string, kind: CtProduct
         owner_name: owners.get(p.user_id) || null,
       };
     });
-  return NextResponse.json({ products, total, more, next: offset + (data?.length ?? 0) });
+  return NextResponse.json({ products, total, more, next: offset + (data?.length ?? 0), ...(page.owners ? { people, owners: activeOwners } : {}) });
+}
+
+/** The people the user ticked in the list's "Người đăng" filter (migration 038); [] = everyone. */
+export async function saveListOwners(s: CtSession, body: unknown): Promise<NextResponse> {
+  const raw = (body as { owners?: unknown } | null)?.owners;
+  if (!Array.isArray(raw)) return jsonError("Thiếu owners", 400);
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const owners = [...new Set(raw.filter((x): x is string => typeof x === "string" && uuid.test(x)))].slice(0, 200);
+  const { error } = await s.supabase.from(CT_TABLES.userPrefs).upsert({ user_id: s.user.id, list_owners: owners, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+  if (error) return jsonError(error.message, 500);
+  return NextResponse.json({ owners });
 }
 
 export async function createProduct(s: CtSession, body: CtCreateProductBody): Promise<NextResponse> {

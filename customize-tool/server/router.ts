@@ -31,6 +31,7 @@
  *   GET    products/:id/shopify/open     → 302 to the product on the store, link made now (page when on sale, else a fresh preview)
  *   GET    stores                        → CtStoreList (Shopify stores + the user's current one, server/stores.ts)
  *   PUT    stores/current                { id } — the /dashboard store switch
+ *   PUT    list-owners                   { owners: uuid[] } — the list's "Người đăng" filter (migration 038)
  *   GET    shopify/products?q=&store=    → { products } Shopify products to deploy onto
  *   GET    shopify/collections?store= · POST {title}  → collections (deploy page badges; the starred one = breadcrumb)
  *   GET    price-tables · POST CtPriceTableBody · PATCH :id · DELETE :id   bảng giá (server/price-tables.ts)
@@ -354,6 +355,9 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
     if (id && method === "DELETE") return st.deleteAiStyle(session, id);
   }
 
+  // The list's "Người đăng" filter, kept in the DB (migration 038).
+  if (head === "list-owners" && !id && method === "PUT") return h.saveListOwners(session, await readJson<unknown>(req));
+
   if (head === "products") {
     if (!id) {
       if (method === "GET") {
@@ -362,6 +366,7 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
         return h.listProducts(session, sp.get("q")?.trim() ?? "", kind === "artwork" || kind === "product" ? kind : null, sp.get("store"), {
           offset: Number(sp.get("offset") ?? 0),
           limit: sp.get("limit") ? Number(sp.get("limit")) : undefined,
+          owners: ownersParam(sp.get("owners")),
         });
       }
       if (method === "POST") {
@@ -523,3 +528,10 @@ export const ctRouteHandlers = {
   DELETE: dispatch,
   OPTIONS: dispatch,
 };
+
+/** ?owners=saved → the user's ticked people from the DB; ?owners=a,b → those; absent → no filter, no people list. */
+function ownersParam(raw: string | null): "saved" | string[] | undefined {
+  if (!raw) return undefined;
+  if (raw === "saved") return "saved";
+  return raw.split(",").map((x) => x.trim()).filter(Boolean);
+}

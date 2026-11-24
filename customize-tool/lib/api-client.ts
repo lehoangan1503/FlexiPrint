@@ -5,7 +5,7 @@
 import { CT_CONFIG } from "../config";
 import { jobFetch } from "./job-fetch";
 import type { CtPrintTemplate } from "../types/print";
-import type { CtMockupBlock } from "../types";
+import type { CtListPerson, CtMockupBlock } from "../types";
 import type { CtBaseRepublishResult, CtBaseStoreState, CtCloneBaseBody, CtCloneProductBody, CtSheetOverflow, CtBasePlacement, CtPreviewBoxBody, CtVersionPhoi, CtVersionPhoiStatus, CtArtworkProductRow, CtArtworkSource, CtBaseProduct, CtBaseProductBody, CtBaseProductDetail, CtBaseScene, CtBaseSceneRequest, CtBaseScenesAuto, CtBaseProductRow, CtBaseImportBody, CtFulfillCatalogFilter,
   CtFulfillCatalogPage, CtFulfillProvider, CtTeeinblueStatus, CtCreateArtworkBody, CtCreateFromArtworkBody, CtProductKind, CtStoreList, CtPhotoStyleRef } from "../types";
 import type { CtBehindStage, CtCharPhotoStyle, CtCharSetProduct, CtSetOptionField, CtCharImportFile, CtCharImportRow, CtProductCharSet, CtCharVersionCard,
@@ -104,10 +104,14 @@ export const ctApi = {
   listProducts: (q: string, kind?: CtProductKind) =>
     call<{ products: CtProductListRow[] }>(`products?q=${encodeURIComponent(q)}${kind ? `&kind=${kind}` : ""}`).then((r) => r.products),
   /** One page of the list (newest first): `more` = there are older ones, `next` = the offset to ask next. */
-  listProductsPage: (q: string, kind: CtProductKind | undefined, offset: number, limit: number) =>
-    call<{ products: CtProductListRow[]; total: number; more: boolean; next: number }>(
-      `products?q=${encodeURIComponent(q)}${kind ? `&kind=${kind}` : ""}&offset=${offset}&limit=${limit}`,
+  /** `owners: "saved"` = filtered by the people ticked in "Người đăng" (kept in the DB), and `people` = everyone who
+   * posted in this list with their counts (migration 038). */
+  listProductsPage: (q: string, kind: CtProductKind | undefined, offset: number, limit: number, owners?: "saved") =>
+    call<{ products: CtProductListRow[]; total: number; more: boolean; next: number; people?: CtListPerson[]; owners?: string[] }>(
+      `products?q=${encodeURIComponent(q)}${kind ? `&kind=${kind}` : ""}&offset=${offset}&limit=${limit}${owners ? `&owners=${owners}` : ""}`,
     ),
+  /** Keeps the people ticked in the list's "Người đăng" filter; [] = everyone. */
+  saveListOwners: (owners: string[]) => call<{ owners: string[] }>("list-owners", json("PUT", { owners })),
   /** A hand-made artwork: on a base product's khuôn, or a blank canvas of any size. */
   createArtwork: (body: CtCreateArtworkBody) => call<{ product: CtProduct }>("products/artwork", json("POST", body)).then((r) => r.product),
   /** Product base (server/base-products.ts). */

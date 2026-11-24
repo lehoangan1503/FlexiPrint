@@ -9,11 +9,11 @@
  * Also the /products index (no kind = both).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Check, Layers, Loader2, Plus, Rocket, Search, ShoppingBag, Sparkles, Trash2, X } from "lucide-react";
 import { CT_CONFIG } from "../config";
-import type { CtProductKind, CtProductListRow, CtProductStatus } from "../types";
+import type { CtListPerson, CtProductKind, CtProductListRow, CtProductStatus } from "../types";
 import { ctApi } from "../lib/api-client";
 import { CHECKER_STYLE, CtButton, CtInput, cx } from "./ui";
 import { CreateArtworkDialog, CreateProductDialog } from "./product-create";
@@ -35,9 +35,6 @@ const FILTER_TEST: Record<ProductFilter, (p: CtProductListRow) => boolean> = {
   "not-deployed": (p) => !p.shopify,
   "no-mockup": (p) => !p.mockup_url,
 };
-
-/** The people ticked in the "Người đăng" filter (localStorage, user ids). */
-const OWNER_KEY = "ct-list-owners";
 
 /** Cards per page of the list ("Xem thêm" loads the next page; 2026-11-23: a flat 200 cap hid the rest). */
 const PAGE_SIZE = 100;
@@ -93,33 +90,14 @@ export function CustomizeProductList({
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ProductFilter>("all");
-  // Only the products of the ticked people (asked 2026-11-20); none ticked = everyone. Kept per browser.
-  const [owners, setOwners] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(OWNER_KEY) ?? "[]") as unknown;
-      if (Array.isArray(saved)) setOwners(new Set(saved.filter((x): x is string => typeof x === "string")));
-    } catch {
-      // a broken saved value: start with everyone
-    }
-  }, []);
-  const toggleOwner = (id: string) =>
-    setOwners((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      localStorage.setItem(OWNER_KEY, JSON.stringify([...next]));
-      return next;
-    });
-  const clearOwners = () => {
-    setOwners(new Set());
-    localStorage.removeItem(OWNER_KEY);
-  };
-  // The people in this list, most products first.
-  const people = [...products.reduce((m, p) => m.set(p.user_id, { id: p.user_id, name: p.owner_name || "(không tên)", n: (m.get(p.user_id)?.n ?? 0) + 1 }), new Map<string, { id: string; name: string; n: number }>()).values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
-  // A ticked person with nothing in this list (other store / tab) does not hide everything.
-  const activeOwners = [...owners].filter((id) => people.some((x) => x.id === id));
-  const shown = products.filter((p) => FILTER_TEST[filter](p) && (!activeOwners.length || activeOwners.includes(p.user_id)));
+  // Only the products of the ticked people (asked 2026-11-20); none ticked = everyone. Since 2026-11-24 the people
+  // come from the whole list in the DB and the ticks are kept in the DB (migration 038) — they were taken from the 100
+  // loaded, so the filter vanished whenever those 100 were one person's, and ticks lived in one browser only.
+  const [people, setPeople] = useState<CtListPerson[]>([]);
+  const [activeOwners, setActiveOwners] = useState<string[]>([]);
+  /** The latest list request: an older answer arriving late (quick ticks) is dropped. */
+  const reqSeq = useRef(0);
+  const shown = products.filter(FILTER_TEST[filter]);
   // Bulk (asked 2026-11-17): tick products, then "Tạo mockup" (each with its own prompts) or "Deploy".
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [bulk, setBulk] = useState<{ title: string; lines: BulkLine[]; running: boolean } | null>(null);
@@ -206,7 +184,7 @@ export function CustomizeProductList({
     // The list again, quietly: each card's picture as the server picks it (picture 1 of the Shopify order).
     if (kind === "mockup")
       ctApi
-        .listProductsPage(search.trim(), listKind, 0, Math.max(PAGE_SIZE, products.length))
+        .listProductsPage(search.trim(), listKind, 0, Math.max(PAGE_SIZE, products.length), "saved")
         .then((r) => {
           setProducts(r.products);
           setPage({ total: r.total, more: r.more, next: r.next });
@@ -215,18 +193,35 @@ export function CustomizeProductList({
   };
 
   const load = useCallback(async (q: string) => {
+    const seq = ++reqSeq.current;
     setLoading(true);
     try {
-      const r = await ctApi.listProductsPage(q, kind, 0, PAGE_SIZE);
+      const r = await ctApi.listProductsPage(q, kind, 0, PAGE_SIZE, "saved");
+      if (seq !== reqSeq.current) return;
       setProducts(r.products);
       setPage({ total: r.total, more: r.more, next: r.next });
+      setPeople(r.people ?? []);
+      setActiveOwners(r.owners ?? []);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Không tải được danh sách");
+      if (seq === reqSeq.current) setError(e instanceof Error ? e.message : "Không tải được danh sách");
     } finally {
-      setLoading(false);
+      if (seq === reqSeq.current) setLoading(false);
     }
   }, [kind]);
+
+  /** Ticks / unticks people in "Người đăng": kept in the DB, then the list again from the server with the filter. */
+  const saveOwners = async (next: string[]) => {
+    setActiveOwners(next);
+    try {
+      await ctApi.saveListOwners(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không lưu được bộ lọc người đăng");
+    }
+    await load(search.trim());
+  };
+  const toggleOwner = (id: string) => void saveOwners(activeOwners.includes(id) ? activeOwners.filter((x) => x !== id) : [...activeOwners, id]);
+  const clearOwners = () => void saveOwners([]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(search.trim()), 250);
@@ -236,7 +231,7 @@ export function CustomizeProductList({
   const loadMore = async () => {
     setLoadingMore(true);
     try {
-      const r = await ctApi.listProductsPage(search.trim(), kind, page.next, PAGE_SIZE);
+      const r = await ctApi.listProductsPage(search.trim(), kind, page.next, PAGE_SIZE, "saved");
       setProducts((cur) => {
         const seen = new Set(cur.map((x) => x.id));
         return [...cur, ...r.products.filter((x) => !seen.has(x.id))];
@@ -278,7 +273,7 @@ export function CustomizeProductList({
           )}
         </div>
       </div>
-      {people.length > 1 && (
+      {(people.length > 1 || activeOwners.length > 0) && (
         <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Lọc theo người đăng">
           <span className="text-xs font-medium text-muted-foreground">Người đăng:</span>
           {people.map((x) => {

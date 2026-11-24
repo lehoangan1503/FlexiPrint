@@ -1198,6 +1198,13 @@ export interface CtProduct {
   updated_at: string;
 }
 
+/** The list's "Người đăng" filter (migration 038): one person who posted in this store's list, counted in the DB. */
+export interface CtListPerson {
+  id: string;
+  name: string;
+  n: number;
+}
+
 export interface CtProductListRow extends CtProduct {
   /** A "product" row: its base product's name. */
   base_product?: { id: string; name: string } | null;

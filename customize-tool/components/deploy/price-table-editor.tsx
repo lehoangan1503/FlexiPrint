@@ -256,7 +256,7 @@ export function PriceTableEditor({
               {orphans.map((r) => (
                 <span key={r.id} className="inline-flex items-center gap-1 rounded-md border bg-background pl-2 text-xs">
                   {r.values.join(" · ") || "1 giá"} · {formatUsd(r.price)}
-                  <button type="button" className="flex h-7 w-7 items-center justify-center rounded-r-md text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => patch({ rows: cfg.rows.filter((x) => x.id !== r.id) })} aria-label="Xoá giá này">
+                  <button type="button" className="flex h-7 w-7 items-center justify-center rounded-r-md pointer-coarse:h-10 pointer-coarse:w-10 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => patch({ rows: cfg.rows.filter((x) => x.id !== r.id) })} aria-label="Xoá giá này">
                     <Trash2 className="h-3 w-3" />
                   </button>
                 </span>

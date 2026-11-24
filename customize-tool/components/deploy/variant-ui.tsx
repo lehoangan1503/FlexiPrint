@@ -46,7 +46,7 @@ function ValuePill({ value, onCommit, onRemove, onDragStart, onDrop }: { value: 
       title="Kéo để đổi thứ tự · bấm vào chữ để sửa"
     >
       <input
-        className="h-full min-w-[3ch] bg-transparent px-1 outline-none"
+        className="h-full min-w-[3ch] bg-transparent px-1 outline-none pointer-coarse:text-base"
         style={{ width: `${Math.max(3, draft.length + 1)}ch` }}
         value={draft}
         onFocus={() => setEditing(true)}
@@ -61,7 +61,7 @@ function ValuePill({ value, onCommit, onRemove, onDragStart, onDrop }: { value: 
         }}
         aria-label={`Giá trị ${value}`}
       />
-      <button type="button" className="flex h-full w-7 items-center justify-center rounded-r-md text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onRemove} aria-label={`Bỏ ${value}`}>
+      <button type="button" className="flex h-full w-7 items-center pointer-coarse:w-10 justify-center rounded-r-md text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onRemove} aria-label={`Bỏ ${value}`}>
         <X className="h-3 w-3" />
       </button>
     </span>

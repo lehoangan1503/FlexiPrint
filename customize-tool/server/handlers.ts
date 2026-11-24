@@ -229,6 +229,42 @@ export async function saveListOwners(s: CtSession, body: unknown): Promise<NextR
   return NextResponse.json({ owners });
 }
 
+/** The product just older and just newer than this one, in the list's order (created_at, then id) — same store, same
+ * kind, and the people ticked in "Người đăng" when any of them posted there (asked 2026-11-24: ‹ › in the editor). */
+export async function productNeighbors(s: CtSession, productId: string): Promise<NextResponse> {
+  const { data: cur } = await s.supabase
+    .from(CT_TABLES.products)
+    .select("id, created_at, kind, store_id")
+    .eq("id", productId)
+    .maybeSingle<{ id: string; created_at: string; kind: CtProductKind; store_id: string | null }>();
+  if (!cur) return jsonError("Không tìm thấy sản phẩm", 404);
+  const [{ data: pref }, { data: ppl }] = await Promise.all([
+    s.supabase.from(CT_TABLES.userPrefs).select("list_owners").eq("user_id", s.user.id).maybeSingle<{ list_owners: string[] | null }>(),
+    s.supabase.rpc("ct_product_owners", { p_store: cur.store_id, p_kind: cur.kind }),
+  ]);
+  const present = new Set(((ppl ?? []) as Array<{ user_id: string }>).map((r) => r.user_id));
+  const owners = (pref?.list_owners ?? []).filter((id) => present.has(id));
+  // Quoted: a timestamp holds ":" "." "+", reserved in PostgREST's or() (several products made in one insert share it).
+  const at = `"${cur.created_at}"`;
+  const side = (newer: boolean) => {
+    const op = newer ? "gt" : "lt";
+    let q = s.supabase
+      .from(CT_TABLES.products)
+      .select("id, name")
+      .eq("kind", cur.kind)
+      .or(`created_at.${op}.${at},and(created_at.eq.${at},id.${op}.${cur.id})`)
+      .order("created_at", { ascending: newer })
+      .order("id", { ascending: newer })
+      .limit(1);
+    q = cur.store_id ? q.eq("store_id", cur.store_id) : q.is("store_id", null);
+    if (owners.length) q = q.in("user_id", owners);
+    return q.maybeSingle<{ id: string; name: string }>();
+  };
+  const [older, newer] = await Promise.all([side(false), side(true)]);
+  if (older.error || newer.error) return jsonError((older.error ?? newer.error)!.message, 500);
+  return NextResponse.json({ older: older.data ?? null, newer: newer.data ?? null });
+}
+
 export async function createProduct(s: CtSession, body: CtCreateProductBody): Promise<NextResponse> {
   // A name that reads as an SKU is stored in the standard form (lib/sku.ts).
   const name = skuName(body.name ?? "");

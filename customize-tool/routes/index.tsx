@@ -50,7 +50,8 @@ export async function CustomizeEditorPage({ params }: { params: Promise<{ id: st
   const session = await ctSession();
   if (!session) redirect(CT_CONFIG.loginPath);
   const { id } = await params;
-  return <CustomizeEditor productId={id} />;
+  // Keyed: ‹ › in the top bar moves to another product — nothing of the last one's editor state is kept.
+  return <CustomizeEditor key={id} productId={id} />;
 }
 
 export async function CustomizeDeployPage({ params }: { params: Promise<{ id: string }> }) {

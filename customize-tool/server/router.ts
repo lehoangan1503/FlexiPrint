@@ -21,6 +21,7 @@
  *   POST   products/from-template        { templateId, name } → { product }   (server/print-products.ts)
  *   POST   products                      { name }
  *   GET    products/:id                  → CtProductBundle
+ *   GET    products/:id/neighbors        → { older, newer }  the product before / after it in the list (editor ‹ ›)
  *   PATCH  products/:id                  CtUpdateProductBody
  *   DELETE products/:id
  *   PUT    products/:id/design           CtSaveDesignBody
@@ -382,6 +383,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
         return body ? h.updateProduct(session, id, body) : h.jsonError("Body không hợp lệ", 400);
       }
       if (method === "DELETE") return h.deleteProduct(session, id);
+    } else if (sub === "neighbors" && !path[3] && method === "GET") {
+      return h.productNeighbors(session, id);
     } else if (sub === "design" && method === "PUT") {
       const body = await readJson<CtSaveDesignBody>(req);
       return body ? h.saveDesign(session, id, body) : h.jsonError("Body không hợp lệ", 400);

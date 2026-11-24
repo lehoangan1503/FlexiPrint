@@ -317,6 +317,7 @@ export function CtNumber({
   min,
   max,
   className,
+  "aria-label": ariaLabel,
 }: {
   value: number;
   onChange: (v: number) => void;
@@ -324,6 +325,7 @@ export function CtNumber({
   min?: number;
   max?: number;
   className?: string;
+  "aria-label"?: string;
 }) {
   const [draft, setDraft] = React.useState(String(round(value)));
   const [editing, setEditing] = React.useState(false);
@@ -350,6 +352,7 @@ export function CtNumber({
       inputMode="decimal"
       autoComplete="off"
       className={className}
+      aria-label={ariaLabel}
       value={draft}
       onFocus={(e) => {
         setEditing(true);

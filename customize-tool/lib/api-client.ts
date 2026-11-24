@@ -142,6 +142,8 @@ export const ctApi = {
   refreshFulfillerBase: (baseId: string) => call<{ reapplied: number; failed: string[]; note: string; phoi: boolean }>("base-import/refresh", json("POST", { baseId })),
   createProduct: (name: string) => call<{ product: CtProduct }>("products", json("POST", { name })).then((r) => r.product),
   getBundle: (id: string) => call<CtProductBundle>(`products/${id}`),
+  /** The product just older / newer in the list (same store, kind and "Người đăng" filter); null at either end. */
+  productNeighbors: (id: string) => call<{ older: { id: string; name: string } | null; newer: { id: string; name: string } | null }>(`products/${id}/neighbors`),
   updateProduct: (id: string, body: CtUpdateProductBody) =>
     call<{ product: CtProduct }>(`products/${id}`, json("PATCH", body)).then((r) => r.product),
   deleteProduct: (id: string) => call<void>(`products/${id}`, { method: "DELETE" }),

@@ -485,7 +485,7 @@ function StoreSync(props: { baseId: string; savedAt: string }) {
         ) : (
           <span className="text-muted-foreground">Store đã khớp base ({state.deployed} sản phẩm đã deploy).</span>
         )}
-        <button type="button" title="Kiểm tra lại" className="ml-auto rounded p-1 hover:bg-accent" onClick={load}>
+        <button type="button" title="Kiểm tra lại" aria-label="Kiểm tra lại" className="ml-auto flex h-8 w-8 items-center justify-center rounded hover:bg-accent pointer-coarse:h-10 pointer-coarse:w-10" onClick={load}>
           <RefreshCw className="h-3 w-3" />
         </button>
       </div>

@@ -82,6 +82,7 @@ function AddValue({ onAdd }: { onAdd: (values: string[]) => void }) {
   return (
     <CtInput
       className="h-8 w-40 text-xs"
+      aria-label="Thêm giá trị"
       value={text}
       placeholder="+ giá trị, Enter"
       onChange={(e) => {
@@ -234,7 +235,7 @@ export function ShopifyOptionsPreview({ cfg, options }: { cfg: CtPriceTableConfi
 }
 
 function Money({ price, compareAt, missing }: { price: number; compareAt: number | null; missing: boolean }) {
-  if (missing) return <span className="font-medium text-destructive">chưa có giá</span>;
+  if (missing) return <span className="font-medium text-red-700 dark:text-red-400">chưa có giá</span>;
   return (
     <span className="whitespace-nowrap">
       <span className="font-medium">{formatUsd(price)}</span>

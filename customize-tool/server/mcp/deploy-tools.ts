@@ -11,7 +11,7 @@
  * able to edit the product (its owner, or an admin — migration 026).
  */
 
-import type { CtAgentTask, CtAsset, CtBaseProduct, CtContentResult, CtPriceTable, CtProduct, CtShopifyCollection, CtShopifyInfo } from "../../types";
+import type { CtAgentTask, CtAsset, CtBaseProduct, CtContentResult, CtPriceTable, CtProduct, CtRegion, CtShopifyCollection, CtShopifyInfo } from "../../types";
 import { auditOptions } from "../../lib/option-audit";
 import { suggestCollections } from "../../lib/collections";
 import { defaultDeployMedia, effectivePicks } from "../../lib/deploy-media";
@@ -30,7 +30,8 @@ import { baseImage, normalizeBaseConfig, normalizeBaseMockup } from "../../lib/b
 import { CT_MOCKUP_BLOCK_REFS_MAX, CT_MOCKUP_REFS_MAX, badBlockRefs, defaultMockupWrap, mockupRefList } from "../../lib/mockup-prompt";
 import { defaultScenes, splitScenes } from "../../lib/mockup-scenes";
 import { ensureVersionPhoi, jobName } from "../version-phoi";
-import { normalizeProductConfig } from "../../lib/design";
+import { normalizeProductConfig, normalizeRegion } from "../../lib/design";
+import { isAiStyleRef } from "../../lib/photo-styles";
 import { liveDraft, normalizeCustomerNote, normalizeDeployDraft } from "../../lib/deploy-draft";
 import { CT_SKU_FORMAT, normalizeSku, skuProblem } from "../../lib/sku";
 import { skuTwins, twinProblem } from "../sku-twins";
@@ -57,6 +58,18 @@ async function openProduct(ctx: CtMcpContext, args: Record<string, unknown>): Pr
   const product = await ownedProduct(s, id);
   if (!product) throw new Error("No such product, or you may not edit it");
   return { db, task, s, product };
+}
+
+/** Pictures on the linked Shopify product that no deploy put there (the Deploy page's \"Ảnh thêm tay trên Shopify\"). */
+function handAdded(product: CtProduct, linked: CtShopifyInfo["product"] | null | undefined): Array<{ id: string; url: string | null }> {
+  const ours = new Set(Object.values(product.shopify?.media ?? {}));
+  return (linked?.media ?? []).filter((m) => !ours.has(m.id) && m.url);
+}
+
+/** The Deploy page's \"Phôi AI có ảnh khách\" applies: a photo zone whose styles include an AI one. */
+async function aiPhotoOf(db: CtServiceClient, productId: string): Promise<boolean> {
+  const { data } = await db.from(CT_TABLES.regions).select("*").eq("product_id", productId).returns<CtRegion[]>();
+  return (data ?? []).map(normalizeRegion).some((r) => r.kind === "photo" && r.config.photo.styles.some(isAiStyleRef));
 }
 
 /** One progress line on the task — nothing when the user works without one. */
@@ -290,7 +303,9 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
           error: st.info.error,
           linked: product.shopify ? { productId: product.shopify.productId, status: product.shopify.status, url: product.shopify.url, adminUrl: product.shopify.adminUrl, deployedAt: product.shopify.deployedAt } : null,
           now: linked ? { title: linked.title, descriptionHtml: linked.descriptionHtml, status: linked.status, tags: linked.tags, productType: linked.productType, vendor: linked.vendor, collectionIds: linked.collectionIds } : null,
+          handAdded: handAdded(product, linked),
         },
+        customerPhoi: { applies: await aiPhotoOf(db, product.id), on: normalizeProductConfig(product.config).customerPhoi === true },
         priceTables: st.tables.map((t) => ({
           id: t.id,
           name: t.name,
@@ -307,7 +322,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         draft: draft ? { ...draft, note: "Saved ahead (save_deploy_draft / the Deploy page's Lưu nháp): deploy_product uses it for what you leave out." } : null,
         customerNote: normalizeProductConfig(product.config).customerNote,
         missing: blockers(st, { kind: product.kind ?? "artwork", sku: product.sku ?? null, tableId, title, descriptionHtml, mediaIds: defaultMedia(st, product) }),
-        next: "Fill what is missing (title + description_html in US English per the content rules; a price table that fits — never create one, the editor keeps them; make_product_mockups when there is none), then deploy_product. Collections: reuse the store's — the suggested ones fit the title; a smart (rule-based) one is joined through its rules (the deploy adds the tag / type), so pick it like any other. Never create a collection when one fits.",
+        next: "Fill what is missing (title + description_html in US English per the content rules; a price table that fits (none fits → ask the user; create_price_table only with their yes); make_product_mockups when there is none), then deploy_product. Collections: reuse the store's — the suggested ones fit the title; a smart (rule-based) one is joined through its rules (the deploy adds the tag / type), so pick it like any other. None fits → create_shopify_collection {title, product_id} (a title already there is reused, never a twin). shopify.handAdded = pictures added by hand on Shopify (not FlexiPrint mockups): they stay after the mockups unless deploy_product remove_shopify_media_ids names them. customerPhoi.applies = the product has a customer photo redrawn by an AI style: customer_phoi true on deploy_product = the Deploy page's \"Phôi AI có ảnh khách\" (the preview shows the AI phôi with the customer's photo).",
       });
     },
   },
@@ -834,6 +849,8 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         collection_ids: { type: "array", items: { type: "string" }, description: "gid://shopify/Collection/… from check_deploy, smart ones too (default: the ones that fit the title)." },
         primary_collection_id: { type: "string", description: "The breadcrumb collection (one of collection_ids)." },
         customer_note: { ...DRAFT_PROPS.customer_note, description: `${DRAFT_PROPS.customer_note.description.replace(" Goes up on the next deploy.", "")} Default: the product's (check_deploy customerNote).` },
+        remove_shopify_media_ids: { type: "array", items: { type: "string" }, description: "Pictures added by hand on Shopify to take off (check_deploy shopify.handAdded ids, gid://shopify/MediaImage/…); the others stay after the mockups." },
+        customer_phoi: { type: "boolean", description: "Only when check_deploy customerPhoi.applies: true = the preview shows the AI phôi with the customer's photo (the Deploy page's tick). Default: the product's." },
       },
       required: ["product_id"],
     },
@@ -892,7 +909,10 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         collectionIds,
         primaryCollectionId: str(args.primary_collection_id) || collectionIds[0] || null,
         shopifyProductId: null,
+        ...(strings(args.remove_shopify_media_ids).length ? { removeShopifyMediaIds: strings(args.remove_shopify_media_ids) } : {}),
+        ...(typeof args.customer_phoi === "boolean" ? { customerPhoi: args.customer_phoi } : {}),
       });
+      if (args.customer_phoi === true && !(await aiPhotoOf(db, product.id))) throw new Error("customer_phoi: this product has no customer photo redrawn by an AI style (check_deploy customerPhoi.applies)");
       const missing = blockers(st, { kind: product.kind ?? "artwork", sku: product.sku ?? null, tableId, title: body?.title ?? "", descriptionHtml: body?.descriptionHtml ?? "", mediaIds });
       if (!body || missing.length) throw new Error(`Chưa deploy được:\n- ${(missing.length ? missing : ["Thiếu title hoặc bảng giá."]).join("\n- ")}`);
       await progress(db, task?.id, `Đang deploy “${body.title}” lên Shopify (${body.status})…`);

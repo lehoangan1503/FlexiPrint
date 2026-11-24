@@ -86,7 +86,41 @@ flexiprint_save_files (urls → a folder).
   make_product_from_artwork mockup_blocks. Read / change ONE product's prompt without drawing:
   get_product_mockup_prompt / set_product_mockup_prompt (blocks; shared_refs = its own "Ảnh tham chiếu chung" in place
   of the base's refs — drop / add / replace pictures for that product only, shared_refs_from_base = back to the base's).
-- Khuôn in (the base's physical shape, rarely touched): list_print_templates / get_print_template.
+- Khuôn in (the base's physical shape, rarely touched): list_print_templates / get_print_template; create_print_template
+  (from the piece's REAL size, only when none fits), add_template_blank / set_template_blank (a phôi photo of a khuôn:
+  which is first, where the sheet sits), delete_print_template (one made by mistake; refused while used).
+
+## Every editor button has a tool (asked 2026-11-24)
+What the web page does, a tool does — through the same handler, so the same owner rules hold.
+- Products: clone_product (Nhân bản — a copy without mockups, SKU or Shopify link), update_product also main_asset_id
+  (Đặt làm chính), thumbnail_url, notes, samples (the default picks: list_product_options default_picks, by region
+  id), update_asset (rename, swatch colour, move a variant to another group) / delete_asset (ask first; a mockup →
+  delete_mockup), link_library_main / unlink_library_main (a library clipart as a version), fit_artwork_to_base (an
+  artwork's "Khớp canvas với khuôn base"), set_photo_zone (a customer-photo layer's place, per version),
+  make_version_thumbs (the version tiles), delete_version_phoi (drop a version's AI phôi). Several products outdated
+  against their artwork: sync_product_from_artwork once per product (= the list's bulk update).
+- Mockups: add_product_mockups (pictures made elsewhere, by https url — nothing drawn, nothing paid),
+  clear_failed_mockups (Xoá N ô lỗi), delete_mockup, update_product mockup_order / mockup_off. A product with a customer
+  photo zone: make_product_mockups fills each zone with a different sample person / pet itself. make_product_blank is
+  for old products without a base only. A refused drawing handed to you (task kind "mockup"): get_task → retry_mockup.
+- Deploy: set_preview_box (where the design sits on the preview photo, this product only), shopify_preview_links (a
+  fresh preview link of deployed products). Collections: reuse check_deploy's (suggested = fits the title; a smart one
+  is joined through its rules); none fits → create_shopify_collection {title, product_id} (a title already there is
+  reused). check_deploy shopify.handAdded (pictures added by hand on Shopify) → deploy_product remove_shopify_media_ids
+  takes them off; customerPhoi.applies → deploy_product customer_phoi (the Deploy page's "Phôi AI có ảnh khách").
+- Price tables: list_price_tables; create_price_table / update_price_table — prices ALWAYS through the user (first call
+  = preview + confirm_token, save only on their yes); update_price_table changes every base using the table (one base
+  only → update_base_product price_table, which copies a shared table); delete_price_table (ask first).
+- AI photo styles of the library: list_ai_styles, update_ai_style (its prompt reaches customers at once).
+- Base preview tasks (kind "base_preview", from the Product base page): base_preview_check → make_base_scene →
+  base_scene_status → render_base_preview (a real design on it) → set_base_preview ONLY when the request says apply.
+- Bộ nhân vật, besides the steps above: char_get_brief (the brief only, small), char_plan_pictures (your 3b plan),
+  char_refine_master (an in-place edit of a master), char_use_edit (back to an earlier, better 3b attempt),
+  char_make_blank (step 4 phôi trơn). Drawn pose by pose: char_draw_poses → char_compose (each version's placement) →
+  char_set_behind (part of a doll behind the others); drawn version by version: char_versions. Bộ ảnh khách:
+  char_save_photo_style / char_remove_photo_style / char_test_photo_styles / char_style_demo. Bộ import
+  (set.brief.imported): char_import_files / char_import_read → char_import_locate / char_import_diff →
+  char_import_preview → char_import_build → char_import_deploy; char_import_rethumb (option pictures again).
 
 ## The 3 kinds of bộ (kiểu 1 / 2 / 3)
 People in the company name a set by its kind ("làm bộ kiểu 1…"); the library's Clipart tab filters by it and the

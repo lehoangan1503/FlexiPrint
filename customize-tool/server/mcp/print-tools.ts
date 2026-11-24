@@ -709,13 +709,13 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
   },
   {
     name: "list_product_options",
-    description: "The layers of a product the customer picks in (backgrounds, hair, clothes, held items, texts…) with every option's name and which is the default — the names render_artwork / make_product_mockups take.",
+    description: "The layers of a product the customer picks in (backgrounds, hair, clothes, held items, texts…) with every option's name and which is the default — the names render_artwork / make_product_mockups take; default_picks = the design's default picks per region id (update_product samples changes them).",
     inputSchema: { type: "object", properties: { product_id: { type: "string", description: "The product." } }, required: ["product_id"] },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
       const bundle = await loadArtwork(ctx.db, str(args.product_id));
       if (!bundle) throw new Error("No such product");
-      return json({ product_id: bundle.product.id, name: bundle.product.name, editor: editorUrl(bundle.product.id), layers: productOptions(bundle) });
+      return json({ product_id: bundle.product.id, name: bundle.product.name, editor: editorUrl(bundle.product.id), layers: productOptions(bundle), default_picks: normalizeProductConfig(bundle.product.config).samples });
     },
   },
   {

@@ -10,6 +10,7 @@ import type { NextResponse } from "next/server";
 import { CT_TABLES } from "../../config";
 import type { CtPriceTable, CtProduct, CtShopifyStatus } from "../../types";
 import { str } from "../ai/llm";
+import { normalizeProductConfig } from "../../lib/design";
 import { serviceSession } from "../char/product";
 import { deleteAsset, deleteProduct, ownedProduct, updateProduct } from "../handlers";
 import { deleteBaseProduct } from "../base-products";
@@ -23,25 +24,25 @@ import type { CtMcpContext, CtMcpTool } from "./tools";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATUSES: CtShopifyStatus[] = ["ACTIVE", "DRAFT", "ARCHIVED"];
 
-async function session(ctx: CtMcpContext, args: Record<string, unknown>): Promise<CtSession> {
+export async function session(ctx: CtMcpContext, args: Record<string, unknown>): Promise<CtSession> {
   const { db, userId } = await actorOf(ctx, args.task_id);
   return serviceSession(db, userId);
 }
 
-function idOf(args: Record<string, unknown>, key: string): string {
+export function idOf(args: Record<string, unknown>, key: string): string {
   const id = str(args[key]);
   if (!UUID.test(id)) throw new Error(`${key} is not a valid id`);
   return id;
 }
 
 /** A web handler's answer as a tool result: its error text thrown, else its JSON (or {ok: true}). */
-async function answer(res: NextResponse): Promise<Record<string, unknown>> {
+export async function answer(res: NextResponse): Promise<Record<string, unknown>> {
   const body = res.status === 204 ? {} : ((await res.json().catch(() => ({}))) as Record<string, unknown>);
   if (res.status >= 400) throw new Error(typeof body.error === "string" ? body.error : `HTTP ${res.status}`);
   return Object.keys(body).length ? body : { ok: true };
 }
 
-async function owned(s: CtSession, id: string): Promise<CtProduct> {
+export async function owned(s: CtSession, id: string): Promise<CtProduct> {
   const p = await ownedProduct(s, id);
   if (!p) throw new Error("No such product / artwork, or you may not edit it");
   return p;
@@ -51,7 +52,7 @@ export const CT_MCP_CRUD_TOOLS: CtMcpTool[] = [
   {
     name: "update_product",
     description:
-      "Change a product or an artwork in place: name, sku (a product's SKU — its own field, never part of the name or the Shopify title: n0x-POD-yyy, typed any way it is brought to the standard form; refused when another product has it; an empty string removes it), status (draft | ready | archived — FlexiPrint's own, not Shopify's), base_product_id (move a product to another base: variants, price, khuôn, phôi follow), mockup_order (asset ids, picture 1 first = the Shopify order) and mockup_off (asset ids not sent to Shopify). Give only what changes. The Shopify product changes on the next deploy_product.",
+      "Change a product or an artwork in place: name, sku (a product's SKU — its own field, never part of the name or the Shopify title: n0x-POD-yyy, typed any way it is brought to the standard form; refused when another product has it; an empty string removes it), status (draft | ready | archived — FlexiPrint's own, not Shopify's), base_product_id (move a product to another base: variants, price, khuôn, phôi follow), mockup_order (asset ids, picture 1 first = the Shopify order), mockup_off (asset ids not sent to Shopify), main_asset_id (the default version = the editor's \"Đặt làm chính\"), thumbnail_url (the list picture), notes (the editor's own note, not on Shopify) and samples (the design's default picks — the editor's \"Đặt làm mẫu mặc định\": {regionId: selection} — only the regions given change, null drops one; the answer shows them all). Give only what changes. The Shopify product changes on the next deploy_product.",
     inputSchema: {
       type: "object",
       properties: {
@@ -63,6 +64,10 @@ export const CT_MCP_CRUD_TOOLS: CtMcpTool[] = [
         base_product_id: { type: "string", description: "A product only: the base to move it to (list_base_products)." },
         mockup_order: { type: "array", items: { type: "string" }, description: "Mockup asset ids in Shopify order." },
         mockup_off: { type: "array", items: { type: "string" }, description: "Mockup asset ids NOT sent to Shopify." },
+        main_asset_id: { type: "string", description: "The default version (a main asset of it)." },
+        thumbnail_url: { type: "string", description: "The list picture (https; \"\" = none)." },
+        notes: { type: "string", description: "The editor's note." },
+        samples: { type: "object", description: "Default picks {regionId: selection} (list_product_options)." },
       },
       required: ["product_id"],
     },
@@ -70,7 +75,7 @@ export const CT_MCP_CRUD_TOOLS: CtMcpTool[] = [
     run: async (ctx, args) => {
       const s = await session(ctx, args);
       const id = idOf(args, "product_id");
-      await owned(s, id);
+      const cur = await owned(s, id);
       const body: Parameters<typeof updateProduct>[2] = {};
       if (typeof args.name === "string" && args.name.trim()) body.name = args.name.trim().slice(0, 200);
       if (typeof args.sku === "string") body.sku = args.sku;
@@ -78,10 +83,25 @@ export const CT_MCP_CRUD_TOOLS: CtMcpTool[] = [
       if (typeof args.base_product_id === "string" && args.base_product_id) body.base_product_id = idOf(args, "base_product_id");
       if (Array.isArray(args.mockup_order)) body.mockupOrder = args.mockup_order.map(String);
       if (Array.isArray(args.mockup_off)) body.mockupOff = args.mockup_off.map(String);
-      if (!Object.keys(body).length) throw new Error("Nothing to change — give name, sku, status, base_product_id, mockup_order or mockup_off");
+      if (typeof args.main_asset_id === "string" && args.main_asset_id) body.main_asset_id = idOf(args, "main_asset_id");
+      if (typeof args.thumbnail_url === "string") {
+        const u = args.thumbnail_url.trim();
+        if (u && !/^https:\/\/\S+$/.test(u)) throw new Error("thumbnail_url: an https link");
+        body.thumbnail_url = u || null;
+      }
+      if (typeof args.notes === "string") body.notes = args.notes.slice(0, 5000);
+      if (args.samples && typeof args.samples === "object" && !Array.isArray(args.samples)) {
+        const merged: Record<string, unknown> = { ...normalizeProductConfig(cur.config).samples };
+        for (const [k, v] of Object.entries(args.samples as Record<string, unknown>)) {
+          if (v === null) delete merged[k];
+          else merged[k] = v;
+        }
+        body.samples = merged as NonNullable<typeof body.samples>;
+      }
+      if (!Object.keys(body).length) throw new Error("Nothing to change — give name, sku, status, base_product_id, mockup_order, mockup_off, main_asset_id, thumbnail_url, notes or samples");
       const out = await answer(await updateProduct(s, id, body));
       const p = out.product as CtProduct | undefined;
-      return json({ product_id: id, changed: Object.keys(body), name: p?.name, sku: p?.sku ?? null, status: p?.status, base_product_id: p?.base_product_id });
+      return json({ product_id: id, changed: Object.keys(body), name: p?.name, sku: p?.sku ?? null, status: p?.status, base_product_id: p?.base_product_id, main_asset_id: p?.main_asset_id ?? null, ...(body.samples ? { samples: p ? normalizeProductConfig(p.config).samples : undefined } : {}) });
     },
   },
   {

@@ -408,15 +408,19 @@ export function CtCheckbox({
         checked={checked}
         disabled={disabled}
         onCheckedChange={(v) => onChange(v === true)}
-        className={cx(
-          "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-input shadow-sm",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60",
-          "data-[state=checked]:border-sky-500 data-[state=checked]:bg-sky-500 data-[state=checked]:text-white",
-        )}
+        className="group -mx-1 -mb-1 -mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60"
       >
-        <CheckboxPrimitive.Indicator>
-          <Check className="h-3 w-3" strokeWidth={3} />
-        </CheckboxPrimitive.Indicator>
+        {/* 24px hit area around the 16px box (WCAG 2.5.8); negative margins keep the box where it was. */}
+        <span
+          className={cx(
+            "flex h-4 w-4 items-center justify-center rounded-[4px] border border-input shadow-sm",
+            "group-data-[state=checked]:border-sky-500 group-data-[state=checked]:bg-sky-500 group-data-[state=checked]:text-white",
+          )}
+        >
+          <CheckboxPrimitive.Indicator>
+            <Check className="h-3 w-3" strokeWidth={3} />
+          </CheckboxPrimitive.Indicator>
+        </span>
       </CheckboxPrimitive.Root>
       <label htmlFor={id} className="cursor-pointer select-none text-sm leading-tight">
         {label}

@@ -85,7 +85,7 @@ export function ContentAgent({
         <Sparkles className="h-4 w-4 text-violet-500" />
         <span className="text-sm font-semibold">Tạo content với FlexiPrint</span>
         <AgentBadge status={status} />
-        <button className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent" onClick={() => setShowHistory((v) => !v)}>
+        <button className="ml-auto inline-flex min-h-6 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent" onClick={() => setShowHistory((v) => !v)}>
           <History className="h-3.5 w-3.5" /> Lịch sử ({done.length})
         </button>
       </div>

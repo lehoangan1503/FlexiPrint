@@ -324,7 +324,7 @@ export function DeployPage({ productId }: { productId: string }) {
           <div className="min-w-0">
             <h1 className="truncate text-base font-semibold">{product.name}</h1>
             <div className="text-[11px] text-muted-foreground">
-              {store && <span className="mr-1.5 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-600">Store {store.name}</span>}
+              {store && <span className="mr-1.5 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-800 dark:text-amber-300">Store {store.name}</span>}
               {link ? `Deploy lần cuối ${new Date(link.deployedAt).toLocaleString("vi-VN")}` : "Chưa deploy"}
             </div>
           </div>
@@ -377,12 +377,12 @@ export function DeployPage({ productId }: { productId: string }) {
                   <>
                     <div className="truncate font-medium">{linked.title}</div>
                     {linked.storeUrl && (
-                      <a href={linked.storeUrl} target="_blank" rel="noreferrer" className="block truncate text-xs text-sky-500 hover:underline">
+                      <a href={linked.storeUrl} target="_blank" rel="noreferrer" className="block truncate py-1 text-xs text-sky-700 hover:underline dark:text-sky-400">
                         {linked.storeUrl}
                       </a>
                     )}
                     {link?.adminUrl && (
-                      <a href={link.adminUrl} target="_blank" rel="noreferrer" className="block truncate text-xs text-muted-foreground hover:text-foreground hover:underline">
+                      <a href={link.adminUrl} target="_blank" rel="noreferrer" className="block truncate py-1 text-xs text-muted-foreground hover:text-foreground hover:underline">
                         {link.adminUrl}
                       </a>
                     )}
@@ -458,7 +458,7 @@ export function DeployPage({ productId }: { productId: string }) {
               <p className="text-xs text-muted-foreground">Chưa có mockup — tạo ở tab Mockups trong editor. Không có ảnh, trang sản phẩm mở thẳng thiết kế live.</p>
             ) : (
               <>
-              {media.length === 0 && link && <p className="mb-2 text-xs text-amber-600">Không chọn ảnh nào: deploy giữ nguyên ảnh đang có trên Shopify.</p>}
+              {media.length === 0 && link && <p className="mb-2 text-xs text-amber-700 dark:text-amber-400">Không chọn ảnh nào: deploy giữ nguyên ảnh đang có trên Shopify.</p>}
               <SortableMockups images={pictures.map((a) => ({ id: a.id, url: a.url, name: a.name }))} off={pictures.filter((a) => !media.includes(a.id)).map((a) => a.id)} onChange={savePicks} disabled={running} />
               </>
             )}
@@ -698,6 +698,7 @@ function CollectionPicker({
           <CtSelect
             value=""
             onChange={add}
+            ariaLabel="Thêm vào collection"
             placeholder={collections.length ? "Thêm vào collection…" : "Store chưa có collection — tạo mới"}
             options={collections.filter((c) => !picked.includes(c.id)).map((c) => ({ value: c.id, label: c.smart ? `${c.title} (tự động — ${ruleText(c)})` : c.title }))}
           />
@@ -725,7 +726,7 @@ function CollectionPicker({
                 key={id}
                 className={cx(
                   "inline-flex cursor-pointer items-center gap-1 rounded-full border px-2.5 py-1 text-xs",
-                  star ? "border-amber-500 bg-amber-500/15 text-amber-700 dark:text-amber-300" : "hover:bg-accent",
+                  star ? "border-amber-500 bg-amber-500/15 text-amber-800 dark:text-amber-300" : "hover:bg-accent",
                 )}
                 title={star ? "Đang hiện trên breadcrumb" : "Bấm để hiện collection này trên breadcrumb"}
                 onClick={() => onChange(picked, id)}
@@ -733,7 +734,7 @@ function CollectionPicker({
                 {star && <Star className="h-3 w-3 fill-current" />}
                 {c?.title ?? "(collection đã xoá)"}
                 <button
-                  className="rounded-full p-0.5 hover:bg-black/10"
+                  className="-my-1 -mr-1.5 rounded-full p-1.5 hover:bg-black/10"
                   aria-label="Bỏ collection"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -775,7 +776,7 @@ function PhoiDemo({ on }: { on: boolean }) {
           <figure key={d.src} className="space-y-1">
             <img src={d.src} alt={d.label} className={cx("aspect-square w-full rounded-md border object-cover", picked ? "border-sky-500 ring-2 ring-sky-500" : "opacity-60")} />
             <figcaption className="text-center text-[10px] leading-tight">
-              <span className={cx("font-medium", picked ? "text-sky-500" : "text-foreground")}>{d.label}</span>
+              <span className={cx("font-medium", picked ? "text-sky-700 dark:text-sky-400" : "text-foreground")}>{d.label}</span>
               <span className="block text-muted-foreground">{d.note}</span>
             </figcaption>
           </figure>

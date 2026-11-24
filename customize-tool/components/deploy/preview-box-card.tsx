@@ -390,7 +390,7 @@ export function PreviewBoxCard({
       <span className="w-16 shrink-0 text-muted-foreground">{label}</span>
       <input
         type="range"
-        className="min-w-0 flex-1 accent-sky-500"
+        className="h-6 min-w-0 flex-1 accent-sky-500"
         min={min}
         max={max}
         step={step}

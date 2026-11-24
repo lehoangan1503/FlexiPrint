@@ -896,6 +896,13 @@ export interface CtProductConfig {
    */
   mockupBlocks: CtMockupBlock[];
   /**
+   * The product base's reference pictures as THIS product uses them (asked 2026-11-24: "bỏ trên sản phẩm đó và thay bằng
+   * ảnh tham chiếu khác, chỉ với sản phẩm đó chứ không thay thẳng vào product base"): sent with every block that has no
+   * pictures of its own. null = the base's own (CtBaseMockup.refs, follows the base page); [] = none. Written by the
+   * server only (POST products/:id/mockups/base-refs).
+   */
+  mockupBaseRefs: string[] | null;
+  /**
    * Each mockup a different custom pick of what the customer can change (asked 2026-11-17: version, options, names, a
    * different sample person in each photo zone — lib/mockup-variants.ts). The Mockups box's tick as last used; on by
    * default. Written by the server when mockups are made, never by a design save.
@@ -1162,7 +1169,7 @@ export interface CtMockupEdit {
 }
 
 /** What a published template carries (no design samples). */
-export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupBlocks" | "mockupVary" | "mockupOrder" | "mockupOff" | "deployDraft" | "customerNote">;
+export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupBlocks" | "mockupBaseRefs" | "mockupVary" | "mockupOrder" | "mockupOff" | "deployDraft" | "customerNote">;
 
 /**
  * What a ct_products row is (migration 031, asked 2026-11-07 — Teeinblue's Artwork / Campaign):

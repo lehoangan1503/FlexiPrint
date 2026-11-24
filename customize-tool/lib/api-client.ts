@@ -263,6 +263,8 @@ export const ctApi = {
   /** Drops the product's own mockup scenes: its mockups follow the product base's prompts again. */
   /** The product's own mockup prompt blocks, pictures per prompt ([] = back to its base's). */
   setMockupBlocks: (productId: string, blocks: CtMockupBlock[]) => call<{ product: CtProduct }>(`products/${productId}/mockups/blocks`, json("POST", { blocks })),
+  /** The base's reference pictures for this product only (null = back to the base's own). */
+  setMockupBaseRefs: (productId: string, refs: string[] | null) => call<{ product: CtProduct }>(`products/${productId}/mockups/base-refs`, json("POST", { refs })),
   clearMockupScenes: (productId: string) => call<{ product: CtProduct }>(`products/${productId}/mockups/prompt`, json("POST", {})),
   autoMockups: (productId: string) => call<{ jobs: CtPackImage[]; front: CtAsset }>(`products/${productId}/mockups/auto`, json("POST", {})),
   /** An AI phôi trơn from the product's khuôn in → config.scene. */

@@ -117,7 +117,30 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
   const own = ready.length > 0 && !sameBlocks(ready, baseList);
   const hasBase = !!product.base_product_id;
   // Picture 1 is the product itself; a block without pictures of its own is sent with the base's.
-  const baseRefs = props.baseMockup?.refs ?? [];
+  const baseOwnRefs = useMemo(() => props.baseMockup?.refs ?? [], [props.baseMockup]);
+  // The base's pictures as this product uses them (asked 2026-11-24): dropped / replaced here for this product only,
+  // the base untouched. null = the base's own.
+  const [ownBaseRefs, setOwnBaseRefs] = useState<string[] | null>(() => normalizeProductConfig(product.config).mockupBaseRefs);
+  const baseRefs = ownBaseRefs ?? baseOwnRefs;
+  const [savingBaseRefs, setSavingBaseRefs] = useState(false);
+  const saveBaseRefs = async (refs: string[] | null) => {
+    // Put back exactly as the base has them: follow the base again (its later changes come through).
+    const next = refs && refs.join("\n") === baseOwnRefs.join("\n") ? null : refs;
+    const prev = ownBaseRefs;
+    setOwnBaseRefs(next);
+    setSavingBaseRefs(true);
+    try {
+      const r = await ctApi.setMockupBaseRefs(product.id, next);
+      setOwnBaseRefs(normalizeProductConfig(r.product.config).mockupBaseRefs);
+      props.onProductRow?.(r.product);
+      props.flash(next === null ? "Sản phẩm dùng lại ảnh tham chiếu của product base" : "Đã lưu ảnh tham chiếu riêng cho sản phẩm này — product base không đổi");
+    } catch (e) {
+      setOwnBaseRefs(prev);
+      props.flash(e instanceof Error ? e.message : "Không lưu được ảnh tham chiếu");
+    } finally {
+      setSavingBaseRefs(false);
+    }
+  };
   const [frontZoom, setFrontZoom] = useState<number | null>(null);
   const [savingBlocks, setSavingBlocks] = useState(false);
   // Blocks start folded (asked 2026-11-24: keep the box short); a click on the header opens one.
@@ -593,7 +616,7 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                   />
                   <div className="text-foreground">
                     Ảnh tham chiếu riêng của prompt này ({b.refs.length}/{CT_MOCKUP_BLOCK_REFS_MAX}) —{" "}
-                    {b.refs.length ? "chỉ gửi kèm prompt này, là ảnh 2, 3… sau ảnh sản phẩm" : baseRefs.length ? `chưa có, sẽ gửi ${baseRefs.length} ảnh tham chiếu của product base` : "chưa có, chỉ gửi ảnh sản phẩm"}
+                    {b.refs.length ? "chỉ gửi kèm prompt này, là ảnh 2, 3… sau ảnh sản phẩm" : baseRefs.length ? `chưa có, sẽ gửi ${baseRefs.length} ảnh tham chiếu chung (khung ảnh 1 bên dưới)` : "chưa có, chỉ gửi ảnh sản phẩm"}
                   </div>
                   <MockupPics urls={b.refs} max={CT_MOCKUP_BLOCK_REFS_MAX} first={2} onChange={(refs) => void saveBlocks(editBlock(i, { ...b, refs }), true)} />
                   </>
@@ -611,7 +634,8 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                 {savingBlocks && <span className="flex items-center gap-1 text-xs text-foreground/70"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang lưu…</span>}
               </div>
             </div>
-            <div className="flex items-start gap-3 rounded-lg border p-2 text-xs">
+            <div className="space-y-2 rounded-lg border p-2 text-xs">
+            <div className="flex items-start gap-3">
               <div className="shrink-0">
                 <button type="button" disabled={!art} onClick={() => setFrontZoom(0)} className="flex h-20 w-20 cursor-zoom-in items-center justify-center overflow-hidden rounded-md border bg-white" title="Bấm để phóng to">
                   {art ? (
@@ -624,9 +648,35 @@ export function AiMockupsPanel(props: AiMockupsPanelProps) {
                 <div className="mt-1 text-center text-[11px] font-medium text-foreground">Ảnh 1 · sản phẩm</div>
               </div>
               <p className="text-foreground/80">
-                Ảnh 1 (thiết kế đặt lên phôi) luôn gửi kèm mọi prompt. Ảnh tham chiếu của khối nào chỉ đi theo prompt của khối đó; trong prompt gọi bằng số: “same room as picture 2”. Khối không có ảnh riêng thì dùng ảnh tham chiếu của product base.
+                Ảnh 1 (thiết kế đặt lên phôi) luôn gửi kèm mọi prompt. Ảnh tham chiếu của khối nào chỉ đi theo prompt của khối đó; trong prompt gọi bằng số: “same room as picture 2”. Khối không có ảnh riêng thì dùng ảnh tham chiếu chung bên dưới.
               </p>
               <CtLightbox images={art ? [{ url: art, name: "Ảnh 1 · sản phẩm" }] : []} index={frontZoom} onIndex={setFrontZoom} />
+            </div>
+            {hasBase && (
+              <div className="space-y-1.5 border-t pt-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-foreground">
+                    Ảnh tham chiếu chung ({baseRefs.length}) —{" "}
+                    {ownBaseRefs === null ? "lấy từ product base" : ownBaseRefs.length ? "đã thay riêng cho sản phẩm này" : "sản phẩm này đã bỏ hết ảnh của product base"}
+                  </span>
+                  {ownBaseRefs !== null && (
+                    <button
+                      type="button"
+                      disabled={savingBaseRefs}
+                      className="min-h-6 text-foreground underline underline-offset-2 hover:no-underline disabled:opacity-60"
+                      onClick={() => void saveBaseRefs(null)}
+                    >
+                      Dùng lại ảnh của product base{baseOwnRefs.length ? ` (${baseOwnRefs.length})` : ""}
+                    </button>
+                  )}
+                  {savingBaseRefs && <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground/70" />}
+                </div>
+                <p className="text-foreground/80">
+                  Gửi kèm mọi prompt chưa có ảnh riêng, là ảnh 2, 3… Bỏ ảnh (dấu ×) hay thêm ảnh ở đây chỉ đổi cho sản phẩm này — product base không bị sửa.
+                </p>
+                <MockupPics urls={baseRefs} max={CT_MOCKUP_BLOCK_REFS_MAX} first={2} onChange={(refs) => void saveBaseRefs(refs)} />
+              </div>
+            )}
             </div>
             <p className="text-xs text-muted-foreground">{ready.length ? `Sẽ tạo ${ready.length} ảnh — mỗi khối prompt 1 ảnh.` : "Chưa có prompt nào — Tạo mockup sẽ báo lỗi."}</p>
             {canVary && (

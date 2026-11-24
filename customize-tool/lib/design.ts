@@ -47,7 +47,7 @@ import { defaultScene, normalizeScene } from "./scene";
 import { isPrintKind, normalizePrintSpec } from "./print-template";
 import { normalizePrintAssembly } from "./assembly";
 import { DEFAULT_CUSTOMER_NOTE, normalizeCustomerNote, normalizeDeployDraft } from "./deploy-draft";
-import { mockupBlocksOf } from "./mockup-prompt";
+import { CT_MOCKUP_BLOCK_REFS_MAX, mockupBlocksOf, mockupRefList } from "./mockup-prompt";
 import { idList } from "./deploy-media";
 
 export function defaultRegionConfig(kind: CtRegionKind): CtRegionConfig {
@@ -314,6 +314,7 @@ export function defaultProductConfig(): CtProductConfig {
     assembly: null,
     customerPhoi: false,
     mockupBlocks: [],
+    mockupBaseRefs: null,
     mockupVary: true,
     mockupOrder: [],
     mockupOff: [],
@@ -407,6 +408,7 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     assembly: normalizePrintAssembly(raw?.assembly),
     customerPhoi: raw?.customerPhoi === true,
     mockupBlocks: mockupBlocksOf(raw as Parameters<typeof mockupBlocksOf>[0]),
+    mockupBaseRefs: Array.isArray(raw?.mockupBaseRefs) ? mockupRefList(raw.mockupBaseRefs, CT_MOCKUP_BLOCK_REFS_MAX) : null,
     mockupVary: raw?.mockupVary !== false,
     mockupOrder: idList(raw?.mockupOrder),
     mockupOff: idList(raw?.mockupOff),

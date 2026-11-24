@@ -41,7 +41,7 @@ function jsonError(message: string, status: number): NextResponse {
 
 export const jobName = (productId: string) => `mockup:${productId}`;
 
-import { CLEAR_ACRYLIC_LOOK, CT_MOCKUP_BLOCK_REFS_MAX, CT_MOCKUP_REFS_MAX, GLASS_LOOK, KEEP_PRINT, badBlockRefs, fillMockupWrap, isGlass, mockupBlockList } from "../lib/mockup-prompt";
+import { CLEAR_ACRYLIC_LOOK, CT_MOCKUP_BLOCK_REFS_MAX, CT_MOCKUP_REFS_MAX, GLASS_LOOK, KEEP_PRINT, badBlockRefs, fillMockupWrap, isGlass, mockupBlockList, mockupRefList } from "../lib/mockup-prompt";
 import { normalizeBaseMockup } from "../lib/base-product";
 import type { CtBaseMockup, CtMockupBlock } from "../types";
 // Moved to lib/mockup-prompt.ts (2026-11-17: the base page shows them); kept here for the old imports.
@@ -629,7 +629,9 @@ async function mockupSetup(db: MockDb, product: CtProduct): Promise<{ wrap: stri
   if (!product.base_product_id) throw new Error("Sản phẩm chưa gắn product base — không có prompt mockup.");
   const base = await baseMockup(db, product);
   if (base.wrap.trim() && !base.wrap.includes("{scene}")) throw new Error("Câu bọc prompt mockup của product base thiếu {scene} — thêm {scene} vào chỗ đặt cảnh ở trang product base.");
-  return { wrap: base.wrap.trim() ? base.wrap : "{scene}", baseRefs: base.refs.slice(0, CT_MOCKUP_REFS_MAX) };
+  // This product's own replacement of the base's pictures wins (asked 2026-11-24, CtProductConfig.mockupBaseRefs).
+  const own = normalizeProductConfig(product.config).mockupBaseRefs;
+  return { wrap: base.wrap.trim() ? base.wrap : "{scene}", baseRefs: own ?? base.refs.slice(0, CT_MOCKUP_REFS_MAX) };
 }
 
 /** POST products/:id/mockups/prompt {} — the editor's "Dùng prompt của product base": drops the product's own blocks. */
@@ -638,6 +640,26 @@ export async function clearOwnMockupScenes(s: CtSession, productId: string): Pro
   if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
   const config = normalizeProductConfig(product.config);
   const { data, error } = await s.supabase.from(CT_TABLES.products).update({ config: { ...config, mockupBlocks: [] } }).eq("id", product.id).select("*").single<CtProduct>();
+  if (error || !data) return jsonError(error?.message ?? "Không lưu được", 500);
+  return NextResponse.json({ product: data });
+}
+
+/**
+ * POST products/:id/mockups/base-refs {refs: string[] | null} — the base's reference pictures for THIS product only
+ * (asked 2026-11-24: drop one, put another in, the base itself untouched). null = back to the base's own.
+ */
+export async function setOwnBaseRefs(s: CtSession, productId: string, raw: unknown): Promise<NextResponse> {
+  const product = await ownedProduct(s, productId);
+  if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
+  const given = raw && typeof raw === "object" ? (raw as { refs?: unknown }).refs : undefined;
+  let refs: string[] | null = null;
+  if (given !== null && given !== undefined) {
+    if (!Array.isArray(given)) return jsonError("refs phải là danh sách url https hoặc null", 400);
+    refs = mockupRefList(given, CT_MOCKUP_BLOCK_REFS_MAX);
+    if (given.length > refs.length) return jsonError(`Ảnh tham chiếu chỉ nhận url https, không trùng, tối đa ${CT_MOCKUP_BLOCK_REFS_MAX} ảnh`, 400);
+  }
+  const config = normalizeProductConfig(product.config);
+  const { data, error } = await s.supabase.from(CT_TABLES.products).update({ config: { ...config, mockupBaseRefs: refs } }).eq("id", product.id).select("*").single<CtProduct>();
   if (error || !data) return jsonError(error?.message ?? "Không lưu được", 500);
   return NextResponse.json({ product: data });
 }

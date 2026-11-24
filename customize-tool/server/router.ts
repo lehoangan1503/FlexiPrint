@@ -81,6 +81,7 @@
  *   POST   products/:id/mockups          multipart: print, scenes (JSON), text (the box, kept on the product) → front mockup on the phôi + AI scenes
  *   POST   products/:id/mockups/blocks   {blocks: [{prompt, refs}]} → {product}: the product's own mockup prompts, pictures per prompt ([] = its base's)
  *   POST   products/:id/mockups/prompt   {} → {product}: drops the product's own mockup scenes (back to its base's)
+ *   POST   products/:id/mockups/base-refs {refs: string[] | null} → {product}: the base's reference pictures for this product only (null = the base's own)
  *   POST   products/:id/mockups/auto     {} → the same, made on the server from the design's content + the product's own prompts (bulk)
  *   POST   products/:id/mockups/samples  { regionId, items: [{ style, name }] } → { samples } a different sample person / pet per
  *                                        item, styled like the zone (server/mockup-samples.ts) — the random custom mockups
@@ -434,6 +435,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return productMockups.autoProductMockups(session, id);
     } else if (sub === "mockups" && path[3] === "blocks" && method === "POST") {
       return productMockups.setOwnMockupBlocks(session, id, await readJson<unknown>(req));
+    } else if (sub === "mockups" && path[3] === "base-refs" && method === "POST") {
+      return productMockups.setOwnBaseRefs(session, id, await readJson<unknown>(req));
     } else if (sub === "mockups" && path[3] === "prompt" && method === "POST") {
       return productMockups.clearOwnMockupScenes(session, id);
     } else if (sub === "mockups" && path[3] === "samples" && method === "POST") {

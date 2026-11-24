@@ -26,7 +26,7 @@ import { previewLoss, sceneJob, startSceneJob } from "../base-scenes";
 import { baseStoreState, setBasePreview } from "../base-republish";
 import { ctUpload } from "../storage";
 import type { CtServiceClient } from "../supabase";
-import { TASK_ARG, json, liveStatus, loadTask, openTask } from "./task-common";
+import { OPT_TASK_ARG, actorOf, json, liveStatus, loadTask, openTask } from "./task-common";
 import type { CtMcpContext, CtMcpTool } from "./tools";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -53,14 +53,25 @@ async function progress(db: CtServiceClient, taskId: string, text: string, image
     .eq("id", taskId);
 }
 
-async function openBase(ctx: CtMcpContext, args: Record<string, unknown>): Promise<{ db: CtServiceClient; task: CtAgentTask; base: CtBaseProduct }> {
+/** The task's base, or (a signed-in user without a task, asked 2026-11-24) base_id; write = its maker or an admin only. */
+async function openBase(ctx: CtMcpContext, args: Record<string, unknown>, write = false): Promise<{ db: CtServiceClient; task: CtAgentTask | null; base: CtBaseProduct; userId: string }> {
+  if (ctx.caller === "user" && !str(args.task_id)) {
+    const { db, userId } = await actorOf(ctx, null);
+    const bid = str(args.base_id);
+    if (!UUID.test(bid)) throw new Error("base_id is not a valid id (list_base_products)");
+    const b = await loadBaseProduct(db, bid);
+    if (!b) throw new Error("No such product base");
+    if (write && !ctx.admin && b.user_id !== userId) throw new Error("Only the base's maker or an admin may change it");
+    return { db, task: null, base: b, userId };
+  }
   const { db, task } = await loadTask(ctx, args.task_id);
   openTask(task);
   const id = str(args.base_id) || task.input.basePreview?.baseId || "";
   if (!UUID.test(id)) throw new Error("base_id is not a valid id");
   const base = await loadBaseProduct(db, id);
   if (!base) throw new Error("No such product base");
-  return { db, task, base };
+  if (!task.user_id) throw new Error("The task has no user");
+  return { db, task, base, userId: task.user_id };
 }
 
 const pct = (l: CtSideLoss | null | undefined) =>
@@ -156,9 +167,9 @@ export const CT_MCP_BASE_PREVIEW_TOOLS: CtMcpTool[] = [
   {
     name: "base_preview_check",
     description:
-      "Base preview task: the product base's store preview and every AI scene made for it — pictures (phôi trơn / scene, overlay), the share of the print sheet each hides per side (top / bottom / left / right; null = no overlay, nothing hidden by it), preset / prompt; the base's facts (name, type, description, print area, khuôn aspect), how many products use it / are on the store, sample products (design picture + latest mockup) for render_base_preview.",
-    inputSchema: { type: "object", properties: { ...TASK_ARG, base_id: { type: "string", description: "Default = the task's base." } }, required: ["task_id"] },
-    callers: ["agent"],
+      "The product base's store preview (a base preview task, or a signed-in user with base_id) and every AI scene made for it — pictures (phôi trơn / scene, overlay), the share of the print sheet each hides per side (top / bottom / left / right; null = no overlay, nothing hidden by it), preset / prompt; the base's facts (name, type, description, print area, khuôn aspect), how many products use it / are on the store, sample products (design picture + latest mockup) for render_base_preview.",
+    inputSchema: { type: "object", properties: { ...OPT_TASK_ARG, base_id: { type: "string", description: "The product base (list_base_products). In a task: default = the task's base." } }, required: [] },
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, base } = await openBase(ctx, args);
       const cfg = base.config;
@@ -181,13 +192,13 @@ export const CT_MCP_BASE_PREVIEW_TOOLS: CtMcpTool[] = [
   {
     name: "render_base_preview",
     description:
-      "Base preview task: a product's real design laid on a scene of the base (default: the current preview) exactly like the storefront preview — phôi, the design in its box, the overlay over it → a picture url to view_image. product_id from base_preview_check samples (default: the first).",
+      "A product's real design laid on a scene of the base (default: the current preview) exactly like the storefront preview — phôi, the design in its box, the overlay over it → a picture url to view_image. product_id from base_preview_check samples (default: the first).",
     inputSchema: {
       type: "object",
-      properties: { ...TASK_ARG, base_id: { type: "string", description: "Default = the task's base." }, scene_id: { type: "string", description: "A scene of the base; omit = the current preview." }, product_id: { type: "string", description: "A product on the base; omit = the newest." } },
-      required: ["task_id"],
+      properties: { ...OPT_TASK_ARG, base_id: { type: "string", description: "The product base (list_base_products). In a task: default = the task's base." }, scene_id: { type: "string", description: "A scene of the base; omit = the current preview." }, product_id: { type: "string", description: "A product on the base; omit = the newest." } },
+      required: [],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
       const { db, base } = await openBase(ctx, args);
       const pid = str(args.product_id) || (await sampleProducts(db, base.id, 1))[0]?.id || "";
@@ -205,34 +216,33 @@ export const CT_MCP_BASE_PREVIEW_TOOLS: CtMcpTool[] = [
   {
     name: "make_base_scene",
     description:
-      "Base preview task: draw one new preview photo for the base in the background (~1–3 min) — prompt = ONLY the place, mood and props (English, 1–3 sentences), or preset home | holiday | minimal. The system adds the product's size, straightness, printable face and keying. Added to the base's scenes (not made the preview). → job_id for base_scene_status.",
+      "Draw one new preview photo for the base in the background (~1–3 min, one paid image call; a user: the base's maker or an admin, the base page's background buttons) — prompt = ONLY the place, mood and props (English, 1–3 sentences), or preset home | holiday | minimal. The system adds the product's size, straightness, printable face and keying. Added to the base's scenes (not made the preview). → job_id for base_scene_status.",
     inputSchema: {
       type: "object",
-      properties: { ...TASK_ARG, base_id: { type: "string", description: "Default = the task's base." }, prompt: { type: "string", description: "Place / mood / props, English." }, preset: { type: "string", description: "home | holiday | minimal (instead of prompt)." } },
-      required: ["task_id"],
+      properties: { ...OPT_TASK_ARG, base_id: { type: "string", description: "The product base (list_base_products). In a task: default = the task's base." }, prompt: { type: "string", description: "Place / mood / props, English." }, preset: { type: "string", description: "home | holiday | minimal (instead of prompt)." } },
+      required: [],
     },
-    callers: ["agent"],
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
-      const { db, task, base } = await openBase(ctx, args);
-      if (!task.user_id) throw new Error("The task has no user");
-      const used = (task.progress ?? []).filter((p) => p.kind === "run" && p.text.startsWith("Vẽ nền")).length;
-      if (used >= MAX_DRAWINGS) throw new Error(`This task already drew ${used} scenes (max ${MAX_DRAWINGS}) — pick the best, or submit_result / fail_task`);
+      const { db, task, base, userId } = await openBase(ctx, args, true);
+      const used = (task?.progress ?? []).filter((p) => p.kind === "run" && p.text.startsWith("Vẽ nền")).length;
+      if (task && used >= MAX_DRAWINGS) throw new Error(`This task already drew ${used} scenes (max ${MAX_DRAWINGS}) — pick the best, or submit_result / fail_task`);
       const prompt = clip(str(args.prompt).trim(), 1000);
       const preset = PRESETS.find((p) => p === str(args.preset)) ?? (prompt ? "custom" : null);
       if (!preset) throw new Error("Give prompt (place / mood / props) or preset");
-      const job = startSceneJob(db, task.user_id, base.id, preset, preset === "custom" ? prompt : "");
-      await progress(db, task.id, `Vẽ nền: ${preset === "custom" ? prompt : preset}`);
+      const job = startSceneJob(db, userId, base.id, preset, preset === "custom" ? prompt : "");
+      if (task) await progress(db, task.id, `Vẽ nền: ${preset === "custom" ? prompt : preset}`);
       return json({ job_id: job, next: "base_scene_status {job_id} (waits ≤ 50 s per call) until done." });
     },
   },
   {
     name: "base_scene_status",
-    description: "Base preview task: a make_base_scene job — waits up to 50 s → done (the scene: scene_id, picture, hidden shares per side), failed (why), or still running (call again).",
-    inputSchema: { type: "object", properties: { ...TASK_ARG, job_id: { type: "string", description: "From make_base_scene." } }, required: ["task_id", "job_id"] },
-    callers: ["agent"],
+    description: "A make_base_scene job — waits up to 50 s → done (the scene: scene_id, picture, hidden shares per side), failed (why), or still running (call again).",
+    inputSchema: { type: "object", properties: { ...OPT_TASK_ARG, job_id: { type: "string", description: "From make_base_scene." } }, required: ["job_id"] },
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
-      const { db, task } = await loadTask(ctx, args.task_id);
-      openTask(task);
+      const own = ctx.caller === "user" && !str(args.task_id) ? null : await loadTask(ctx, args.task_id);
+      if (own) openTask(own.task);
       const id = str(args.job_id);
       const until = Date.now() + 50_000;
       let job = sceneJob(id);
@@ -244,22 +254,21 @@ export const CT_MCP_BASE_PREVIEW_TOOLS: CtMcpTool[] = [
       if (job.status === "running") return json({ status: "running", next: "Call base_scene_status again." });
       if (job.status === "failed") return json({ status: "failed", error: job.error });
       const sc = job.scene!;
-      await progress(db, task.id, `Nền mới · che trên ${pct(sc.loss)?.top ?? "?"} dưới ${pct(sc.loss)?.bottom ?? "?"} trái ${pct(sc.loss)?.left ?? "?"} phải ${pct(sc.loss)?.right ?? "?"}`, [sc.scene.url as string]);
+      if (own) await progress(own.db, own.task.id, `Nền mới · che trên ${pct(sc.loss)?.top ?? "?"} dưới ${pct(sc.loss)?.bottom ?? "?"} trái ${pct(sc.loss)?.left ?? "?"} phải ${pct(sc.loss)?.right ?? "?"}`, [sc.scene.url as string]);
       return json({ status: "done", ...sceneView(sc, null), next: "view_image picture + render_base_preview {scene_id} to judge it." });
     },
   },
   {
     name: "set_base_preview",
     description:
-      "Base preview task — ONLY when the editor's request asks to apply it: make a scene the base's preview. Every product on the base is re-laid on it in flexi2 at once; the store keeps its old preview until the editor clicks \"Cập nhật store\" on the base page.",
-    inputSchema: { type: "object", properties: { ...TASK_ARG, base_id: { type: "string", description: "Default = the task's base." }, scene_id: { type: "string", description: "From base_preview_check / base_scene_status." } }, required: ["task_id", "scene_id"] },
-    callers: ["agent"],
+      "Make a scene the base's preview (the base page's pick of a background; a task: ONLY when the editor's request asks to apply it; a user: the base's maker or an admin). Every product on the base is re-laid on it in flexi2 at once; the store keeps its old preview until the editor clicks \"Cập nhật store\" on the base page.",
+    inputSchema: { type: "object", properties: { ...OPT_TASK_ARG, base_id: { type: "string", description: "The product base (list_base_products). In a task: default = the task's base." }, scene_id: { type: "string", description: "From base_preview_check / base_scene_status." } }, required: ["scene_id"] },
+    callers: ["agent", "user"],
     run: async (ctx, args) => {
-      const { db, task, base } = await openBase(ctx, args);
-      if (!task.user_id) throw new Error("The task has no user");
-      const s = await serviceSession(db, task.user_id);
+      const { db, task, base, userId } = await openBase(ctx, args, true);
+      const s = await serviceSession(db, userId);
       const r = await setBasePreview(s, base.id, str(args.scene_id));
-      await progress(db, task.id, `Đặt làm preview của base · ${r.reapplied} sản phẩm cập nhật trong flexi2${r.failed.length ? ` · lỗi ${r.failed.length}` : ""}`);
+      if (task) await progress(db, task.id, `Đặt làm preview của base · ${r.reapplied} sản phẩm cập nhật trong flexi2${r.failed.length ? ` · lỗi ${r.failed.length}` : ""}`);
       return json({ ok: true, ...r, note: "The store still shows the old preview until the editor clicks “Cập nhật store” on the base page — tell them." });
     },
   },

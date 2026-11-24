@@ -561,7 +561,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "update_base_product",
     description:
-      "Change an EXISTING product base in place (only its maker or an admin) — the way to fix or change a base; never create_base_product again for a change. Give only what changes: name, product_type, description, material, print_area, template_id ('' = no khuôn), options (the variants: rows of buttons on Shopify, e.g. Material × Size — the whole list), price_table (prices only; edits the base's own table in place, a table other bases share is copied first) or price_table_id (switch to another table) — a change of options / prices saves nothing on the first call: it answers a preview + confirm_token, show it to the user, ask, then call again with the same arguments + confirm_token; mockup {scenes?, wrap?, refs?, size_charts?} (only the keys given). Every product on the base is laid on it again. → the base as list_base_products shows it.",
+      "Change an EXISTING product base in place (only its maker or an admin) — the way to fix or change a base; never create_base_product again for a change. Give only what changes: name, product_type, description, material, print_area, template_id ('' = no khuôn), options (the variants: rows of buttons on Shopify, e.g. Material × Size — the whole list), price_table (prices only; edits the base's own table in place, a table other bases share is copied first) or price_table_id (switch to another table) — a change of options / prices saves nothing on the first call: it answers a preview + confirm_token, show it to the user, ask, then call again with the same arguments + confirm_token; mockup {scenes?, wrap?, refs?, size_charts?} (only the keys given); print_areas (every side), cut (khuon | alpha | none, border, hanging hole), preview (the store preview photo: url, box, overlay), fulfillment, notes — the base page's other fields. Every product on the base is laid on it again. → the base as list_base_products shows it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -579,6 +579,11 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         confirm_token: CONFIRM_ARG,
         mockup: { type: "object", description: "{scenes?, wrap?, refs?: [urls ≤ 4], size_charts?: [urls ≤ 4]} — only the keys given change." },
         image_url: { type: "string", description: "A new fixed picture for the base (https; a file on this machine → flexiprint_upload_image first)." },
+        print_areas: { type: "array", items: { type: "object" }, description: "EVERY print area (sides the factory prints), in order: [{id?, name, width, height, dpi?}] px — replaces the list (≤ 8; keep an area's id to keep it)." },
+        cut: { type: "object", description: "How the piece is cut (the base page's Cắt): {mode?: khuon | alpha | none, border_mm?, hole?, hole_size?} — only the keys given change. alpha = cut along the artwork (clear plate, border_mm around it, hole = a hanging tab)." },
+        preview: { type: "object", description: "The store preview photo (the base page's Ảnh xem trước): {url?, width?, height?, box?: {x, y, w, h} = where the print sheet sits on it (px of the photo), overlay?: url ('' = none)} — only the keys given change. To pick an AI background use set_base_preview." },
+        fulfillment: { type: "object", description: "{provider?, catalog_id?} — the fulfiller and its product id." },
+        notes: { type: "string", description: "The base's notes (the whole text)." },
       },
       required: ["base_product_id"],
     },
@@ -668,6 +673,49 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         raw.priceTableId = priceTableId;
         changed.push("price_table");
       }
+      if (Array.isArray(args.print_areas)) {
+        const areas = list(args.print_areas);
+        if (!areas.length || areas.length !== args.print_areas.length) throw new Error("print_areas: a list of {name, width, height, dpi?}");
+        raw.printAreas = areas.map((a) => ({ id: a.id, name: a.name, width: a.width, height: a.height, dpi: a.dpi }));
+        changed.push("print_areas");
+      }
+      const cut = obj(args.cut);
+      if (cut) {
+        const mode = cut.mode === undefined ? now.cut.mode : cut.mode;
+        if (mode !== "khuon" && mode !== "alpha" && mode !== "none") throw new Error("cut.mode: khuon | alpha | none");
+        raw.cut = {
+          ...now.cut,
+          mode,
+          ...(typeof cut.border_mm === "number" ? { borderMm: cut.border_mm } : {}),
+          ...(typeof cut.hole === "boolean" ? { hole: cut.hole } : {}),
+          ...(typeof cut.hole_size === "number" ? { holeSize: cut.hole_size } : {}),
+        };
+        changed.push("cut");
+      }
+      const pv = obj(args.preview);
+      if (pv) {
+        const p: Record<string, unknown> = { ...now.preview };
+        if (pv.url !== undefined) {
+          if (pv.url !== null && !(typeof pv.url === "string" && /^https:\/\/\S+$/.test(pv.url))) throw new Error("preview.url: an https picture url (null = none)");
+          p.url = pv.url;
+        }
+        for (const k of ["width", "height"] as const) if (typeof pv[k] === "number") p[k] = pv[k];
+        const box = obj(pv.box);
+        if (box) p.box = { ...now.preview.box, ...box };
+        if (typeof pv.overlay === "string") {
+          if (pv.overlay && !/^https:\/\/\S+$/.test(pv.overlay)) throw new Error("preview.overlay: an https picture url ('' = none)");
+          if (pv.overlay) p.overlay = pv.overlay;
+          else delete p.overlay;
+        }
+        raw.preview = p;
+        changed.push("preview");
+      }
+      const ful = obj(args.fulfillment);
+      if (ful) {
+        raw.fulfillment = { provider: typeof ful.provider === "string" ? ful.provider : now.fulfillment.provider, catalogId: typeof ful.catalog_id === "string" ? ful.catalog_id : now.fulfillment.catalogId };
+        changed.push("fulfillment");
+      }
+      if (typeof args.notes === "string") { raw.notes = args.notes; changed.push("notes"); }
       const mk = obj(args.mockup);
       if (mk) {
         const m = { ...now.mockup };

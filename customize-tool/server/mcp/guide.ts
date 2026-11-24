@@ -112,8 +112,20 @@ What the web page does, a tool does — through the same handler, so the same ow
   = preview + confirm_token, save only on their yes); update_price_table changes every base using the table (one base
   only → update_base_product price_table, which copies a shared table); delete_price_table (ask first).
 - AI photo styles of the library: list_ai_styles, update_ai_style (its prompt reaches customers at once).
-- Base preview tasks (kind "base_preview", from the Product base page): base_preview_check → make_base_scene →
-  base_scene_status → render_base_preview (a real design on it) → set_base_preview ONLY when the request says apply.
+- Design: get_product_design (the whole saved design: layers, options, settings, versions) → save_product_design
+  (regions / items = whole lists, config = only the keys given; = the editor's "Lưu thiết kế"); prefer the narrower
+  tools when one fits. clone_version (+ Version nhân bản: picture + layers copied as a new version, saved).
+- Product base page: update_base_product also print_areas (every side), cut (khuon | alpha | none, border, hanging
+  hole), preview (photo url, box = where the sheet sits, overlay), fulfillment, notes; clone_base_product (Nhân bản —
+  try a change without moving products on Shopify). Import (admin, ask first): list_fulfiller_catalog {provider
+  printbelle | merchize} → import_base_product (merchize needs teeinblue_connection); refresh_base_from_fulfiller
+  (Khuôn + phôi từ xưởng). Pictures (paid AI calls — the user's yes first): make_base_khuon_phoi (phôi trơn from the
+  fulfiller's), base_scenes_auto {start: true} (the 3 ready backgrounds; without start = how it goes), make_base_scene
+  {base_id, prompt | preset} → base_scene_status. Then base_preview_check / render_base_preview (a real design on a
+  scene) → set_base_preview {base_id, scene_id}. set_base_assembly (Ráp mảnh may: sewn pieces, swap, off). After the
+  preview / assembly changed: republish_base (no confirm = which products show an old preview on the store; confirm
+  true = Cập nhật store).
+- Base preview tasks (kind "base_preview"): the same tools with task_id; set_base_preview ONLY when the request says apply.
 - Bộ nhân vật, besides the steps above: char_get_brief (the brief only, small), char_plan_pictures (your 3b plan),
   char_refine_master (an in-place edit of a master), char_use_edit (back to an earlier, better 3b attempt),
   char_make_blank (step 4 phôi trơn). Drawn pose by pose: char_draw_poses → char_compose (each version's placement) →

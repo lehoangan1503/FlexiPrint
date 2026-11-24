@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { BookOpen } from "lucide-react";
 import type { UserProfile } from "@/types/auth";
 import { UserDropdown } from "@/components/user-dropdown";
 import { FirstLoginDialog } from "@/components/first-login-dialog";
@@ -54,14 +55,15 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-20 border-b bg-card/80 backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:px-6 lg:px-8">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-6 lg:px-8">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.svg" alt="" className="h-7 w-7" />
-          <h1 className="text-lg font-semibold">FlexiPrint</h1>
+          <img src="/logo.svg" alt="" className="h-7 w-7 shrink-0" />
+          <h1 className="hidden text-lg font-semibold sm:block">FlexiPrint</h1>
           <StoreSwitch onChange={(st) => setStore(st.id)} />
-          <div className="ml-auto flex items-center gap-2">
-            <a href="/news" className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-foreground" title="Bài viết · hướng dẫn">
-              Hướng dẫn
+          <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
+            <a href="/news" className="flex h-10 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground" title="Bài viết · hướng dẫn" aria-label="Hướng dẫn">
+              <BookOpen className="h-4 w-4" />
+              <span className="hidden sm:inline">Hướng dẫn</span>
             </a>
             <ImportStatus />
             <ThemeToggle />
@@ -69,13 +71,13 @@ export function DashboardClient({ profile, isSuperAdmin }: { profile: UserProfil
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <nav className="mb-6 flex gap-6 border-b">
+      <main className="mx-auto max-w-7xl px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
+        <nav className="-mx-3 mb-6 flex gap-5 overflow-x-auto border-b px-3 [scrollbar-width:none] sm:mx-0 sm:gap-6 sm:px-0">
           {TABS.map(([k, label]) => (
             <button
               key={k}
               onClick={() => pick(k)}
-              className={`-mb-px border-b-2 pb-2.5 text-lg font-semibold ${tab === k ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+              className={`-mb-px shrink-0 whitespace-nowrap border-b-2 pb-2.5 text-base font-semibold sm:text-lg ${tab === k ? "border-foreground text-foreground" : "border-transparent text-foreground/70 hover:text-foreground"}`}
             >
               {label}
             </button>

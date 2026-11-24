@@ -40,7 +40,7 @@ function Shot({ src, caption, tone }: { src: string; caption: string; tone?: "tb
     <figure className="overflow-hidden rounded-xl border bg-card shadow-sm">
       <div className="flex items-center gap-2 border-b px-3 py-1.5 text-xs">
         {tone && (
-          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${tone === "tb" ? "bg-blue-600 text-white" : "bg-emerald-600 text-white"}`}>{tone === "tb" ? "Teeinblue" : "flexi2"}</span>
+          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${tone === "tb" ? "bg-blue-700 text-white" : "bg-emerald-700 text-white"}`}>{tone === "tb" ? "Teeinblue" : "flexi2"}</span>
         )}
         <span className="text-muted-foreground">{caption}</span>
       </div>
@@ -253,7 +253,7 @@ export function GuidePage() {
     <div className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-20 border-b bg-card/90 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4">
-          <Link href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">
+          <Link href="/dashboard" className="flex min-h-10 shrink-0 items-center text-sm text-muted-foreground hover:text-foreground">
             ← Dashboard
           </Link>
           <h1 className="truncate font-semibold">Hướng dẫn: Product base · Artwork · Sản phẩm</h1>
@@ -362,9 +362,9 @@ export function GuidePage() {
                 <thead className="bg-muted text-left">
                   <tr>
                     <th className="p-2">Thứ</th>
-                    <th className="p-2 text-amber-600">Product base</th>
-                    <th className="p-2 text-violet-600">Artwork</th>
-                    <th className="p-2 text-sky-600">Sản phẩm</th>
+                    <th className="p-2 text-amber-700 dark:text-amber-300">Product base</th>
+                    <th className="p-2 text-violet-700 dark:text-violet-300">Artwork</th>
+                    <th className="p-2 text-sky-700 dark:text-sky-300">Sản phẩm</th>
                   </tr>
                 </thead>
                 <tbody className="[&_td]:border-t [&_td]:p-2 [&_td]:align-top">
@@ -408,7 +408,7 @@ export function GuidePage() {
             <div className="hidden grid-cols-[150px_minmax(0,1fr)_minmax(0,1fr)] gap-3 px-1 text-xs font-semibold text-muted-foreground md:grid">
               <span>Phần</span>
               <span className="text-blue-600">Teeinblue</span>
-              <span className="text-emerald-600">flexi2</span>
+              <span className="text-emerald-700 dark:text-emerald-300">flexi2</span>
             </div>
             <div className="space-y-3">
               {MATCHES.map((m) => (
@@ -420,7 +420,7 @@ export function GuidePage() {
                     {m.tbShot && <Thumb src={m.tbShot} alt={`Teeinblue — ${m.part}`} />}
                   </div>
                   <div className="text-sm">
-                    <span className="mr-1 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-semibold text-white md:hidden">flexi2</span>
+                    <span className="mr-1 rounded bg-emerald-700 px-1.5 py-0.5 text-[10px] font-semibold text-white md:hidden">flexi2</span>
                     {m.fx}
                     {m.fxShot && <Thumb src={m.fxShot} alt={`flexi2 — ${m.part}`} />}
                   </div>

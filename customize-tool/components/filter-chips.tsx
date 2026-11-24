@@ -21,7 +21,7 @@ export function FilterChips<T extends string | number>({ value, onChange, option
           key={String(o.value)}
           onClick={() => onChange(o.value)}
           title={o.title}
-          className={cx("h-8 rounded-full border px-3 text-xs font-medium", value === o.value ? "border-foreground bg-foreground text-background" : "hover:bg-accent")}
+          className={cx("h-8 rounded-full border px-3 text-xs font-medium pointer-coarse:h-10 pointer-coarse:text-sm", value === o.value ? "border-foreground bg-foreground text-background" : "hover:bg-accent")}
         >
           {o.label}
         </button>

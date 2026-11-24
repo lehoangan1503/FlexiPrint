@@ -23,7 +23,7 @@ function Inline({ text }: { text: string }) {
         const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(p);
         if (link)
           return (
-            <a key={i} href={link[2]} className="text-sky-600 underline-offset-2 hover:underline">
+            <a key={i} href={link[2]} className="text-sky-700 dark:text-sky-300 underline-offset-2 hover:underline">
               {link[1]}
             </a>
           );
@@ -65,7 +65,7 @@ function Block({ b }: { b: CtNewsBlock }) {
       const Icon = warn ? TriangleAlert : Info;
       return (
         <div className={`flex gap-2.5 rounded-xl border p-3 text-sm leading-relaxed ${warn ? "border-amber-500/40 bg-amber-500/10" : "border-sky-500/40 bg-sky-500/10"}`}>
-          <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${warn ? "text-amber-600" : "text-sky-600"}`} />
+          <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${warn ? "text-amber-700 dark:text-amber-300" : "text-sky-700 dark:text-sky-300"}`} />
           <div>
             <Inline text={b.text} />
           </div>
@@ -108,7 +108,7 @@ function Shell({ back, title, wide, children }: { back: string; title: string; w
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-20 border-b bg-card/80 backdrop-blur-sm">
         <div className={`mx-auto flex h-14 ${width} items-center gap-3 px-4`}>
-          <Link href={back} className="rounded p-1.5 hover:bg-accent">
+          <Link href={back} className="flex h-9 w-9 shrink-0 items-center justify-center rounded hover:bg-accent pointer-coarse:h-10 pointer-coarse:w-10" aria-label="Quay lại">
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <Newspaper className="h-4 w-4 text-muted-foreground" />
@@ -147,7 +147,7 @@ export function NewsList({ articles }: { articles: CtNewsArticle[] }) {
                     )}
                   </div>
                   <div className="flex flex-1 flex-col gap-2 p-4">
-                    <h2 className="font-semibold leading-snug group-hover:text-sky-600">{a.title}</h2>
+                    <h2 className="font-semibold leading-snug group-hover:text-sky-700 dark:text-sky-300">{a.title}</h2>
                     <p className="line-clamp-3 text-sm text-muted-foreground">{a.summary}</p>
                     <div className="mt-auto flex items-center gap-1.5 pt-2 text-xs text-muted-foreground">
                       <CalendarDays className="h-3.5 w-3.5" /> {dateText(a.createdAt)}

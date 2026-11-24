@@ -63,7 +63,7 @@ const OWNER_ON = "border-indigo-600 bg-indigo-600 text-white";
 const STATUS_LABEL: Record<CtProductStatus, string> = { draft: "Nháp", ready: "Sẵn sàng", archived: "Lưu trữ" };
 const STATUS_CLASS: Record<CtProductStatus, string> = {
   draft: "bg-muted text-muted-foreground",
-  ready: "bg-emerald-500/15 text-emerald-600",
+  ready: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
   archived: "bg-neutral-500/15 text-neutral-500",
 };
 
@@ -266,9 +266,9 @@ export function CustomizeProductList({
         {tabs}
         <div className="ml-auto flex flex-wrap items-center gap-3">
           {kind !== "artwork" && <FilterChips value={filter} onChange={setFilter} options={FILTERS} />}
-          <div className="relative">
+          <div className="relative w-full sm:w-auto">
             <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <CtInput className="h-9 w-56 pl-8" placeholder={`Tìm ${word}…`} value={search} onChange={(e) => setSearch(e.target.value)} />
+            <CtInput className="h-9 w-full pl-8 sm:w-56" placeholder={`Tìm ${word}…`} aria-label={`Tìm ${word}`} value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
           {actions}
           {kind && (
@@ -325,7 +325,7 @@ export function CustomizeProductList({
       {kind === "product" && shown.length > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm">
           <button
-            className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="min-h-8 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:min-h-10"
             onClick={() => setPicked(pickedRows.length === shown.length ? new Set() : new Set(shown.map((p) => p.id)))}
           >
             {pickedRows.length === shown.length ? "Bỏ chọn tất cả" : `Chọn tất cả (${shown.length})`}
@@ -355,7 +355,7 @@ export function CustomizeProductList({
           <ul className="max-h-64 space-y-1 overflow-y-auto text-xs">
             {bulk.lines.map((l) => (
               <li key={l.id} className="flex gap-2">
-                <span className={cx("w-16 shrink-0 font-medium", l.state === "ok" ? "text-emerald-600" : l.state === "skip" ? "text-amber-600" : l.state === "fail" ? "text-destructive" : "text-muted-foreground")}>
+                <span className={cx("w-16 shrink-0 font-medium", l.state === "ok" ? "text-emerald-700 dark:text-emerald-300" : l.state === "skip" ? "text-amber-700 dark:text-amber-300" : l.state === "fail" ? "text-destructive" : "text-muted-foreground")}>
                   {l.state === "ok" ? "Xong" : l.state === "skip" ? "Bỏ qua" : l.state === "fail" ? "Lỗi" : l.state === "run" ? "Đang chạy" : "Chờ"}
                 </span>
                 <Link href={`${CT_CONFIG.basePath}/${l.id}`} className="w-48 shrink-0 truncate hover:underline">
@@ -398,8 +398,8 @@ export function CustomizeProductList({
             return (
               <div key={p.id} className={cx("group relative overflow-hidden rounded-xl border bg-card", picked.has(p.id) && "ring-2 ring-sky-500")}>
                 {kind === "product" && (
-                  <label className="absolute left-2 top-2 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded bg-white/90 shadow ring-1 ring-black/20" title="Chọn để tạo mockup / deploy hàng loạt">
-                    <input type="checkbox" className="h-4 w-4 cursor-pointer accent-sky-500" checked={picked.has(p.id)} onChange={() => toggle(p.id)} />
+                  <label className="absolute left-2 top-2 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded bg-white/90 shadow ring-1 ring-black/20 pointer-coarse:h-10 pointer-coarse:w-10" title="Chọn để tạo mockup / deploy hàng loạt">
+                    <input type="checkbox" aria-label={`Chọn ${p.name}`} className="h-4 w-4 cursor-pointer accent-sky-500 pointer-coarse:h-6 pointer-coarse:w-6" checked={picked.has(p.id)} onChange={() => toggle(p.id)} />
                   </label>
                 )}
                 <Link href={`${CT_CONFIG.basePath}/${p.id}`} className="block aspect-square" style={CHECKER_STYLE}>
@@ -412,38 +412,38 @@ export function CustomizeProductList({
                 <div className="flex items-center gap-2 p-2.5">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{p.name}</div>
-                    {p.base_product && <div className="truncate text-[10px] text-muted-foreground">{p.base_product.name}</div>}
-                    {p.artwork_from && <div className="truncate text-[10px] text-muted-foreground">artwork “{p.artwork_from.name}”</div>}
+                    {p.base_product && <div className="truncate text-xs text-muted-foreground">{p.base_product.name}</div>}
+                    {p.artwork_from && <div className="truncate text-xs text-muted-foreground">artwork “{p.artwork_from.name}”</div>}
                     {p.owner_name && (
                       <div className="mt-0.5">
-                        <span className={cx("inline-block max-w-full truncate rounded px-1.5 py-0.5 align-top text-[11px] font-semibold", OWNER_BADGE)} title={`Người đăng: ${p.owner_name}`}>
+                        <span className={cx("inline-block max-w-full truncate rounded px-1.5 py-0.5 align-top text-xs font-semibold", OWNER_BADGE)} title={`Người đăng: ${p.owner_name}`}>
                           {p.owner_name}
                         </span>
                       </div>
                     )}
                     <div className="mt-0.5 flex flex-wrap items-center gap-1.5 whitespace-nowrap">
-                      <span className={cx("rounded px-1.5 py-0.5 text-[10px] font-medium", STATUS_CLASS[p.status])}>{STATUS_LABEL[p.status]}</span>
-                      {kind !== "artwork" && p.shopify && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-600">Đã deploy</span>}
+                      <span className={cx("rounded px-1.5 py-0.5 text-xs font-medium", STATUS_CLASS[p.status])}>{STATUS_LABEL[p.status]}</span>
+                      {kind !== "artwork" && p.shopify && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-300">Đã deploy</span>}
                       {p.artwork_from?.outdated && (
-                        <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600" title={`Artwork “${p.artwork_from.name}” đã có bản mới — mở sản phẩm để cập nhật`}>
+                        <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300" title={`Artwork “${p.artwork_from.name}” đã có bản mới — mở sản phẩm để cập nhật`}>
                           Artwork mới
                         </span>
                       )}
                       {!!p.artwork_users && (
-                        <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-medium text-violet-600" title="Số sản phẩm làm từ artwork này">
+                        <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-xs font-medium text-violet-700 dark:text-violet-300" title="Số sản phẩm làm từ artwork này">
                           {p.artwork_users} sản phẩm
                         </span>
                       )}
-                      <span className="text-[10px] text-muted-foreground">{new Date(p.created_at).toLocaleDateString("vi-VN")}</span>
+                      <span className="text-xs text-muted-foreground">{new Date(p.created_at).toLocaleDateString("vi-VN")}</span>
                     </div>
                   </div>
                   {kind === "artwork" && (
-                    <button className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setFromArtwork({ id: p.id, name: p.name })} title="Tạo sản phẩm từ artwork này (chọn product base)">
+                    <button className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:p-2.5" onClick={() => setFromArtwork({ id: p.id, name: p.name })} title="Tạo sản phẩm từ artwork này (chọn product base)" aria-label="Tạo sản phẩm từ artwork này">
                       <ShoppingBag className="h-4 w-4" />
                     </button>
                   )}
                   {mine && (
-                    <button className="rounded p-1 text-destructive opacity-0 hover:bg-accent group-hover:opacity-100" onClick={() => remove(p)} title="Xoá">
+                    <button className="rounded p-1 text-destructive hover:bg-accent pointer-coarse:p-2.5 pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100" onClick={() => remove(p)} title="Xoá" aria-label="Xoá">
                       <Trash2 className="h-4 w-4" />
                     </button>
                   )}

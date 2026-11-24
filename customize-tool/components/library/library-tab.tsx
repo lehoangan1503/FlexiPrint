@@ -94,7 +94,7 @@ export function LibraryTab({ currentUserId, admin }: { currentUserId: string; ad
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex rounded-md border p-0.5">
             {TABS.map(([k, label]) => (
-              <button key={k} onClick={() => pick(k)} className={cx("rounded px-3 py-1 text-sm font-medium", tab === k ? "bg-foreground text-background" : "hover:bg-accent")}>
+              <button key={k} onClick={() => pick(k)} className={cx("rounded px-3 py-1 text-sm font-medium pointer-coarse:min-h-10", tab === k ? "bg-foreground text-background" : "hover:bg-accent")}>
                 {label}
               </button>
             ))}
@@ -198,9 +198,9 @@ function SetGrid({ currentUserId, admin, onOpen, onError }: { currentUserId: str
           onChange={setKindFilter}
           options={[{ value: "all", label: "Tất cả" }, ...SET_KINDS.map((k) => ({ value: k as KindFilter, label: `Bộ ${SET_KIND_INFO[k].label.toLowerCase()}`, title: SET_KIND_INFO[k].short }))]}
         />
-        <div className="relative ml-auto">
+        <div className="relative w-full sm:ml-auto sm:w-auto">
           <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <CtInput className="h-9 w-56 pl-8" placeholder="Tìm bộ clipart…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <CtInput className="h-9 w-full pl-8 sm:w-56" placeholder="Tìm bộ clipart…" aria-label="Tìm bộ clipart" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
       </div>
       {projects === null ? (
@@ -261,11 +261,11 @@ function SetCard({ project: p, thumb, options, mine, onOpen, onRemove }: { proje
       </div>
       <div className="p-2.5">
         <div className="truncate text-sm font-medium">{p.name}</div>
-        <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
-          <span className="rounded bg-orange-500/15 px-1.5 py-0.5 font-medium text-orange-600" title={SET_KIND_INFO[k].short}>
+        <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="rounded bg-orange-500/15 px-1.5 py-0.5 font-medium text-orange-700 dark:text-orange-300" title={SET_KIND_INFO[k].short}>
             {SET_KIND_INFO[k].label}
           </span>
-          {isCum(p) && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 font-medium text-sky-600" title={`Tách từ “${p.brief.extracted?.productName ?? ""}”`}>Cụm</span>}
+          {isCum(p) && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 font-medium text-sky-700 dark:text-sky-300" title={`Tách từ “${p.brief.extracted?.productName ?? ""}”`}>Cụm</span>}
           {!ready && <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">Đang làm</span>}
           <span className="text-muted-foreground">{new Date(p.updated_at).toLocaleDateString("vi-VN")}</span>
         </div>
@@ -284,7 +284,7 @@ function SetCard({ project: p, thumb, options, mine, onOpen, onRemove }: { proje
         </Link>
       )}
       {mine && (
-        <button className="absolute right-2 top-2 rounded bg-background/80 p-1 text-destructive opacity-0 hover:bg-background group-hover:opacity-100" onClick={onRemove} title="Xoá">
+        <button className="absolute right-2 top-2 rounded bg-background/80 p-1 text-destructive hover:bg-background pointer-coarse:p-2.5 pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100" onClick={onRemove} title="Xoá" aria-label="Xoá">
           <Trash2 className="h-4 w-4" />
         </button>
       )}

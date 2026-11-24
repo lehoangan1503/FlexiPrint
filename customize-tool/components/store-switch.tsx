@@ -54,12 +54,13 @@ export function StoreSwitch({ onChange }: { onChange: (store: CtStore) => void }
   if (stores.length < 2 && !shown) return null;
   return (
     <div className="flex items-center gap-1.5">
-      <Store className="h-4 w-4 text-muted-foreground" />
+      <Store className="hidden h-4 w-4 text-muted-foreground sm:block" />
       <CtSelect<string>
         value={current}
         onChange={(v) => void pick(v)}
         disabled={busy}
-        className="h-8 w-40 font-medium"
+        className="h-8 w-28 font-medium sm:w-40"
+        ariaLabel="Store đang làm"
         options={stores.map((x) => ({ value: x.id, label: x.name }))}
       />
       {shown && !shown.configured && (
@@ -89,7 +90,7 @@ export function StoreTag({ storeId }: { storeId?: string }) {
   if (stores.length < 2) return null;
   const st = stores.find((x) => x.id === storeId) ?? stores[0];
   return (
-    <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-amber-600" title="Store của artwork / sản phẩm này (đổi store ở dashboard)">
+    <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300" title="Store của artwork / sản phẩm này (đổi store ở dashboard)">
       {st.name}
     </span>
   );

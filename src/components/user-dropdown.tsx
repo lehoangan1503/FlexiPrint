@@ -68,7 +68,8 @@ export function UserDropdown({ profile: initialProfile, isSuperAdmin = false }: 
         variant="ghost"
         size="sm"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 max-w-[180px]"
+        className="flex items-center gap-1.5 max-w-[180px] px-2 sm:px-4"
+        aria-label={`Tài khoản: ${displayName}`}
       >
         <User className="h-4 w-4 shrink-0" />
         <span className="truncate text-sm hidden sm:inline">{displayName}</span>

@@ -57,14 +57,14 @@ export function BaseProductsTab({ admin }: { admin: boolean }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <div className="relative shrink-0">
+      <p className="text-sm text-muted-foreground">Loại sản phẩm bán: biến thể + giá (bảng giá Notion), khuôn in + phôi. Mockup ở đây là mockup của các sản phẩm làm từ nó.</p>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative w-full sm:w-56">
           <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <CtInput className="h-9 w-56 pl-8" placeholder="Tìm product base…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <CtInput className="h-9 w-full pl-8" placeholder="Tìm product base…" aria-label="Tìm product base" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <p className="text-sm text-muted-foreground">Loại sản phẩm bán: biến thể + giá (bảng giá Notion), khuôn in + phôi. Mockup ở đây là mockup của các sản phẩm làm từ nó.</p>
         {admin && (
-          <div className="ml-auto flex shrink-0 gap-2">
+          <div className="flex shrink-0 gap-2 sm:ml-auto">
             <CtButton variant="outline" onClick={() => setCreateOpen(true)}>
               <Plus className="h-4 w-4" /> Product base
             </CtButton>
@@ -98,14 +98,14 @@ export function BaseProductsTab({ admin }: { admin: boolean }) {
                 </div>
                 <div className="space-y-0.5 p-2.5">
                   <div className="truncate text-sm font-medium">{b.name}</div>
-                  <div className="truncate text-[11px] text-muted-foreground">{priceSummary(b)}</div>
+                  <div className="truncate text-xs text-muted-foreground">{priceSummary(b)}</div>
                   {b.config.source && (
-                    <div className="truncate text-[11px] text-muted-foreground">
+                    <div className="truncate text-xs text-muted-foreground">
                       {b.config.fulfillment.provider} {b.config.source.catalogId}
                       {costRange(b)}
                     </div>
                   )}
-                  <div className="text-[11px] text-muted-foreground">
+                  <div className="text-xs text-muted-foreground">
                     {b.products} sản phẩm · {b.mockups} mockup
                   </div>
                 </div>

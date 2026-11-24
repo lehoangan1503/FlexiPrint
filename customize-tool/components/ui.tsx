@@ -37,9 +37,9 @@ const VARIANT: Record<ButtonVariant, string> = {
 };
 
 const SIZE: Record<ButtonSize, string> = {
-  sm: "h-8 px-2.5 text-xs gap-1.5",
-  md: "h-9 px-3.5 text-sm gap-2",
-  icon: "h-8 w-8 justify-center",
+  sm: "h-8 px-2.5 text-xs gap-1.5 pointer-coarse:h-10",
+  md: "h-9 px-3.5 text-sm gap-2 pointer-coarse:h-10",
+  icon: "h-8 w-8 justify-center pointer-coarse:h-10 pointer-coarse:w-10",
 };
 
 export const CtButton = React.forwardRef<HTMLButtonElement, CtButtonProps>(function CtButton(
@@ -70,7 +70,7 @@ export const CtInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttribu
     <input
       ref={ref}
       className={cx(
-        "h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none focus:ring-2 focus:ring-sky-500/60",
+        "h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none focus:ring-2 focus:ring-sky-500/60 pointer-coarse:h-10 pointer-coarse:text-base",
         className,
       )}
       {...props}
@@ -84,7 +84,7 @@ export const CtTextarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHT
       <textarea
         ref={ref}
         className={cx(
-          "w-full rounded-md border border-input bg-transparent px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-sky-500/60",
+          "w-full rounded-md border border-input bg-transparent px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-sky-500/60 pointer-coarse:text-base",
           className,
         )}
         {...props}
@@ -109,6 +109,7 @@ export function CtSelect<T extends string>({
   className,
   placeholder = "Chọn…",
   disabled,
+  ariaLabel,
 }: {
   value: T;
   onChange: (v: T) => void;
@@ -116,13 +117,16 @@ export function CtSelect<T extends string>({
   className?: string;
   placeholder?: string;
   disabled?: boolean;
+  /** Name read by screen readers when no visible label sits next to the box. */
+  ariaLabel?: string;
 }) {
   const known = options.some((o) => o.value === value);
   return (
     <SelectPrimitive.Root value={known ? value : undefined} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
       <SelectPrimitive.Trigger
+        aria-label={ariaLabel}
         className={cx(
-          "flex h-8 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-2 text-sm",
+          "flex h-8 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-2 text-sm pointer-coarse:h-10 pointer-coarse:text-base",
           "hover:border-muted-foreground/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60",
           "disabled:cursor-not-allowed disabled:opacity-50 data-[placeholder]:text-muted-foreground [&>span]:truncate [&>span]:text-left",
           className,
@@ -280,12 +284,23 @@ export function CtAutoWidthInput({
  * Labelled field. A <div>, not a <label>: a wrapping label re-dispatches clicks
  * to the first control inside, which re-toggles Radix triggers.
  */
+type Named = { "aria-label"?: string; ariaLabel?: string };
+/** Give a lone CtInput / CtTextarea / CtSelect / input its field name; a wrapper div (several boxes) is left alone. */
+function nameField(children: React.ReactNode, label: string): React.ReactNode {
+  if (!React.isValidElement<Named>(children)) return children;
+  const t = children.type;
+  if (typeof t === "string" && !["input", "textarea", "select"].includes(t)) return children;
+  if (children.props["aria-label"] || children.props.ariaLabel) return children;
+  return React.cloneElement(children, t === CtSelect ? { ariaLabel: label } : { "aria-label": label });
+}
+
 export function CtField({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
     <div className="block space-y-1">
-      <span className="block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
-      {children}
-      {hint && <span className="block text-[11px] leading-snug text-muted-foreground">{hint}</span>}
+      <span className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+      {/* A lone input/select gets the field name for screen readers (the label above is a plain span). */}
+      {nameField(children, label)}
+      {hint && <span className="block text-xs leading-snug text-muted-foreground">{hint}</span>}
     </div>
   );
 }

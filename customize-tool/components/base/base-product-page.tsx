@@ -61,7 +61,7 @@ function Section({ title, children, right, fold, folded = false, summary }: { ti
     <section className="rounded-xl border bg-card p-4">
       <div className={cx("flex items-center gap-2", !closed && "mb-3")}>
         {fold ? (
-          <button type="button" onClick={toggle} className="flex min-w-0 items-center gap-1.5 text-left" title={closed ? "Mở rộng" : "Thu gọn"} aria-expanded={!closed}>
+          <button type="button" onClick={toggle} className="flex min-h-8 min-w-0 items-center gap-1.5 text-left pointer-coarse:min-h-10" title={closed ? "Mở rộng" : "Thu gọn"} aria-expanded={!closed}>
             {closed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
             <h2 className="text-sm font-semibold">{title}</h2>
           </button>
@@ -70,7 +70,7 @@ function Section({ title, children, right, fold, folded = false, summary }: { ti
         )}
         {closed && summary && <span className="min-w-0 truncate text-xs text-foreground/75">{summary}</span>}
         {fold && closed ? (
-          <button type="button" onClick={toggle} className="ml-auto shrink-0 rounded border px-2 py-0.5 text-xs font-medium hover:bg-accent">
+          <button type="button" onClick={toggle} className="ml-auto min-h-8 shrink-0 rounded border px-2 py-0.5 text-xs font-medium hover:bg-accent pointer-coarse:min-h-10 pointer-coarse:px-3">
             Mở rộng
           </button>
         ) : (
@@ -244,22 +244,22 @@ export function BaseProductView({ baseId }: { baseId: string }) {
     <CtTooltipProvider>
       <div className="min-h-screen bg-background">
         <header className="sticky top-0 z-20 border-b bg-card/80 backdrop-blur-sm">
-          <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:px-6 lg:px-8">
-            <Link href={`${CT_CONFIG.homePath}?tab=bases`} className="rounded p-1.5 hover:bg-accent">
+          <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-6 lg:px-8">
+            <Link href={`${CT_CONFIG.homePath}?tab=bases`} className="flex h-9 w-9 shrink-0 items-center justify-center rounded hover:bg-accent pointer-coarse:h-10 pointer-coarse:w-10" aria-label="Về danh sách Product base">
               <ArrowLeft className="h-4 w-4" />
             </Link>
             <Link
               href={`${CT_CONFIG.homePath}?tab=bases`}
-              className="rounded px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground hover:underline"
+              className="hidden rounded px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground hover:underline sm:inline"
               title="Về danh sách Product base"
             >
               Product base
             </Link>
-            <span className="text-xs text-muted-foreground">/</span>
-            <h1 className="truncate text-lg font-semibold">{name}</h1>
-            <div className="ml-auto flex items-center gap-2">
-              {notice && <span className="text-xs text-muted-foreground">{notice}</span>}
-              <CtButton variant="ghost" size="sm" onClick={() => void remove()} title="Xoá product base">
+            <span className="hidden text-xs text-muted-foreground sm:inline">/</span>
+            <h1 className="min-w-0 truncate text-base font-semibold sm:text-lg">{name}</h1>
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {notice && <span className="hidden text-xs text-muted-foreground sm:inline">{notice}</span>}
+              <CtButton variant="ghost" size="sm" onClick={() => void remove()} title="Xoá product base" aria-label="Xoá product base">
                 <Trash2 className="h-4 w-4" />
               </CtButton>
               <CtButton variant={dirty ? "primary" : "outline"} size="sm" onClick={() => void save()} disabled={saving || !dirty}>
@@ -268,7 +268,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
             </div>
           </div>
         </header>
-        <main className="mx-auto grid max-w-7xl gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:px-8">
+        <main className="mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)] gap-4 px-3 py-4 sm:px-6 sm:py-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:px-8">
           {error && <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive lg:col-span-2">{error}</div>}
           <div className="space-y-4">
             <Section title="Thông tin">
@@ -305,7 +305,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                   {(cfg.source.links ?? []).length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
                       {(cfg.source.links ?? []).map((l) => (
-                        <a key={l.url} href={l.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sky-600 hover:underline">
+                        <a key={l.url} href={l.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300 hover:underline">
                           <ExternalLink className="h-3 w-3" /> {l.label}
                         </a>
                       ))}
@@ -443,7 +443,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                           <CtInput className="h-7 text-xs" inputMode="numeric" value={String(a.dpi)} onChange={(e) => setArea(a.id, { dpi: Number(e.target.value) || 0 })} />
                         </td>
                         <td>
-                          <button className="rounded p-1 text-muted-foreground hover:bg-accent" onClick={() => patch({ printAreas: cfg.printAreas.filter((x) => x.id !== a.id) })} aria-label="Xoá">
+                          <button className="rounded p-1 text-muted-foreground hover:bg-accent pointer-coarse:p-2.5" onClick={() => patch({ printAreas: cfg.printAreas.filter((x) => x.id !== a.id) })} aria-label="Xoá">
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </td>
@@ -507,7 +507,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                         {template.spec.width}×{template.spec.height}px · {template.spec.dpi} dpi{template.spec.widthMm ? ` · ${template.spec.widthMm}×${template.spec.heightMm} mm` : ""}
                       </div>
                       <div>{template.kind === "cut" ? "Cắt theo viền thiết kế (alpha)" : template.spec.faces.length ? `${template.spec.faces.length} mặt` : "Khuôn cố định"}</div>
-                      {dirty && cfg.templateId !== detail.base.config.templateId && <div className="mt-1 text-amber-600">Lưu để đổi khuôn — mọi artwork xem trên base này và mọi sản phẩm của nó dùng khuôn mới.</div>}
+                      {dirty && cfg.templateId !== detail.base.config.templateId && <div className="mt-1 text-amber-700 dark:text-amber-300">Lưu để đổi khuôn — mọi artwork xem trên base này và mọi sản phẩm của nó dùng khuôn mới.</div>}
                     </div>
                   </div>
                   <PhoiRow
@@ -598,7 +598,7 @@ export function BaseProductView({ baseId }: { baseId: string }) {
                             {u.name}
                           </Link>
                           {u.artwork && <span className="truncate text-muted-foreground">· artwork “{u.artwork.name}”</span>}
-                          {u.shopify && <span className="rounded bg-sky-500/15 px-1 text-[10px] text-sky-600">Shopify</span>}
+                          {u.shopify && <span className="rounded bg-sky-500/15 px-1 text-[10px] text-sky-700 dark:text-sky-300">Shopify</span>}
                           <Link href={`${CT_CONFIG.basePath}/${u.id}`} target="_blank" rel="noreferrer" title="Mở sản phẩm (tab mới)" className="ml-auto text-muted-foreground hover:text-foreground" aria-label="Mở sản phẩm">
                             <ExternalLink className="h-3.5 w-3.5" />
                           </Link>

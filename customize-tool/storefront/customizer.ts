@@ -97,7 +97,7 @@ import { filterBlob, processName, processPhoto, shrinkImage } from "../lib/photo
 import { isAiStyleRef, styleEngine, styleFamily, styleFilter, styleLabel } from "../lib/photo-styles";
 import { phoiPicks, phoiTaskKey } from "../lib/photo-task-key";
 import { addTask, getTask, latestForPage, onTasks, TASK_PARAM, taskWorking, updateTask, type CtStoredTask } from "./tasks";
-import { createMagicLoader, type MagicLoader } from "./magic-loader";
+import { createMagicLoader, type MagicLoader, type MagicStep, type MagicWait } from "./magic-loader";
 
 interface VariantInfo {
   price: string;
@@ -1581,7 +1581,10 @@ export class Customizer {
    * In the background (a server task) "Keep browsing" leaves; else the products open in a new tab and "Cancel" stops
    * waiting.
    */
-  private waitDialog(magic: MagicLoader, on: { keep: () => void; cancel: () => void }): { show: (background: boolean) => void; hide: () => void; remove: () => void } {
+  private waitDialog(
+    magic: MagicLoader,
+    on: { keep: () => void; cancel: () => void },
+  ): { show: (background: boolean) => void; failed: () => void; hide: () => void; remove: () => void } {
     const dialog = el("dialog", { class: "ct-dialog ct-waitdlg" });
     dialog.style.setProperty("--ct-accent", getComputedStyle(this.root).getPropertyValue("--ct-accent"));
     const top = el("div", { class: "ct-waitdlg__top" });
@@ -1616,6 +1619,7 @@ export class Customizer {
         text.textContent = bg
           ? this.t("waitText", "This takes a minute or two. Feel free to buy more — it carries on in the background and pops up in the corner when it's ready.")
           : this.t("waitTextHere", "This takes about a minute. Meanwhile, have a look at these (they open in a new tab).");
+        text.hidden = false;
         keep.hidden = !bg;
         cancel.hidden = bg;
         top.append(magic.root);
@@ -1623,11 +1627,28 @@ export class Customizer {
         if (!dialog.open) dialog.showModal();
         void this.loadRecos().then(fill);
       },
+      // The wait failed (the loader says why, with Try again): nothing goes on in the background, so no "Buy More".
+      failed: () => {
+        text.hidden = true;
+        keep.hidden = true;
+        cancel.hidden = false;
+      },
       hide: () => {
         if (dialog.open) dialog.close();
       },
       remove: () => dialog.remove(),
     };
+  }
+
+  /**
+   * What a customer reads when a photo could not be made: the server's own words when they are plain, otherwise a
+   * plain sentence (never "HTTP 502" or a stack line).
+   */
+  private plainError(e: unknown): string {
+    const msg = (e instanceof Error ? e.message : String(e ?? "")).trim();
+    const technical =
+      !msg || msg.length > 160 || /\b(HTTP|fetch|network|timeout|timed out|ECONN\w*|JSON|undefined|null|TypeError|SyntaxError|status|abort\w*|[45]\d\d)\b|[{}<>]/i.test(msg);
+    return technical ? this.t("waitFailed", "Sorry, we couldn't create your picture this time. Please try again.") : msg;
   }
 
   // ------------------------------------------------------------- photo dialog
@@ -1890,14 +1911,16 @@ export class Customizer {
       }
     };
 
-    /** wait: "stage" = the loader over the picture (a quick cut-out), "here" / "background" = the wait dialog on top. */
-    const setBusy = (on: boolean, text = "", steps?: string[], wait: "stage" | "here" | "background" = "stage") => {
-      if (on) {
-        if (wait === "stage") {
+    /** where: "stage" = the loader over the picture (a quick cut-out), "here" / "background" = the wait dialog on top. */
+    let busyWhere: "stage" | "here" | "background" = "stage";
+    const setBusy = (on: boolean, wait?: MagicWait, where: "stage" | "here" | "background" = "stage") => {
+      if (on && wait) {
+        busyWhere = where;
+        if (where === "stage") {
           waitDlg.hide();
           stageBox.append(busy);
-        } else waitDlg.show(wait === "background");
-        magic.show(text, steps);
+        } else waitDlg.show(where === "background");
+        magic.show({ photo: sourceUrl, slowAfter: 180, slowText: this.t("waitSlow", "Almost there — thanks for waiting!"), ...wait });
       } else {
         magic.hide();
         waitDlg.hide();
@@ -1906,13 +1929,26 @@ export class Customizer {
       adjust.disabled = on;
       empty.hidden = on || Boolean(photoUrl);
     };
-    const phoiSteps = [
-      this.t("phoiStep0", "Crafting your acrylic piece…"),
-      this.t("phoiStep1", "Cutting the acrylic around your design…"),
-      this.t("phoiStep2", "Polishing the edges and the shine…"),
-      this.t("phoiStep3", "Hanging it up for its photo…"),
-      this.t("phoiStep4", "Almost there — good things take a moment ✨"),
-    ];
+    /** The wait could not end with a picture: say so plainly, with Try again (the loader stays, nothing spins). */
+    const failBusy = (e: unknown, again: () => void) => {
+      if (magic.root.hidden) {
+        setBusy(false);
+        status.textContent = this.plainError(e);
+        return;
+      }
+      if (busyWhere !== "stage") waitDlg.failed();
+      magic.fail(this.plainError(e), this.t("tryAgain", "Try again"), again);
+    };
+    // The realistic piece drawn again for a new placement.
+    const phoiWait: MagicWait = {
+      text: this.t("phoiStep0", "Crafting your acrylic piece…"),
+      steps: [
+        { at: 25, text: this.t("phoiStep1", "Cutting the acrylic around your design…") },
+        { at: 55, text: this.t("phoiStep2", "Polishing the edges and the shine…") },
+        { at: 85, text: this.t("phoiStep3", "Hanging it up for its photo…") },
+      ],
+      expect: 60,
+    };
 
     const render = (next: CtPhotoStyleRef): Promise<string> => {
       const cached = renders.get(next);
@@ -1930,7 +1966,8 @@ export class Customizer {
             taskOf.set(next, stored.id);
             // Ready when the acrylic piece is drawn too; the loader's lines follow the task's step.
             return this.taskResult(stored.id, (stage) => {
-              if (stage === "phoi" && style === next && !magic.root.hidden) magic.show(phoiSteps[0], phoiSteps);
+              // The photo is drawn, the acrylic piece is next: the bar is at least at the "Painting" mark.
+              if (stage === "phoi" && style === next && !magic.root.hidden) magic.reach(75);
             });
           })()
         : engine === "none" && !cfg.cutout
@@ -1968,21 +2005,18 @@ export class Customizer {
         const faceFirst = styleFamily(next) === "face" && !renders.has("face");
         const ai = !cutoutOnly && !faceFirst && styleEngine(next) === "server";
         const name = styleLabel(next, this.tpl.aiStyles);
-        // An AI redraw takes 30–60 s: the line keeps changing so it never looks stuck.
-        const steps = ai
-          ? [
-              `${this.t("creating", "Creating")} ${name}…`,
-              this.t("magicStep1", "Studying every little detail of your photo…"),
-              this.t("magicStep2", "Sketching the outline by hand…"),
-              this.t("magicStep3", "Painting colours and textures…"),
-              this.t("magicStep4", "Adding the finishing sparkle…"),
-              this.t("magicStep5", "Almost there — good things take a moment ✨"),
-            ]
-          : undefined;
+        // An AI redraw takes about 90 s on average (asked 2026-11-25): the bar reaches 90 % then, the line follows it.
+        const aiSteps: MagicStep[] = [
+          { at: 15, text: this.t("waitStep15", "Finding your pet's face…") },
+          { at: 35, text: this.t("waitStep35", "Sketching the outline by hand…") },
+          { at: 60, text: this.t("waitStep60", "Painting colors and fur details…") },
+          { at: 85, text: this.t("waitStep85", "Adding the final touches…") },
+        ];
         setBusy(
           true,
-          cutoutOnly || faceFirst ? this.t("removingBg", "Removing background…") : `${this.t("creating", "Creating")} ${name}…`,
-          steps,
+          ai
+            ? { text: this.t("waitStep0", "Uploading your photo…"), steps: aiSteps, expect: 90 }
+            : { text: cutoutOnly || faceFirst ? this.t("removingBg", "Removing background…") : `${this.t("creating", "Creating")} ${name}…`, expect: 10 },
           // The editor preview shows the store's wait too (2026-11-10): Buy More, the products below.
           !ai ? "stage" : this.usesTasks(r, next) || this.previewMode ? "background" : "here",
         );
@@ -2000,11 +2034,12 @@ export class Customizer {
         const tid = this.taskByPhoto.get(url);
         const err = tid ? getTask(tid)?.task.error : null;
         if (err) status.textContent = err;
+        // 100 % only now, with the real picture behind.
+        await magic.finish();
+        if (token === job) setBusy(false);
       } catch (e) {
         if (token !== job) return;
-        status.textContent = e instanceof Error ? e.message : String(e);
-      } finally {
-        if (token === job) setBusy(false);
+        failBusy(e, () => void show(next));
       }
     };
 
@@ -2054,6 +2089,9 @@ export class Customizer {
       }
       placing = false;
       adjust.textContent = this.t("adjust", "Adjust position");
+      redrawPlacement();
+    });
+    const redrawPlacement = () => {
       const sel = dialogSel();
       const want = this.wantedPhoi(sel);
       if (!want || want.stored.task.phoi?.key === want.key) {
@@ -2063,18 +2101,22 @@ export class Customizer {
       const token = ++job;
       leaving = "placement";
       status.textContent = "";
-      setBusy(true, phoiSteps[0], phoiSteps, "background");
+      setBusy(true, phoiWait, "background");
       void this.askPhoi(sel)
         .then((key) => (key ? this.waitPhoi(want.stored.id, key) : null))
-        .catch((e: unknown) => {
-          if (token === job) status.textContent = e instanceof Error ? e.message : String(e);
-        })
-        .finally(() => {
+        .then(async () => {
+          if (token !== job) return;
+          await magic.finish();
           if (token !== job) return;
           setBusy(false);
           void draw();
+        })
+        .catch((e: unknown) => {
+          if (token !== job) return;
+          void draw();
+          failBusy(e, redrawPlacement);
         });
-    });
+    };
 
     // ---- hand placement: drag = move, corner = resize, ↻ = rotate, two fingers = pinch, wheel = zoom
     type Grab =

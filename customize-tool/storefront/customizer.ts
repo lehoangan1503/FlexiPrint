@@ -1617,8 +1617,8 @@ export class Customizer {
       show: (bg) => {
         background = bg;
         text.textContent = bg
-          ? this.t("waitText", "Your portrait is being hand-crafted ✨ Keep shopping — we'll pop it up in the corner the moment it's ready.")
-          : this.t("waitTextHere", "Your portrait is being hand-crafted ✨ Meanwhile, have a look at these (they open in a new tab).");
+          ? this.t("waitText", "Your portrait is being created ✨ Keep shopping — we'll pop it up in the corner the moment it's ready.")
+          : this.t("waitTextHere", "Your portrait is being created ✨ Meanwhile, have a look at these (they open in a new tab).");
         text.hidden = false;
         keep.hidden = !bg;
         cancel.hidden = bg;

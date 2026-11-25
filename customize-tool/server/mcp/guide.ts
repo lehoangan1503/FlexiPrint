@@ -100,8 +100,9 @@ What the web page does, a tool does — through the same handler, so the same ow
   make_version_thumbs (the version tiles), delete_version_phoi (drop a version's AI phôi). Several products outdated
   against their artwork: sync_product_from_artwork once per product (= the list's bulk update).
 - Mockups: add_product_mockups (pictures made elsewhere, by https url — nothing drawn, nothing paid),
-  clear_failed_mockups (Xoá N ô lỗi), delete_mockup, update_product mockup_order / mockup_off. A product with a customer
-  photo zone: make_product_mockups fills each zone with a different sample person / pet itself. make_product_blank is
+  clear_failed_mockups (Xoá N ô lỗi), delete_mockup, update_product mockup_order / mockup_off. A product the customer
+  customises: make_product_mockups makes each scene a different random pick itself (names, options, a sample person /
+  pet or a drawn name in each photo zone — the options you name stay fixed; vary false = exactly yours). make_product_blank is
   for old products without a base only. A refused drawing handed to you (task kind "mockup"): get_task → retry_mockup.
 - Deploy: set_preview_box (where the design sits on the preview photo, this product only), shopify_preview_links (a
   fresh preview link of deployed products). Collections: reuse check_deploy's (suggested = fits the title; a smart one

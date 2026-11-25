@@ -18,7 +18,9 @@ import { NextResponse } from "next/server";
 import { CT_CONFIG, CT_TABLES } from "../config";
 import type { CtAsset, CtBaseProduct, CtBounds, CtPackImage, CtProduct, CtProductScene, CtSelection } from "../types";
 import type { CtPrintSpec } from "../types/print";
-import { normalizeProductConfig } from "../lib/design";
+import { normalizeProductConfig, resolveLinked } from "../lib/design";
+import { CT_MAIN_KEY } from "../types";
+import type { ArtworkBundle } from "./print-render";
 import { shapePolygon } from "../lib/material-frame";
 import { shapeBounds } from "../lib/geometry";
 import { isAdmin } from "./ai-styles";
@@ -798,12 +800,8 @@ export async function autoProductMockups(s: CtSession, productId: string): Promi
     // picture (Girl Soccer blanket, 2026-11-17) gave an empty print and a blank front mockup.
     const side = Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000);
     const render = (selection: CtSelection) => renderArtwork(bundle, selection, side, "print", { withMain: true });
-    if (config.mockupVary && isCustomizable(customizable(bundle.regions, bundle.items, bundle.assets, config.main, product.main_asset_id))) {
-      const variants = mockupVariants({ regions: bundle.regions, items: bundle.items, assets: bundle.assets, base: config.samples, main: config.main, defaultMainId: product.main_asset_id, count: Math.max(1, blocks.length) });
-      await fillVariantPhotos(s, product, bundle.regions, variants);
-      const prints = await Promise.all(variants.map((v) => render(v.selection)));
-      return NextResponse.json(await productMockups(s, product, prints, blocks), { status: 202 });
-    }
+    // The sample names / people (~1 min) are drawn in the background: the rows come back at once.
+    if (config.mockupVary && canVaryMockups(product, bundle)) return NextResponse.json({ jobs: (await variedProductMockups(s, product, bundle, config.samples, blocks)).jobs }, { status: 202 });
     return NextResponse.json(await productMockups(s, product, await render(config.samples), blocks), { status: 202 });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Không tạo được mockup", 500);
@@ -819,42 +817,25 @@ export async function autoProductMockups(s: CtSession, productId: string): Promi
  * several prints of one product are mocked up ("Christmas — Snowflakes").
  */
 export async function productMockups(s: CtSession, product: CtProduct, print: Buffer | Buffer[], scenes: Array<string | CtMockupBlock>, label = ""): Promise<{ jobs: CtPackImage[]; front: { url: string } }> {
-  const productId = product.id;
-  const config = normalizeProductConfig(product.config);
-  const piece = config.print?.name || product.name;
   // One print for every scene, or one per scene (asked 2026-11-17: each mockup a different custom pick —
   // lib/mockup-variants.ts): scene i is drawn from print i.
   const prints = Array.isArray(print) ? print : [print];
   if (!prints.length) throw new Error("Thiếu artwork");
-  // The prompts first, before anything is uploaded: nothing to draw from = refused, never a built-in one.
+  const rows = await mockupRows(s, product, scenes);
+  return startMockupRows(s, product, rows, prints);
+}
+
+/**
+ * The rows of a mockup run, one per prompt, inserted 'running' before any picture exists (the prompts first: nothing
+ * to draw from = refused, never a built-in one). refs = the prompt's own pictures; startMockupRows puts the front first.
+ */
+async function mockupRows(s: CtSession, product: CtProduct, scenes: Array<string | CtMockupBlock>): Promise<CtPackImage[]> {
+  const config = normalizeProductConfig(product.config);
+  const piece = config.print?.name || product.name;
   const want = mockupBlockList(scenes);
   if (!want.length) throw new Error(NO_SCENES);
   const db = ctServiceClient() ?? s.supabase;
   const { wrap, baseRefs } = await mockupSetup(db, product);
-
-  // The front one: the artwork laid exactly on the phôi (its own light and shade), no AI. A die-cut acrylic: its plate
-  // made from the artwork's outline (+ the border, the hanging tab). Without a phôi: on white.
-  const dieCut = config.print?.kind === "cut" || (config.material.id.startsWith("acrylic") && config.material.shape === "contour");
-  const blank = config.scene.url && config.scene.box.w > 0 ? await fetchImage(config.scene.url) : null;
-  const overlay = blank && config.scene.overlay ? await fetchImage(config.scene.overlay).catch(() => null) : null;
-  const frontOf = async (art: Buffer): Promise<{ url: string }> => {
-    let front: Buffer;
-    if (blank) front = await frontMockup(blank, art, config.scene.box, overlay, materialPreset(config.material.id).whiteInk);
-    else if (dieCut) {
-      const pw = (await sharp(art).metadata()).width ?? 1024;
-      const mm = config.print?.spec.widthMm || config.material.widthMm || 90;
-      front = await acrylicFront(art, Math.max(4, Math.round((config.material.borderMm || 2.5) * (pw / mm))));
-    } else {
-      const m = await sharp(art).metadata();
-      const pad = Math.round(Math.max(m.width ?? 0, m.height ?? 0) * 0.08);
-      front = await sharp(art).flatten({ background: "#ffffff" }).extend({ top: pad, bottom: pad, left: pad, right: pad, background: "#ffffff" }).jpeg({ quality: 92 }).toBuffer();
-    }
-    front = await squared(front);
-    return { url: await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/${productId}/mockup-ref/${crypto.randomUUID()}.jpg`, front, "image/jpeg") };
-  };
-  const fronts = await Promise.all(prints.map(frontOf));
-  const frontAsset = fronts[0];
-
   // One square for every scene (a 4:5 one was drawn 2:3 and cropped — the ornament's ends were cut off, 2026-10-22).
   const sceneAspect = MOCKUP_ASPECT;
   const model = CT_IMAGE_MODEL;
@@ -862,19 +843,123 @@ export async function productMockups(s: CtSession, product: CtProduct, print: Bu
   // The prompt = the base's wrap with {product} / {scene} filled (its page, CtBaseMockup — asked 2026-11-17: "prompt
   // tạo mockup đưa ra khỏi code"); no wrap = the scene alone ({product} filled); nothing added by the code.
   // Each block's own pictures go with its prompt only (asked 2026-11-23); a block with none takes the base's.
-  for (const [i, block] of want.entries()) {
+  for (const block of want) {
     const sc = block.prompt;
     const refs = block.refs.length ? block.refs : baseRefs;
     const prompt = fillMockupWrap(wrap, piece, sc);
     const { data: row } = await db
       .from(CT_TABLES.packImages)
-      .insert({ user_id: s.user.id, name: jobName(productId), source: "ai", status: "running", listed: false, description: sc, prompt, refs: [(fronts[i] ?? frontAsset).url, ...refs], aspect: sceneAspect, model })
+      .insert({ user_id: s.user.id, name: jobName(product.id), source: "ai", status: "running", listed: false, description: sc, prompt, refs, aspect: sceneAspect, model })
       .select("*")
       .single<CtPackImage>();
-    if (row) rows.push(row);
+    if (row) {
+      // Not an orphan while its prints are made (a list in between must not fail it).
+      activeJobs.add(row.id);
+      rows.push(row);
+    }
   }
-  for (const row of rows) drawMockupJob(s, productId, row);
-  return { jobs: rows, front: frontAsset };
+  return rows;
+}
+
+/** Rows that will not draw: failed with why. */
+async function failRows(s: CtSession, rows: CtPackImage[], why: string): Promise<void> {
+  const db = ctServiceClient() ?? s.supabase;
+  for (const r of rows) activeJobs.delete(r.id);
+  if (rows.length) await db.from(CT_TABLES.packImages).update({ status: "failed", error: why }).in("id", rows.map((r) => r.id)).eq("status", "running");
+}
+
+/**
+ * Row i drawn from print i (or the only print): its front — the print laid exactly on the phôi with its own light, no
+ * AI — goes first in its refs, then it draws in the background. The front is only that reference (2026-10-30: "không
+ * đưa mockup phôi trơn, cũng không cần tạo phôi trơn có artwork"). A failure here fails the rows.
+ */
+async function startMockupRows(s: CtSession, product: CtProduct, rows: CtPackImage[], prints: Buffer[]): Promise<{ jobs: CtPackImage[]; front: { url: string } }> {
+  const productId = product.id;
+  const config = normalizeProductConfig(product.config);
+  const db = ctServiceClient() ?? s.supabase;
+  let fronts: Array<{ url: string }>;
+  try {
+    // A die-cut acrylic: its plate made from the artwork's outline (+ the border, the hanging tab). Without a phôi: on white.
+    const dieCut = config.print?.kind === "cut" || (config.material.id.startsWith("acrylic") && config.material.shape === "contour");
+    const blank = config.scene.url && config.scene.box.w > 0 ? await fetchImage(config.scene.url) : null;
+    const overlay = blank && config.scene.overlay ? await fetchImage(config.scene.overlay).catch(() => null) : null;
+    const frontOf = async (art: Buffer): Promise<{ url: string }> => {
+      let front: Buffer;
+      if (blank) front = await frontMockup(blank, art, config.scene.box, overlay, materialPreset(config.material.id).whiteInk);
+      else if (dieCut) {
+        const pw = (await sharp(art).metadata()).width ?? 1024;
+        const mm = config.print?.spec.widthMm || config.material.widthMm || 90;
+        front = await acrylicFront(art, Math.max(4, Math.round((config.material.borderMm || 2.5) * (pw / mm))));
+      } else {
+        const m = await sharp(art).metadata();
+        const pad = Math.round(Math.max(m.width ?? 0, m.height ?? 0) * 0.08);
+        front = await sharp(art).flatten({ background: "#ffffff" }).extend({ top: pad, bottom: pad, left: pad, right: pad, background: "#ffffff" }).jpeg({ quality: 92 }).toBuffer();
+      }
+      front = await squared(front);
+      return { url: await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/${productId}/mockup-ref/${crypto.randomUUID()}.jpg`, front, "image/jpeg") };
+    };
+    fronts = await Promise.all(prints.map(frontOf));
+  } catch (e) {
+    await failRows(s, rows, e instanceof Error ? e.message : String(e));
+    throw e;
+  }
+  const jobs: CtPackImage[] = [];
+  for (const [i, row] of rows.entries()) {
+    const refs = [(fronts[i] ?? fronts[0]).url, ...row.refs];
+    await db.from(CT_TABLES.packImages).update({ refs }).eq("id", row.id);
+    const ready = { ...row, refs };
+    jobs.push(ready);
+    drawMockupJob(s, productId, ready);
+  }
+  return { jobs, front: fronts[0] };
+}
+
+/**
+ * Mockups each drawn from a different custom pick (lib/mockup-variants.ts: version, options, names, a sample person /
+ * a drawn name in each photo zone — server/mockup-samples.ts), answered at once: the rows are 'running' while the
+ * samples (~1 min, the image model) and the prints are made in the background, then each draws. `pinned` = picks the
+ * caller chose (MCP options): kept in every variant; a pinned version keeps every variant on it.
+ */
+export async function variedProductMockups(
+  s: CtSession,
+  product: CtProduct,
+  bundle: ArtworkBundle,
+  base: CtSelection,
+  scenes: Array<string | CtMockupBlock>,
+  pinned: CtSelection = {},
+): Promise<{ jobs: CtPackImage[]; picks: string[] }> {
+  const config = normalizeProductConfig(product.config);
+  const want = mockupBlockList(scenes);
+  const version = pinned[CT_MAIN_KEY]?.kind === "main" ? pinned[CT_MAIN_KEY] : null;
+  const variants = mockupVariants({
+    regions: bundle.regions,
+    items: bundle.items,
+    assets: bundle.assets,
+    base,
+    main: version ? { ...config.main, enabled: false } : config.main,
+    defaultMainId: version ? version.assetId : product.main_asset_id,
+    count: Math.max(1, want.length),
+  });
+  for (const v of variants) v.selection = resolveLinked(bundle.regions, bundle.items, bundle.assets, { ...v.selection, ...pinned });
+  const rows = await mockupRows(s, product, want);
+  void (async () => {
+    try {
+      const missed = await fillVariantPhotos(s, product, bundle.regions, variants);
+      if (missed.length) console.warn(`[ct] mockup samples ${product.id}: ${missed.join("; ")}`);
+      const { renderArtwork } = await import("./print-render");
+      const side = Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000);
+      const prints = await Promise.all(variants.map((v) => renderArtwork(bundle, v.selection, side, "print", { withMain: true })));
+      await startMockupRows(s, product, rows, prints);
+    } catch (e) {
+      await failRows(s, rows, e instanceof Error ? e.message : String(e));
+    }
+  })();
+  return { jobs: rows, picks: variants.map((v) => v.label) };
+}
+
+/** Whether the customer can change anything on the product (versions, layer options, texts, photo / name zones). */
+export function canVaryMockups(product: CtProduct, bundle: ArtworkBundle): boolean {
+  return isCustomizable(customizable(bundle.regions, bundle.items, bundle.assets, normalizeProductConfig(product.config).main, product.main_asset_id));
 }
 
 /** A finished mockup photo added to the product's pictures. */

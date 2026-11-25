@@ -20,7 +20,7 @@
 
 import sharp from "sharp";
 import { CT_CONFIG, CT_FONTS, CT_TABLES } from "../../config";
-import type { CtAiStyleParams, CtAsset, CtBounds, CtProduct, CtRegion, CtRegionItem, CtShape } from "../../types";
+import type { CtAiStyleParams, CtAsset, CtBounds, CtProduct, CtRegion, CtRegionItem, CtSelection, CtShape } from "../../types";
 import type { CtPrintBlank, CtPrintSpec, CtPrintTemplate } from "../../types/print";
 import { defaultRegionConfig, normalizeProductConfig } from "../../lib/design";
 import { newId, shapeBounds } from "../../lib/geometry";
@@ -34,7 +34,7 @@ import { frameRegion, makeBaseArtwork, makeTemplateProduct, productPrintOf, type
 import { loadBaseProduct } from "../base-products";
 import { loadArtwork, renderArtwork, safeReport, type ArtworkBundle } from "../print-render";
 import { productOptions, selectionFromNames } from "../product-options";
-import { failOrphans, makeProductBlank, productBlocks, productMockups, saveOwnMockupPrompt } from "../product-mockups";
+import { canVaryMockups, failOrphans, makeProductBlank, productBlocks, productMockups, saveOwnMockupPrompt, variedProductMockups } from "../product-mockups";
 import { CT_MOCKUP_BLOCK_REFS_MAX, badBlockRefs, mockupBlockList } from "../../lib/mockup-prompt";
 import { serviceSession } from "../char/product";
 import type { CtPackImage } from "../../types";
@@ -734,7 +734,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
   {
     name: "make_product_mockups",
     description:
-      "Mockups of a PRODUCT (kind product — an artwork has none: make_product_from_artwork first, the mockups are of artwork + base), one set per entry: one AI lifestyle photo per scene (~1 min, in the background), drawn from the print with those options (rendered on the server exactly, text in its font) laid on the product's phôi — that front picture (front) is only the AI's reference, not a product picture. The photos are added to the product (editor → Mockups) and are what Deploy sends to Shopify. → job ids; then wait_product_mockups and view_image every photo.",
+      "Mockups of a PRODUCT (kind product — an artwork has none: make_product_from_artwork first, the mockups are of artwork + base), one set per entry: one AI lifestyle photo per scene (~1 min, in the background), drawn from the print (rendered on the server exactly, text in its font) laid on the product's phôi — that front picture is only the AI's reference, not a product picture. By default (vary, the product's tick 'Mỗi ảnh 1 bản custom khác nhau') a product the customer can customise gets a DIFFERENT random custom pick per scene, like the editor's Tạo mockup: version, layer options, typed names, and each photo / name-only zone filled with a sample person / a name drawn by the zone's AI style — the options you name stay fixed in every scene; the samples take ~1 min more, in the background (picks = what each scene shows). vary false = every scene from exactly those options (photo / name zones left empty). The photos are added to the product (editor → Mockups) and are what Deploy sends to Shopify. → job ids; then wait_product_mockups and view_image every photo.",
     inputSchema: {
       type: "object",
       properties: {
@@ -753,6 +753,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
           type: "string",
           description: 'Optional, older form of save_blocks: scene prompts as one text (one per line, or split by an empty line / ---), no pictures of their own. "" = back to the base\'s.',
         },
+        vary: { type: "boolean", description: "Each scene a different random custom pick (names, options, sample person / drawn name in photo zones). Default: the product's own tick (on unless turned off in its Mockups tab)." },
         task_id: { type: "string", description: "Agent: the task it is for (its user owns the mockups)." },
       },
       required: ["product_id", "mockups"],
@@ -776,12 +777,24 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
         scenes: typeof args.save_scenes === "string" ? args.save_scenes : undefined,
       });
       const kept = await productBlocks(ctx.service ?? ctx.db, product);
-      const out: Array<{ label: string; front: string; jobs: Array<{ id: string; scene: string; status: string }> }> = [];
+      // Each scene its own custom pick, like the editor (2026-11-25: MCP mockups of a name product had no name at all).
+      const vary = (typeof args.vary === "boolean" ? args.vary : normalizeProductConfig(product.config).mockupVary) && canVaryMockups(product, bundle);
+      const out: Array<{ label: string; front: string; picks?: string[]; jobs: Array<{ id: string; scene: string; status: string }> }> = [];
       for (const m of list) {
         const options = m.options && typeof m.options === "object" ? (m.options as Record<string, unknown>) : {};
-        const selection = selectionFromNames(bundle, Object.fromEntries(Object.entries(options).map(([k, v]) => [k, str(v)])));
+        const named = Object.fromEntries(Object.entries(options).map(([k, v]) => [k, str(v)]));
+        const selection = selectionFromNames(bundle, named);
         const given = mockupBlockList(m.scenes);
         const scenes = given.length ? given : kept.blocks;
+        if (vary) {
+          // The picks the caller named stay in every scene; the rest is random.
+          const defaults = selectionFromNames(bundle, {});
+          const pinned: CtSelection = Object.fromEntries(Object.entries(selection).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(defaults[k])));
+          const label = str(m.label).slice(0, 60);
+          const r = await variedProductMockups(s, product, bundle, { ...normalizeProductConfig(product.config).samples, ...pinned }, scenes, pinned);
+          out.push({ label, front: "", picks: r.picks, jobs: r.jobs.map((j) => ({ id: j.id, scene: j.description, refs: j.refs.length, status: j.status })) });
+          continue;
+        }
         // With the version's own picture, like the editor's Tạo mockup (lib/compositor draws it): an artwork that IS one
         // picture (Girl Soccer blanket, 2026-11-17) gave an empty print and a blank front mockup.
         const print = await renderArtwork(bundle, selection, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print", { withMain: true });

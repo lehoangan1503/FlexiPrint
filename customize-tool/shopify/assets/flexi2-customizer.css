@@ -333,17 +333,20 @@
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .18), 0 8px 28px rgba(0, 0, 0, .45); }
 .ct-magic__frame.is-ready { opacity: 1; }
 .ct-magic__img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; animation: ct-magic-sketch 7s ease-in-out infinite alternate; }
-.ct-magic__sweep { position: absolute; inset: 0; pointer-events: none;
+.ct-magic .ct-magic__sweep { display: block; position: absolute; inset: 0; pointer-events: none;
   background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, .5) 47%, rgba(255, 255, 255, .08) 55%, transparent 68%);
   background-size: 250% 100%; animation: ct-magic-sweep 2.6s ease-in-out infinite; mix-blend-mode: screen; }
 .ct-magic.is-failed .ct-magic__img { animation: none; filter: grayscale(1); opacity: .45; }
 .ct-magic.is-failed .ct-magic__sweep { display: none; }
-.ct-magic__bar { position: relative; flex: none; display: flex; align-items: center; gap: 10px; width: min(340px, 88%); }
-.ct-magic__track { flex: 1; height: 8px; border-radius: 999px; overflow: hidden; background: rgba(255, 255, 255, .18); }
-.ct-magic__fill { width: 0; height: 100%; border-radius: inherit; transition: width .25s linear;
+/* The bar sits in the middle: an empty box as wide as the percentage on its left balances it. Themes hide empty
+   divs (Dawn base.css "div:empty { display: none }" — the fill vanished on Caridora 25/11), hence display: block. */
+.ct-magic__bar { position: relative; flex: none; display: flex; align-items: center; gap: 10px; width: min(400px, 92%); }
+.ct-magic__bar::before { content: ""; flex: none; width: 3.2em; }
+.ct-magic .ct-magic__track { display: block; flex: 1; height: 8px; border-radius: 999px; overflow: hidden; background: rgba(255, 255, 255, .18); }
+.ct-magic .ct-magic__fill { display: block; width: 0; height: 100%; border-radius: inherit; transition: width .25s linear;
   background: linear-gradient(90deg, #ff9a6b, #ffc371, #5ef2a5, #4fc3ff, #a77bff); background-size: 340px 100%; }
 .ct-magic.is-done .ct-magic__fill { transition: width .4s ease-out; }
-.ct-magic__pct { flex: none; min-width: 3.2em; text-align: right; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; color: #fff; }
+.ct-magic__pct { flex: none; width: 3.2em; text-align: left; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; color: #fff; }
 .ct-magic__error { position: relative; flex: none; display: grid; justify-items: center; gap: 12px; max-width: min(420px, 92%); }
 .ct-magic__error-text { margin: 0; font-size: 15px; line-height: 1.45; font-weight: 500; color: #fff; text-shadow: 0 1px 6px rgba(0, 0, 0, .5); }
 .ct-magic__retry { min-width: 140px; }

@@ -21,7 +21,7 @@ import { faceTargets } from "../lib/face-center";
 import { isAiStyleRef, isPhotoStyleRef, styleFamily } from "../lib/photo-styles";
 import { CT_IMAGE_MODEL } from "../lib/image-models";
 import { FEMALE_NAMES, MALE_NAMES, PET_HINT, type CtMockupVariant } from "../lib/mockup-variants";
-import { processPhoto } from "./ai/photo";
+import { jobCutsOut, processPhoto } from "./ai/photo";
 import { isAdmin, loadAiStyle } from "./ai-styles";
 import { fetchImage } from "./char/files";
 import { drawImage } from "./pack-images";
@@ -183,8 +183,9 @@ export async function styledSamples(s: CtSession, product: CtProduct, region: Ct
       if (nameOnly && !aiStyle) throw new Error("Vùng chỉ nhập tên cần một style AI");
       const src = sources[i];
       const image = src ? { data: src.data, mime: src.mime } : null;
-      const out = await processPhoto({ image, style: it.style, cutout: cfg.cutout, aiStyle: aiStyle ?? undefined, name: src ? nameFor(src.look, it.name) : it.name });
-      const png = await finishPhoto(out, cfg.cutout, cfg.fadeCrop && !nameOnly, styleFamily(it.style) === "face", nameOnly ? null : targets);
+      const job = { image, style: it.style, cutout: cfg.cutout, aiStyle: aiStyle ?? undefined, name: src ? nameFor(src.look, it.name) : it.name };
+      const out = await processPhoto(job);
+      const png = await finishPhoto(out, jobCutsOut(job),cfg.fadeCrop && !nameOnly, styleFamily(it.style) === "face", nameOnly ? null : targets);
       const url = await ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/${product.id}/mockup-samples/${crypto.randomUUID()}.png`, png, "image/png");
       return { url, error: "" };
     } catch (e) {

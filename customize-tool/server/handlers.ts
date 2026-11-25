@@ -45,7 +45,7 @@ import { ctLibraryPath, ctPublicUploadPath, ctRemove, ctStoragePath, ctUpload } 
 import { buildTemplate } from "../lib/template";
 import { readImageInfo } from "./image-size";
 import { listProviders } from "./ai/providers";
-import { PhotoConfigError, cachedAiResult, photoCapabilities, processPhoto, type PhotoResult } from "./ai/photo";
+import { PhotoConfigError, cachedAiResult, jobCutsOut, photoCapabilities, processPhoto, type PhotoResult } from "./ai/photo";
 import { sweepPhotoCache } from "./photo-cache";
 import { isAiStyleRef, isPhotoStyleRef } from "../lib/photo-styles";
 import { isAdmin, loadAiStyle, originAllowed, publicAiStyles, takeAiQuota } from "./ai-styles";
@@ -770,7 +770,7 @@ export const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
   "Access-Control-Max-Age": "86400",
-  "Access-Control-Expose-Headers": "X-Ct-Backdrop",
+  "Access-Control-Expose-Headers": "X-Ct-Backdrop, X-Ct-Cutout",
 };
 
 export function publicJson(body: object, status = 200, extra: Record<string, string> = {}): NextResponse {
@@ -909,11 +909,14 @@ export function photoInputError(req: PhotoRequest, cfg: Pick<CtPhotoConfig, "inp
   return null;
 }
 
-/** The image goes back as raw bytes; X-Ct-Backdrop says what is left to key out. */
-function imageResponse(out: PhotoResult, headers: Record<string, string>): NextResponse {
+/**
+ * The image goes back as raw bytes; X-Ct-Backdrop says what is left to key out, X-Ct-Cutout "0" that the picture
+ * is kept whole (an AI style with "Remove background" unticked): the browser skips its edge fade + trim.
+ */
+function imageResponse(out: PhotoResult, headers: Record<string, string>, cut = true): NextResponse {
   return new NextResponse(new Uint8Array(out.image.data), {
     status: 200,
-    headers: { ...headers, "Content-Type": out.image.mime, "Cache-Control": "no-store", ...(out.backdrop ? { "X-Ct-Backdrop": out.backdrop } : {}) },
+    headers: { ...headers, "Content-Type": out.image.mime, "Cache-Control": "no-store", ...(out.backdrop ? { "X-Ct-Backdrop": out.backdrop } : {}), ...(cut ? {} : { "X-Ct-Cutout": "0" }) },
   });
 }
 
@@ -921,7 +924,8 @@ function imageResponse(out: PhotoResult, headers: Record<string, string>): NextR
 async function photoResponse(req: PhotoRequest, headers: Record<string, string>, aiStyle?: CtAiStyle): Promise<NextResponse> {
   if (!isPhotoStyleRef(req.style)) return NextResponse.json({ error: "Style không hợp lệ" }, { status: 400, headers });
   try {
-    return imageResponse(await processPhoto({ image: requestImage(req), style: req.style, cutout: req.cutout, aiStyle, name: req.name }), headers);
+    const job = { image: requestImage(req), style: req.style, cutout: req.cutout, aiStyle, name: req.name };
+    return imageResponse(await processPhoto(job), headers, jobCutsOut(job));
   } catch (e) {
     const status = e instanceof PhotoConfigError ? 501 : 502;
     return NextResponse.json({ error: e instanceof Error ? e.message : "Xử lý ảnh thất bại" }, { status, headers });
@@ -965,7 +969,7 @@ export async function publicPhoto(productId: string, form: FormData, ip: string,
   const job = { image: requestImage(parsed), style: style as CtAiStyleRef, cutout: parsed.cutout, aiStyle, name: parsed.name };
   // Same photo + same style version = already paid for: served from the cache, not counted.
   const hit = await cachedAiResult(job);
-  if (hit) return imageResponse(hit, CORS_HEADERS);
+  if (hit) return imageResponse(hit, CORS_HEADERS, jobCutsOut(job));
   const quota = await takeAiQuota(ip);
   if (quota === "ip") return publicError("Daily limit reached for AI styles — please try again tomorrow.", 429);
   if (quota === "total") return publicError("AI styles are busy right now — please try again later.", 429);

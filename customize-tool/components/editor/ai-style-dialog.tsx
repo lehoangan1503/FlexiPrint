@@ -154,8 +154,10 @@ export function AiStyleDialog({ target, onClose, onSaved }: AiStyleDialogProps) 
         </CtField>
         <div className="space-y-1">
           <CtCheckbox checked={body.params.removeBackground} disabled={readOnly} onChange={(v) => setParams({ removeBackground: v })} label="Remove background" />
-          {body.params.removeBackground && (
+          {body.params.removeBackground ? (
             <p className="pl-6 font-mono text-[10px] leading-snug text-muted-foreground">Thêm vào cuối prompt: “{CT_AI_STYLE_CLEAR_BG_LINE}”</p>
+          ) : (
+            <p className="pl-6 text-[10px] leading-snug text-muted-foreground">Không tách nền: giữ nguyên cả bức AI vẽ, kể cả phông nền.</p>
           )}
         </div>
         <CtField label="Tỉ lệ ảnh AI" hint="Chọn đúng tỉ lệ vùng artwork / file in mà ảnh sẽ lấp. Tỉ lệ được ghi vào prompt, ảnh trả về được bù nền trong suốt cho khớp tỉ lệ.">

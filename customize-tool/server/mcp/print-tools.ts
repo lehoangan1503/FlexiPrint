@@ -346,7 +346,7 @@ export const CT_MCP_PRINT_TOOLS: CtMcpTool[] = [
         prompt: { type: "string", description: "The whole prompt." },
         aspect: { type: "string", description: `Output shape: ${CT_AI_STYLE_ASPECTS.map((x) => x.id).join(" | ")} ("auto" = the photo's shape). Said in the prompt and the picture padded to it exactly — pick the shape of the artwork / print area it fills.` },
         ask_name: { type: "boolean", description: "true = the customer types a name in the photo dialog, added at the end of the prompt as \"Name: …\" (nothing when empty)." },
-        remove_background: { type: "boolean", description: "true = the subject is cut out (the dialog's \"Xoá nền\" tick)." },
+        remove_background: { type: "boolean", description: "true = the subject is cut out (the dialog's \"Remove background\" tick); false = the AI picture is kept whole, backdrop included." },
         ref_urls: { type: "array", items: { type: "string" }, description: "Style reference pictures (our own urls, upload_image), given whole." },
       },
       required: ["style_id"],

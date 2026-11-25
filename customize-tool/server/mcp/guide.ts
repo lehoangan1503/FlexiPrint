@@ -132,6 +132,8 @@ What the web page does, a tool does — through the same handler, so the same ow
   replace_clipart (an edited one takes its place in every product); promote_to_library (a product's picture → library).
 - Fonts: list_fonts / upload_font (.ttf .otf .woff) / delete_font. AI photo styles: create_ai_style → make_ai_style_demo
   (paid: one AI picture) / update_ai_style (also remove_background, ref_urls — our urls) / delete_ai_style.
+  remove_background false = the AI picture is kept whole, backdrop included (full-bleed art on a blanket); it is the
+  only switch — the photo zone always asks for a cut-out and the style's tick decides.
 - Khuôn in: draw_print_template_ai (not saved: look, then) → save_print_template (any shape: no template_id = new;
   spec given whole), make_template_blank_ai (phôi AI). upload_image: a picture (url or base64) → our url for every
   tool that takes one. create_blank_artwork: an empty artwork on a base or a W×H canvas.

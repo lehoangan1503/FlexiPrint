@@ -32,7 +32,7 @@ import { faceTargets, placeFaces, type FaceTargets } from "../lib/face-center";
 import { fadeCroppedEdgesData, keyOutBackdrop, opaqueBox } from "../lib/pixel-ops";
 import { phoiPicks, phoiTaskKey } from "../lib/photo-task-key";
 import { isAiStyleRef, styleFamily } from "../lib/photo-styles";
-import { cachedAiResult, processPhoto, type PhotoJob, type PhotoResult } from "./ai/photo";
+import { cachedAiResult, jobCutsOut, processPhoto, type PhotoJob, type PhotoResult } from "./ai/photo";
 import { aiStylesConfigured } from "./ai/style-run";
 import { loadAiStyle, originAllowed, takeAiQuota, type AiQuota } from "./ai-styles";
 import { loadBaseProduct } from "./base-products";
@@ -190,7 +190,7 @@ export async function createPhotoTask(productId: string, form: FormData, ip: str
   void (async () => {
     try {
       const out = hit ?? (await processPhoto(job));
-      const png = await finishPhoto(out, parsed.cutout, cfg.fadeCrop, styleFamily(style) === "face", targets);
+      const png = await finishPhoto(out, jobCutsOut(job), cfg.fadeCrop, styleFamily(style) === "face", targets);
       // A name-only zone has no upload to keep.
       const [photoUrl, sourceUrl] = await Promise.all([
         ctUpload(ctPublicUploadPath(productId, "photo", "image/png"), png, "image/png"),

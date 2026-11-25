@@ -337,10 +337,19 @@ export function photoCapabilities(): CtPhotoCapabilities {
 /** The cache key's "photo" for a name-only job (no upload): the name and the style make the key. */
 const NAME_ONLY = Buffer.from("ct-name-only");
 
+/**
+ * Is the subject lifted out of its background? An AI style decides by its own "Remove background" tick (2026-11-25:
+ * the zone's cutout is always on — lib/design.ts normalizePhotoConfig — so the tick used to do nothing). Unticked =
+ * the picture comes back whole, backdrop included: no cut, no edge fade, no trim.
+ */
+export function jobCutsOut(job: Pick<PhotoJob, "style" | "cutout" | "aiStyle">): boolean {
+  return isAiStyleRef(job.style) && job.aiStyle ? normalizeAiStyleParams(job.aiStyle.params).removeBackground : job.cutout;
+}
+
 /** AI results by (photo, style version, cut-out) — see server/photo-cache.ts. */
 function aiCacheKey(job: PhotoJob, style: CtAiStyle): string {
   const name = aiStyleAsksName(normalizeAiStyleParams(style.params), style.prompt) ? cleanCustomerName(job.name) : "";
-  return photoCacheKey(job.image?.data ?? NAME_ONLY, "ai", style.id, style.updated_at, job.cutout ? 1 : 0, ...(name ? [name] : []));
+  return photoCacheKey(job.image?.data ?? NAME_ONLY, "ai", style.id, style.updated_at, jobCutsOut({ ...job, aiStyle: style }) ? 1 : 0, ...(name ? [name] : []));
 }
 
 /**
@@ -354,8 +363,7 @@ export async function cachedAiResult(job: PhotoJob): Promise<PhotoResult | null>
 }
 
 async function runAiStyle(job: PhotoJob, style: CtAiStyle): Promise<PhotoResult> {
-  const params = normalizeAiStyleParams(style.params);
-  const wantCut = job.cutout || params.removeBackground;
+  const wantCut = jobCutsOut({ ...job, aiStyle: style });
   // A cut-out is asked of the model itself (GPT Image draws real alpha); when it paints a backdrop anyway, the
   // style runs again on flat white and the bg-remover lifts the subject out.
   let image: ProviderImage;

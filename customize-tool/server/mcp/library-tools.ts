@@ -319,7 +319,7 @@ export const CT_MCP_LIBRARY_TOOLS: CtMcpTool[] = [
         prompt: { type: "string", description: "The whole prompt." },
         aspect: { type: "string", description: `${CT_AI_STYLE_ASPECTS.map((x) => x.id).join(" | ")} (default auto).` },
         ask_name: { type: "boolean", description: "The customer types a name." },
-        remove_background: { type: "boolean", description: "Cut the subject out (default true)." },
+        remove_background: { type: "boolean", description: "Cut the subject out (default true); false = the AI picture is kept whole, backdrop included." },
         ref_urls: { type: "array", items: { type: "string" }, description: "https style reference pictures." },
       },
       required: ["name", "prompt"],

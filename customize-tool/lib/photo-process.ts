@@ -87,7 +87,8 @@ export async function shrinkImage(file: Blob, maxPx: number): Promise<Blob> {
   return canvasToBlob(c, file.type === "image/png" ? "image/png" : "image/jpeg", 0.92);
 }
 
-async function serverStep(req: Pick<PhotoProcessRequest, "style" | "cutout" | "endpoint" | "fields" | "signal">, input: Blob | null): Promise<HTMLCanvasElement> {
+/** `cut` false = the server kept the picture whole (X-Ct-Cutout "0": an AI style with "Remove background" unticked). */
+async function serverStep(req: Pick<PhotoProcessRequest, "style" | "cutout" | "endpoint" | "fields" | "signal">, input: Blob | null): Promise<{ canvas: HTMLCanvasElement; cut: boolean }> {
   const body = new FormData();
   if (input) body.append("file", input, input.type === "image/png" ? "photo.png" : "photo.jpg");
   body.append("style", req.style);
@@ -100,18 +101,21 @@ async function serverStep(req: Pick<PhotoProcessRequest, "style" | "cutout" | "e
   }
   const backdrop = res.headers.get("X-Ct-Backdrop");
   const canvas = toCanvas(await blobToImage(await res.blob()));
-  return backdrop === "white" ? removeBackgroundFrom(canvas, { tolerance: 26, feather: 2 }) : canvas;
+  const cut = res.headers.get("X-Ct-Cutout") !== "0";
+  return { canvas: backdrop === "white" ? removeBackgroundFrom(canvas, { tolerance: 26, feather: 2 }) : canvas, cut };
 }
 
 export async function processPhoto(req: PhotoProcessRequest): Promise<Blob> {
   const input = await shrinkImage(req.source, isFaceStyle(req.style) ? FACE_PROCESS_MAX_PX : PROCESS_MAX_PX);
-  let canvas = needsServer(req.style, req.cutout) ? await serverStep(req, input) : toCanvas(await blobToImage(input));
+  const step = needsServer(req.style, req.cutout) ? await serverStep(req, input) : { canvas: toCanvas(await blobToImage(input)), cut: true };
+  let canvas = step.canvas;
+  const cutout = req.cutout && step.cut;
   // Face styles end at the jaw on purpose (services/face-detect): no fade into a body that isn't there.
   const centred = req.centerOn ? centerFaces(canvas, req.centerOn) : null;
   if (centred) canvas = centred;
   else {
-    if (req.cutout && req.fadeCrop && !isFaceStyle(req.style)) canvas = fadeCroppedEdges(canvas);
-    if (req.cutout) canvas = trimTransparent(canvas, 2);
+    if (cutout && req.fadeCrop && !isFaceStyle(req.style)) canvas = fadeCroppedEdges(canvas);
+    if (cutout) canvas = trimTransparent(canvas, 2);
   }
   if (styleEngine(req.style) === "local") canvas = pixelArt(canvas, { cells: 170, colors: 64 });
   const filter = styleFilter(req.style);
@@ -124,8 +128,9 @@ export async function processPhoto(req: PhotoProcessRequest): Promise<Blob> {
  * (`fields.name`, with `fields.region` on the storefront). Keyed / trimmed like a photo; never faded at the edge.
  */
 export async function processName(req: Pick<PhotoProcessRequest, "style" | "cutout" | "endpoint" | "fields" | "signal">): Promise<Blob> {
-  let canvas = await serverStep(req, null);
-  if (req.cutout) canvas = trimTransparent(canvas, 2);
+  const step = await serverStep(req, null);
+  let canvas = step.canvas;
+  if (req.cutout && step.cut) canvas = trimTransparent(canvas, 2);
   return hasAlpha(canvas) ? canvasToBlob(canvas, "image/png") : canvasToBlob(canvas, "image/jpeg", 0.92);
 }
 

@@ -22,7 +22,8 @@ import { khuonAi } from "../print-khuon";
 import { aiTemplateBlank } from "../print-blanks";
 import { createArtwork } from "../print-products";
 import { answerAgentTask, cancelAgentTask, createAgentTask, listAgentTasks } from "../agent/tasks";
-import { deleteCharProject, listCharProjects, updateCharProject } from "../char/projects";
+import { deleteCharProject, listCharProjects } from "../char/projects";
+import { charCall } from "./char-edit-tools";
 import type { CtSession } from "../supabase";
 import { answer, idOf, session } from "./crud-tools";
 import { OPT_TASK_ARG, json } from "./task-common";
@@ -30,12 +31,12 @@ import type { CtMcpContext, CtMcpTool } from "./tools";
 
 const MAX_FILE = 25 * 1024 * 1024;
 
-async function adminOf(ctx: CtMcpContext, s: CtSession): Promise<boolean> {
+export async function adminOf(ctx: CtMcpContext, s: CtSession): Promise<boolean> {
   return ctx.caller === "user" ? ctx.admin : st.isAdmin(s);
 }
 
 /** The file of a call: data_base64 (a data: url or bare base64) or an https url. */
-async function fileOf(args: Record<string, unknown>, urlKey = "image_url"): Promise<Buffer> {
+export async function fileOf(args: Record<string, unknown>, urlKey = "image_url"): Promise<Buffer> {
   const b64 = str(args.data_base64).replace(/^data:[^,]*,/, "").replace(/\s+/g, "");
   const url = str(args[urlKey]).trim();
   let data: Buffer;
@@ -528,7 +529,8 @@ export const CT_MCP_LIBRARY_TOOLS: CtMcpTool[] = [
     callers: ["agent", "user"],
     run: async (ctx, args) => {
       if (!str(args.name).trim()) throw new Error("name is empty");
-      const out = await answer(await updateCharProject(await session(ctx, args), idOf(args, "project_id"), { name: str(args.name) }));
+      // Through the page's route: @flexiprint working on the bộ is told of the new name.
+      const out = await charCall(await session(ctx, args), "PATCH", ["char", "projects", idOf(args, "project_id")], { name: str(args.name) });
       const p = out.project as { id: string; name: string };
       return json({ id: p.id, name: p.name });
     },

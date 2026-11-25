@@ -23,7 +23,8 @@ import { ownedProduct, productTemplate, readDeployBody, runDeploy } from "../han
 import { listCollections, previewLinks, shopifyConfigured, shopifyInfo } from "../shopify";
 import { loadStores, storeOfProduct } from "../stores";
 import { siteUrl } from "../site-url";
-import { listBaseRows, loadBaseProduct } from "../base-products";
+import { listBaseRows, loadBaseProduct, updateBaseProduct } from "../base-products";
+import { answer } from "./crud-tools";
 import { applyBase, makeProductFromArtwork, resyncProduct } from "../artwork-link";
 import { saveOwnMockupPrompt } from "../product-mockups";
 import { baseImage, normalizeBaseConfig, normalizeBaseMockup } from "../../lib/base-product";
@@ -735,14 +736,10 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         changed.push("mockup");
       }
       if (!changed.length) throw new Error("Nothing to change — give at least one field");
-      const config = normalizeBaseConfig(raw);
-      const { error } = await db.from(CT_TABLES.baseProducts).update({ name, config }).eq("id", id);
-      if (error) throw new Error(error.message);
-      // As the base page's save (server/base-products.ts updateBaseProduct): every product on it is laid on it again.
-      const { data: products } = await db.from(CT_TABLES.products).select("*").eq("base_product_id", id).eq("kind", "product").returns<CtProduct[]>();
-      const failed: string[] = [];
-      for (const p of products ?? []) await applyBase(db, p).catch((e: Error) => failed.push(`${p.name}: ${e.message}`));
-      return json({ ok: true, base_product_id: id, name, changed, price_table_id: priceTableId, reapplied: (products ?? []).length - failed.length, failed, page: `${siteUrl()}/base-products/${id}` });
+      // The base page's own save (server/base-products.ts updateBaseProduct): the same checks (a base keeps its
+      // picture), and every product on it is laid on it again. Maker / admin checked above (the handler leans on RLS).
+      const saved = await answer(await updateBaseProduct(await serviceSession(db, userId), id, { name, config: raw }));
+      return json({ ok: true, base_product_id: id, name, changed, price_table_id: priceTableId, reapplied: saved.reapplied, failed: saved.failed, page: `${siteUrl()}/base-products/${id}` });
     },
   },
   {

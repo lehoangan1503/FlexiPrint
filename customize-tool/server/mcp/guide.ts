@@ -138,6 +138,17 @@ What the web page does, a tool does — through the same handler, so the same ow
 - A signed-in user also: list_agent_tasks / open_agent_task (content, mockup, base_preview, char — what the buttons
   open) / cancel_agent_task / answer_agent_task; char_list_sets, char_rename_set, char_delete_set (confirm, ask first).
   Every change above is its maker's or an admin's; deletes are asked first.
+- Bộ nhân vật by hand (its page's buttons, no task needed): char_get_set (files, 3a matte, 3c regions — the ids and
+  urls) → char_edit_file (a clipart file: mask = its new alpha on the bộ's canvas, move {dx, dy}, fix = cân màu; every
+  colour of the option follows) / char_revert_file (hoàn tác) / char_approve_layers; char_cut_step (matte: start, fix
+  points, revert, approve; plan: start, region key + mask, revert key, approve). A bộ ảnh khách: char_order_photo_styles,
+  char_set_test_photos. @flexiprint working on the bộ is told of each change, as for a change on the page.
+- Lưu thành bộ clipart: char_extract_set {product_id, region_ids (get_product_design), name, version_id?} — the layers
+  copied at the same place into a new bộ (its picture drawn on the server).
+- Mockup library: list_mockup_packs (full = the scenes) → save_mockup_pack (no pack_id = new; slides given whole;
+  pictures via upload_mockup_pack_image) / delete_mockup_pack (confirm). Thư viện ảnh mockup: list_pack_images,
+  get_pack_image, upload_pack_image, delete_pack_image (confirm). mockup_sample_photos: sample people / pets for a photo
+  zone through its styles (paid: one AI picture each, nothing saved). list_presets: material presets (read-only).
 - Bộ nhân vật, besides the steps above: char_get_brief (the brief only, small), char_plan_pictures (your 3b plan),
   char_refine_master (an in-place edit of a master), char_use_edit (back to an earlier, better 3b attempt),
   char_make_blank (step 4 phôi trơn). Drawn pose by pose: char_draw_poses → char_compose (each version's placement) →

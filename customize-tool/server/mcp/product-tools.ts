@@ -8,6 +8,7 @@
  *   clone_product              POST products/:id/clone              (product list "Nhân bản")
  *   fit_artwork_to_base        POST products/:id/fit-base           (artwork "Khớp canvas với khuôn base")
  *   set_preview_box            POST products/:id/preview-box        (Deploy page: where the design sits on the preview photo)
+ *   set_multi_photo            POST products/:id/multi-photo        (Deploy page "Popup nhiều ảnh": every photo slot in one popup)
  *   clear_failed_mockups       DELETE products/:id/mockups/failed   (Mockups tab "Xoá N ô lỗi")
  *   add_product_mockups        POST products/:id/assets role mockup (Mockups tab "Import mockup" — pictures made elsewhere)
  *   update_asset / delete_asset PATCH / DELETE assets/:id           (rename, swatch colour, move a variant; delete a picture)
@@ -23,7 +24,7 @@ import { normalizeProductConfig } from "../../lib/design";
 import { normalizePriceTableConfig } from "../../lib/pricing";
 import { str } from "../ai/llm";
 import { fetchImage } from "../char/files";
-import { deleteAsset, shopifyCreateCollection, updateAsset, uploadAsset } from "../handlers";
+import { deleteAsset, setMultiPhoto, shopifyCreateCollection, updateAsset, uploadAsset } from "../handlers";
 import { cloneProduct, setPreviewBox } from "../artwork-link";
 import { fitArtworkToBase } from "../artwork-fit";
 import { clearFailedMockupJobs } from "../product-mockups";
@@ -138,6 +139,27 @@ export const CT_MCP_PRODUCT_TOOLS: CtMcpTool[] = [
       if (args.box === undefined) return json({ product_id: id, preview: sceneOf(p.config), note: "Give box {x, y, w, h} (photo pixels) to move the design, null for the base's position." });
       const out = await answer(await setPreviewBox(s, id, { box: args.box }));
       return json({ product_id: id, preview: sceneOf((out.product as { config: unknown }).config), next: "deploy_product puts the new position on the store." });
+    },
+  },
+  {
+    name: "set_multi_photo",
+    description:
+      "The store's \"one popup for every photo\" mode of a product (the Deploy page's \"Popup nhiều ảnh\"): on = the customer gets ONE popup — the live preview of the whole product on the left, every AI photo slot on the right (upload / change, its own progress bar, error + Try again), the AI jobs run side by side and each result drops into the preview; no waiting screen, no Buy More. Off (default) = one photo dialog per slot. Meant for products with several AI photo slots (3+). A product already published is published again at once, so the live page uses it now (no deploy needed). Without on: only reads → {on, photo_slots}.",
+    inputSchema: {
+      type: "object",
+      properties: { ...OPT_TASK_ARG, product_id: { type: "string", description: "The product." }, on: { type: "boolean", description: "true = one popup for every photo slot; false = one dialog per slot." } },
+      required: ["product_id"],
+    },
+    callers: ["agent", "user"],
+    run: async (ctx, args) => {
+      const s = await session(ctx, args);
+      const id = idOf(args, "product_id");
+      const p = await owned(s, id);
+      const { data: regions } = await s.supabase.from(CT_TABLES.regions).select("kind,config").eq("product_id", id).returns<Array<{ kind: string; config: { photo?: { styles?: string[] } } }>>();
+      const slots = (regions ?? []).filter((r) => r.kind === "photo").length;
+      if (typeof args.on !== "boolean") return json({ product_id: id, on: normalizeProductConfig(p.config).multiPhoto, photo_slots: slots });
+      const out = await answer(await setMultiPhoto(s, id, { on: args.on }, siteUrl()));
+      return json({ product_id: id, on: args.on, photo_slots: slots, published: out.published, version: out.version ?? null, ...(slots < 2 && args.on ? { note: "Fewer than 2 photo slots: the popup adds little here." } : {}) });
     },
   },
   {

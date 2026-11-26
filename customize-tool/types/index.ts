@@ -889,6 +889,12 @@ export interface CtProductConfig {
    */
   customerPhoi: boolean;
   /**
+   * "Popup nhiều ảnh" (asked 2026-11-26, the 11-photo blanket): every AI photo slot of the product in ONE popup on the
+   * store — the live preview left, the slots right, each slot's AI task running in parallel (storefront/multi-photo.ts).
+   * Off (default) = one photo dialog per slot, as before. Set by POST products/:id/multi-photo (Deploy page, MCP set_multi_photo).
+   */
+  multiPhoto: boolean;
+  /**
    * The product's own mockup prompts, one block = one AI photo (asked 2026-11-23: "mỗi prompt 1 khối, up ảnh tham chiếu
    * riêng lên từng khối"): its prompt and the reference pictures sent with THAT prompt only. [] = its base's scenes
    * (CtBaseMockup). Read from the older mockupScenes text / mockupRefs when a product has no blocks yet
@@ -2257,6 +2263,11 @@ export interface CtUpdateProductBody {
   deployDraft?: Omit<CtDeployDraft, "savedAt"> | null;
   /** CtProductConfig.customerNote */
   customerNote?: CtCustomerNote;
+}
+
+/** POST products/:id/multi-photo */
+export interface CtMultiPhotoBody {
+  on: boolean;
 }
 
 export interface CtSaveDesignBody {

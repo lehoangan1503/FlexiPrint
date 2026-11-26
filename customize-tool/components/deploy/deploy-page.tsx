@@ -93,6 +93,10 @@ export function DeployPage({ productId }: { productId: string }) {
   const [primary, setPrimary] = useState<string | null>(null);
   // "Phôi AI có ảnh khách" (2026-11-10): off by default, stored on the product at deploy.
   const [customerPhoi, setCustomerPhoi] = useState(false);
+  // "Popup nhiều ảnh" (2026-11-26): saved at once (POST products/:id/multi-photo), not at deploy.
+  const [multiPhoto, setMultiPhoto] = useState(false);
+  const [multiSaving, setMultiSaving] = useState(false);
+  const [multiError, setMultiError] = useState<string | null>(null);
   // The customer note box on the Shopify page (asked 2026-11-20) and the Lưu nháp state.
   const [note, setNote] = useState<CtCustomerNote>({ ...DEFAULT_CUSTOMER_NOTE });
   const [savingDraft, setSavingDraft] = useState(false);
@@ -136,6 +140,7 @@ export function DeployPage({ productId }: { productId: string }) {
         setSkuDraft(b.product.sku ?? "");
         setStore(stores?.stores.find((x) => x.id === (b.product.store_id ?? stores.stores[0]?.id)) ?? null);
         setCustomerPhoi(b.product.config?.customerPhoi === true);
+        setMultiPhoto(b.product.config?.multiPhoto === true);
         setNote(normalizeProductConfig(b.product.config).customerNote);
         setTables(list);
         setInfo(shop);
@@ -204,6 +209,7 @@ export function DeployPage({ productId }: { productId: string }) {
     () => (bundle?.regions ?? []).map(normalizeRegion).some((r) => r.kind === "photo" && r.config.photo.styles.some(isAiStyleRef)),
     [bundle],
   );
+  const photoSlots = useMemo(() => (bundle?.regions ?? []).filter((r) => r.kind === "photo").length, [bundle]);
 
   const table = tables.find((t) => t.id === tableId) ?? null;
   // The variants are the base's (2026-11-24); a product without a base / a base without options: the table's.
@@ -597,6 +603,26 @@ export function DeployPage({ productId }: { productId: string }) {
               {customerPhoi && !(template.tpl?.config.versionPhoi.length ?? 0) && (
                 <Notice level="warn" text="Sản phẩm chưa có phôi AI theo version trên base này — tick không có tác dụng." />
               )}
+              <CtCheckbox
+                checked={multiPhoto}
+                disabled={multiSaving}
+                onChange={async (on) => {
+                  setMultiSaving(true);
+                  setMultiError(null);
+                  try {
+                    const r = await ctApi.setMultiPhoto(product.id, on);
+                    setMultiPhoto(on);
+                    setBundle((b) => (b ? { ...b, product: r.product } : b));
+                  } catch (e) {
+                    setMultiError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setMultiSaving(false);
+                  }
+                }}
+                label="Popup nhiều ảnh"
+                hint={`Bật: khách mở 1 popup chung cho cả ${photoSlots} ô ảnh — xem trước bên trái, danh sách ô bên phải, tải ảnh liên tục, AI chạy song song, không có màn chờ và nút Buy More. Lưu ngay, sản phẩm đã lên Shopify thì có hiệu lực luôn (không cần Deploy). Hợp với sản phẩm từ 3 ô ảnh.`}
+              />
+              {multiError && <Notice level="warn" text={multiError} />}
             </Card>
           )}
 

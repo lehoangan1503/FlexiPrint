@@ -34,7 +34,7 @@ import { phoiPicks, phoiTaskKey } from "../lib/photo-task-key";
 import { isAiStyleRef, styleFamily } from "../lib/photo-styles";
 import { cachedAiResult, jobCutsOut, processPhoto, type PhotoJob, type PhotoResult } from "./ai/photo";
 import { aiStylesConfigured } from "./ai/style-run";
-import { loadAiStyle, originAllowed, takeAiQuota, type AiQuota } from "./ai-styles";
+import { aiQuotaLeft, loadAiStyle, originAllowed, takeAiQuota, type AiQuota } from "./ai-styles";
 import { loadBaseProduct } from "./base-products";
 import { CORS_HEADERS, photoInputError, photoRateLimited, publicError, publicJson, readPhotoRequest, requestImage } from "./handlers";
 import { ctPublicUploadPath, ctUpload } from "./storage";
@@ -65,7 +65,7 @@ function touch(t: Task, patch: Partial<CtPhotoTask>): void {
 }
 
 const QUOTA_TEXT: Record<Exclude<AiQuota, "ok">, string> = {
-  ip: "Daily limit reached for AI styles — please try again tomorrow.",
+  ip: "You've used all your free AI drawings for today. The photos already made stay on your design — please come back tomorrow for the rest.",
   total: "AI styles are busy right now — please try again later.",
   unavailable: "AI styles unavailable (spend cap not configured — run migration 003)",
 };
@@ -247,6 +247,13 @@ async function phoiRound(db: CtServiceClient, task: Task, ask: PhoiAsk): Promise
   }
   console.warn(`[ct] phôi khách ${state.id}: ${last}`);
   if (task.state.phoiPending === key) touch(task, { phoiPending: null, stage: "done", error: last });
+}
+
+/** GET public/quota/:productId — the customer's AI drawings left today { limit, left } (the multi-photo popup shows it). */
+export async function aiQuotaStatus(ip: string): Promise<NextResponse> {
+  const q = await aiQuotaLeft(ip);
+  if (!q) return publicError("Unknown", 503);
+  return publicJson(q, 200, { "Cache-Control": "no-store" });
 }
 
 /** GET public/tasks/:taskId */

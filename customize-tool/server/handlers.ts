@@ -398,6 +398,8 @@ export async function saveDesign(s: CtSession, productId: string, body: CtSaveDe
             ...normalizeProductConfig(body.config),
             versionPhoi: normalizeProductConfig(owned.config).versionPhoi,
             customerPhoi: normalizeProductConfig(owned.config).customerPhoi,
+            // Set by POST products/:id/multi-photo.
+            multiPhoto: normalizeProductConfig(owned.config).multiPhoto,
             // Written when mockups are made (server/product-mockups.ts).
             mockupBlocks: normalizeProductConfig(owned.config).mockupBlocks,
             mockupBaseRefs: normalizeProductConfig(owned.config).mockupBaseRefs,
@@ -453,6 +455,25 @@ export async function publish(s: CtSession, productId: string, origin: string): 
     if (store) await setTemplateUrlMetafield(store, r.product.shopify.productId, r.cdnUrl).catch((e: Error) => console.warn("[ct] template_url", e.message));
   }
   return NextResponse.json({ product: r.product, publish: r.publish });
+}
+
+/**
+ * POST products/:id/multi-photo { on } — "Popup nhiều ảnh" (CtProductConfig.multiPhoto): the Deploy page's tick and the MCP
+ * set_multi_photo. A product already published is published again at once, so its Shopify page reads the flag now.
+ */
+export async function setMultiPhoto(s: CtSession, productId: string, body: unknown, origin: string): Promise<NextResponse> {
+  const product = await ownedProduct(s, productId);
+  if (!product) return jsonError("Không có quyền sửa sản phẩm này", 403);
+  const on = body && typeof body === "object" ? (body as { on?: unknown }).on : undefined;
+  if (typeof on !== "boolean") return jsonError("on phải là true hoặc false", 400);
+  const config = { ...normalizeProductConfig(product.config), multiPhoto: on };
+  const { data, error } = await s.supabase.from(CT_TABLES.products).update({ config }).eq("id", productId).select("*").single<CtProduct>();
+  if (error || !data) return jsonError(error?.message ?? "Không lưu được", 500);
+  if (!data.published_version) return NextResponse.json({ product: data, published: false });
+  const res = await publish(s, productId, origin);
+  if (!res.ok) return res;
+  const out = (await res.json()) as { product: CtProduct; publish: CtPublishResponse };
+  return NextResponse.json({ product: out.product, published: true, version: out.publish.version });
 }
 
 /** The storefront template of the saved design as the next version would carry it (publish, and the MCP check_deploy). */

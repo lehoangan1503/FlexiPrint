@@ -263,6 +263,23 @@ export function originAllowed(origin: string | null): boolean {
 
 export type AiQuota = "ok" | "ip" | "total" | "unavailable";
 
+const ipBucketOf = (ip: string) => `ip:${createHash("sha256").update(ip).digest("hex").slice(0, 32)}`;
+
+/** How many AI drawings `ip` has left today (the per-customer cap only); null = cannot tell. Counts nothing. */
+export async function aiQuotaLeft(ip: string): Promise<{ limit: number; left: number } | null> {
+  const db = ctServiceClient();
+  if (!db) return null;
+  const limit = envInt("CT_AI_IP_DAILY_LIMIT", 12);
+  const { data, error } = await db
+    .from("ct_ai_usage")
+    .select("count")
+    .eq("day", new Date().toISOString().slice(0, 10))
+    .eq("bucket", ipBucketOf(ip))
+    .maybeSingle<{ count: number }>();
+  if (error) return null;
+  return { limit, left: Math.max(0, limit - (data?.count ?? 0)) };
+}
+
 /**
  * Count one AI call for `ip`. Durable across serverless instances (Postgres).
  * "unavailable" = migration 003 missing or no service key → refuse rather than
@@ -273,7 +290,7 @@ export async function takeAiQuota(ip: string): Promise<AiQuota> {
   if (!db) return "unavailable";
   const total = envInt("CT_AI_DAILY_LIMIT", 300);
   const perIp = envInt("CT_AI_IP_DAILY_LIMIT", 12);
-  const ipBucket = `ip:${createHash("sha256").update(ip).digest("hex").slice(0, 32)}`;
+  const ipBucket = ipBucketOf(ip);
   const { data, error } = await db.rpc("ct_ai_usage_hit", { p_buckets: [ipBucket, "all"], p_limits: [perIp, total] });
   if (error) {
     console.error("[ct] ct_ai_usage_hit failed", error.message);

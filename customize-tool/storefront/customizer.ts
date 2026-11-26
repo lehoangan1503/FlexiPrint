@@ -96,7 +96,7 @@ import { photoNameConfig } from "../lib/photo-name";
 import { filterBlob, processName, processPhoto, shrinkImage } from "../lib/photo-process";
 import { isAiStyleRef, styleEngine, styleFamily, styleFilter, styleLabel } from "../lib/photo-styles";
 import { phoiPicks, phoiTaskKey } from "../lib/photo-task-key";
-import { addTask, getTask, latestForPage, onTasks, TASK_PARAM, taskWorking, updateTask, type CtStoredTask } from "./tasks";
+import { addTask, getTask, latestForPage, onTasks, progressOf, TASK_PARAM, tasksForPage, taskWorking, updateTask, type CtStoredTask } from "./tasks";
 import { createMagicLoader, type MagicLoader, type MagicStep, type MagicWait } from "./magic-loader";
 
 interface VariantInfo {
@@ -216,6 +216,18 @@ interface CtCollectionProduct {
 
 interface CtShopifyWindow extends Window {
   Shopify?: { routes?: { root?: string } };
+}
+
+/** One slot of the multi-photo popup: its newest AI task, the photo sent (for Try again), what went wrong. */
+interface MultiSlot {
+  taskId: string | null;
+  /** The customer's own picture (object URL) shown while it is drawn. */
+  thumb: string | null;
+  source: Blob | null;
+  error: string | null;
+  style: CtPhotoStyleRef;
+  /** The task is being created (upload in flight). */
+  starting: boolean;
 }
 
 const PREVIEW_MAX_PX = 1200;
@@ -626,6 +638,12 @@ export class Customizer {
   }
 
   private async renderStage(): Promise<void> {
+    await this.drawStage();
+    // The multi-photo popup shows the same picture.
+    this.copyStage();
+  }
+
+  private async drawStage(): Promise<void> {
     const canvas = this.canvas;
     if (!canvas || this.stage?.hidden) return;
     const token = ++this.renderToken;
@@ -661,9 +679,10 @@ export class Customizer {
     const stale = !done && want && working && task?.phoi?.mainId === want.mainId ? task.phoi : null;
     const waitedOn = this.waitingTask ? getTask(this.waitingTask)?.task : null;
     const waiting = !!waitedOn && taskWorking(waitedOn);
+    const multiBusy = this.multiBusy();
     this.showBadge(
-      !!this.nameBusy || waiting || (!!want && working && !done),
-      this.nameBusy ?? (stale ? this.t("updating", "Updating your realistic preview…") : this.t("realistic", "Making your realistic preview…")),
+      !!this.nameBusy || waiting || multiBusy > 0 || (!!want && working && !done),
+      this.nameBusy ?? (multiBusy > 0 ? `${this.t("creatingMany", "Creating")} ${multiBusy} ${multiBusy === 1 ? this.t("photoOne", "photo") : this.t("photoMany", "photos")}…` : stale ? this.t("updating", "Updating your realistic preview…") : this.t("realistic", "Making your realistic preview…")),
     );
     const mine = done ?? stale;
     if (mine) {
@@ -979,6 +998,8 @@ export class Customizer {
       const main = mode === "fixed" ? null : this.textField(r, tsel?.text ?? "");
       return [main, this.zoneOptionsField(r, tsel, false)].filter((x): x is HTMLElement => x !== null);
     }
+    // The multi-photo popup: one field for all its slots, on the first one's place.
+    if (this.isMultiSlot(r)) return this.multiSlots()[0]?.id === r.id ? [this.multiField()] : [];
     const psel = sel?.kind === "photo" ? sel : null;
     return [this.photoField(r, psel), this.zoneOptionsField(r, psel, false)].filter((x): x is HTMLElement => x !== null);
   }
@@ -1485,7 +1506,8 @@ export class Customizer {
   }
 
   private onTasksChanged(): void {
-    if (this.waitingTask || this.wantedPhoi(this.selection)) this.scheduleRender();
+    this.multi.refresh?.();
+    if (this.waitingTask || this.multiBusy() > 0 || this.wantedPhoi(this.selection)) this.scheduleRender();
   }
 
   private showBadge(on: boolean, text = ""): void {
@@ -1505,6 +1527,7 @@ export class Customizer {
    * Shift+R, coming back later — the design and its preview are still there): its design filled in again.
    */
   private restoreTask(): void {
+    if (this.multiOn()) return this.restoreMulti();
     const url = new URL(location.href);
     const fromLink = url.searchParams.get(TASK_PARAM);
     if (fromLink) {
@@ -1649,6 +1672,363 @@ export class Customizer {
     const technical =
       !msg || msg.length > 160 || /\b(HTTP|fetch|network|timeout|timed out|ECONN\w*|JSON|undefined|null|TypeError|SyntaxError|status|abort\w*|[45]\d\d)\b|[{}<>]/i.test(msg);
     return technical ? this.t("waitFailed", "Sorry, we couldn't create your picture this time. Please try again.") : msg;
+  }
+
+  // ------------------------------------------------------------- multi-photo popup (CtProductConfig.multiPhoto)
+  /**
+   * 2026-11-26 (the 11-photo blanket, n06-POD-273): every AI photo slot in ONE popup — the live preview of the whole
+   * product left, the slots right (thumbnail, upload / change, its own progress bar, error + Try again). The customer
+   * uploads one after another; each slot is its own server task (server/photo-tasks.ts), they run side by side and each
+   * finished photo goes into the design at once. No waiting screen, no "Buy More". Off = one dialog per slot.
+   */
+  private multi: { slots: Map<string, MultiSlot>; refresh: (() => void) | null } = { slots: new Map(), refresh: null };
+  /** The customer's AI drawings left today (GET public/quota), null = not known yet. */
+  private quota: { limit: number; left: number } | null = null;
+  /** The popup's preview canvas: a copy of the stage after each render. */
+  private stageCopy: HTMLCanvasElement | null = null;
+
+  /** The photo slots the popup holds: AI photo zones (server tasks) without sub-options, on the version shown. */
+  private multiSlots(sel: CtSelection = this.selection): CtRegion[] {
+    return this.shownRegions(sel).filter(
+      (r) => r.kind === "photo" && r.config.photo.input !== "name" && !r.config.options.list.length && this.usesTasks(r, r.config.photo.defaultStyle),
+    );
+  }
+
+  private multiOn(): boolean {
+    return !this.previewMode && this.tpl.config.multiPhoto === true && this.multiSlots().length >= 2;
+  }
+
+  private isMultiSlot(r: CtRegion): boolean {
+    return this.multiOn() && this.multiSlots().some((x) => x.id === r.id);
+  }
+
+  private slotKey(design: number, regionId: string): string {
+    return `${design}:${regionId}`;
+  }
+
+  /** A slot whose AI task is running (or being started). */
+  private slotWorking(key: string): boolean {
+    const s = this.multi.slots.get(key);
+    if (!s || s.error) return false;
+    if (s.starting) return true;
+    const t = s.taskId ? getTask(s.taskId)?.task : null;
+    return !!t && taskWorking(t);
+  }
+
+  private multiBusy(): number {
+    if (!this.multiOn()) return 0;
+    return this.multiSlots().filter((r) => this.slotWorking(this.slotKey(this.active, r.id))).length;
+  }
+
+  private copyStage(): void {
+    const src = this.canvas;
+    const dst = this.stageCopy;
+    if (!src || !dst || !src.width || !dst.isConnected) return;
+    dst.width = src.width;
+    dst.height = src.height;
+    dst.getContext("2d")?.drawImage(src, 0, 0);
+  }
+
+  /** The one field on the form for all the popup's slots: how many are in, their thumbnails, the button. */
+  private multiField(): HTMLElement {
+    const slots = this.multiSlots();
+    const sel = this.selection;
+    const urlOf = (r: CtRegion) => {
+      const p = sel[r.id];
+      return p?.kind === "photo" ? p.url : null;
+    };
+    const done = slots.filter((r) => urlOf(r)).length;
+    const strip = el(
+      "div",
+      { class: "ct-multi-field__strip" },
+      slots.map((r, i) => {
+        const url = urlOf(r);
+        return url ? el("img", { class: "ct-multi-field__thumb", src: url, alt: "" }) : el("span", { class: "ct-multi-field__thumb ct-multi-field__thumb--empty", text: String(i + 1) });
+      }),
+    );
+    const open = el("button", { type: "button", class: done ? "ct-btn ct-btn--ghost" : "ct-btn ct-btn--upload", text: done ? this.t("editPhotos", "Edit your photos") : this.t("uploadPhotos", "Upload your photos") });
+    open.addEventListener("click", () => this.openMultiPhoto());
+    strip.addEventListener("click", () => this.openMultiPhoto());
+    return this.field(this.t("multiTitle", "Your photos"), el("div", { class: "ct-multi-field" }, [strip, open]), slots.some((r) => r.config.photo.required), `${done}/${slots.length}`);
+  }
+
+  private async refreshQuota(): Promise<void> {
+    const res = await fetch(this.photoUrl.replace("/public/photo/", "/public/quota/"), { mode: "cors", cache: "no-store" }).catch(() => null);
+    const j = res?.ok ? ((await res.json().catch(() => null)) as { limit?: number; left?: number } | null) : null;
+    if (j && typeof j.left === "number" && typeof j.limit === "number") this.quota = { limit: j.limit, left: j.left };
+    this.multi.refresh?.();
+  }
+
+  /** The finished photo of a slot's task goes into the design (unless another photo was put there meanwhile). */
+  private watchSlot(r: CtRegion, design: number, slot: MultiSlot, id: string): void {
+    const key = this.slotKey(design, r.id);
+    void this.taskPhoto(id)
+      .then((url) => {
+        if (this.destroyed || this.multi.slots.get(key) !== slot) return;
+        const stored = getTask(id);
+        const sel = this.designs[design] ?? {};
+        const cur = sel[r.id];
+        const value: CtPhotoSelection = {
+          kind: "photo",
+          url,
+          transform: { ...(stored?.transform ?? IDENTITY_TRANSFORM) },
+          style: slot.style,
+          sourceUrl: stored?.task.sourceUrl ?? null,
+          optionId: cur?.kind === "photo" ? (cur.optionId ?? null) : (stored?.optionId ?? null),
+        };
+        this.taskByPhoto.set(url, id);
+        if (stored && !stored.notified && this.stageCopy) updateTask(id, { notified: true });
+        if (design === this.active) this.change(r.id, value);
+        else this.designs[design] = { ...sel, [r.id]: value };
+        this.multi.refresh?.();
+      })
+      .catch((e) => {
+        if (this.multi.slots.get(key) !== slot) return;
+        slot.error = this.plainError(e);
+        this.multi.refresh?.();
+        this.scheduleRender();
+        void this.refreshQuota();
+      });
+  }
+
+  /** A photo for one slot: its own AI task, started at once (others may be running). */
+  private async runSlot(r: CtRegion, design: number, source: Blob, style: CtPhotoStyleRef): Promise<void> {
+    const key = this.slotKey(design, r.id);
+    const prev = this.multi.slots.get(key);
+    const thumb = prev?.source === source && prev.thumb ? prev.thumb : URL.createObjectURL(source);
+    if (prev?.thumb && prev.thumb !== thumb) URL.revokeObjectURL(prev.thumb);
+    const slot: MultiSlot = { taskId: null, thumb, source, error: null, style, starting: true };
+    this.multi.slots.set(key, slot);
+    this.multi.refresh?.();
+    this.scheduleRender();
+    try {
+      const cur = this.designs[design]?.[r.id];
+      const optionId = cur?.kind === "photo" ? (cur.optionId ?? null) : null;
+      const nameCfg = photoNameConfig(r.config.photo);
+      const name = this.aiStyleInfo(style)?.askName === true ? (this.photoNames.get(r.id) ?? "").replace(/\s+/g, " ").trim().slice(0, nameCfg.maxChars) : "";
+      const stored = await this.startPhotoTask(r, source, style, optionId, name);
+      if (this.multi.slots.get(key) !== slot) return;
+      slot.taskId = stored.id;
+      slot.starting = false;
+      this.multi.refresh?.();
+      void this.refreshQuota();
+      this.watchSlot(r, design, slot, stored.id);
+    } catch (e) {
+      if (this.multi.slots.get(key) !== slot) return;
+      slot.starting = false;
+      slot.error = this.plainError(e);
+      this.multi.refresh?.();
+      this.scheduleRender();
+      void this.refreshQuota();
+    }
+  }
+
+  /** After a reload: every task of this product comes back — finished photos in their slots, running ones watched. */
+  private restoreMulti(): void {
+    const url = new URL(location.href);
+    if (url.searchParams.has(TASK_PARAM)) {
+      url.searchParams.delete(TASK_PARAM);
+      history.replaceState(history.state, "", url.toString());
+    }
+    const mine = tasksForPage();
+    if (!mine.length) return;
+    const slots = this.multiSlots(this.carryOver({ ...mine[0].selection }));
+    const sel = this.carryOver({ ...mine[0].selection });
+    const seen = new Set<string>();
+    const watch: Array<[CtRegion, MultiSlot, string]> = [];
+    for (const t of mine) {
+      const r = slots.find((x) => x.id === t.task.regionId);
+      if (!r || seen.has(r.id)) continue;
+      seen.add(r.id);
+      const style = t.task.style as CtPhotoStyleRef;
+      const slot: MultiSlot = { taskId: t.id, thumb: null, source: null, error: null, style, starting: false };
+      this.multi.slots.set(this.slotKey(0, r.id), slot);
+      if (t.task.stage === "failed") {
+        slot.error = this.plainError(new Error(t.task.error || ""));
+        continue;
+      }
+      if (t.task.photoUrl) {
+        this.taskByPhoto.set(t.task.photoUrl, t.id);
+        sel[r.id] = { kind: "photo", url: t.task.photoUrl, transform: t.transform, style, sourceUrl: t.task.sourceUrl, optionId: t.optionId };
+        if (!t.notified && !taskWorking(t.task)) updateTask(t.id, { notified: true });
+      } else watch.push([r, slot, t.id]);
+    }
+    this.active = 0;
+    this.selection = sel;
+    this.renderOptions();
+    this.showStage();
+    for (const [r, slot, id] of watch) this.watchSlot(r, 0, slot, id);
+    this.syncTasks();
+  }
+
+  /** The popup. `focus`: the slot scrolled into view first. */
+  private openMultiPhoto(focus: string | null = null): void {
+    for (const old of Array.from(document.querySelectorAll("dialog.ct-multi"))) old.remove();
+    const design = this.active;
+    const dialog = el("dialog", { class: "ct-dialog ct-multi", "data-ct-owner": this.root.id || undefined });
+    dialog.style.setProperty("--ct-accent", getComputedStyle(this.root).getPropertyValue("--ct-accent"));
+    const canvas = el("canvas", { class: "ct-multi__canvas" });
+    const chip = el("div", { class: "ct-multi__chip", role: "status", hidden: true });
+    const count = el("span", { class: "ct-multi__count" });
+    const quota = el("div", { class: "ct-multi__quota", role: "status", hidden: true });
+    const list = el("div", { class: "ct-multi__list" });
+    const done = el("button", { type: "button", class: "ct-btn ct-btn--primary", text: this.t("done", "Done") });
+    const x = el("button", { type: "button", class: "ct-multi__x", "aria-label": this.t("close", "Close"), text: "×" });
+    dialog.append(
+      el("div", { class: "ct-dialog__head ct-multi__head" }, [el("strong", { text: this.t("multiTitle", "Your photos") }), count, x]),
+      el("div", { class: "ct-multi__body" }, [
+        el("div", { class: "ct-multi__preview" }, [canvas, chip]),
+        el("div", { class: "ct-multi__side" }, [
+          el("p", { class: "ct-multi__hint", text: this.t("multiHint", "Add your photos one after another — no need to wait. Each one appears on the preview as soon as it's ready.") }),
+          quota,
+          list,
+        ]),
+      ]),
+      el("div", { class: "ct-dialog__foot ct-multi__foot" }, [done]),
+    );
+
+    const slots = this.multiSlots();
+    type Row = { r: CtRegion; key: string; row: HTMLElement; thumb: HTMLElement; status: HTMLElement; bar: HTMLElement; fill: HTMLElement; upload: HTMLButtonElement; retry: HTMLButtonElement; style: () => CtPhotoStyleRef };
+    const rows: Row[] = [];
+    slots.forEach((r, i) => {
+      const cfg = r.config.photo;
+      const key = this.slotKey(design, r.id);
+      const file = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp", hidden: true });
+      const thumb = el("div", { class: "ct-slot__thumb" });
+      const status = el("div", { class: "ct-slot__status" });
+      const fill = el("i", { class: "ct-slot__fill" });
+      const bar = el("div", { class: "ct-slot__bar", hidden: true }, [fill]);
+      const upload = el("button", { type: "button", class: "ct-btn ct-btn--ghost ct-slot__btn" });
+      const retry = el("button", { type: "button", class: "ct-btn ct-btn--ghost ct-slot__btn", text: this.t("tryAgain", "Try again"), hidden: true });
+      const cur = this.designs[design]?.[r.id];
+      let chosen: CtPhotoStyleRef = cur?.kind === "photo" && cur.style && cfg.styles.includes(cur.style) ? cur.style : cfg.defaultStyle;
+      const extras: HTMLElement[] = [];
+      if (cfg.styles.length > 1) {
+        const pick = el("select", { class: "ct-select ct-slot__style", "aria-label": cfg.styleLabel || this.t("filter", "Filter") });
+        for (const id of cfg.styles) pick.append(el("option", { value: id, text: styleLabel(id, this.tpl.aiStyles), selected: id === chosen }));
+        pick.addEventListener("change", () => (chosen = pick.value as CtPhotoStyleRef));
+        extras.push(pick);
+      }
+      if (cfg.styles.some((id) => this.aiStyleInfo(id)?.askName === true)) {
+        const nameCfg = photoNameConfig(cfg);
+        const name = el("input", { class: "ct-input ct-slot__name", type: "text", maxlength: String(nameCfg.maxChars), value: this.photoNames.get(r.id) ?? "", placeholder: nameCfg.placeholder || nameCfg.label || this.t("photoName", "Name") });
+        name.addEventListener("input", () => this.photoNames.set(r.id, name.value));
+        extras.push(name);
+      }
+      const use = (f: File | Blob) => void this.runSlot(r, design, f, chosen);
+      upload.addEventListener("click", () => file.click());
+      thumb.addEventListener("click", () => file.click());
+      file.addEventListener("change", () => {
+        const f = file.files?.[0];
+        file.value = "";
+        if (f) use(f);
+      });
+      retry.addEventListener("click", () => {
+        const s = this.multi.slots.get(key);
+        if (s?.source) use(s.source);
+        else file.click();
+      });
+      const row = el("div", { class: "ct-slot", "data-slot": r.id }, [
+        thumb,
+        el("div", { class: "ct-slot__main" }, [el("div", { class: "ct-slot__title", text: cfg.label || r.name }), status, bar, ...extras]),
+        el("div", { class: "ct-slot__actions" }, [upload, retry, file]),
+      ]);
+      row.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        row.classList.add("is-drop");
+      });
+      row.addEventListener("dragleave", () => row.classList.remove("is-drop"));
+      row.addEventListener("drop", (e) => {
+        e.preventDefault();
+        row.classList.remove("is-drop");
+        const f = e.dataTransfer?.files?.[0];
+        if (f && f.type.startsWith("image/")) use(f);
+      });
+      thumb.dataset.n = String(i + 1);
+      rows.push({ r, key, row, thumb, status, bar, fill, upload, retry, style: () => chosen });
+      list.append(row);
+    });
+
+    const paint = () => {
+      const sel = this.designs[design] ?? {};
+      let ready = 0;
+      let working = 0;
+      let empty = 0;
+      for (const w of rows) {
+        const p = sel[w.r.id];
+        const photo = p?.kind === "photo" ? p.url : null;
+        const s = this.multi.slots.get(w.key);
+        const t = s?.taskId ? getTask(s.taskId) : null;
+        const busy = this.slotWorking(w.key);
+        const error = s?.error ?? null;
+        if (busy) working++;
+        else if (photo) ready++;
+        else empty++;
+        const show = busy ? (s?.thumb ?? photo) : (photo ?? s?.thumb ?? null);
+        const img = w.thumb.querySelector("img");
+        if (show) {
+          if (img?.getAttribute("src") !== show) w.thumb.replaceChildren(el("img", { src: show, alt: "" }));
+        } else if (img || !w.thumb.textContent) w.thumb.replaceChildren(w.thumb.dataset.n ?? "");
+        w.row.classList.toggle("is-working", busy);
+        w.row.classList.toggle("is-done", !busy && !error && !!photo);
+        w.row.classList.toggle("is-error", !!error && !busy);
+        const pct = busy ? (t ? Math.round(progressOf(t) * 100) : 3) : 0;
+        w.status.textContent = error && !busy
+          ? error
+          : busy
+            ? `${this.t("creating", "Creating your picture…")} ${pct}%`
+            : photo
+              ? this.t("slotReady", "Ready ✓")
+              : w.r.config.photo.required
+                ? this.t("slotEmpty", "No photo yet")
+                : this.t("slotOptional", "Optional");
+        w.bar.hidden = !busy;
+        w.fill.style.width = `${pct}%`;
+        w.upload.textContent = photo || busy || s?.thumb ? this.t("changePhoto", "Change photo") : this.t("upload", "Upload photo");
+        w.upload.disabled = !!s?.starting;
+        w.retry.hidden = !error || busy;
+      }
+      count.textContent = `${ready}/${rows.length} ${this.t("readyCount", "ready")}`;
+      chip.hidden = working === 0;
+      chip.textContent = working ? `${this.t("creatingMany", "Creating")} ${working} ${working === 1 ? this.t("photoOne", "photo") : this.t("photoMany", "photos")}…` : "";
+      const q = this.quota;
+      quota.hidden = !q;
+      if (q) {
+        quota.classList.toggle("is-out", q.left === 0);
+        quota.textContent =
+          q.left === 0
+            ? this.t("quotaOut", `You've used all ${q.limit} free AI drawings for today. The photos already made stay on your design — please come back tomorrow to add the rest.`)
+            : `${this.t("quotaLeft", "AI drawings left today:")} ${q.left} / ${q.limit}` + (empty > q.left ? ` — ${this.t("quotaTip", "choose your photos carefully, there are more empty slots than drawings left.")}` : "");
+      }
+    };
+
+    const tick = window.setInterval(paint, 700);
+    const close = () => {
+      window.clearInterval(tick);
+      this.multi.refresh = null;
+      this.stageCopy = null;
+      if (dialog.open) dialog.close();
+      dialog.remove();
+      this.renderOptions();
+    };
+    done.addEventListener("click", close);
+    x.addEventListener("click", close);
+    dialog.addEventListener("cancel", (e) => {
+      if (e.target !== dialog) return;
+      e.preventDefault();
+      close();
+    });
+
+    this.multi.refresh = paint;
+    this.stageCopy = canvas;
+    document.body.append(dialog);
+    dialog.showModal();
+    paint();
+    this.showStage();
+    this.copyStage();
+    void this.refreshQuota();
+    const first = focus ? rows.find((w) => w.r.id === focus) : rows.find((w) => !(this.designs[design]?.[w.r.id] as CtPhotoSelection | undefined)?.url && !this.slotWorking(w.key));
+    if (first) requestAnimationFrame(() => first.row.scrollIntoView({ block: "nearest" }));
   }
 
   // ------------------------------------------------------------- photo dialog
@@ -2433,6 +2813,9 @@ export class Customizer {
         const nameCfg = photoNameConfig(r.config.photo);
         if ((r.config.photo.required || nameCfg.required) && !(sel?.kind === "photo" && sel.url)) return `${this.t("nameRequired", "Please enter a name and press OK")}: ${nameCfg.label || r.config.photo.label}`;
         continue;
+      }
+      if (r.kind === "photo" && !(sel?.kind === "photo" && sel.url) && this.isMultiSlot(r) && this.slotWorking(this.slotKey(this.designs.indexOf(selection), r.id))) {
+        return this.t("stillCreating", "Your photos are still being created — please wait a moment.");
       }
       if (r.kind === "photo" && r.config.photo.required && !(sel?.kind === "photo" && sel.url)) {
         return `${this.t("required", "Please complete")}: ${r.config.photo.label}`;

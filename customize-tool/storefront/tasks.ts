@@ -60,7 +60,8 @@ export function loadTasks(): CtStoredTask[] {
 
 function saveAll(list: CtStoredTask[]): void {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(list.slice(-20)));
+    // 40: a product with many photo slots (the multi-photo popup, 11 on a blanket) + a few retries still fits.
+    localStorage.setItem(STORE_KEY, JSON.stringify(list.slice(-40)));
   } catch {
     // Private mode / full storage: the page still works, the task is only not remembered.
   }
@@ -117,6 +118,14 @@ export function latestForPage(): CtStoredTask | null {
   return mine.sort((a, b) => b.createdAt - a.createdAt)[0] ?? null;
 }
 
+/** Every task of the product page open now, newest first (failed ones too) — the multi-photo popup brings them all back. */
+export function tasksForPage(): CtStoredTask[] {
+  const here = pageKey(location.href);
+  return loadTasks()
+    .filter((t) => !t.dismissed && pageKey(t.productUrl) === here)
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
 /** Newest first, one per product (its newest task). */
 function byProduct(list: CtStoredTask[]): CtStoredTask[] {
   const seen = new Set<string>();
@@ -137,7 +146,7 @@ const resultImage = (t: CtStoredTask) => t.task.phoi?.url ?? t.task.photoUrl ?? 
  * How far a running task looks (0–1), for its moving bar: the server says only the stage, so the bar eases toward the
  * stage's usual end (the style ~30 s, the phôi ~2 min) and never reaches the end before the task does.
  */
-function progressOf(t: CtStoredTask, now = Date.now()): number {
+export function progressOf(t: CtStoredTask, now = Date.now()): number {
   if (!taskWorking(t.task)) return 1;
   const phoi = t.task.stage === "phoi" || !!t.task.phoiPending;
   const leg = t.bar ?? { at: t.createdAt, from: 0 };

@@ -170,6 +170,8 @@ export const ctApi = {
   fitArtworkToBase: (id: string) => call<{ changed: boolean; width: number; height: number }>(`products/${id}/fit-base`, json("POST", {})),
   setPlacement: (id: string, placement: CtBasePlacement) => call<{ product: CtProduct }>(`products/${id}/placement`, json("POST", placement)).then((r) => r.product),
   /** The artwork's place on the preview photo, this product only (photo px); null = the base's. Preview only. */
+  /** "Popup nhiều ảnh" on / off (a published product is published again at once). */
+  setMultiPhoto: (id: string, on: boolean) => call<{ product: CtProduct; published: boolean; version?: number }>(`products/${id}/multi-photo`, json("POST", { on })),
   setPreviewBox: (id: string, box: CtPreviewBoxBody["box"]) => call<{ product: CtProduct }>(`products/${id}/preview-box`, json("POST", { box })).then((r) => r.product),
   cloneProduct: (id: string, body: CtCloneProductBody = {}) => call<{ product: CtProduct }>(`products/${id}/clone`, json("POST", body)).then((r) => r.product),
   syncFromArtwork: (id: string) => call<{ product: CtProduct }>(`products/${id}/artwork-sync`, { method: "POST" }).then((r) => r.product),

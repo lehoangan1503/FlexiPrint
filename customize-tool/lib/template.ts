@@ -124,6 +124,8 @@ export function buildTemplate(args: {
       assembly: config.assembly,
       // The phôi drawn again with the customer's photo (server/photo-tasks.ts) — off unless ticked at deploy.
       customerPhoi: config.customerPhoi,
+      // Every photo slot in one popup on the store (storefront/multi-photo.ts) — off unless set for this product.
+      multiPhoto: config.multiPhoto,
     },
     // Swatches (main versions, layer options) show the flat clipart; the design is drawn with its material.
     assets: Array.from(used.values()).map((a) => renderAsset(a, flatUrl.get(a.id))),

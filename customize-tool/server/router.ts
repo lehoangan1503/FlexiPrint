@@ -53,6 +53,7 @@
  *   POST   public/tasks/:productId       multipart: file, region, style, cutout, mainId, selection → 202 { task } (server/photo-tasks.ts)
  *   GET    public/tasks/:taskId          → { task: CtPhotoTask }
  *   POST   public/tasks/:taskId/phoi     { mainId, transform, selection, optionId } → { task } (the phôi again for that design)
+ *   GET    public/quota/:productId       → { limit, left } AI drawings the customer has left today (multi-photo popup)
  *
  * Jobs (server/jobs.ts) — any POST sent with ?async=1 that runs longer than a few seconds answers 202 CtJobPending:
  *   GET    jobs/:id · public/jobs/:id    202 while it runs, then the POST's own response
@@ -213,6 +214,7 @@ async function dispatchPublic(req: NextRequest, path: string[]): Promise<NextRes
   if (resource === "uploads" && req.method === "POST") return h.publicUpload(id, await req.formData());
   const ip = () => req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
   if (resource === "photo" && req.method === "POST") return h.publicPhoto(id, await req.formData(), ip(), req.headers.get("origin"));
+  if (resource === "quota" && req.method === "GET") return photoTasks.aiQuotaStatus(ip());
   // Photo tasks (server/photo-tasks.ts): POST tasks/:productId starts one, GET tasks/:taskId, POST tasks/:taskId/phoi.
   if (resource === "tasks") {
     if (req.method === "GET" && path.length === 3) return photoTasks.photoTaskStatus(id);
@@ -423,6 +425,8 @@ async function route(req: NextRequest, path: string[]): Promise<NextResponse> {
       return artworkLink.setPlacement(session, id, await readJson<unknown>(req));
     } else if (sub === "clone" && !path[3] && method === "POST") {
       return artworkLink.cloneProduct(session, id, await readJson<unknown>(req));
+    } else if (sub === "multi-photo" && !path[3] && method === "POST") {
+      return h.setMultiPhoto(session, id, await readJson<unknown>(req), publicOrigin(req));
     } else if (sub === "preview-box" && !path[3] && method === "POST") {
       return artworkLink.setPreviewBox(session, id, await readJson<unknown>(req));
     } else if (sub === "fit-base" && !path[3] && method === "POST") {

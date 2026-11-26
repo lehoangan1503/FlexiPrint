@@ -41,6 +41,7 @@ import { effectivePicks, pickedMockups, productMockups, type CtMockupPicks } fro
 import { normalizeProductConfig } from "../../lib/design";
 import { DEFAULT_CUSTOMER_NOTE, liveDraft } from "../../lib/deploy-draft";
 import { normalizeSku, shopifyHandle, skuProblem, twinProblem, variantSku } from "../../lib/sku";
+import { autoTags, manualTags } from "../../lib/auto-tags";
 import { SortableMockups } from "../sortable-mockups";
 import { ZoomThumbs } from "../zoom-thumbs";
 import { auditOptions, type CtAuditLevel } from "../../lib/option-audit";
@@ -101,14 +102,15 @@ export function DeployPage({ productId }: { productId: string }) {
   const [skuSaving, setSkuSaving] = useState(false);
   const [skuError, setSkuError] = useState<string | null>(null);
 
-  const fill = useCallback((p: CtShopifyProductSummary | null, fallbackTitle: string) => {
+  // The Tags box holds the hand-typed tags only; the auto ones (lib/auto-tags.ts) are shown under it and added at deploy.
+  const fill = useCallback((p: CtShopifyProductSummary | null, fallbackTitle: string, lastAuto?: string[]) => {
     setForm({
       title: p?.title ?? fallbackTitle,
       descriptionHtml: p?.descriptionHtml ?? "",
       status: p?.status ?? "ACTIVE",
       vendor: p?.vendor ?? "",
       productType: p?.productType ?? "",
-      tags: (p?.tags ?? []).join(", "),
+      tags: manualTags(p?.tags ?? [], lastAuto).join(", "),
     });
     setPicked(p?.collectionIds ?? []);
     setPrimary(p?.primaryCollectionId ?? p?.collectionIds[0] ?? null);
@@ -147,7 +149,7 @@ export function DeployPage({ productId }: { productId: string }) {
           own?.config.priceTableId ??
             (link?.priceTableId && list.some((t) => t.id === link.priceTableId) ? link.priceTableId : (priceTableFor(list, b.product.config?.material?.id ?? "")?.id ?? "")),
         );
-        fill(shop.product, link?.title ?? b.product.name);
+        fill(shop.product, link?.title ?? b.product.name, link?.autoTags);
         if (!shop.product && own) setForm((f) => ({ ...f, productType: f.productType || own.config.productType, descriptionHtml: f.descriptionHtml || own.config.description }));
         // Not on Shopify yet: it starts in the collections that fit it (no twin collections — 2026-10-30).
         if (!shop.product) {
@@ -170,7 +172,7 @@ export function DeployPage({ productId }: { productId: string }) {
             status: draft.status,
             vendor: draft.vendor || f.vendor,
             productType: draft.productType || f.productType,
-            tags: draft.tags.length ? draft.tags.join(", ") : f.tags,
+            tags: draft.tags.length ? manualTags(draft.tags, link?.autoTags).join(", ") : f.tags,
           }));
           const known = draft.collectionIds.filter((id) => cols.some((c) => c.id === id));
           if (known.length) {
@@ -260,6 +262,8 @@ export function DeployPage({ productId }: { productId: string }) {
     ? priceCells(table.config, options).slice(0, 2).map((c) => variantSku(sku, cellOptionValues(table.config, options, c).map((o) => o.value)))
     : [];
   const handle = sku && form.title.trim() ? shopifyHandle(form.title.trim(), sku) : null;
+  const pickedHandles = picked.map((id) => collections.find((c) => c.id === id)?.handle ?? "").filter(Boolean);
+  const willTag = autoTags(sku, pickedHandles);
   const canDeploy = Boolean(!badSku && !skuSaving && table && !problems.length && template.tpl && form.title.trim() && info?.configured !== false);
 
   /** Save the SKU box when it changed: the product as saved, or null when the server refused it (shown under the box). */
@@ -494,9 +498,13 @@ export function DeployPage({ productId }: { productId: string }) {
                 }}
                 onCreated={(c) => setCollections((list) => [...list, c].sort((a, b) => a.title.localeCompare(b.title)))}
               />
-              <CtField label="Tags" hint="Cách nhau bằng dấu phẩy">
+              <CtField label="Tags" hint="Cách nhau bằng dấu phẩy — tag tay; tag tự động ở dưới">
                 <CtInput value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="personalized, christmas" />
               </CtField>
+              <div className="text-xs text-muted-foreground">
+                Tag tự động khi deploy (SKU, mã nhân viên, collection):{" "}
+                {willTag.length ? <span className="font-mono text-foreground">{willTag.join(", ")}</span> : "chưa có — điền SKU, chọn collection"}
+              </div>
             </div>
           </Card>
 

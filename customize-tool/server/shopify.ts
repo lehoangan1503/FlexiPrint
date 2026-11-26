@@ -28,6 +28,7 @@ import type {
 } from "../types";
 import { sameCollection } from "../lib/collections";
 import { cellOptionValues, priceCells, shopifyOptions, shopifyPricing } from "../lib/pricing";
+import { autoTags, manualTags, mergeTags } from "../lib/auto-tags";
 import { shopifyHandle, variantSku } from "../lib/sku";
 import { CT_DEFAULT_STORE, storeCredentials } from "./stores";
 
@@ -332,7 +333,13 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
   // Collections: a manual one takes the product; a smart one gets it through the tags / type its rules ask.
   const all = input.collectionIds.length ? await listCollections(st) : [];
   const picked = all.filter((c) => input.collectionIds.includes(c.id));
-  const needs = smartNeeds(picked, { tags: input.tags, productType: input.productType, vendor: input.vendor });
+  // Auto tags (lib/auto-tags.ts, asked 2026-11-26): SKU, staff code, col_<handle> per collection; last deploy's stale ones off.
+  const auto = autoTags(input.sku, picked.map((c) => c.handle));
+  const tags = mergeTags(manualTags(input.tags, input.link?.autoTags), auto);
+  const needs = smartNeeds(picked, { tags, productType: input.productType, vendor: input.vendor });
+  // Tags a smart collection's rules made us add are ours too: taken off when the collection is (asked 2026-11-26).
+  const have = new Set(tags.map((t) => t.toLowerCase()));
+  const ourTags = [...auto, ...needs.tags.filter((t) => !have.has(t.toLowerCase()))];
   if (needs.unmet.length) warnings.push(`Chưa vào được collection tự động: ${needs.unmet.join(", ")} (luật của nó không gắn tự động được).`);
 
   // The handle = the title's + the SKU at the end (asked 2026-11-24); a changed one redirects from the old (links in ads keep working).
@@ -464,6 +471,7 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
       media,
       deployedAt: new Date().toISOString(),
       templateVersion: input.templateVersion,
+      autoTags: ourTags,
       url: `${p.onlineStoreUrl ?? `https://${shopDomain}/products/${p.handle}`}${theme ? `?preview_theme_id=${theme}` : ""}`,
       adminUrl: `https://admin.shopify.com/store/${shopDomain.replace(/\.myshopify\.com$/, "")}/products/${numericId}`,
     },

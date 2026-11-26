@@ -2685,6 +2685,8 @@ export interface CtShopifyLink {
   media: Record<string, string>;
   deployedAt: string;
   templateVersion: number;
+  /** The tags this deploy put on by itself (lib/auto-tags.ts): SKU, staff code, col_<handle>; the next deploy takes stale ones off. */
+  autoTags?: string[];
   url: string;
   adminUrl: string;
 }

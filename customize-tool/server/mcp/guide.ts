@@ -74,7 +74,10 @@ flexiprint_save_files (urls → a folder).
 - Products: make_product_from_artwork {artwork_id, base_product_id} → make_product_mockups → wait_product_mockups →
   check_deploy → deploy_product, all on the PRODUCT id. Title / description / tags / collections / customer note box
   known ahead → give them to make_product_from_artwork or save_deploy_draft (= the Deploy page's Lưu nháp): after the
-  mockups the editor only presses Deploy, and deploy_product {product_id} alone uses them. list_artwork_products (an artwork's products, outdated ones) → sync_product_from_artwork updates an outdated one in place (never a new product).
+  mockups the editor only presses Deploy, and deploy_product {product_id} alone uses them. Tags you give = hand-typed
+  only: every deploy adds the auto tags itself — the SKU lower case (n06-pod-126), the staff code = its first part
+  (n06), col_<collection handle> per collection — and takes off the last deploy's stale ones (check_deploy autoTags).
+  Customer options (names, photos, note box) are not tags: they go as metafields. list_artwork_products (an artwork's products, outdated ones) → sync_product_from_artwork updates an outdated one in place (never a new product).
 - Change / remove (every step): update_base_product / delete_base_product, list_price_tables / delete_price_table,
   set_artwork_layers (an artwork) / delete_product (artwork or product), update_product (name, status, move base,
   mockup order / off), delete_mockup, set_shopify_status (ACTIVE / DRAFT / ARCHIVED), delete_shopify_product.

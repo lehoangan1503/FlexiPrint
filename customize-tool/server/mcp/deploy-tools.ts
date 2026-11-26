@@ -35,6 +35,7 @@ import { normalizeProductConfig, normalizeRegion } from "../../lib/design";
 import { isAiStyleRef } from "../../lib/photo-styles";
 import { liveDraft, normalizeCustomerNote, normalizeDeployDraft } from "../../lib/deploy-draft";
 import { CT_SKU_FORMAT, normalizeSku, skuProblem } from "../../lib/sku";
+import { autoTags, manualTags } from "../../lib/auto-tags";
 import { skuTwins, twinProblem } from "../sku-twins";
 import { CT_CONFIG, CT_TABLES } from "../../config";
 import type { CtServiceClient, CtSession } from "../supabase";
@@ -195,7 +196,7 @@ const strings = (v: unknown) => (Array.isArray(v) ? v.map(str).filter(Boolean) :
 const DRAFT_PROPS = {
   title: { type: "string", description: "Shopify title (US English), saved ahead: Deploy later uses it." },
   description_html: { type: "string", description: "Shopify description (p, ul/li, strong, h3 only; ≥ 200 characters of text to deploy), saved ahead." },
-  tags: { type: "array", items: { type: "string" }, description: "Shopify tags, saved ahead." },
+  tags: { type: "array", items: { type: "string" }, description: "Hand-typed Shopify tags, saved ahead. Not the auto ones (SKU, staff code, col_<handle>): the deploy adds those itself." },
   product_type: { type: "string", description: "Shopify product type (default: the base's)." },
   vendor: { type: "string", description: "Shopify vendor (empty = the shop's)." },
   status: { type: "string", description: "ACTIVE (default) | DRAFT — what Deploy will use." },
@@ -296,6 +297,9 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       const title = draft?.title || linked?.title || st.content?.title || "";
       const descriptionHtml = draft?.descriptionHtml || linked?.descriptionHtml || st.content?.descriptionHtml || "";
       const fit = suggestCollections(collections, { title: title || product.name, description: descriptionHtml });
+      // The tags the deploy adds by itself (lib/auto-tags.ts) for the collections it would use (draft, else Shopify's, else suggested).
+      const nextCollections = draft?.collectionIds.length ? draft.collectionIds : linked?.collectionIds.length ? linked.collectionIds : fit.map((c) => c.id);
+      const nextAuto = autoTags(product.sku, nextCollections.map((id) => collections.find((c) => c.id === id)?.handle ?? ""));
       return json({
         product: { id: product.id, name: product.name, sku: product.sku ?? null, status: product.status, publishedVersion: product.published_version },
         shopify: {
@@ -303,9 +307,10 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
           shop: st.info.shop?.domain ?? null,
           error: st.info.error,
           linked: product.shopify ? { productId: product.shopify.productId, status: product.shopify.status, url: product.shopify.url, adminUrl: product.shopify.adminUrl, deployedAt: product.shopify.deployedAt } : null,
-          now: linked ? { title: linked.title, descriptionHtml: linked.descriptionHtml, status: linked.status, tags: linked.tags, productType: linked.productType, vendor: linked.vendor, collectionIds: linked.collectionIds } : null,
+          now: linked ? { title: linked.title, descriptionHtml: linked.descriptionHtml, status: linked.status, tags: manualTags(linked.tags, product.shopify?.autoTags), productType: linked.productType, vendor: linked.vendor, collectionIds: linked.collectionIds } : null,
           handAdded: handAdded(product, linked),
         },
+        autoTags: { next: nextAuto, last: product.shopify?.autoTags ?? [], note: "Added by the deploy itself (SKU lower case, staff code = the SKU's first part, col_<handle> per collection); the last deploy's stale ones are taken off. Never put them in tags — tags = hand-typed only." },
         customerPhoi: { applies: await aiPhotoOf(db, product.id), on: normalizeProductConfig(product.config).customerPhoi === true },
         priceTables: st.tables.map((t) => ({
           id: t.id,
@@ -877,7 +882,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "deploy_product",
     description:
-      "Deploy a product to Shopify — the editor's Deploy button: publishes the storefront template, then creates (or updates, keeping its variants) the Shopify product with the price table's variants, the title / description, and mockups as images. Refuses with the list of blockers (the product's SKU — its own field, not the name or title — must be set and be n0x-POD-yyy, x one digit, yyy a number, e.g. n06-POD-126, used by no other product; set it with update_product sku — title, description_html ≥ 200 chars of text, a valid price table, ≥ 1 mockup, the template builds, Shopify configured). Every variant gets the SKU + its size / pack; the Shopify handle = the title's + the SKU at the end (an old handle redirects to the new one). status ACTIVE (default, on sale at once) | DRAFT. → the Shopify link (store url, admin url), preview url, warnings, template version.",
+      "Deploy a product to Shopify — the editor's Deploy button: publishes the storefront template, then creates (or updates, keeping its variants) the Shopify product with the price table's variants, the title / description, and mockups as images. Refuses with the list of blockers (the product's SKU — its own field, not the name or title — must be set and be n0x-POD-yyy, x one digit, yyy a number, e.g. n06-POD-126, used by no other product; set it with update_product sku — title, description_html ≥ 200 chars of text, a valid price table, ≥ 1 mockup, the template builds, Shopify configured). Every variant gets the SKU + its size / pack; the deploy adds the auto tags itself (the SKU lower case n06-pod-126, the staff code n06 = the SKU's first part, col_<handle> per collection — stale ones of the last deploy taken off, hand tags kept; check_deploy autoTags.next); the Shopify handle = the title's + the SKU at the end (an old handle redirects to the new one). status ACTIVE (default, on sale at once) | DRAFT. → the Shopify link (store url, admin url), preview url, warnings, template version.",
     inputSchema: {
       type: "object",
       properties: {
@@ -887,7 +892,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         description_html: { type: "string", description: "Shopify description: p, ul/li, strong, h3 only. Default: the draft saved ahead." },
         price_table_id: { type: "string", description: "A price table from check_deploy (default: the linked one, else the newest)." },
         status: { type: "string", description: "ACTIVE (default, on sale at once) | DRAFT." },
-        tags: { type: "array", items: { type: "string" }, description: "Shopify tags." },
+        tags: { type: "array", items: { type: "string" }, description: "Hand-typed Shopify tags (default: the draft's, else the Shopify product's). The SKU, staff code and col_<handle> tags are added by the deploy itself — don't give them." },
         product_type: { type: "string", description: "Shopify product type (e.g. Christmas Ornament)." },
         vendor: { type: "string", description: "Shopify vendor (empty = the shop's default)." },
         media_asset_ids: { type: "array", items: { type: "string" }, description: "Mockup ids, in order (default: the product's ticked mockups in its order — set in the editor's Ảnh sản phẩm — else those on Shopify, else all scene mockups). Ids not in the list are taken off Shopify." },

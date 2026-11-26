@@ -71,6 +71,9 @@ flexiprint_save_files (urls → a folder).
   library cliparts on a base's print area), set_artwork_base (the base it is viewed on), render_artwork (on its base:
   guides, or the print file with chosen options), list_product_options, make_version_phoi → version_phoi_status (the
   customer's preview photo per version on an acrylic base; an import folder's own preview is kept, never redrawn).
+  A photo layer with "input": "name" (the customer types, the AI style draws it): its "label" is the field's label,
+  "placeholder" its hint, "max_chars" its length (default 12, max 40 — a whole line like "The Montgomery Family" needs
+  ~30). Changed on the artwork → sync the product, deploy again.
 - Products: make_product_from_artwork {artwork_id, base_product_id} → make_product_mockups → wait_product_mockups →
   check_deploy → deploy_product, all on the PRODUCT id. Title / description / tags / collections / customer note box
   known ahead → give them to make_product_from_artwork or save_deploy_draft (= the Deploy page's Lưu nháp): after the

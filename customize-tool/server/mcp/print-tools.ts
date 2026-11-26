@@ -27,7 +27,8 @@ import { newId, shapeBounds } from "../../lib/geometry";
 import { normalizePrintSpec, safeShapes, sizedTemplateSpec } from "../../lib/print-template";
 import { str } from "../ai/llm";
 import { aiStyleRef, isAiStyleRef, withAiStyles } from "../../lib/photo-styles";
-import { CT_AI_STYLE_ASPECTS, CT_AI_STYLE_PROMPT_MAX, aiStyleAsksName, isAiStyleAspect, normalizeAiStyleParams } from "../../lib/ai-style-models";
+import { CT_AI_STYLE_ASPECTS, CT_AI_STYLE_NAME_MAX, CT_AI_STYLE_PROMPT_MAX, aiStyleAsksName, isAiStyleAspect, normalizeAiStyleParams } from "../../lib/ai-style-models";
+import { photoNameConfig } from "../../lib/photo-name";
 import { ctLibraryPath, ctUpload } from "../storage";
 import { siteUrl } from "../site-url";
 import { frameRegion, makeBaseArtwork, makeTemplateProduct, productPrintOf, type PrintDb } from "../print-products";
@@ -71,6 +72,8 @@ interface LayerArg {
   styles?: unknown;
   default_style?: unknown;
   input?: unknown;
+  placeholder?: unknown;
+  name_label?: unknown;
   zone?: unknown;
   mode?: unknown;
   tile?: unknown;
@@ -83,7 +86,7 @@ const LAYERS_DOC =
   'Layers, bottom first. Each: {"type": "clipart" | "text" | "photo" | "fill", "name": "…", "label": customer-facing question ("Choose your dog")}. ' +
   'clipart: "asset_ids" (library clipart ids — several = the customer picks one, first is the default) or "image_url" / "image_urls" (https pictures — a finished design: put in the library for you; a file on this machine → flexiprint_upload_image first), "x","y","w","h" (the box the picture is fitted into, sheet px), optional "rotation" (deg). ' +
   'text: "text", box x/y/w/h, "editable" (true = the customer types it, e.g. a name; false = fixed), "max_chars", "font" (Google font family), "font_size" px, "color" "#rrggbb". ' +
-  'photo: a customer photo zone, box x/y/w/h, "shape" "rect"|"ellipse", optional "styles" (AI style refs "ai:<id>" from list_ai_styles — the customer\'s photo is redrawn in the one they pick, by its demo picture) + "default_style"; "input": "name" = the customer only types a name (no upload) and the zone\'s AI style draws it — a prompt with [NAME], its reference pictures are image 1, 2… (e.g. a name lettered like the artwork). ' +
+  'photo: a customer photo zone, box x/y/w/h, "shape" "rect"|"ellipse", optional "styles" (AI style refs "ai:<id>" from list_ai_styles — the customer\'s photo is redrawn in the one they pick, by its demo picture) + "default_style"; "input": "name" = the customer only types a name (no upload) and the zone\'s AI style draws it — a prompt with [NAME], its reference pictures are image 1, 2… (e.g. a name lettered like the artwork); its typed-name field: "label" is shown above it, "placeholder" (hint inside, default "Enter a name"), "max_chars" (1–' + CT_AI_STYLE_NAME_MAX + ', default 12 — e.g. 30 for a whole line like "The Montgomery Family"); on an upload zone whose style asks a name, "name_label" / "placeholder" / "max_chars" set that field. ' +
   'fill: covers a zone with a picture — "zone" (a template zone id, or "sheet" = the whole cut piece), "asset_ids" (options), "mode" "cover" (one picture, e.g. a background) | "tile" (a repeated pattern, "tile" px wide), "print_only" (true: printed but not drawn on the product photo — a background whose options each have their own mockup photo).';
 
 async function ownerOf(ctx: CtMcpContext, args: Record<string, unknown>, fallback: string | null): Promise<string> {
@@ -264,6 +267,18 @@ async function buildLayers(db: PrintDb, productId: string, spec: CtPrintSpec, ra
       if (refs.length) config.photo = withAiStyles(config.photo, refs, isAiStyleRef(def) ? def : UUID.test(def) ? aiStyleRef(def) : undefined);
       // Name only (2026-11-17): the customer types a name, the AI style draws it — no upload.
       if (str(l.input) === "name") config.photo = { ...config.photo, input: "name", mode: "ai", fit: "contain", fadeCrop: false, label: str(l.label) || "Name" };
+      // The typed-name field (2026-11-26): its label (name-only zone: the layer's label), hint and length.
+      if (str(l.input) === "name" || l.max_chars !== undefined || l.placeholder !== undefined || l.name_label !== undefined) {
+        const base = photoNameConfig(config.photo);
+        config.photo.name = photoNameConfig({
+          name: {
+            ...base,
+            ...(str(l.name_label) ? { label: str(l.name_label) } : {}),
+            ...(typeof l.placeholder === "string" ? { placeholder: l.placeholder.slice(0, 200) } : {}),
+            ...(l.max_chars !== undefined ? { maxChars: Number(l.max_chars) } : {}),
+          },
+        });
+      }
       const shape: CtShape = str(l.shape) === "ellipse" ? { type: "ellipse", cx: box.x + box.w / 2, cy: box.y + box.h / 2, rx: box.w / 2, ry: box.h / 2 } : box;
       regions.push({ id, product_id: productId, name, kind: "photo", shape, config, sort_order: order });
     } else {

@@ -36,7 +36,7 @@ import { cachedAiResult, jobCutsOut, processPhoto, type PhotoJob, type PhotoResu
 import { aiStylesConfigured } from "./ai/style-run";
 import { aiQuotaLeft, loadAiStyle, originAllowed, takeAiQuota, type AiQuota } from "./ai-styles";
 import { loadBaseProduct } from "./base-products";
-import { CORS_HEADERS, photoInputError, photoRateLimited, publicError, publicJson, readPhotoRequest, requestImage } from "./handlers";
+import { CORS_HEADERS, NOT_PUBLISHED, photoInputError, photoRateLimited, publicError, publicJson, readLatestTemplate, readPhotoRequest, requestImage, SERVER_BUSY } from "./handlers";
 import { ctPublicUploadPath, ctUpload } from "./storage";
 import { drawPhoi, promptFor } from "./version-phoi";
 import { phoiReference } from "./version-phoi-ref";
@@ -70,15 +70,11 @@ const QUOTA_TEXT: Record<Exclude<AiQuota, "ok">, string> = {
   unavailable: "AI styles unavailable (spend cap not configured — run migration 003)",
 };
 
-async function latestTemplate(db: CtServiceClient, productId: string): Promise<CtTemplate | null> {
-  const { data } = await db
-    .from(CT_TABLES.templates)
-    .select("template")
-    .eq("product_id", productId)
-    .order("version", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ template: CtTemplate }>();
-  return data?.template ?? null;
+/** The product's latest published template; a failed read answers 503, never a false "not published" (2026-11-27). */
+async function latestTemplate(db: CtServiceClient, productId: string): Promise<CtTemplate | NextResponse> {
+  const got = await readLatestTemplate(db, productId);
+  if (got === "error") return publicError(SERVER_BUSY, 503);
+  return got ?? publicError(NOT_PUBLISHED, 404);
 }
 
 /** The version id when it is one of the template's versions, else the template's main. */
@@ -153,7 +149,7 @@ export async function createPhotoTask(productId: string, form: FormData, ip: str
   const parsed = await readPhotoRequest(form);
   if (typeof parsed === "string") return publicError(parsed, 400);
   const tpl = await latestTemplate(db, productId);
-  if (!tpl) return publicError("Sản phẩm chưa publish", 404);
+  if (tpl instanceof NextResponse) return tpl;
   const region = tpl.regions.find((r) => r.id === parsed.regionId);
   if (!region || region.kind !== "photo") return publicError("Vùng ảnh không tồn tại", 400);
   const cfg = normalizeRegion(region).config.photo;
@@ -275,7 +271,7 @@ export async function requestTaskPhoi(id: string, body: unknown, origin: string 
   if (!task.state.photoUrl) return publicError("The photo is not ready yet", 409);
   const b = (body ?? {}) as { mainId?: unknown; transform?: unknown; selection?: unknown; optionId?: unknown };
   const tpl = await latestTemplate(db, task.state.productId);
-  if (!tpl) return publicError("Sản phẩm chưa publish", 404);
+  if (tpl instanceof NextResponse) return tpl;
   const mainId = versionOf(tpl, b.mainId);
   if (tpl.config.customerPhoi !== true || !(tpl.config.versionPhoi ?? []).some((v) => v.mainId === mainId)) return publicJson({ task: task.state });
   const ask: PhoiAsk = { mainId, transform: readTransform(b.transform), selection: readSelection(b.selection), optionId: typeof b.optionId === "string" && b.optionId ? b.optionId : null };

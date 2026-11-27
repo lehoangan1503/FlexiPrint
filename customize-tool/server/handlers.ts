@@ -802,6 +802,31 @@ export function publicError(message: string, status: number): NextResponse {
   return publicJson({ error: message }, status);
 }
 
+/** Storefront texts (shown to customers, so English). */
+export const NOT_PUBLISHED = "This product can't be personalized right now.";
+export const SERVER_BUSY = "Our server is busy for a moment — please try again.";
+
+/**
+ * Latest published template of a product: the template, null = never published, "error" = the database did not
+ * answer. Tried 3 times — on 2026-11-27 a busy minute made one read fail and the storefront told a live product's
+ * customer "Sản phẩm chưa publish" (the error was read as "no row").
+ */
+export async function readLatestTemplate(db: CtServiceClient, productId: string): Promise<CtTemplate | null | "error"> {
+  for (let attempt = 1; ; attempt++) {
+    const { data, error } = await db
+      .from(CT_TABLES.templates)
+      .select("template")
+      .eq("product_id", productId)
+      .order("version", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ template: CtTemplate }>();
+    if (!error) return data?.template ?? null;
+    console.warn(`[ct] read template ${productId} (try ${attempt}): ${error.message}`);
+    if (attempt >= 3) return "error";
+    await new Promise((r) => setTimeout(r, 400 * attempt));
+  }
+}
+
 export function publicPreflight(): NextResponse {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
 }
@@ -830,8 +855,9 @@ export async function publicUpload(productId: string, form: FormData): Promise<N
   const db = ctServiceClient();
   if (!db) return publicError("SUPABASE_SERVICE_ROLE_KEY chưa được cấu hình", 501);
   // Only products that are actually live accept uploads.
-  const { data: live } = await db.from(CT_TABLES.templates).select("version").eq("product_id", productId).limit(1).maybeSingle();
-  if (!live) return publicError("Sản phẩm chưa publish", 404);
+  const live = await readLatestTemplate(db, productId);
+  if (live === "error") return publicError(SERVER_BUSY, 503);
+  if (!live) return publicError(NOT_PUBLISHED, 404);
 
   const file = form.get("file");
   if (!(file instanceof Blob)) return publicError("Thiếu file", 400);
@@ -966,14 +992,10 @@ export async function publicPhoto(productId: string, form: FormData, ip: string,
   const parsed = await readPhotoRequest(form);
   if (typeof parsed === "string") return publicError(parsed, 400);
 
-  const { data } = await db
-    .from(CT_TABLES.templates)
-    .select("template")
-    .eq("product_id", productId)
-    .order("version", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ template: CtTemplate }>();
-  if (!data) return publicError("Sản phẩm chưa publish", 404);
+  const tpl = await readLatestTemplate(db, productId);
+  if (tpl === "error") return publicError(SERVER_BUSY, 503);
+  if (!tpl) return publicError(NOT_PUBLISHED, 404);
+  const data = { template: tpl };
   const region = data.template.regions.find((r) => r.id === parsed.regionId);
   if (!region || region.kind !== "photo") return publicError("Vùng ảnh không tồn tại", 400);
   const cfg = normalizeRegion(region).config.photo;

@@ -993,6 +993,9 @@ async function mockupToProduct(s: CtSession, productId: string, data: Buffer, na
 const MOCKUP_PARALLEL_FALLBACK = 4;
 const MOCKUP_PARALLEL_MAX = 30;
 let parallel = { n: MOCKUP_PARALLEL_FALLBACK, at: 0 };
+/** When the account list was last read. Unreadable for 5 min = back to the fallback (2026-11-27: the list timed out
+ * every minute for hours and the last count, 30 at once, was kept — 30 mockups drawn together on an 8-core server). */
+let parallelReadAt = 0;
 async function mockupParallel(): Promise<number> {
   if (Date.now() - parallel.at < 60_000) return parallel.n;
   parallel.at = Date.now();
@@ -1010,7 +1013,9 @@ async function mockupParallel(): Promise<number> {
     const n = Math.min(MOCKUP_PARALLEL_MAX, Math.max(2, ready * 2));
     if (n !== parallel.n) console.log(`[ct] mockup parallel ${parallel.n} → ${n} (${ready} CPA accounts ready)`);
     parallel = { n, at: now };
+    parallelReadAt = now;
   } catch (e) {
+    if (Date.now() - parallelReadAt > 5 * 60_000) parallel = { n: MOCKUP_PARALLEL_FALLBACK, at: parallel.at };
     console.warn(`[ct] CPA account count: ${e instanceof Error ? e.message : String(e)} — keeping ${parallel.n}`);
   }
   return parallel.n;

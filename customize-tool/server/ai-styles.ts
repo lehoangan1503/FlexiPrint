@@ -306,3 +306,37 @@ export async function takeAiQuota(ip: string): Promise<AiQuota> {
     .maybeSingle<{ count: number }>();
   return (row?.count ?? 0) >= total ? "total" : "ip";
 }
+
+/**
+ * Undo one takeAiQuota of `ip` (per-customer and total) — the drawing it paid for failed, the customer got nothing
+ * (migration 043, 2026-11-27). Never throws: a refund that cannot be written only logs.
+ */
+export async function refundAiQuota(ip: string): Promise<void> {
+  const db = ctServiceClient();
+  if (!db) return;
+  const { error } = await db.rpc("ct_ai_usage_refund", { p_buckets: [ipBucketOf(ip), "all"] });
+  if (error) console.error("[ct] ct_ai_usage_refund failed", error.message);
+}
+
+/**
+ * A failure worth one more try: the request never got a real answer (timeout, dropped / refused connection, a
+ * service down, a 502/503/504/524 from a proxy). A model refusal or a bad photo fails the same way again: not retried.
+ */
+export function isTransientAiError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const code = (e.cause as { code?: string } | undefined)?.code ?? (e as { code?: string }).code ?? "";
+  const text = `${e.name} ${code} ${e.message}`;
+  return /TimeoutError|AbortError|timed? ?out|aborted|fetch failed|socket hang up|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|ENOTFOUND|EHOSTUNREACH|UND_ERR|không phản hồi|\b(502|503|504|524)\b/i.test(text);
+}
+
+/** `run` once more after a short pause when it failed with a transient error (isTransientAiError). */
+export async function withOneRetry<T>(label: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    if (!isTransientAiError(e)) throw e;
+    console.warn(`[ct] ${label}: ${e instanceof Error ? e.message : String(e)} — trying once more`);
+    await new Promise((r) => setTimeout(r, 3000));
+    return run();
+  }
+}

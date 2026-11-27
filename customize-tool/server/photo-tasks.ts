@@ -34,7 +34,7 @@ import { phoiPicks, phoiTaskKey } from "../lib/photo-task-key";
 import { isAiStyleRef, styleFamily } from "../lib/photo-styles";
 import { cachedAiResult, jobCutsOut, processPhoto, type PhotoJob, type PhotoResult } from "./ai/photo";
 import { aiStylesConfigured } from "./ai/style-run";
-import { aiQuotaLeft, loadAiStyle, originAllowed, takeAiQuota, type AiQuota } from "./ai-styles";
+import { aiQuotaLeft, loadAiStyle, originAllowed, refundAiQuota, takeAiQuota, withOneRetry, type AiQuota } from "./ai-styles";
 import { loadBaseProduct } from "./base-products";
 import { CORS_HEADERS, NOT_PUBLISHED, photoInputError, photoRateLimited, publicError, publicJson, readLatestTemplate, readPhotoRequest, requestImage, SERVER_BUSY } from "./handlers";
 import { ctPublicUploadPath, ctUpload } from "./storage";
@@ -184,14 +184,26 @@ export async function createPhotoTask(productId: string, form: FormData, ip: str
   const targets = faceTargets(tpl.config.print, shapeBounds(layoutFor(tpl.config.layouts, mainId)?.regions[region.id]?.shape ?? region.shape));
 
   void (async () => {
+    let photoUrl: string;
+    let sourceUrl: string | null;
     try {
-      const out = hit ?? (await processPhoto(job));
+      // A timeout / dropped connection (busy server, 2026-11-27) is tried once more before the task fails.
+      const out = hit ?? (await withOneRetry(`photo task ${id}`, () => processPhoto(job)));
       const png = await finishPhoto(out, jobCutsOut(job), cfg.fadeCrop, styleFamily(style) === "face", targets);
       // A name-only zone has no upload to keep.
-      const [photoUrl, sourceUrl] = await Promise.all([
-        ctUpload(ctPublicUploadPath(productId, "photo", "image/png"), png, "image/png"),
-        parsed.data ? ctUpload(ctPublicUploadPath(productId, "source", parsed.mime), parsed.data, parsed.mime) : Promise.resolve(null),
-      ]);
+      [photoUrl, sourceUrl] = await withOneRetry(`photo task ${id} upload`, () =>
+        Promise.all([
+          ctUpload(ctPublicUploadPath(productId, "photo", "image/png"), png, "image/png"),
+          parsed.data ? ctUpload(ctPublicUploadPath(productId, "source", parsed.mime), parsed.data, parsed.mime) : Promise.resolve(null),
+        ]),
+      );
+    } catch (e) {
+      // The customer got no picture: the drawing counted for it is given back.
+      if (!hit) await refundAiQuota(ip);
+      touch(task, { stage: "failed", error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+    try {
       // The phôi with the photo only when the deploy ticked "Phôi AI có ảnh khách" (off by default, 2026-11-10).
       const hasPhoi = tpl.config.customerPhoi === true && (tpl.config.versionPhoi ?? []).some((v) => v.mainId === mainId);
       touch(task, { photoUrl, sourceUrl, stage: hasPhoi ? "phoi" : "done" });
@@ -242,6 +254,8 @@ async function phoiRound(db: CtServiceClient, task: Task, ask: PhoiAsk): Promise
     }
   }
   console.warn(`[ct] phôi khách ${state.id}: ${last}`);
+  // No phôi came out of the round: its drawing is given back.
+  await refundAiQuota(task.ip);
   if (task.state.phoiPending === key) touch(task, { phoiPending: null, stage: "done", error: last });
 }
 

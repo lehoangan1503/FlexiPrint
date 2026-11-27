@@ -48,7 +48,7 @@ import { listProviders } from "./ai/providers";
 import { PhotoConfigError, cachedAiResult, jobCutsOut, photoCapabilities, processPhoto, type PhotoResult } from "./ai/photo";
 import { sweepPhotoCache } from "./photo-cache";
 import { isAiStyleRef, isPhotoStyleRef } from "../lib/photo-styles";
-import { isAdmin, loadAiStyle, originAllowed, publicAiStyles, takeAiQuota } from "./ai-styles";
+import { isAdmin, loadAiStyle, originAllowed, publicAiStyles, refundAiQuota, takeAiQuota, withOneRetry } from "./ai-styles";
 import { aiStylesConfigured } from "./ai/style-run";
 import { printPack, readPrintPackForm } from "./material";
 import { deleteClipart, loadProductAssets } from "./library";
@@ -1023,7 +1023,14 @@ export async function publicPhoto(productId: string, form: FormData, ip: string,
   if (quota === "ip") return publicError("Daily limit reached for AI styles — please try again tomorrow.", 429);
   if (quota === "total") return publicError("AI styles are busy right now — please try again later.", 429);
   if (quota === "unavailable") return publicError("AI styles unavailable (spend cap not configured — run migration 003)", 503);
-  return photoResponse(parsed, CORS_HEADERS, aiStyle);
+  // A timeout / dropped connection is tried once more; a drawing that still fails is given back (2026-11-27).
+  try {
+    return imageResponse(await withOneRetry("public photo", () => processPhoto(job)), CORS_HEADERS, jobCutsOut(job));
+  } catch (e) {
+    await refundAiQuota(ip);
+    const status = e instanceof PhotoConfigError ? 501 : 502;
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Xử lý ảnh thất bại" }, { status, headers: CORS_HEADERS });
+  }
 }
 
 /** Editor "try a customer photo" — any style (the library is global), owner of the product or an admin. */

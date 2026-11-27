@@ -117,7 +117,8 @@ What the web page does, a tool does — through the same handler, so the same ow
   takes them off; customerPhoi.applies → deploy_product customer_phoi (the Deploy page's "Phôi AI có ảnh khách").
   A product with several AI photo slots (3+, e.g. a photo-collage blanket): set_multi_photo {product_id, on: true} =
   ONE popup on the store for every slot (preview left, slots right, AI jobs side by side) — live at once, no deploy;
-  only when the user asks for it (it is the owner's per-product choice).
+  only when the user asks for it (it is the owner's per-product choice). Customer AI drawings: a timeout / dropped
+  connection is tried once more by itself; a drawing that still fails does not count against the customer's daily cap.
 - Price tables: list_price_tables; create_price_table / update_price_table — prices ALWAYS through the user (first call
   = preview + confirm_token, save only on their yes); update_price_table changes every base using the table (one base
   only → update_base_product price_table, which copies a shared table); delete_price_table (ask first).

@@ -67,7 +67,13 @@ async function staticPrintFile(s: CtSession, product: CtProduct): Promise<string
   const bundle = await loadArtwork(s.supabase, product.id);
   if (!bundle) return null;
   const png = await renderArtwork(bundle, normalizeProductConfig(product.config).samples, Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000), "print");
-  return ctUpload(`${s.user.id}/${CT_CONFIG.storagePrefix}/${product.id}/static-print/${crypto.randomUUID()}.png`, png, "image/png");
+  // Named by its content (2026-11-27: every deploy stored a new ~100 MB copy — 834 files / 86 GB for 430 products, 394
+  // of them byte-for-byte the same size as an earlier one): the same print is stored once, an old order's url stays.
+  const { createHash } = await import("node:crypto");
+  const path = `${s.user.id}/${CT_CONFIG.storagePrefix}/${product.id}/static-print/${createHash("sha256").update(png).digest("hex").slice(0, 32)}.png`;
+  const { r2Exists, r2PublicUrl } = await import("./r2");
+  if (await r2Exists(path).catch(() => false)) return r2PublicUrl(path);
+  return ctUpload(path, png, "image/png");
 }
 import { effectiveOptions, variantProblems } from "../lib/pricing";
 import { cleanCustomerName } from "../lib/ai-style-models";

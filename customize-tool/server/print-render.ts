@@ -25,6 +25,7 @@ import { withBase } from "../lib/base-fit";
 import { loadBaseProduct } from "./base-products";
 import { loadTemplate } from "./artwork-link";
 import type { PrintDb } from "./print-products";
+import { readOwnFile } from "./own-file";
 
 export interface ArtworkBundle {
   product: CtProduct;
@@ -112,6 +113,9 @@ export async function safeReport(b: ArtworkBundle): Promise<Array<{ layer: strin
 const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 async function fetchBuffer(url: string): Promise<Buffer | null> {
+  // Our own file: straight from R2 (cached), not through nginx back into this app (server/own-file.ts).
+  const own = await readOwnFile(url).catch(() => undefined);
+  if (own !== undefined) return own;
   const res = await fetch(url).catch(() => null);
   if (!res?.ok) return null;
   return Buffer.from(await res.arrayBuffer());
@@ -300,7 +304,13 @@ export async function renderArtwork(b: ArtworkBundle, selection: CtSelection = {
   // The print has the piece's holes (the hanging hole) cut out, like the storefront's print file.
   if (!guides) for (const c of b.spec?.cuts ?? []) layers.push({ input: maskSvg(W, H, c), blend: "dest-out", left: 0, top: 0 });
   const canvas = sharp({ create: { width: W, height: H, channels: 4, background: guides ? { r: 236, g: 236, b: 236, alpha: 1 } : { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(layers);
-  const full = await canvas.png().toBuffer();
   const k = Math.min(1, maxSide / Math.max(W, H));
-  return sharp(full).resize(Math.round(W * k), Math.round(H * k)).png().toBuffer();
+  // Full size: encoded once (2026-11-27: a 7400×10000 blanket print was PNG-encoded, decoded and encoded again for
+  // nothing — seconds of CPU each time). Smaller: resized from the raw pixels, not from a compressed PNG.
+  if (k >= 1) return canvas.png().toBuffer();
+  const raw = await canvas.raw().toBuffer({ resolveWithObject: true });
+  return sharp(raw.data, { raw: { width: raw.info.width, height: raw.info.height, channels: raw.info.channels } })
+    .resize(Math.round(W * k), Math.round(H * k))
+    .png()
+    .toBuffer();
 }

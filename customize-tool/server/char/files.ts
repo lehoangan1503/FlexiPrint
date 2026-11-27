@@ -8,6 +8,7 @@ import sharp from "sharp";
 import { CT_CONFIG } from "../../config";
 import type { CtCharImageKind } from "../../types";
 import { ctUpload } from "../storage";
+import { readOwnFile } from "../own-file";
 
 export const THUMB_SIDE = 640;
 
@@ -57,6 +58,13 @@ export async function fetchImage(url: string): Promise<Buffer> {
   for (let attempt = 1; ; attempt++) {
     let status = 0;
     try {
+      // Our own file: straight from R2 (cached), not through nginx back into this app (server/own-file.ts).
+      const own = await readOwnFile(url);
+      if (own === null) {
+        status = 404;
+        throw new Error("Không tải được ảnh (404)");
+      }
+      if (own) return own;
       const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
       status = res.status;
       if (!res.ok) throw new Error(`Không tải được ảnh (${res.status})`);

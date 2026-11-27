@@ -99,6 +99,14 @@ export async function frontMockup(blank: Buffer, print: Buffer, box: CtProductSc
  * square as asked: nothing is cropped off). */
 export const MOCKUP_SIDE = 2048;
 export const MOCKUP_ASPECT = "1:1";
+/** The long side of the artwork a mockup is made from (2026-11-27: it was the print size — 7400×10000 for a fleece
+ * blanket, 20 at once per product — the main CPU load of flexi2; the front picture is laid on a ~2000 px phôi and
+ * squared to MOCKUP_SIDE, so more pixels than this never reach the photo). */
+export const MOCKUP_PRINT_SIDE = 3072;
+/** The side to render a mockup's artwork at: the print's, capped at MOCKUP_PRINT_SIDE. */
+export function mockupPrintSide(spec: { width?: number; height?: number } | null | undefined): number {
+  return Math.min(MOCKUP_PRINT_SIDE, Math.max(spec?.width ?? 2000, spec?.height ?? 2000));
+}
 
 /** The visible pixels of a print (its sheet's transparent margin cut off). */
 async function inkOnly(png: Buffer): Promise<Buffer> {
@@ -798,7 +806,7 @@ export async function autoProductMockups(s: CtSession, productId: string): Promi
   try {
     // With the version's own picture, like the editor's Tạo mockup (lib/compositor draws it): an artwork that IS one
     // picture (Girl Soccer blanket, 2026-11-17) gave an empty print and a blank front mockup.
-    const side = Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000);
+    const side = mockupPrintSide(bundle.spec);
     const render = (selection: CtSelection) => renderArtwork(bundle, selection, side, "print", { withMain: true });
     // The sample names / people (~1 min) are drawn in the background: the rows come back at once.
     if (config.mockupVary && canVaryMockups(product, bundle)) return NextResponse.json({ jobs: (await variedProductMockups(s, product, bundle, config.samples, blocks)).jobs }, { status: 202 });
@@ -947,8 +955,10 @@ export async function variedProductMockups(
       const missed = await fillVariantPhotos(s, product, bundle.regions, variants);
       if (missed.length) console.warn(`[ct] mockup samples ${product.id}: ${missed.join("; ")}`);
       const { renderArtwork } = await import("./print-render");
-      const side = Math.max(bundle.spec?.width ?? 2000, bundle.spec?.height ?? 2000);
-      const prints = await Promise.all(variants.map((v) => renderArtwork(bundle, v.selection, side, "print", { withMain: true })));
+      const side = mockupPrintSide(bundle.spec);
+      // One after another (2026-11-27: 20 variants rendered at once took every core of the server).
+      const prints: Buffer[] = [];
+      for (const v of variants) prints.push(await renderArtwork(bundle, v.selection, side, "print", { withMain: true }));
       await startMockupRows(s, product, rows, prints);
     } catch (e) {
       await failRows(s, rows, e instanceof Error ? e.message : String(e));

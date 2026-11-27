@@ -17,6 +17,7 @@
 import {
   DeleteObjectsCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -64,6 +65,18 @@ export async function r2Get(key: string): Promise<GetObjectCommandOutput | null>
   } catch (e) {
     const name = e instanceof Error ? e.name : "";
     if (name === "NoSuchKey" || name === "NotFound") return null;
+    throw e;
+  }
+}
+
+/** Whether the object exists (no body read). */
+export async function r2Exists(key: string): Promise<boolean> {
+  try {
+    await s3().send(new HeadObjectCommand({ Bucket: bucket(), Key: full(key) }));
+    return true;
+  } catch (e) {
+    const name = e instanceof Error ? e.name : "";
+    if (name === "NoSuchKey" || name === "NotFound") return false;
     throw e;
   }
 }

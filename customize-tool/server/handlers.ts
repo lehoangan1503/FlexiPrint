@@ -325,11 +325,10 @@ export async function updateProduct(s: CtSession, productId: string, body: CtUpd
     patch.config = { ...cfg, ...(body.mockupOrder !== undefined ? { mockupOrder: idList(body.mockupOrder) } : {}), ...(body.mockupOff !== undefined ? { mockupOff: idList(body.mockupOff) } : {}) };
   }
   // The Deploy page's Lưu nháp (asked 2026-11-20): the draft (null = drop it) and / or the customer note box.
-  if (body.deployDraft !== undefined || body.customerNote !== undefined || typeof body.plainPage === "boolean") {
+  if (body.deployDraft !== undefined || body.customerNote !== undefined) {
     const cfg = patch.config ?? normalizeProductConfig(product.config);
     patch.config = {
       ...cfg,
-      ...(typeof body.plainPage === "boolean" ? { plainPage: body.plainPage } : {}),
       ...(body.deployDraft !== undefined ? { deployDraft: body.deployDraft === null ? null : normalizeDeployDraft({ ...body.deployDraft, savedAt: new Date().toISOString() }) } : {}),
       ...(body.customerNote !== undefined ? { customerNote: normalizeCustomerNote(body.customerNote) } : {}),
     };
@@ -419,8 +418,6 @@ export async function saveDesign(s: CtSession, productId: string, body: CtSaveDe
             // Set by the deploy page's Lưu nháp / deploy (PATCH products/:id deployDraft / customerNote).
             deployDraft: normalizeProductConfig(owned.config).deployDraft,
             customerNote: normalizeProductConfig(owned.config).customerNote,
-            // Set by the deploy page / MCP deploy_product plain_page ("Trang bán thường").
-            plainPage: normalizeProductConfig(owned.config).plainPage,
           },
           owned,
         ),
@@ -590,7 +587,6 @@ export function readDeployBody(raw: unknown): CtDeployBody | null {
     shopifyProductId: typeof b.shopifyProductId === "string" && /^gid:\/\/shopify\/Product\/\d+$/.test(b.shopifyProductId) ? b.shopifyProductId : null,
     ...(typeof b.customerPhoi === "boolean" ? { customerPhoi: b.customerPhoi } : {}),
     ...(b.customerNote && typeof b.customerNote === "object" ? { customerNote: normalizeCustomerNote(b.customerNote) } : {}),
-    ...(typeof b.plainPage === "boolean" ? { plainPage: b.plainPage } : {}),
     ...(Array.isArray(b.removeShopifyMediaIds) ? { removeShopifyMediaIds: strings(b.removeShopifyMediaIds, 100).filter((id) => /^gid:\/\/shopify\/\w+\/\d+$/.test(id)) } : {}),
   };
 }
@@ -654,11 +650,10 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
   }
 
   // 0. The deploy page's "Phôi AI có ảnh khách" tick goes in the product before its template is made.
-  if (typeof body.customerPhoi === "boolean" || body.customerNote || typeof body.plainPage === "boolean") {
+  if (typeof body.customerPhoi === "boolean" || body.customerNote) {
     const config = {
       ...normalizeProductConfig(product.config),
       ...(typeof body.customerPhoi === "boolean" ? { customerPhoi: body.customerPhoi } : {}),
-      ...(typeof body.plainPage === "boolean" ? { plainPage: body.plainPage } : {}),
       ...(body.customerNote ? { customerNote: body.customerNote } : {}),
     };
     const { error: cfgErr } = await s.supabase.from(CT_TABLES.products).update({ config }).eq("id", productId);
@@ -705,7 +700,6 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
       templateVersion: pub.publish.version,
       templateUrl: pub.cdnUrl,
       staticPrintUrl,
-      plainPage: normalizeProductConfig(product.config).plainPage,
       customerNote: normalizeProductConfig(product.config).customerNote,
     });
   } catch (e) {
@@ -725,11 +719,7 @@ export async function runDeploy(s: CtSession, product: CtProduct, body: CtDeploy
   }
   const { data: updated, error } = await s.supabase.from(CT_TABLES.products).update(patch).eq("id", productId).select("*").single<CtProduct>();
   if (error) return { error: missingShopifyColumn(error.message), status: 500 };
-  const plainCfg = normalizeProductConfig(product.config);
-  const plainWarn = plainCfg.plainPage && !staticPrintUrl
-    ? [`Trang bán thường: Shopify không có preview, đơn không kèm file in — designer làm file in tay${plainCfg.customerNote.enabled ? " theo ô ghi chú của khách" : ""}.`, ...(plainCfg.customerNote.enabled ? [] : ["Trang bán thường mà chưa bật ô ghi chú: khách không nhập được gì."])]
-    : [];
-  return { product: updated, publish: pub.publish, shopify: result.link, previewUrl: result.previewUrl, warnings: [...plainWarn, ...(staticPrintUrl ? ["Sản phẩm không có gì cho khách chọn: trang bán là sản phẩm Shopify thường (không gọi flexi2), mỗi đơn kèm sẵn file in."] : []), ...result.warnings] };
+  return { product: updated, publish: pub.publish, shopify: result.link, previewUrl: result.previewUrl, warnings: [...(staticPrintUrl ? ["Sản phẩm không có gì cho khách chọn: trang bán là sản phẩm Shopify thường (không gọi flexi2), mỗi đơn kèm sẵn file in."] : []), ...result.warnings] };
 }
 
 function missingShopifyColumn(message: string): string {

@@ -99,8 +99,6 @@ export function DeployPage({ productId }: { productId: string }) {
   const [multiError, setMultiError] = useState<string | null>(null);
   // The customer note box on the Shopify page (asked 2026-11-20) and the Lưu nháp state.
   const [note, setNote] = useState<CtCustomerNote>({ ...DEFAULT_CUSTOMER_NOTE });
-  // "Trang bán thường" (2026-11-28): stored on the product at deploy / Lưu nháp.
-  const [plainPage, setPlainPage] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftAt, setDraftAt] = useState<string | null>(null);
   /** The SKU box (its own field, asked 2026-11-24): what is typed, saved on blur / Enter / before a deploy. */
@@ -144,7 +142,6 @@ export function DeployPage({ productId }: { productId: string }) {
         setCustomerPhoi(b.product.config?.customerPhoi === true);
         setMultiPhoto(b.product.config?.multiPhoto === true);
         setNote(normalizeProductConfig(b.product.config).customerNote);
-        setPlainPage(normalizeProductConfig(b.product.config).plainPage);
         setTables(list);
         setInfo(shop);
         setCollections(cols);
@@ -317,7 +314,6 @@ export function DeployPage({ productId }: { productId: string }) {
         primaryCollectionId: primary && picked.includes(primary) ? primary : (picked[0] ?? null),
         ...(aiPhoto ? { customerPhoi } : {}),
         customerNote: note,
-        plainPage,
       });
       setDraftAt(null);
       setResult(r);
@@ -347,7 +343,6 @@ export function DeployPage({ productId }: { productId: string }) {
           primaryCollectionId: primary && picked.includes(primary) ? primary : (picked[0] ?? null),
         },
         customerNote: note,
-        plainPage,
       });
       setBundle({ ...bundle, product: p });
       setDraftAt(normalizeProductConfig(p.config).deployDraft?.savedAt ?? new Date().toISOString());
@@ -630,20 +625,6 @@ export function DeployPage({ productId }: { productId: string }) {
               {multiError && <Notice level="warn" text={multiError} />}
             </Card>
           )}
-
-          <Card title="Trang bán thường">
-            <CtCheckbox
-              checked={plainPage}
-              onChange={(on) => {
-                setPlainPage(on);
-                if (on && !note.enabled) setNote({ ...note, enabled: true });
-              }}
-              label="Bỏ preview, bán như sản phẩm Shopify thường"
-              hint="Bật: trang Shopify chỉ còn ảnh mockup, biến thể và ô ghi chú bên dưới — không có khung xem trước, không tải ảnh, không gõ tên. Đơn hàng không kèm file in: designer làm file in tay theo chữ khách ghi. Thiết kế trong artwork giữ nguyên, tắt tick + Deploy là về lại trang tuỳ chỉnh. Có hiệu lực từ lần deploy sau."
-            />
-            {plainPage && !note.enabled && <Notice level="warn" text="Chưa bật ô ghi chú bên dưới: khách sẽ không nhập được gì." />}
-            {plainPage && <Notice level="warn" text="Nhớ sửa mô tả nếu nó còn bảo khách tải ảnh / gõ tên để xem trước." />}
-          </Card>
 
           <Card title="Ô ghi chú cho khách">
             <CtCheckbox

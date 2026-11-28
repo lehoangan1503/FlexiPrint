@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 async function upsertUserProfile(supabase: Awaited<ReturnType<typeof createClient>>, userId: string, email: string) {
   await supabase
     .from("user_profiles")
-    .upsert({ user_id: userId, email }, { onConflict: "user_id", ignoreDuplicates: false })
+    .upsert({ user_id: userId, email }, { onConflict: "user_id", ignoreDuplicates: true })
     .select();
 }
 

@@ -43,14 +43,22 @@ export async function PUT(request: Request) {
       }
     }
 
-    const { data, error } = await supabase
+    // Not upsert: ON CONFLICT DO UPDATE writes user_id too, and `authenticated` may only UPDATE (nickname, email)
+    // (001_base.sql) — the upsert failed with "permission denied" for every user. Update the row; insert if missing.
+    const fields = { email: user.email!, nickname: nickname?.trim() || null };
+    let { data, error } = await supabase
       .from("user_profiles")
-      .upsert(
-        { user_id: user.id, email: user.email!, nickname: nickname?.trim() || null },
-        { onConflict: "user_id" }
-      )
+      .update(fields)
+      .eq("user_id", user.id)
       .select()
-      .single();
+      .maybeSingle();
+    if (!error && !data) {
+      ({ data, error } = await supabase
+        .from("user_profiles")
+        .insert({ user_id: user.id, ...fields })
+        .select()
+        .single());
+    }
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });

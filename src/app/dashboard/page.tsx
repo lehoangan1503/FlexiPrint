@@ -15,7 +15,7 @@ export default async function DashboardPage() {
   if (!profile) {
     const { data: created } = await supabase
       .from("user_profiles")
-      .upsert({ user_id: user.id, email: user.email! }, { onConflict: "user_id" })
+      .upsert({ user_id: user.id, email: user.email! }, { onConflict: "user_id", ignoreDuplicates: true })
       .select()
       .single();
     profile = (created as UserProfile | null) ?? {

@@ -207,6 +207,11 @@ const DRAFT_PROPS = {
     description:
       'A text box on the Shopify product page for the customer (NOT printed — for a printed name / text add an editable text layer to the artwork): {"enabled": true, "label": "Gift message" (shown above the box and the order line\'s name for it), "placeholder": "…", "required": true = Add to cart waits until it is filled, "max_chars": 250}. {"enabled": false} = no box. Goes up on the next deploy.',
   },
+  plain_page: {
+    type: "boolean",
+    description:
+      'true = "Trang bán thường": the Shopify page becomes a plain product — no customizer, no preview, no flexi2 call — even when the design has photo / text fields; the customer note box (customer_note) is then the only thing the customer types, and orders carry NO print file (a designer makes it by hand from the note). false = the normal customizable page. Goes up on the next deploy.',
+  },
 } as const;
 
 /** Merge the given deploy fields into the product's saved draft (Lưu nháp) and / or its customer note box. */
@@ -214,7 +219,7 @@ async function saveDraft(db: CtServiceClient, product: CtProduct, args: Record<s
   const cfg = normalizeProductConfig(product.config);
   const old = cfg.deployDraft;
   const given = (k: string) => args[k] !== undefined;
-  // Only the customer note given: the draft (and its date — a deployed one must stay old) is left as it is.
+  // Only the customer note / plain page given: the draft (and its date — a deployed one must stay old) is left as it is.
   const draftGiven = ["title", "description_html", "tags", "product_type", "vendor", "status", "collection_ids", "primary_collection_id"].some(given);
   const draft = !draftGiven ? old : normalizeDeployDraft({
     title: given("title") ? str(args.title) : (old?.title ?? ""),
@@ -229,7 +234,7 @@ async function saveDraft(db: CtServiceClient, product: CtProduct, args: Record<s
   });
   const n = args.customer_note && typeof args.customer_note === "object" ? (args.customer_note as Record<string, unknown>) : null;
   const customerNote = n ? normalizeCustomerNote({ ...cfg.customerNote, ...n, ...(n.max_chars !== undefined ? { maxChars: Number(n.max_chars) } : {}) }) : cfg.customerNote;
-  const config = { ...cfg, deployDraft: draft ?? old, customerNote };
+  const config = { ...cfg, deployDraft: draft ?? old, customerNote, ...(typeof args.plain_page === "boolean" ? { plainPage: args.plain_page } : {}) };
   const { data, error } = await db.from(CT_TABLES.products).update({ config }).eq("id", product.id).select("*").single<CtProduct>();
   if (error || !data) throw new Error(error?.message ?? "Could not save the draft");
   return data;
@@ -327,6 +332,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         lastContent: st.content ? { title: st.content.title, descriptionHtml: st.content.descriptionHtml } : null,
         draft: draft ? { ...draft, note: "Saved ahead (save_deploy_draft / the Deploy page's Lưu nháp): deploy_product uses it for what you leave out." } : null,
         customerNote: normalizeProductConfig(product.config).customerNote,
+        plainPage: normalizeProductConfig(product.config).plainPage,
         missing: blockers(st, { kind: product.kind ?? "artwork", sku: product.sku ?? null, tableId, title, descriptionHtml, mediaIds: defaultMedia(st, product) }),
         next: "Fill what is missing (title + description_html in US English per the content rules; a price table that fits (none fits → ask the user; create_price_table only with their yes); make_product_mockups when there is none), then deploy_product. Collections: reuse the store's — the suggested ones fit the title; a smart (rule-based) one is joined through its rules (the deploy adds the tag / type), so pick it like any other. None fits → create_shopify_collection {title, product_id} (a title already there is reused, never a twin). shopify.handAdded = pictures added by hand on Shopify (not FlexiPrint mockups): they stay after the mockups unless deploy_product remove_shopify_media_ids names them. customerPhoi.applies = the product has a customer photo redrawn by an AI style: customer_phoi true on deploy_product = the Deploy page's \"Phôi AI có ảnh khách\" (the preview shows the AI phôi with the customer's photo).",
       });
@@ -410,7 +416,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         blocks: Array.isArray(args.mockup_blocks) && args.mockup_blocks.length ? args.mockup_blocks : undefined,
         scenes: typeof args.mockup_scenes === "string" && args.mockup_scenes.trim() ? args.mockup_scenes : undefined,
       });
-      if (str(args.title) || str(args.description_html) || args.customer_note) product = await saveDraft(db, product, args);
+      if (str(args.title) || str(args.description_html) || args.customer_note || typeof args.plain_page === "boolean") product = await saveDraft(db, product, args);
       await progress(db, task?.id, `Đã tạo sản phẩm “${product.name}” từ artwork “${artwork.name}” trên ${base.name}`);
       return json({ product_id: product.id, editor: `${siteUrl()}${CT_CONFIG.basePath}/${product.id}`, next: "make_product_mockups on product_id, then check_deploy / deploy_product." });
     },
@@ -867,7 +873,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
   {
     name: "save_deploy_draft",
     description:
-      "Write a product's Deploy fields AHEAD — the Deploy page's Lưu nháp (asked 2026-11-20): title, description, tags, type, vendor, status, collections, and the customer note box. Give only what changes (the rest of the draft stays). The Deploy page opens filled with it and deploy_product / the product list's bulk Deploy use it, so once the mockups are made the editor only presses Deploy. Kept until the next deploy (after that the Shopify product's text wins). Nothing goes to Shopify now. → the saved draft.",
+      "Write a product's Deploy fields AHEAD — the Deploy page's Lưu nháp (asked 2026-11-20): title, description, tags, type, vendor, status, collections, the customer note box and plain_page (Trang bán thường). Give only what changes (the rest of the draft stays). The Deploy page opens filled with it and deploy_product / the product list's bulk Deploy use it, so once the mockups are made the editor only presses Deploy. Kept until the next deploy (after that the Shopify product's text wins). Nothing goes to Shopify now. → the saved draft.",
     inputSchema: { type: "object", properties: { ...OPT_TASK_ARG, product_id: { type: "string", description: "The FlexiPrint product (kind product)." }, ...DRAFT_PROPS }, required: ["product_id"] },
     callers: ["agent", "user"],
     run: async (ctx, args) => {
@@ -876,7 +882,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       const saved = await saveDraft(db, product, args);
       const cfg = normalizeProductConfig(saved.config);
       await progress(db, task?.id, `Đã lưu nháp deploy cho “${saved.name}”`);
-      return json({ product_id: saved.id, draft: cfg.deployDraft, customerNote: cfg.customerNote, deploy_page: `${siteUrl()}${CT_CONFIG.basePath}/${saved.id}/deploy`, next: "make_product_mockups if it has none, then deploy_product {product_id} (the draft fills the rest) — ask the user before ACTIVE." });
+      return json({ product_id: saved.id, draft: cfg.deployDraft, customerNote: cfg.customerNote, plainPage: cfg.plainPage, deploy_page: `${siteUrl()}${CT_CONFIG.basePath}/${saved.id}/deploy`, next: "make_product_mockups if it has none, then deploy_product {product_id} (the draft fills the rest) — ask the user before ACTIVE." });
     },
   },
   {
@@ -900,6 +906,7 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         primary_collection_id: { type: "string", description: "The breadcrumb collection (one of collection_ids)." },
         customer_note: { ...DRAFT_PROPS.customer_note, description: `${DRAFT_PROPS.customer_note.description.replace(" Goes up on the next deploy.", "")} Default: the product's (check_deploy customerNote).` },
         remove_shopify_media_ids: { type: "array", items: { type: "string" }, description: "Pictures added by hand on Shopify to take off (check_deploy shopify.handAdded ids, gid://shopify/MediaImage/…); the others stay after the mockups." },
+        plain_page: { ...DRAFT_PROPS.plain_page, description: `${DRAFT_PROPS.plain_page.description.replace(" Goes up on the next deploy.", "")} Default: the product's (check_deploy plainPage).` },
         customer_phoi: { type: "boolean", description: "Only when check_deploy customerPhoi.applies: true = the preview shows the AI phôi with the customer's photo (the Deploy page's tick). Default: the product's." },
       },
       required: ["product_id"],
@@ -909,7 +916,8 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
       const opened = await openProduct(ctx, args);
       const { db, task, s } = opened;
       // A customer note box given here is kept on the product (like the Deploy page's tick), then deployed with it.
-      const product = args.customer_note && typeof args.customer_note === "object" ? await saveDraft(db, opened.product, { customer_note: args.customer_note }) : opened.product;
+      const keep = { ...(args.customer_note && typeof args.customer_note === "object" ? { customer_note: args.customer_note } : {}), ...(typeof args.plain_page === "boolean" ? { plain_page: args.plain_page } : {}) };
+      const product = Object.keys(keep).length ? await saveDraft(db, opened.product, keep) : opened.product;
       const st = await deployState(db, s, product);
       // What the agent leaves out comes from the draft saved ahead (save_deploy_draft / Lưu nháp).
       const draft = liveDraft(product);

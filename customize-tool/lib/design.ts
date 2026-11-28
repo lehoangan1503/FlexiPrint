@@ -321,6 +321,7 @@ export function defaultProductConfig(): CtProductConfig {
     mockupOff: [],
     deployDraft: null,
     customerNote: { ...DEFAULT_CUSTOMER_NOTE },
+    plainPage: false,
   };
 }
 
@@ -416,6 +417,7 @@ export function normalizeProductConfig(raw: Partial<CtProductConfig> | null | un
     mockupOff: idList(raw?.mockupOff),
     deployDraft: normalizeDeployDraft(raw?.deployDraft),
     customerNote: normalizeCustomerNote(raw?.customerNote),
+    plainPage: raw?.plainPage === true,
   };
 }
 

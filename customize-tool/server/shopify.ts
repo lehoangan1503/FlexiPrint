@@ -251,6 +251,11 @@ export interface ShopifyDeployInput {
   templateUrl: string | null;
   /** Static product (nothing to customize, lib/option-audit isStaticTemplate): its print file; null = customizable. */
   staticPrintUrl: string | null;
+  /**
+   * "Trang bán thường" (CtProductConfig.plainPage): the page is a plain product (metafield static, no customizer)
+   * even with fields in the design; with no staticPrintUrl the orders carry no print file (made by hand).
+   */
+  plainPage?: boolean;
   /** The customer note box (metafield customize_tool.customer_note, read by flexi2-product.liquid); off = removed. */
   customerNote?: CtCustomerNote;
 }
@@ -364,12 +369,8 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
       // The storefront loads the template from the CDN (fast in the US), flexi2 when this is missing.
       ...(input.templateUrl ? [{ namespace: CT_METAFIELD_NS, key: "template_url", type: "single_line_text_field", value: input.templateUrl }] : []),
       // Static: flexi2-product.liquid shows a plain product (no flexi2 call) and adds the print file to every order.
-      ...(input.staticPrintUrl
-        ? [
-            { namespace: CT_METAFIELD_NS, key: "static", type: "boolean", value: "true" },
-            { namespace: CT_METAFIELD_NS, key: "print_url", type: "single_line_text_field", value: input.staticPrintUrl },
-          ]
-        : []),
+      ...(input.staticPrintUrl || input.plainPage ? [{ namespace: CT_METAFIELD_NS, key: "static", type: "boolean", value: "true" }] : []),
+      ...(input.staticPrintUrl ? [{ namespace: CT_METAFIELD_NS, key: "print_url", type: "single_line_text_field", value: input.staticPrintUrl }] : []),
       // The customer note box under the options (asked 2026-11-20): what the customer types goes in the order line.
       ...(input.customerNote?.enabled
         ? [
@@ -418,7 +419,7 @@ export async function deployToShopify(st: ShopifyStore, input: ShopifyDeployInpu
     await gql<{ metafieldsDelete: { userErrors: UserError[] } }>(
       st,
       `mutation($m: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $m) { userErrors { field message } } }`,
-      { m: ["static", "print_url"].map((key) => ({ ownerId: p.id, namespace: CT_METAFIELD_NS, key })) },
+      { m: (input.plainPage ? ["print_url"] : ["static", "print_url"]).map((key) => ({ ownerId: p.id, namespace: CT_METAFIELD_NS, key })) },
     ).catch(() => undefined);
   }
 

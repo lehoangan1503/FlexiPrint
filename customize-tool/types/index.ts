@@ -929,6 +929,12 @@ export interface CtProductConfig {
   deployDraft: CtDeployDraft | null;
   /** A box on the Shopify product page for the customer to type a note (not printed) — set by Lưu nháp / deploy. */
   customerNote: CtCustomerNote;
+  /**
+   * "Trang bán thường" (asked 2026-11-28, n05-POD-34): the Shopify page is a plain product — no customizer, no preview,
+   * no flexi2 call — even when the design has fields for the customer; the customer note box is the only input. Orders
+   * carry no print file (a designer makes it by hand from the note). Set by deploy (Deploy page tick, MCP plain_page).
+   */
+  plainPage: boolean;
 }
 
 /** CtProductConfig.deployDraft */
@@ -1175,7 +1181,7 @@ export interface CtMockupEdit {
 }
 
 /** What a published template carries (no design samples). */
-export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupBlocks" | "mockupBaseRefs" | "mockupVary" | "mockupOrder" | "mockupOff" | "deployDraft" | "customerNote">;
+export type CtPublicProductConfig = Omit<CtProductConfig, "samples" | "printGuide" | "artworkRevision" | "artworkLink" | "placement" | "baseFrameId" | "previewBox" | "mockupBlocks" | "mockupBaseRefs" | "mockupVary" | "mockupOrder" | "mockupOff" | "deployDraft" | "customerNote" | "plainPage">;
 
 /**
  * What a ct_products row is (migration 031, asked 2026-11-07 — Teeinblue's Artwork / Campaign):
@@ -2263,6 +2269,8 @@ export interface CtUpdateProductBody {
   deployDraft?: Omit<CtDeployDraft, "savedAt"> | null;
   /** CtProductConfig.customerNote */
   customerNote?: CtCustomerNote;
+  /** CtProductConfig.plainPage (Lưu nháp) — the Shopify page changes on the next deploy. */
+  plainPage?: boolean;
 }
 
 /** POST products/:id/multi-photo */
@@ -2722,6 +2730,8 @@ export interface CtDeployBody {
   customerPhoi?: boolean;
   /** CtProductConfig.customerNote to store and put on the product page; absent = keep the product's. */
   customerNote?: CtCustomerNote;
+  /** CtProductConfig.plainPage to store before deploying; absent = keep the product's. */
+  plainPage?: boolean;
   /** Images added by hand on Shopify (not FlexiPrint mockups) to take off; the rest of those stay after the mockups. */
   removeShopifyMediaIds?: string[];
 }

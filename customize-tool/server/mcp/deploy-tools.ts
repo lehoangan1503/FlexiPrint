@@ -12,7 +12,7 @@
  */
 
 import type { CtAgentTask, CtAsset, CtBaseProduct, CtContentResult, CtPriceTable, CtProduct, CtRegion, CtShopifyCollection, CtShopifyInfo } from "../../types";
-import { auditOptions } from "../../lib/option-audit";
+import { auditOptions, isStaticTemplate } from "../../lib/option-audit";
 import { suggestCollections } from "../../lib/collections";
 import { defaultDeployMedia, effectivePicks } from "../../lib/deploy-media";
 import { effectiveOptions, normalizePriceTableConfig, priceCells, priceTableFor, usesPacks, variantProblems } from "../../lib/pricing";
@@ -95,6 +95,8 @@ interface DeployState {
   mockups: CtAsset[];
   templateError: string | null;
   audit: ReturnType<typeof auditOptions> | null;
+  /** Nothing for the customer to pick or type (lib/option-audit isStaticTemplate): the deploy makes a plain Shopify page. */
+  plain: boolean;
   content: CtContentResult | null;
   /** Other products with the same SKU (server/sku-twins.ts). */
   skuTwins: Array<{ id: string; name: string }>;
@@ -141,6 +143,7 @@ export async function deployState(db: CtServiceClient, s: CtSession, product: Ct
     mockups,
     templateError: "error" in built ? built.error : null,
     audit: "error" in built ? null : auditOptions(built.template),
+    plain: "error" in built ? false : isStaticTemplate(built.template),
     content,
     skuTwins: twins,
   };
@@ -321,7 +324,13 @@ export const CT_MCP_DEPLOY_TOOLS: CtMcpTool[] = [
         })),
         template: st.templateError
           ? { ok: false, error: st.templateError }
-          : { ok: true, versions: st.audit?.versions ?? [], lines: (st.audit?.lines ?? []).filter((l) => l.level !== "ok") },
+          : {
+              ok: true,
+              // plain = the Shopify page will be a normal product (no preview, no flexi2 call, the print file on every order).
+              plain: st.plain,
+              versions: st.audit?.versions ?? [],
+              lines: (st.audit?.lines ?? []).filter((l) => l.level !== "ok"),
+            },
         mockups: st.mockups.map((a) => ({ id: a.id, url: a.url, default: defaultMedia(st, product).includes(a.id) })),
         collections: collections.map((c) => ({ id: c.id, title: c.title, smart: c.smart, rules: c.smart ? c.rules.map((r) => `${r.column} ${r.relation} ${r.condition}`) : undefined, suggested: fit.some((x) => x.id === c.id) })),
         lastContent: st.content ? { title: st.content.title, descriptionHtml: st.content.descriptionHtml } : null,

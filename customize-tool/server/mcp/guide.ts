@@ -80,7 +80,20 @@ flexiprint_save_files (urls → a folder).
   mockups the editor only presses Deploy, and deploy_product {product_id} alone uses them. Tags you give = hand-typed
   only: every deploy adds the auto tags itself — the SKU lower case (n06-pod-126), the staff code = its first part
   (n06), col_<collection handle> per collection — and takes off the last deploy's stale ones (check_deploy autoTags).
-  Customer options (names, photos, note box) are not tags: they go as metafields. list_artwork_products (an artwork's products, outdated ones) → sync_product_from_artwork updates an outdated one in place (never a new product).
+  Customer options (names, photos, note box) are not tags: they go as metafields.
+  PLAIN PAGE ("bỏ preview, thành sản phẩm thường, chỉ thêm ô cho khách nhập chữ" — like n06-POD-25, asked 2026-11-28):
+  the design itself must have nothing for the customer — one version, no photo zone, no text the customer types, no
+  layer with 2+ pictures to pick. Then every deploy makes the Shopify page plain (no preview, no flexi2 call) and puts the
+  print file of the fixed design on every order; a designer makes the real print by hand from the note. Steps, all MCP:
+  1. list_product_options {product_id} → the photo / text layers to drop (a fixed text the customer cannot change may stay).
+  2. On the ARTWORK (product's artwork link; list_artwork_products shows it): get_product_design → save_product_design with
+     regions = the same list minus those layers (items of the kept ones only) → sync_product_from_artwork {product_id}
+     (every product of that artwork follows; one product only → do the same save_product_design on the product itself).
+  3. check_deploy {product_id}: template.plain must be true (false = something is still left for the customer — read
+     template.versions[].fields). Rewrite description_html when it tells the customer to upload a photo / type a name.
+  4. deploy_product {product_id, customer_note: {enabled: true, label: "Type Your Name", placeholder: "Melissa",
+     required: true, max_chars: 12}, description_html} — ask the user before deploying an ACTIVE product. The mockups stay.
+  Back to customizable: put the layers back the same way and deploy again. list_artwork_products (an artwork's products, outdated ones) → sync_product_from_artwork updates an outdated one in place (never a new product).
 - Change / remove (every step): update_base_product / delete_base_product, list_price_tables / delete_price_table,
   set_artwork_layers (an artwork) / delete_product (artwork or product), update_product (name, status, move base,
   mockup order / off), delete_mockup, set_shopify_status (ACTIVE / DRAFT / ARCHIVED), delete_shopify_product.
